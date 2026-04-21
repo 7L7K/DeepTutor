@@ -10,6 +10,7 @@ from typing import Any
 from openai import AsyncOpenAI
 
 from deeptutor.logging import get_logger
+from deeptutor.services.llm.capabilities import get_effective_temperature
 from deeptutor.services.llm.provider_registry import find_by_name, strip_provider_prefix
 
 from .config import get_token_limit_kwargs
@@ -93,7 +94,11 @@ async def sdk_complete(
     )
 
     max_tokens_val = int(kwargs.pop("max_tokens", 4096))
-    temperature_val = float(kwargs.pop("temperature", 0.7))
+    temperature_val = get_effective_temperature(
+        provider_name,
+        resolved_model,
+        float(kwargs.pop("temperature", 0.7)),
+    )
 
     payload: dict[str, Any] = {
         "model": resolved_model,
@@ -154,7 +159,11 @@ async def sdk_stream(
     )
 
     max_tokens_val = int(kwargs.pop("max_tokens", 4096))
-    temperature_val = float(kwargs.pop("temperature", 0.7))
+    temperature_val = get_effective_temperature(
+        provider_name,
+        resolved_model,
+        float(kwargs.pop("temperature", 0.7)),
+    )
 
     payload: dict[str, Any] = {
         "model": resolved_model,

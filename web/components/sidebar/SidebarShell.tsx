@@ -10,11 +10,13 @@ import {
   Brain,
   GraduationCap,
   MessageSquare,
+  NotebookPen,
   PanelLeftClose,
   PanelLeftOpen,
   PenLine,
   Plus,
   Settings,
+  SquarePen,
   type LucideIcon,
 } from "lucide-react";
 import { useTranslation } from "react-i18next";
@@ -30,10 +32,12 @@ interface NavEntry {
 
 const PRIMARY_NAV: NavEntry[] = [
   { href: "/chat", label: "Chat", icon: MessageSquare },
+  { href: "/practice", label: "Practice", icon: SquarePen },
   { href: "/agents", label: "TutorBot", icon: Bot },
   { href: "/co-writer", label: "Co-Writer", icon: PenLine },
   { href: "/guide", label: "Guided Learning", icon: GraduationCap },
   { href: "/knowledge", label: "Knowledge", icon: BookOpen },
+  { href: "/notebook", label: "Notebook", icon: NotebookPen },
   { href: "/memory", label: "Memory", icon: Brain },
 ];
 

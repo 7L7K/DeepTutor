@@ -95,6 +95,21 @@ export interface MessageItem {
   requestSnapshot?: MessageRequestSnapshot;
 }
 
+function isLeakedInternalChatMemo(
+  role: "user" | "assistant" | "system",
+  capability: string | undefined,
+  content: string,
+): boolean {
+  if (role !== "assistant") return false;
+  if ((capability || "") !== "chat") return false;
+  const normalized = content.trim().toLowerCase();
+  return (
+    normalized.startsWith("internal observation note") ||
+    normalized.startsWith("internal analysis memo") ||
+    normalized.startsWith("internal memo")
+  );
+}
+
 interface SessionEntry extends ChatState {
   key: string;
   status: SessionRuntimeStatus;
@@ -437,6 +452,14 @@ export function UnifiedChatProvider({ children }: { children: React.ReactNode })
     // backend turn runtime) are LLM-only and must not surface in the chat UI.
     return messages
       .filter((message) => message.role !== "system")
+      .filter(
+        (message) =>
+          !isLeakedInternalChatMemo(
+            message.role,
+            message.capability || "",
+            message.content || "",
+          ),
+      )
       .map((message) => ({
         role: message.role,
         content:

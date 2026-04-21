@@ -18,16 +18,32 @@ import type { SelectedHistorySession } from "@/components/chat/HistorySessionPic
 import AssistantResponse from "@/components/common/AssistantResponse";
 import type { MessageRequestSnapshot } from "@/context/UnifiedChatContext";
 import { extractMathAnimatorResult } from "@/lib/math-animator-types";
-import { extractQuizQuestions } from "@/lib/quiz-types";
+import { extractQuizQuestions, extractQuizQuestionsFromContent } from "@/lib/quiz-types";
 import { extractVisualizeResult } from "@/lib/visualize-types";
 import type { StreamEvent } from "@/lib/unified-ws";
 import { hasVisibleMarkdownContent } from "@/lib/markdown-display";
 import { CallTracePanel } from "./TracePanels";
 
+export type TutorActionId =
+  | "quiz_me"
+  | "explain_simpler"
+  | "make_flashcards"
+  | "review_weak_spots";
+
+const TUTOR_ACTIONS: Array<{ id: TutorActionId; label: string }> = [
+  { id: "quiz_me", label: "Quiz me" },
+  { id: "explain_simpler", label: "Explain simpler" },
+  { id: "make_flashcards", label: "Make flashcards" },
+  { id: "review_weak_spots", label: "Review weak spots" },
+];
+
 const MathAnimatorViewer = dynamic(
   () => import("@/components/math-animator/MathAnimatorViewer"),
   { ssr: false },
 );
+const ChatQuizViewer = dynamic(() => import("@/components/quiz/ChatQuizViewer"), {
+  ssr: false,
+});
 const QuizViewer = dynamic(() => import("@/components/quiz/QuizViewer"), { ssr: false });
 const ResearchOutlineEditor = dynamic(
   () => import("@/components/research/ResearchOutlineEditor"),
@@ -110,6 +126,11 @@ const AssistantMessage = memo(function AssistantMessage({
     return extractQuizQuestions(resultEvent.metadata);
   }, [msg.capability, resultEvent]);
 
+  const parsedChatQuiz = useMemo(() => {
+    if (msg.capability === "deep_question") return null;
+    return extractQuizQuestionsFromContent(msg.content);
+  }, [msg.capability, msg.content]);
+
   const mathAnimatorResult = useMemo(() => {
     if (msg.capability !== "math_animator" || !resultEvent) return null;
     return extractMathAnimatorResult(resultEvent.metadata);
@@ -120,9 +141,11 @@ const AssistantMessage = memo(function AssistantMessage({
     return extractVisualizeResult(resultEvent.metadata);
   }, [msg.capability, resultEvent]);
 
+  const showTracePanel = hasCallTrace && shouldShowTracePanel(msg.capability, isStreaming);
+
   return (
     <>
-      {hasCallTrace ? (
+      {showTracePanel ? (
         <CallTracePanel events={events} isStreaming={isStreaming} />
       ) : null}
       {isStreaming && onAnswerNow ? <AnswerNowRow onAnswerNow={onAnswerNow} /> : null}
@@ -139,6 +162,11 @@ const AssistantMessage = memo(function AssistantMessage({
         <VisualizationViewer result={visualizeResult} />
       ) : quizQuestions && quizQuestions.length > 0 ? (
         <QuizViewer questions={quizQuestions} sessionId={sessionId} language={language} />
+      ) : parsedChatQuiz && parsedChatQuiz.questions.length > 0 ? (
+        <ChatQuizViewer
+          intro={parsedChatQuiz.intro}
+          questions={parsedChatQuiz.questions}
+        />
       ) : (
         <AssistantResponse content={msg.content} />
       )}
@@ -196,6 +224,7 @@ const AnswerNowRow = memo(function AnswerNowRow({
 AnswerNowRow.displayName = "AnswerNowRow";
 
 function CostFooter({ cost, tokens, calls }: { cost: number; tokens: number; calls: number }) {
+  const { t } = useTranslation();
   const formatCost = (usd: number) => {
     if (usd < 0.01) return `$${usd.toFixed(4)}`;
     return `$${usd.toFixed(2)}`;
@@ -209,9 +238,9 @@ function CostFooter({ cost, tokens, calls }: { cost: number; tokens: number; cal
       <Coins size={10} strokeWidth={1.5} className="shrink-0" />
       <span>{formatCost(cost)}</span>
       <span className="opacity-40">·</span>
-      <span>{formatTokens(tokens)} tokens</span>
+      <span>{formatTokens(tokens)} {t("tokens")}</span>
       <span className="opacity-40">·</span>
-      <span>{calls} calls</span>
+      <span>{calls} {t("calls")}</span>
     </div>
   );
 }
@@ -236,6 +265,27 @@ function RoughActionButton({
     >
       <Icon size={11} strokeWidth={1.5} />
       <span>{label}</span>
+    </button>
+  );
+}
+
+function TutorActionChip({
+  label,
+  onClick,
+  disabled,
+}: {
+  label: string;
+  onClick: () => void;
+  disabled?: boolean;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      disabled={disabled}
+      className="rounded-full border border-[var(--border)] bg-[var(--background)] px-3 py-1.5 text-[12px] font-medium text-[var(--foreground)] transition-colors hover:border-[var(--primary)]/35 hover:bg-[var(--primary)]/8 disabled:cursor-not-allowed disabled:opacity-40"
+    >
+      {label}
     </button>
   );
 }
@@ -370,6 +420,26 @@ export const ReferenceChips = memo(function ReferenceChips({
 
 ReferenceChips.displayName = "ReferenceChips";
 
+function supportsTutorActions(capability?: string) {
+  return !capability || capability === "chat" || capability === "deep_solve";
+}
+
+function shouldShowTracePanel(capability?: string, isStreaming?: boolean) {
+  if (isStreaming) return true;
+  return capability === "deep_research" || capability === "deep_solve";
+}
+
+function isLeakedInternalChatMemo(msg: ChatMessageItem) {
+  if (msg.role !== "assistant") return false;
+  if ((msg.capability || "") !== "chat") return false;
+  const normalized = (msg.content || "").trim().toLowerCase();
+  return (
+    normalized.startsWith("internal observation note") ||
+    normalized.startsWith("internal analysis memo") ||
+    normalized.startsWith("internal memo")
+  );
+}
+
 export const ChatMessageList = memo(function ChatMessageList({
   messages,
   isStreaming,
@@ -378,6 +448,7 @@ export const ChatMessageList = memo(function ChatMessageList({
   onAnswerNow,
   onCopyAssistantMessage,
   onRetryMessage,
+  onTutorAction,
   onConfirmOutline,
 }: {
   messages: ChatMessageItem[];
@@ -390,6 +461,7 @@ export const ChatMessageList = memo(function ChatMessageList({
   ) => void;
   onCopyAssistantMessage: (content: string) => void | Promise<void>;
   onRetryMessage: (snapshot?: MessageRequestSnapshot) => void;
+  onTutorAction: (action: TutorActionId, snapshot?: MessageRequestSnapshot) => void;
   onConfirmOutline?: (outline: Array<{ title: string; overview: string }>, topic: string, researchConfig?: Record<string, unknown> | null) => void;
 }) {
   const { t } = useTranslation();
@@ -425,7 +497,7 @@ export const ChatMessageList = memo(function ChatMessageList({
     // addition to the hydration-time filter in UnifiedChatContext.
     return messages
       .map((msg, index) => ({ msg, originalIndex: index }))
-      .filter(({ msg }) => msg.role !== "system")
+      .filter(({ msg }) => msg.role !== "system" && !isLeakedInternalChatMemo(msg))
       .map(({ msg, originalIndex }) => {
         if (msg.role === "user") {
           return { msg, originalIndex, pairedUserMessage: null as ChatMessageItem | null };
@@ -460,6 +532,10 @@ export const ChatMessageList = memo(function ChatMessageList({
           showActions &&
           (!pairedUserMessage?.capability || pairedUserMessage?.capability === "chat") &&
           Boolean(pairedUserMessage?.requestSnapshot);
+        const showTutorActions =
+          showActions &&
+          Boolean(pairedUserMessage?.requestSnapshot) &&
+          supportsTutorActions(pairedUserMessage?.capability);
 
         // The "Answer now" affordance lives inside the trace panel for the
         // currently-streaming assistant turn. We hand the panel a thin
@@ -494,6 +570,18 @@ export const ChatMessageList = memo(function ChatMessageList({
               onConfirmOutline={onConfirmOutline}
               onAnswerNow={handleTraceAnswerNow}
             />
+            {showTutorActions ? (
+              <div className="mt-3 flex flex-wrap gap-2">
+                {TUTOR_ACTIONS.map((action) => (
+                  <TutorActionChip
+                    key={action.id}
+                    label={t(action.label)}
+                    onClick={() => onTutorAction(action.id, pairedUserMessage?.requestSnapshot)}
+                    disabled={isStreaming}
+                  />
+                ))}
+              </div>
+            ) : null}
             {(showActions || costSummary) && (
               <div className="mt-2 flex items-center">
                 {showActions && (

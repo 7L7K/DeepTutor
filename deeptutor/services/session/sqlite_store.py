@@ -182,6 +182,133 @@ class SQLiteSessionStore:
                     category_id INTEGER NOT NULL REFERENCES notebook_categories(id) ON DELETE CASCADE,
                     PRIMARY KEY (entry_id, category_id)
                 );
+
+                CREATE TABLE IF NOT EXISTS practice_attempts (
+                    id TEXT PRIMARY KEY,
+                    session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
+                    source_type TEXT DEFAULT 'practice',
+                    source_session_id TEXT DEFAULT '',
+                    source_message_id INTEGER,
+                    title TEXT NOT NULL DEFAULT 'Practice Quiz',
+                    topic TEXT DEFAULT '',
+                    knowledge_base TEXT DEFAULT '',
+                    mode TEXT DEFAULT 'untimed',
+                    status TEXT NOT NULL DEFAULT 'in_progress',
+                    time_limit_seconds REAL,
+                    question_count INTEGER NOT NULL DEFAULT 0,
+                    quiz_snapshot_json TEXT NOT NULL DEFAULT '{}',
+                    result_summary_json TEXT NOT NULL DEFAULT '{}',
+                    started_at REAL NOT NULL,
+                    submitted_at REAL,
+                    duration_seconds REAL,
+                    timed_out INTEGER NOT NULL DEFAULT 0,
+                    score_correct INTEGER,
+                    score_total INTEGER,
+                    score_percent REAL
+                );
+
+                CREATE INDEX IF NOT EXISTS idx_practice_attempts_started
+                    ON practice_attempts(started_at DESC);
+
+                CREATE INDEX IF NOT EXISTS idx_practice_attempts_session
+                    ON practice_attempts(session_id, started_at DESC);
+
+                CREATE INDEX IF NOT EXISTS idx_practice_attempts_source_session
+                    ON practice_attempts(source_session_id, started_at DESC);
+
+                CREATE TABLE IF NOT EXISTS practice_attempt_items (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    attempt_id TEXT NOT NULL REFERENCES practice_attempts(id) ON DELETE CASCADE,
+                    display_order INTEGER NOT NULL,
+                    question_id TEXT NOT NULL,
+                    question_text TEXT NOT NULL DEFAULT '',
+                    question_type TEXT DEFAULT '',
+                    options_json TEXT DEFAULT '{}',
+                    domain TEXT DEFAULT '',
+                    difficulty TEXT DEFAULT '',
+                    correct_answer TEXT DEFAULT '',
+                    user_answer TEXT DEFAULT '',
+                    is_correct INTEGER NOT NULL DEFAULT 0,
+                    is_answered INTEGER NOT NULL DEFAULT 0,
+                    explanation TEXT DEFAULT '',
+                    coaching_note TEXT DEFAULT '',
+                    UNIQUE(attempt_id, question_id)
+                );
+
+                CREATE INDEX IF NOT EXISTS idx_practice_attempt_items_attempt
+                    ON practice_attempt_items(attempt_id, display_order, id);
+
+                CREATE TABLE IF NOT EXISTS flashcard_decks (
+                    id TEXT PRIMARY KEY,
+                    source_type TEXT NOT NULL DEFAULT 'topic',
+                    title TEXT NOT NULL,
+                    topic TEXT DEFAULT '',
+                    source_summary TEXT DEFAULT '',
+                    source_kb_names_json TEXT NOT NULL DEFAULT '[]',
+                    style TEXT DEFAULT 'mixed',
+                    card_count INTEGER NOT NULL DEFAULT 0,
+                    generation_fingerprint TEXT NOT NULL DEFAULT '',
+                    generation_settings_json TEXT NOT NULL DEFAULT '{}',
+                    source_context_json TEXT NOT NULL DEFAULT '[]',
+                    created_at REAL NOT NULL,
+                    updated_at REAL NOT NULL,
+                    last_reviewed_at REAL
+                );
+
+                CREATE INDEX IF NOT EXISTS idx_flashcard_decks_updated
+                    ON flashcard_decks(updated_at DESC);
+
+                CREATE INDEX IF NOT EXISTS idx_flashcard_decks_fingerprint
+                    ON flashcard_decks(generation_fingerprint, updated_at DESC);
+
+                CREATE TABLE IF NOT EXISTS flashcard_cards (
+                    id TEXT PRIMARY KEY,
+                    deck_id TEXT NOT NULL REFERENCES flashcard_decks(id) ON DELETE CASCADE,
+                    display_order INTEGER NOT NULL,
+                    front TEXT NOT NULL,
+                    back TEXT NOT NULL,
+                    hint TEXT DEFAULT '',
+                    tag TEXT DEFAULT '',
+                    source_ref TEXT DEFAULT '',
+                    UNIQUE(deck_id, display_order)
+                );
+
+                CREATE INDEX IF NOT EXISTS idx_flashcard_cards_deck
+                    ON flashcard_cards(deck_id, display_order, id);
+
+                CREATE TABLE IF NOT EXISTS flashcard_reviews (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    deck_id TEXT NOT NULL REFERENCES flashcard_decks(id) ON DELETE CASCADE,
+                    card_id TEXT NOT NULL REFERENCES flashcard_cards(id) ON DELETE CASCADE,
+                    rating TEXT NOT NULL,
+                    reviewed_at REAL NOT NULL
+                );
+
+                CREATE INDEX IF NOT EXISTS idx_flashcard_reviews_deck_time
+                    ON flashcard_reviews(deck_id, reviewed_at DESC, id DESC);
+
+                CREATE INDEX IF NOT EXISTS idx_flashcard_reviews_card_time
+                    ON flashcard_reviews(card_id, reviewed_at DESC, id DESC);
+
+                CREATE TABLE IF NOT EXISTS flashcard_session_reviews (
+                    id TEXT PRIMARY KEY,
+                    deck_id TEXT NOT NULL REFERENCES flashcard_decks(id) ON DELETE CASCADE,
+                    review_mode TEXT NOT NULL DEFAULT 'full_deck',
+                    card_ids_json TEXT NOT NULL DEFAULT '[]',
+                    cards_reviewed INTEGER NOT NULL DEFAULT 0,
+                    got_it_count INTEGER NOT NULL DEFAULT 0,
+                    missed_count INTEGER NOT NULL DEFAULT 0,
+                    skipped_count INTEGER NOT NULL DEFAULT 0,
+                    analysis_summary TEXT DEFAULT '',
+                    analysis_strengths_json TEXT NOT NULL DEFAULT '[]',
+                    analysis_weak_spots_json TEXT NOT NULL DEFAULT '[]',
+                    analysis_recommended_next_step TEXT DEFAULT '',
+                    analysis_focus_topics_json TEXT NOT NULL DEFAULT '[]',
+                    created_at REAL NOT NULL
+                );
+
+                CREATE INDEX IF NOT EXISTS idx_flashcard_session_reviews_deck_created
+                    ON flashcard_session_reviews(deck_id, created_at DESC);
                 """
             )
             columns = {row[1] for row in conn.execute("PRAGMA table_info(sessions)").fetchall()}
@@ -502,6 +629,800 @@ class SQLiteSessionStore:
 
     async def get_turn_events(self, turn_id: str, after_seq: int = 0) -> list[dict[str, Any]]:
         return await self._run(self._get_turn_events_sync, turn_id, after_seq)
+
+    @staticmethod
+    def _normalize_question_count(snapshot: dict[str, Any]) -> int:
+        questions = snapshot.get("questions")
+        return len(questions) if isinstance(questions, list) else 0
+
+    @staticmethod
+    def _serialize_practice_attempt(row: sqlite3.Row) -> dict[str, Any]:
+        payload = {
+            "id": row["id"],
+            "attempt_id": row["id"],
+            "session_id": row["session_id"],
+            "source_type": row["source_type"] or "practice",
+            "source_session_id": row["source_session_id"] or None,
+            "source_message_id": row["source_message_id"],
+            "title": row["title"] or "Practice Quiz",
+            "topic": row["topic"] or "",
+            "knowledge_base": row["knowledge_base"] or "",
+            "mode": row["mode"] or "untimed",
+            "status": row["status"] or "in_progress",
+            "time_limit_seconds": row["time_limit_seconds"],
+            "question_count": int(row["question_count"] or 0),
+            "quiz_snapshot": _json_loads(row["quiz_snapshot_json"], {}),
+            "result_summary": _json_loads(row["result_summary_json"], {}),
+            "started_at": row["started_at"],
+            "submitted_at": row["submitted_at"],
+            "duration_seconds": row["duration_seconds"],
+            "timed_out": bool(row["timed_out"]),
+            "score_correct": row["score_correct"],
+            "score_total": row["score_total"],
+            "score_percent": row["score_percent"],
+        }
+        return payload
+
+    @staticmethod
+    def _serialize_practice_item(row: sqlite3.Row) -> dict[str, Any]:
+        return {
+            "id": row["id"],
+            "attempt_id": row["attempt_id"],
+            "display_order": int(row["display_order"] or 0),
+            "question_id": row["question_id"] or "",
+            "question_text": row["question_text"] or "",
+            "question_type": row["question_type"] or "",
+            "options": _json_loads(row["options_json"], {}),
+            "domain": row["domain"] or "",
+            "difficulty": row["difficulty"] or "",
+            "correct_answer": row["correct_answer"] or "",
+            "user_answer": row["user_answer"] or "",
+            "is_correct": bool(row["is_correct"]),
+            "is_answered": bool(row["is_answered"]),
+            "explanation": row["explanation"] or "",
+            "coaching_note": row["coaching_note"] or "",
+        }
+
+    def _create_quiz_attempt_sync(self, payload: dict[str, Any]) -> dict[str, Any]:
+        now = time.time()
+        session_id = str(payload.get("session_id") or "").strip()
+        if not session_id:
+            raise ValueError("session_id is required")
+        quiz_snapshot = payload.get("quiz_snapshot")
+        if not isinstance(quiz_snapshot, dict):
+            raise ValueError("quiz_snapshot must be an object")
+
+        attempt_id = f"practice_{int(now * 1000)}_{uuid.uuid4().hex[:8]}"
+        question_count = self._normalize_question_count(quiz_snapshot)
+
+        with self._connect() as conn:
+            session = conn.execute("SELECT id FROM sessions WHERE id = ?", (session_id,)).fetchone()
+            if session is None:
+                raise ValueError(f"Session not found: {session_id}")
+
+            conn.execute(
+                """
+                INSERT INTO practice_attempts (
+                    id, session_id, source_type, source_session_id, source_message_id, title,
+                    topic, knowledge_base, mode, status, time_limit_seconds, question_count,
+                    quiz_snapshot_json, result_summary_json, started_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, '{}', ?)
+                """,
+                (
+                    attempt_id,
+                    session_id,
+                    str(payload.get("source_type") or "practice"),
+                    str(payload.get("source_session_id") or ""),
+                    payload.get("source_message_id"),
+                    str(payload.get("title") or "Practice Quiz")[:100],
+                    str(payload.get("topic") or ""),
+                    str(payload.get("knowledge_base") or ""),
+                    str(payload.get("mode") or "untimed"),
+                    str(payload.get("status") or "in_progress"),
+                    payload.get("time_limit_seconds"),
+                    question_count,
+                    _json_dumps(quiz_snapshot),
+                    now,
+                ),
+            )
+            conn.commit()
+
+            row = conn.execute("SELECT * FROM practice_attempts WHERE id = ?", (attempt_id,)).fetchone()
+        if row is None:
+            raise ValueError("Failed to create practice attempt")
+        return self._serialize_practice_attempt(row)
+
+    async def create_quiz_attempt(self, payload: dict[str, Any]) -> dict[str, Any]:
+        return await self._run(self._create_quiz_attempt_sync, payload)
+
+    def _get_quiz_attempt_sync(self, attempt_id: str) -> dict[str, Any] | None:
+        with self._connect() as conn:
+            row = conn.execute("SELECT * FROM practice_attempts WHERE id = ?", (attempt_id,)).fetchone()
+        return self._serialize_practice_attempt(row) if row is not None else None
+
+    async def get_quiz_attempt(self, attempt_id: str) -> dict[str, Any] | None:
+        return await self._run(self._get_quiz_attempt_sync, attempt_id)
+
+    def _get_quiz_attempt_items_sync(self, attempt_id: str) -> list[dict[str, Any]]:
+        with self._connect() as conn:
+            rows = conn.execute(
+                """
+                SELECT *
+                FROM practice_attempt_items
+                WHERE attempt_id = ?
+                ORDER BY display_order ASC, id ASC
+                """,
+                (attempt_id,),
+            ).fetchall()
+        return [self._serialize_practice_item(row) for row in rows]
+
+    async def get_quiz_attempt_items(self, attempt_id: str) -> list[dict[str, Any]]:
+        return await self._run(self._get_quiz_attempt_items_sync, attempt_id)
+
+    def _save_quiz_attempt_results_sync(
+        self, attempt_id: str, payload: dict[str, Any]
+    ) -> dict[str, Any]:
+        structured_result = payload.get("structured_result")
+        if not isinstance(structured_result, dict):
+            raise ValueError("structured_result must be an object")
+
+        question_results = structured_result.get("question_results")
+        if not isinstance(question_results, list):
+            question_results = []
+
+        score = structured_result.get("score")
+        if not isinstance(score, dict):
+            score = {}
+
+        with self._connect() as conn:
+            row = conn.execute("SELECT * FROM practice_attempts WHERE id = ?", (attempt_id,)).fetchone()
+            if row is None:
+                raise ValueError(f"Practice attempt not found: {attempt_id}")
+
+            conn.execute("DELETE FROM practice_attempt_items WHERE attempt_id = ?", (attempt_id,))
+
+            for index, item in enumerate(question_results, start=1):
+                if not isinstance(item, dict):
+                    continue
+                conn.execute(
+                    """
+                    INSERT INTO practice_attempt_items (
+                        attempt_id, display_order, question_id, question_text, question_type,
+                        options_json, domain, difficulty, correct_answer, user_answer,
+                        is_correct, is_answered, explanation, coaching_note
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        attempt_id,
+                        int(item.get("display_order") or index),
+                        str(item.get("question_id") or f"q{index}"),
+                        str(item.get("question_text") or item.get("question") or ""),
+                        str(item.get("question_type") or ""),
+                        _json_dumps(item.get("options") if isinstance(item.get("options"), dict) else {}),
+                        str(item.get("domain") or ""),
+                        str(item.get("difficulty") or ""),
+                        str(item.get("correct_answer") or ""),
+                        str(item.get("user_answer") or ""),
+                        1 if bool(item.get("is_correct")) else 0,
+                        1 if bool(item.get("is_answered")) else 0,
+                        str(item.get("explanation") or ""),
+                        str(item.get("coaching_note") or ""),
+                    ),
+                )
+
+            submitted_at = payload.get("submitted_at") or time.time()
+            timed_out = bool(payload.get("timed_out"))
+            conn.execute(
+                """
+                UPDATE practice_attempts
+                SET status = ?,
+                    submitted_at = ?,
+                    duration_seconds = ?,
+                    timed_out = ?,
+                    result_summary_json = ?,
+                    score_correct = ?,
+                    score_total = ?,
+                    score_percent = ?
+                WHERE id = ?
+                """,
+                (
+                    "timed_out" if timed_out else "submitted",
+                    submitted_at,
+                    payload.get("duration_seconds"),
+                    1 if timed_out else 0,
+                    _json_dumps(structured_result),
+                    score.get("correct"),
+                    score.get("total"),
+                    score.get("percent"),
+                    attempt_id,
+                ),
+            )
+            conn.commit()
+            refreshed = conn.execute("SELECT * FROM practice_attempts WHERE id = ?", (attempt_id,)).fetchone()
+        if refreshed is None:
+            raise ValueError(f"Practice attempt not found: {attempt_id}")
+        result = self._serialize_practice_attempt(refreshed)
+        result["items"] = self._get_quiz_attempt_items_sync(attempt_id)
+        return result
+
+    async def save_quiz_attempt_results(self, attempt_id: str, payload: dict[str, Any]) -> dict[str, Any]:
+        return await self._run(self._save_quiz_attempt_results_sync, attempt_id, payload)
+
+    def _list_quiz_attempts_sync(
+        self,
+        limit: int = 20,
+        offset: int = 0,
+        session_id: str | None = None,
+        source_session_id: str | None = None,
+    ) -> list[dict[str, Any]]:
+        clauses: list[str] = []
+        params: list[Any] = []
+        if session_id:
+            clauses.append("session_id = ?")
+            params.append(session_id)
+        if source_session_id:
+            clauses.append("source_session_id = ?")
+            params.append(source_session_id)
+
+        where_sql = f"WHERE {' AND '.join(clauses)}" if clauses else ""
+        params.extend([int(limit), int(offset)])
+        with self._connect() as conn:
+            rows = conn.execute(
+                f"""
+                SELECT *
+                FROM practice_attempts
+                {where_sql}
+                ORDER BY started_at DESC
+                LIMIT ? OFFSET ?
+                """,
+                params,
+            ).fetchall()
+        return [self._serialize_practice_attempt(row) for row in rows]
+
+    async def list_quiz_attempts(
+        self,
+        limit: int = 20,
+        offset: int = 0,
+        session_id: str | None = None,
+        source_session_id: str | None = None,
+    ) -> list[dict[str, Any]]:
+        return await self._run(
+            self._list_quiz_attempts_sync,
+            limit,
+            offset,
+            session_id,
+            source_session_id,
+        )
+
+    def _get_domain_progress_summary_sync(self, recent_attempt_window: int = 10) -> list[dict[str, Any]]:
+        with self._connect() as conn:
+            rows = conn.execute(
+                """
+                WITH submitted_attempts AS (
+                    SELECT id, submitted_at
+                    FROM practice_attempts
+                    WHERE status IN ('submitted', 'timed_out') AND submitted_at IS NOT NULL
+                ),
+                recent_attempts AS (
+                    SELECT id
+                    FROM submitted_attempts
+                    ORDER BY submitted_at DESC
+                    LIMIT ?
+                ),
+                item_rollup AS (
+                    SELECT
+                        i.domain AS domain,
+                        a.id AS attempt_id,
+                        a.submitted_at AS submitted_at,
+                        i.is_correct AS is_correct
+                    FROM practice_attempt_items i
+                    INNER JOIN practice_attempts a ON a.id = i.attempt_id
+                    WHERE a.status IN ('submitted', 'timed_out')
+                      AND i.domain <> ''
+                )
+                SELECT
+                    domain,
+                    COUNT(*) AS lifetime_total,
+                    SUM(is_correct) AS lifetime_correct,
+                    COUNT(DISTINCT attempt_id) AS lifetime_attempt_count,
+                    MAX(submitted_at) AS last_submitted_at,
+                    SUM(CASE WHEN attempt_id IN (SELECT id FROM recent_attempts) THEN 1 ELSE 0 END) AS recent_total,
+                    SUM(CASE WHEN attempt_id IN (SELECT id FROM recent_attempts) THEN is_correct ELSE 0 END) AS recent_correct,
+                    COUNT(DISTINCT CASE WHEN attempt_id IN (SELECT id FROM recent_attempts) THEN attempt_id END) AS recent_attempt_count
+                FROM item_rollup
+                GROUP BY domain
+                ORDER BY last_submitted_at DESC, domain COLLATE NOCASE ASC
+                """,
+                (int(recent_attempt_window),),
+            ).fetchall()
+        result: list[dict[str, Any]] = []
+        for row in rows:
+            lifetime_total = int(row["lifetime_total"] or 0)
+            recent_total = int(row["recent_total"] or 0)
+            lifetime_correct = int(row["lifetime_correct"] or 0)
+            recent_correct = int(row["recent_correct"] or 0)
+            result.append(
+                {
+                    "domain": row["domain"] or "",
+                    "lifetime": {
+                        "attempt_count": int(row["lifetime_attempt_count"] or 0),
+                        "correct": lifetime_correct,
+                        "total": lifetime_total,
+                        "percent": (lifetime_correct / lifetime_total * 100.0) if lifetime_total else 0.0,
+                    },
+                    "recent": {
+                        "attempt_count": int(row["recent_attempt_count"] or 0),
+                        "correct": recent_correct,
+                        "total": recent_total,
+                        "percent": (recent_correct / recent_total * 100.0) if recent_total else 0.0,
+                    },
+                    "last_submitted_at": row["last_submitted_at"],
+                }
+            )
+        return result
+
+    async def get_domain_progress_summary(self, recent_attempt_window: int = 10) -> list[dict[str, Any]]:
+        return await self._run(self._get_domain_progress_summary_sync, recent_attempt_window)
+
+    @staticmethod
+    def _serialize_flashcard_card(row: sqlite3.Row) -> dict[str, Any]:
+        return {
+            "id": row["id"],
+            "deck_id": row["deck_id"],
+            "display_order": int(row["display_order"] or 0),
+            "front": row["front"] or "",
+            "back": row["back"] or "",
+            "hint": row["hint"] or "",
+            "tag": row["tag"] or "",
+            "source_ref": row["source_ref"] or "",
+        }
+
+    def _get_flashcard_rating_map_sync(self, conn: sqlite3.Connection, deck_id: str) -> dict[str, dict[str, Any]]:
+        rows = conn.execute(
+            """
+            SELECT r.card_id, r.rating, r.reviewed_at
+            FROM flashcard_reviews r
+            INNER JOIN (
+                SELECT card_id, MAX(reviewed_at) AS max_reviewed_at, MAX(id) AS max_id
+                FROM flashcard_reviews
+                WHERE deck_id = ?
+                GROUP BY card_id
+            ) latest
+              ON latest.card_id = r.card_id
+             AND latest.max_reviewed_at = r.reviewed_at
+             AND latest.max_id = r.id
+            WHERE r.deck_id = ?
+            """,
+            (deck_id, deck_id),
+        ).fetchall()
+        return {
+            row["card_id"]: {
+                "rating": row["rating"] or "new",
+                "reviewed_at": row["reviewed_at"],
+            }
+            for row in rows
+        }
+
+    def _build_flashcard_summary_sync(
+        self, conn: sqlite3.Connection, deck_id: str, card_ids: list[str]
+    ) -> dict[str, Any]:
+        rating_map = self._get_flashcard_rating_map_sync(conn, deck_id)
+        counts = {"new": 0, "got_it": 0, "missed": 0, "skipped": 0}
+        for card_id in card_ids:
+            rating = str(rating_map.get(card_id, {}).get("rating") or "new")
+            if rating not in counts:
+                rating = "new"
+            counts[rating] += 1
+        return {
+            "ratings": rating_map,
+            "counts": counts,
+            "remaining": counts["new"],
+        }
+
+    @staticmethod
+    def _serialize_flashcard_session_review(row: sqlite3.Row) -> dict[str, Any]:
+        return {
+            "id": row["id"],
+            "deck_id": row["deck_id"],
+            "review_mode": row["review_mode"] or "full_deck",
+            "card_ids": _json_loads(row["card_ids_json"], []),
+            "cards_reviewed": int(row["cards_reviewed"] or 0),
+            "got_it_count": int(row["got_it_count"] or 0),
+            "missed_count": int(row["missed_count"] or 0),
+            "skipped_count": int(row["skipped_count"] or 0),
+            "analysis_summary": row["analysis_summary"] or "",
+            "analysis_strengths": _json_loads(row["analysis_strengths_json"], []),
+            "analysis_weak_spots": _json_loads(row["analysis_weak_spots_json"], []),
+            "analysis_recommended_next_step": row["analysis_recommended_next_step"] or "",
+            "analysis_focus_topics": _json_loads(row["analysis_focus_topics_json"], []),
+            "created_at": row["created_at"],
+        }
+
+    def _get_latest_flashcard_session_review_sync(
+        self, conn: sqlite3.Connection, deck_id: str
+    ) -> dict[str, Any] | None:
+        row = conn.execute(
+            """
+            SELECT *
+            FROM flashcard_session_reviews
+            WHERE deck_id = ?
+            ORDER BY created_at DESC, id DESC
+            LIMIT 1
+            """,
+            (deck_id,),
+        ).fetchone()
+        if row is None:
+            return None
+        return self._serialize_flashcard_session_review(row)
+
+    def _serialize_flashcard_deck(
+        self,
+        row: sqlite3.Row,
+        cards: list[dict[str, Any]] | None = None,
+        summary: dict[str, Any] | None = None,
+        latest_session_review: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        payload = {
+            "id": row["id"],
+            "deck_id": row["id"],
+            "source_type": row["source_type"] or "topic",
+            "title": row["title"] or "",
+            "topic": row["topic"] or "",
+            "source_summary": row["source_summary"] or "",
+            "source_kb_names": _json_loads(row["source_kb_names_json"], []),
+            "style": row["style"] or "mixed",
+            "card_count": int(row["card_count"] or 0),
+            "generation_fingerprint": row["generation_fingerprint"] or "",
+            "generation_settings": _json_loads(row["generation_settings_json"], {}),
+            "source_context": _json_loads(row["source_context_json"], []),
+            "created_at": row["created_at"],
+            "updated_at": row["updated_at"],
+            "last_reviewed_at": row["last_reviewed_at"],
+        }
+        if cards is not None:
+            payload["cards"] = cards
+        if summary is not None:
+            payload["summary"] = summary
+        if latest_session_review is not None:
+            payload["latest_session_review"] = latest_session_review
+        return payload
+
+    def _save_flashcard_deck_sync(self, payload: dict[str, Any]) -> dict[str, Any]:
+        now = time.time()
+        cards = payload.get("cards")
+        if not isinstance(cards, list) or not cards:
+            raise ValueError("cards are required")
+
+        deck_id = str(payload.get("id") or f"deck_{int(now * 1000)}_{uuid.uuid4().hex[:8]}")
+        source_kb_names = payload.get("source_kb_names")
+        source_context = payload.get("source_context")
+        generation_settings = payload.get("generation_settings")
+        if not isinstance(source_kb_names, list):
+            source_kb_names = []
+        if not isinstance(source_context, list):
+            source_context = []
+        if not isinstance(generation_settings, dict):
+            generation_settings = {}
+
+        serialized_cards: list[dict[str, Any]] = []
+        with self._connect() as conn:
+            conn.execute(
+                """
+                INSERT INTO flashcard_decks (
+                    id, source_type, title, topic, source_summary, source_kb_names_json,
+                    style, card_count, generation_fingerprint, generation_settings_json,
+                    source_context_json, created_at, updated_at, last_reviewed_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL)
+                """,
+                (
+                    deck_id,
+                    str(payload.get("source_type") or "topic"),
+                    str(payload.get("title") or "")[:200],
+                    str(payload.get("topic") or ""),
+                    str(payload.get("source_summary") or ""),
+                    _json_dumps(source_kb_names),
+                    str(payload.get("style") or "mixed"),
+                    len(cards),
+                    str(payload.get("generation_fingerprint") or ""),
+                    _json_dumps(generation_settings),
+                    _json_dumps(source_context),
+                    now,
+                    now,
+                ),
+            )
+
+            for index, card in enumerate(cards, start=1):
+                if not isinstance(card, dict):
+                    continue
+                card_id = str(card.get("id") or f"{deck_id}_card_{index}")
+                conn.execute(
+                    """
+                    INSERT INTO flashcard_cards (
+                        id, deck_id, display_order, front, back, hint, tag, source_ref
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        card_id,
+                        deck_id,
+                        index,
+                        str(card.get("front") or ""),
+                        str(card.get("back") or ""),
+                        str(card.get("hint") or ""),
+                        str(card.get("tag") or ""),
+                        str(card.get("source_ref") or ""),
+                    ),
+                )
+                serialized_cards.append(
+                    {
+                        "id": card_id,
+                        "deck_id": deck_id,
+                        "display_order": index,
+                        "front": str(card.get("front") or ""),
+                        "back": str(card.get("back") or ""),
+                        "hint": str(card.get("hint") or ""),
+                        "tag": str(card.get("tag") or ""),
+                        "source_ref": str(card.get("source_ref") or ""),
+                    }
+                )
+
+            conn.commit()
+            row = conn.execute("SELECT * FROM flashcard_decks WHERE id = ?", (deck_id,)).fetchone()
+        if row is None:
+            raise ValueError("Failed to save flashcard deck")
+        summary = {
+            "ratings": {},
+            "counts": {"new": len(serialized_cards), "got_it": 0, "missed": 0, "skipped": 0},
+            "remaining": len(serialized_cards),
+        }
+        return self._serialize_flashcard_deck(
+            row,
+            cards=serialized_cards,
+            summary=summary,
+            latest_session_review=None,
+        )
+
+    async def save_flashcard_deck(self, payload: dict[str, Any]) -> dict[str, Any]:
+        return await self._run(self._save_flashcard_deck_sync, payload)
+
+    def _find_flashcard_deck_by_fingerprint_sync(self, generation_fingerprint: str) -> dict[str, Any] | None:
+        if not generation_fingerprint:
+            return None
+        with self._connect() as conn:
+            row = conn.execute(
+                """
+                SELECT *
+                FROM flashcard_decks
+                WHERE generation_fingerprint = ?
+                ORDER BY updated_at DESC
+                LIMIT 1
+                """,
+                (generation_fingerprint,),
+            ).fetchone()
+            if row is None:
+                return None
+            cards = [
+                self._serialize_flashcard_card(card_row)
+                for card_row in conn.execute(
+                    "SELECT * FROM flashcard_cards WHERE deck_id = ? ORDER BY display_order ASC, id ASC",
+                    (row["id"],),
+                ).fetchall()
+            ]
+            summary = self._build_flashcard_summary_sync(
+                conn, row["id"], [card["id"] for card in cards]
+            )
+            latest_session_review = self._get_latest_flashcard_session_review_sync(conn, row["id"])
+        return self._serialize_flashcard_deck(
+            row,
+            cards=cards,
+            summary=summary,
+            latest_session_review=latest_session_review,
+        )
+
+    async def find_flashcard_deck_by_fingerprint(self, generation_fingerprint: str) -> dict[str, Any] | None:
+        return await self._run(self._find_flashcard_deck_by_fingerprint_sync, generation_fingerprint)
+
+    def _get_flashcard_deck_sync(self, deck_id: str) -> dict[str, Any] | None:
+        with self._connect() as conn:
+            row = conn.execute("SELECT * FROM flashcard_decks WHERE id = ?", (deck_id,)).fetchone()
+            if row is None:
+                return None
+            cards = [
+                self._serialize_flashcard_card(card_row)
+                for card_row in conn.execute(
+                    "SELECT * FROM flashcard_cards WHERE deck_id = ? ORDER BY display_order ASC, id ASC",
+                    (deck_id,),
+                ).fetchall()
+            ]
+            summary = self._build_flashcard_summary_sync(
+                conn, deck_id, [card["id"] for card in cards]
+            )
+            latest_session_review = self._get_latest_flashcard_session_review_sync(conn, deck_id)
+        return self._serialize_flashcard_deck(
+            row,
+            cards=cards,
+            summary=summary,
+            latest_session_review=latest_session_review,
+        )
+
+    async def get_flashcard_deck(self, deck_id: str) -> dict[str, Any] | None:
+        return await self._run(self._get_flashcard_deck_sync, deck_id)
+
+    def _list_flashcard_decks_sync(self, limit: int = 20, offset: int = 0) -> list[dict[str, Any]]:
+        with self._connect() as conn:
+            rows = conn.execute(
+                """
+                SELECT *
+                FROM flashcard_decks
+                ORDER BY updated_at DESC
+                LIMIT ? OFFSET ?
+                """,
+                (int(limit), int(offset)),
+            ).fetchall()
+            result: list[dict[str, Any]] = []
+            for row in rows:
+                card_rows = conn.execute(
+                    "SELECT id FROM flashcard_cards WHERE deck_id = ? ORDER BY display_order ASC, id ASC",
+                    (row["id"],),
+                ).fetchall()
+                card_ids = [card_row["id"] for card_row in card_rows]
+                summary = self._build_flashcard_summary_sync(conn, row["id"], card_ids)
+                latest_session_review = self._get_latest_flashcard_session_review_sync(conn, row["id"])
+                result.append(
+                    self._serialize_flashcard_deck(
+                        row,
+                        summary=summary,
+                        latest_session_review=latest_session_review,
+                    )
+                )
+        return result
+
+    async def list_flashcard_decks(self, limit: int = 20, offset: int = 0) -> list[dict[str, Any]]:
+        return await self._run(self._list_flashcard_decks_sync, limit, offset)
+
+    def _record_flashcard_review_sync(self, deck_id: str, card_id: str, rating: str) -> dict[str, Any]:
+        now = time.time()
+        with self._connect() as conn:
+            deck = conn.execute("SELECT id FROM flashcard_decks WHERE id = ?", (deck_id,)).fetchone()
+            if deck is None:
+                raise ValueError(f"Flashcard deck not found: {deck_id}")
+            card = conn.execute(
+                "SELECT id FROM flashcard_cards WHERE deck_id = ? AND id = ?",
+                (deck_id, card_id),
+            ).fetchone()
+            if card is None:
+                raise ValueError(f"Flashcard card not found: {card_id}")
+            conn.execute(
+                """
+                INSERT INTO flashcard_reviews (deck_id, card_id, rating, reviewed_at)
+                VALUES (?, ?, ?, ?)
+                """,
+                (deck_id, card_id, rating, now),
+            )
+            conn.execute(
+                "UPDATE flashcard_decks SET updated_at = ?, last_reviewed_at = ? WHERE id = ?",
+                (now, now, deck_id),
+            )
+            conn.commit()
+            row = conn.execute("SELECT * FROM flashcard_decks WHERE id = ?", (deck_id,)).fetchone()
+            cards = [
+                self._serialize_flashcard_card(card_row)
+                for card_row in conn.execute(
+                    "SELECT * FROM flashcard_cards WHERE deck_id = ? ORDER BY display_order ASC, id ASC",
+                    (deck_id,),
+                ).fetchall()
+            ]
+            summary = self._build_flashcard_summary_sync(
+                conn, deck_id, [item["id"] for item in cards]
+            )
+            latest_session_review = self._get_latest_flashcard_session_review_sync(conn, deck_id)
+        if row is None:
+            raise ValueError(f"Flashcard deck not found: {deck_id}")
+        return self._serialize_flashcard_deck(
+            row,
+            cards=cards,
+            summary=summary,
+            latest_session_review=latest_session_review,
+        )
+
+    async def record_flashcard_review(self, deck_id: str, card_id: str, rating: str) -> dict[str, Any]:
+        return await self._run(self._record_flashcard_review_sync, deck_id, card_id, rating)
+
+    def _reset_flashcard_reviews_sync(self, deck_id: str) -> dict[str, Any]:
+        with self._connect() as conn:
+            deck = conn.execute("SELECT id FROM flashcard_decks WHERE id = ?", (deck_id,)).fetchone()
+            if deck is None:
+                raise ValueError(f"Flashcard deck not found: {deck_id}")
+            conn.execute("DELETE FROM flashcard_reviews WHERE deck_id = ?", (deck_id,))
+            conn.execute(
+                "UPDATE flashcard_decks SET updated_at = ?, last_reviewed_at = NULL WHERE id = ?",
+                (time.time(), deck_id),
+            )
+            conn.commit()
+            row = conn.execute("SELECT * FROM flashcard_decks WHERE id = ?", (deck_id,)).fetchone()
+            cards = [
+                self._serialize_flashcard_card(card_row)
+                for card_row in conn.execute(
+                    "SELECT * FROM flashcard_cards WHERE deck_id = ? ORDER BY display_order ASC, id ASC",
+                    (deck_id,),
+                ).fetchall()
+            ]
+            summary = self._build_flashcard_summary_sync(
+                conn, deck_id, [item["id"] for item in cards]
+            )
+            latest_session_review = self._get_latest_flashcard_session_review_sync(conn, deck_id)
+        if row is None:
+            raise ValueError(f"Flashcard deck not found: {deck_id}")
+        return self._serialize_flashcard_deck(
+            row,
+            cards=cards,
+            summary=summary,
+            latest_session_review=latest_session_review,
+        )
+
+    async def reset_flashcard_reviews(self, deck_id: str) -> dict[str, Any]:
+        return await self._run(self._reset_flashcard_reviews_sync, deck_id)
+
+    def _save_flashcard_session_review_sync(self, payload: dict[str, Any]) -> dict[str, Any]:
+        now = time.time()
+        deck_id = str(payload.get("deck_id") or "").strip()
+        if not deck_id:
+            raise ValueError("deck_id is required")
+        review_id = str(payload.get("id") or f"flashcard_review_{int(now * 1000)}_{uuid.uuid4().hex[:8]}")
+        review_mode = str(payload.get("review_mode") or "full_deck").strip() or "full_deck"
+        card_ids = payload.get("card_ids")
+        strengths = payload.get("analysis_strengths")
+        weak_spots = payload.get("analysis_weak_spots")
+        focus_topics = payload.get("analysis_focus_topics")
+        if not isinstance(card_ids, list):
+            card_ids = []
+        if not isinstance(strengths, list):
+            strengths = []
+        if not isinstance(weak_spots, list):
+            weak_spots = []
+        if not isinstance(focus_topics, list):
+            focus_topics = []
+
+        with self._connect() as conn:
+            deck = conn.execute("SELECT id FROM flashcard_decks WHERE id = ?", (deck_id,)).fetchone()
+            if deck is None:
+                raise ValueError(f"Flashcard deck not found: {deck_id}")
+            conn.execute(
+                """
+                INSERT INTO flashcard_session_reviews (
+                    id, deck_id, review_mode, card_ids_json, cards_reviewed,
+                    got_it_count, missed_count, skipped_count, analysis_summary,
+                    analysis_strengths_json, analysis_weak_spots_json,
+                    analysis_recommended_next_step, analysis_focus_topics_json, created_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    review_id,
+                    deck_id,
+                    review_mode,
+                    _json_dumps(card_ids),
+                    int(payload.get("cards_reviewed") or 0),
+                    int(payload.get("got_it_count") or 0),
+                    int(payload.get("missed_count") or 0),
+                    int(payload.get("skipped_count") or 0),
+                    str(payload.get("analysis_summary") or ""),
+                    _json_dumps(strengths),
+                    _json_dumps(weak_spots),
+                    str(payload.get("analysis_recommended_next_step") or ""),
+                    _json_dumps(focus_topics),
+                    now,
+                ),
+            )
+            conn.commit()
+            row = conn.execute(
+                "SELECT * FROM flashcard_session_reviews WHERE id = ?",
+                (review_id,),
+            ).fetchone()
+        if row is None:
+            raise ValueError("Failed to save flashcard session review")
+        return self._serialize_flashcard_session_review(row)
+
+    async def save_flashcard_session_review(self, payload: dict[str, Any]) -> dict[str, Any]:
+        return await self._run(self._save_flashcard_session_review_sync, payload)
 
     def _update_session_title_sync(self, session_id: str, title: str) -> bool:
         with self._connect() as conn:

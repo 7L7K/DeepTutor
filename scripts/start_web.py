@@ -10,6 +10,7 @@ import subprocess
 import sys
 import threading
 import time
+import importlib.util
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 if str(PROJECT_ROOT) not in sys.path:
@@ -18,7 +19,16 @@ if str(PROJECT_ROOT) not in sys.path:
 
 def _load_runtime_deps():
     from _cli_kit import accent, banner, bold, dim, log_error, log_info, log_success, warn
-    from deeptutor.services.config import get_env_store
+    # Load the lightweight env store by file path so the launcher can avoid
+    # importing the heavier deeptutor.services.config package at startup.
+    env_store_path = PROJECT_ROOT / "deeptutor" / "services" / "config" / "env_store.py"
+    spec = importlib.util.spec_from_file_location("deeptutor_env_store_launcher", env_store_path)
+    if spec is None or spec.loader is None:
+        raise RuntimeError(f"Unable to load env_store from {env_store_path}")
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = module
+    spec.loader.exec_module(module)
+    get_env_store = module.get_env_store
 
     return accent, banner, bold, dim, log_error, log_info, log_success, warn, get_env_store
 
@@ -127,7 +137,7 @@ def main() -> None:
     frontend_env["NEXT_PUBLIC_API_BASE"] = api_base
 
     backend_cmd = [sys.executable, "-m", "deeptutor.api.run_server"]
-    frontend_cmd = [npm, "run", "dev", "--", "--port", str(frontend_port)]
+    frontend_cmd = [npm, "run", "dev", "--", "--webpack", "--port", str(frontend_port)]
 
     log_info("Starting backend ...")
     backend = _spawn(backend_cmd, cwd=PROJECT_ROOT, env=backend_env, name="backend")
