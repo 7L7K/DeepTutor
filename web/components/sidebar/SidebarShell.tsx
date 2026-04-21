@@ -17,6 +17,7 @@ import {
   PenLine,
   Plus,
   Settings,
+  SquarePen,
   type LucideIcon,
 } from "lucide-react";
 import { useTranslation } from "react-i18next";
@@ -39,6 +40,12 @@ const PRIMARY_NAV: NavEntry[] = [
     label: "Chat",
     icon: MessageSquare,
     tooltipKey: "Chat tooltip",
+  },
+  {
+    href: "/practice",
+    label: "Practice",
+    icon: SquarePen,
+    tooltipKey: "Practice tooltip",
   },
   {
     href: "/agents",

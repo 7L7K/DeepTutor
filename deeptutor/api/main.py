@@ -272,10 +272,12 @@ from deeptutor.api.routers import (
     chat,
     co_writer,
     dashboard,
+    flashcards,
     knowledge,
     memory,
     notebook,
     plugins_api,
+    practice,
     question,
     question_notebook,
     sessions,
@@ -326,6 +328,15 @@ app.include_router(book.router, prefix="/api/v1/book", tags=["book"], dependenci
 app.include_router(memory.router, prefix="/api/v1/memory", tags=["memory"], dependencies=_auth)
 app.include_router(
     sessions.router, prefix="/api/v1/sessions", tags=["sessions"], dependencies=_auth
+)
+app.include_router(
+    practice.router, prefix="/api/v1/practice", tags=["practice"], dependencies=_auth
+)
+app.include_router(
+    flashcards.router,
+    prefix="/api/v1/practice/flashcards",
+    tags=["flashcards"],
+    dependencies=_auth,
 )
 app.include_router(
     question_notebook.router,

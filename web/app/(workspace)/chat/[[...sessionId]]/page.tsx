@@ -24,7 +24,10 @@ import type { SelectedRecord } from "@/lib/notebook-selection-types";
 import type { SelectedHistorySession } from "@/components/chat/HistorySessionPicker";
 import type { SelectedQuestionEntry } from "@/components/chat/QuestionBankPicker";
 import ChatComposer from "@/components/chat/home/ChatComposer";
-import { ChatMessageList } from "@/components/chat/home/ChatMessages";
+import {
+  ChatMessageList,
+  type TutorActionId,
+} from "@/components/chat/home/ChatMessages";
 // Imported eagerly so the drawer shell is always mounted off-screen —
 // clicking a chip becomes a single CSS class flip, no chunk fetch + double
 // render. The heavy renderers inside still load lazily.
@@ -251,6 +254,21 @@ function getCapability(value: string | null): CapabilityDef {
   return CAPABILITIES.find((c) => c.value === (value || "")) ?? CAPABILITIES[0];
 }
 
+function buildTutorActionPrompt(action: TutorActionId): string {
+  switch (action) {
+    case "quiz_me":
+      return "Quiz me on what you just explained. Keep it short and focused on checking whether I really understand it.";
+    case "explain_simpler":
+      return "Explain that simpler with shorter sentences, less jargon, and one concrete example.";
+    case "make_flashcards":
+      return "Make flashcards from what you just taught me. Keep them concise and study-ready.";
+    case "review_weak_spots":
+      return "Based on that, what are my likely weak spots and what should I review first?";
+    default:
+      return "";
+  }
+}
+
 /* ------------------------------------------------------------------ */
 /*  Chat page                                                         */
 /* ------------------------------------------------------------------ */
@@ -346,6 +364,7 @@ export default function ChatPage() {
   const spaceMenuRef = useRef<HTMLDivElement>(null);
   const spaceBtnRef = useRef<HTMLButtonElement>(null);
   const initialLoadRef = useRef(false);
+  const freshChatPhaseRef = useRef<"idle" | "await_draft" | "await_server_id">("idle");
 
   const activeCap = useMemo(
     () => getCapability(state.activeCapability),
@@ -563,10 +582,26 @@ export default function ChatPage() {
 
   // When a new session_id is assigned by the server, update the URL
   useEffect(() => {
-    if (state.sessionId && !sessionIdParam) {
+    if (sessionIdParam) {
+      freshChatPhaseRef.current = "idle";
+      return;
+    }
+
+    if (freshChatPhaseRef.current === "await_draft") {
+      if (state.sessionId || state.messages.length > 0) return;
+      freshChatPhaseRef.current = "await_server_id";
+      return;
+    }
+
+    if (freshChatPhaseRef.current === "await_server_id") {
+      if (!state.sessionId) return;
+      freshChatPhaseRef.current = "idle";
+    }
+
+    if (state.sessionId) {
       router.replace(`/chat/${state.sessionId}`, { scroll: false });
     }
-  }, [state.sessionId, sessionIdParam, router]);
+  }, [state.messages.length, state.sessionId, sessionIdParam, router]);
 
   useEffect(() => {
     setActiveSessionId(state.sessionId || sessionIdParam || null);
@@ -1064,6 +1099,72 @@ export default function ChatPage() {
     regenerateLastMessage();
   }, [regenerateLastMessage]);
 
+  const handleTutorAction = useCallback(
+    (
+      action: TutorActionId,
+      snapshot?: MessageRequestSnapshot,
+    ) => {
+      if (!snapshot || state.isStreaming) return;
+
+      const prompt = buildTutorActionPrompt(action);
+      if (!prompt) return;
+
+      if (action === "quiz_me") {
+        const quizCapability = getCapability("deep_question");
+        const quizConfigOverride = buildQuizWSConfig({
+          ...DEFAULT_QUIZ_CONFIG,
+          num_questions: 4,
+          preference: "Focus on core understanding and one application-style check.",
+        });
+        const quizSnapshot: MessageRequestSnapshot = {
+          ...snapshot,
+          content: prompt,
+          capability: "deep_question",
+          enabledTools: [...quizCapability.defaultTools],
+          config: quizConfigOverride,
+        };
+
+        sendMessage(
+          prompt,
+          snapshot.attachments,
+          quizConfigOverride,
+          snapshot.notebookReferences,
+          snapshot.historyReferences,
+          {
+            requestSnapshotOverride: quizSnapshot,
+            bookReferences: snapshot.bookReferences,
+          },
+          snapshot.questionNotebookReferences,
+          snapshot.skills,
+          snapshot.memoryReferences,
+        );
+      } else {
+        const followupSnapshot: MessageRequestSnapshot = {
+          ...snapshot,
+          content: prompt,
+        };
+
+        sendMessage(
+          prompt,
+          snapshot.attachments,
+          undefined,
+          snapshot.notebookReferences,
+          snapshot.historyReferences,
+          {
+            requestSnapshotOverride: followupSnapshot,
+            bookReferences: snapshot.bookReferences,
+          },
+          snapshot.questionNotebookReferences,
+          snapshot.skills,
+          snapshot.memoryReferences,
+        );
+      }
+
+      shouldAutoScrollRef.current = true;
+    },
+    [sendMessage, shouldAutoScrollRef, state.isStreaming],
+  );
+
   const handleSetKB = useCallback(
     (kb: string) => {
       setKBs(kb ? [kb] : []);
@@ -1188,8 +1289,13 @@ export default function ChatPage() {
   }, []);
 
   const handleNewChat = useCallback(() => {
-    router.push("/chat");
-  }, [router]);
+    freshChatPhaseRef.current = "await_draft";
+    setAttachments([]);
+    setSelectedNotebookRecords([]);
+    setSelectedHistorySessions([]);
+    newSession();
+    router.replace("/chat", { scroll: false });
+  }, [newSession, router]);
 
   const handleDownloadMarkdown = useCallback(() => {
     if (!state.messages.length) return;
@@ -1281,6 +1387,7 @@ export default function ChatPage() {
               onAnswerNow={handleAnswerNow}
               onCopyAssistantMessage={copyAssistantMessage}
               onRegenerateMessage={handleRegenerateMessage}
+              onTutorAction={handleTutorAction}
               onConfirmOutline={handleConfirmOutline}
               onPreviewAttachment={handlePreviewMessageAttachment}
             />

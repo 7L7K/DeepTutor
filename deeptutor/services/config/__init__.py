@@ -1,29 +1,11 @@
 """Configuration helpers backed by runtime YAML and the project `.env` file."""
 
+from __future__ import annotations
+
 import importlib
+from typing import Any
 
 from .env_store import ConfigSummary, EnvStore, get_env_store
-from .knowledge_base_config import (
-    KnowledgeBaseConfigService,
-    get_kb_config_service,
-)
-from .launch_settings import LaunchSettings, load_launch_settings
-from .loader import (
-    DEFAULT_CHAT_PARAMS,
-    PROJECT_ROOT,
-    get_agent_params,
-    get_chat_params,
-    get_path_from_config,
-    get_runtime_settings_dir,
-    load_config_with_main,
-    parse_language,
-    resolve_config_path,
-)
-from .model_catalog import ModelCatalogService, get_model_catalog_service
-
-# Re-export the loader module itself for code paths that monkeypatch via the
-# package namespace, e.g. ``deeptutor.services.config.loader.PROJECT_ROOT``.
-loader = importlib.import_module(f"{__name__}.loader")
 
 __all__ = [
     "ConfigSummary",
@@ -31,7 +13,7 @@ __all__ = [
     "get_env_store",
     "LaunchSettings",
     "load_launch_settings",
-    # From loader.py
+    "loader",
     "PROJECT_ROOT",
     "get_runtime_settings_dir",
     "load_config_with_main",
@@ -51,7 +33,6 @@ __all__ = [
     "NANOBOT_LLM_PROVIDERS",
     "SUPPORTED_SEARCH_PROVIDERS",
     "DEPRECATED_SEARCH_PROVIDERS",
-    # From knowledge_base_config.py
     "KnowledgeBaseConfigService",
     "get_kb_config_service",
     "ModelCatalogService",
@@ -61,25 +42,44 @@ __all__ = [
     "get_config_test_runner",
 ]
 
+_EXPORT_MODULES = {
+    "LaunchSettings": "deeptutor.services.config.launch_settings",
+    "load_launch_settings": "deeptutor.services.config.launch_settings",
+    "PROJECT_ROOT": "deeptutor.services.config.loader",
+    "get_runtime_settings_dir": "deeptutor.services.config.loader",
+    "load_config_with_main": "deeptutor.services.config.loader",
+    "resolve_config_path": "deeptutor.services.config.loader",
+    "get_path_from_config": "deeptutor.services.config.loader",
+    "parse_language": "deeptutor.services.config.loader",
+    "get_agent_params": "deeptutor.services.config.loader",
+    "get_chat_params": "deeptutor.services.config.loader",
+    "DEFAULT_CHAT_PARAMS": "deeptutor.services.config.loader",
+    "KnowledgeBaseConfigService": "deeptutor.services.config.knowledge_base_config",
+    "get_kb_config_service": "deeptutor.services.config.knowledge_base_config",
+    "ModelCatalogService": "deeptutor.services.config.model_catalog",
+    "get_model_catalog_service": "deeptutor.services.config.model_catalog",
+    "DEPRECATED_SEARCH_PROVIDERS": "deeptutor.services.config.provider_runtime",
+    "NANOBOT_LLM_PROVIDERS": "deeptutor.services.config.provider_runtime",
+    "SUPPORTED_SEARCH_PROVIDERS": "deeptutor.services.config.provider_runtime",
+    "ResolvedLLMConfig": "deeptutor.services.config.provider_runtime",
+    "ResolvedEmbeddingConfig": "deeptutor.services.config.provider_runtime",
+    "ResolvedSearchConfig": "deeptutor.services.config.provider_runtime",
+    "resolve_embedding_runtime_config": "deeptutor.services.config.provider_runtime",
+    "resolve_llm_runtime_config": "deeptutor.services.config.provider_runtime",
+    "resolve_search_runtime_config": "deeptutor.services.config.provider_runtime",
+    "search_provider_state": "deeptutor.services.config.provider_runtime",
+    "ConfigTestRunner": "deeptutor.services.config.test_runner",
+    "TestRun": "deeptutor.services.config.test_runner",
+    "get_config_test_runner": "deeptutor.services.config.test_runner",
+}
 
-def __getattr__(name: str):
-    """Lazy-load provider_runtime exports to avoid circular imports."""
-    if name in {
-        "DEPRECATED_SEARCH_PROVIDERS",
-        "NANOBOT_LLM_PROVIDERS",
-        "SUPPORTED_SEARCH_PROVIDERS",
-        "ResolvedLLMConfig",
-        "ResolvedEmbeddingConfig",
-        "ResolvedSearchConfig",
-        "resolve_embedding_runtime_config",
-        "resolve_llm_runtime_config",
-        "resolve_search_runtime_config",
-        "search_provider_state",
-    }:
-        provider_runtime = importlib.import_module(f"{__name__}.provider_runtime")
 
-        return getattr(provider_runtime, name)
-    if name in {"ConfigTestRunner", "TestRun", "get_config_test_runner"}:
-        test_runner = importlib.import_module(f"{__name__}.test_runner")
-        return getattr(test_runner, name)
-    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+def __getattr__(name: str) -> Any:
+    """Lazy-load config helpers to keep API startup imports small."""
+    if name == "loader":
+        return importlib.import_module("deeptutor.services.config.loader")
+    module_name = _EXPORT_MODULES.get(name)
+    if module_name is None:
+        raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+    module = importlib.import_module(module_name)
+    return getattr(module, name)

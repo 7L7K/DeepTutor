@@ -55,6 +55,11 @@ export interface QuizFollowupContext {
   is_correct?: boolean;
 }
 
+export interface ParsedChatQuiz {
+  intro: string;
+  questions: QuizQuestion[];
+}
+
 /**
  * Extract QuizQuestion[] from the raw `result` event metadata returned by
  * the deep_question capability.
@@ -94,6 +99,95 @@ export function extractQuizQuestions(
   return parsed.filter(
     (question): question is QuizQuestion => question !== null,
   );
+}
+
+export function extractQuizQuestionsFromContent(
+  content: string,
+): ParsedChatQuiz | null {
+  const normalized = content.replace(/\r\n/g, "\n").trim();
+  if (!normalized) return null;
+
+  const lines = normalized.split("\n");
+  const questionStart = /^\s*(\d+)\.\s+(.*\S)\s*$/;
+  const optionStart = /^\s*([A-Z])[\):]\s+(.*\S)?\s*$/;
+
+  const introLines: string[] = [];
+  const questions: QuizQuestion[] = [];
+
+  let currentQuestion: QuizQuestion | null = null;
+  let currentOptionKey: string | null = null;
+
+  const pushCurrentQuestion = () => {
+    if (!currentQuestion) return;
+    const optionCount = Object.keys(currentQuestion.options ?? {}).length;
+    if (currentQuestion.question.trim() && optionCount >= 2) {
+      questions.push(currentQuestion);
+    }
+    currentQuestion = null;
+    currentOptionKey = null;
+  };
+
+  for (const rawLine of lines) {
+    const line = rawLine.trimEnd();
+    if (!line.trim()) {
+      currentOptionKey = null;
+      continue;
+    }
+
+    const questionMatch = line.match(questionStart);
+    if (questionMatch) {
+      pushCurrentQuestion();
+      const index = Number(questionMatch[1]);
+      currentQuestion = {
+        question_id: `chat_quiz_${index}`,
+        question: questionMatch[2].trim(),
+        question_type: "choice",
+        options: {},
+        correct_answer: "",
+        explanation: "",
+      };
+      currentOptionKey = null;
+      continue;
+    }
+
+    const optionMatch = line.match(optionStart);
+    if (optionMatch && currentQuestion) {
+      const key = optionMatch[1];
+      const value = (optionMatch[2] ?? "").trim();
+      currentQuestion.options ??= {};
+      currentQuestion.options[key] = value;
+      currentOptionKey = key;
+      continue;
+    }
+
+    if (currentQuestion) {
+      if (
+        currentOptionKey &&
+        currentQuestion.options &&
+        currentQuestion.options[currentOptionKey] !== undefined
+      ) {
+        currentQuestion.options[currentOptionKey] = [
+          currentQuestion.options[currentOptionKey],
+          line.trim(),
+        ]
+          .filter(Boolean)
+          .join(" ");
+      } else {
+        currentQuestion.question = `${currentQuestion.question} ${line.trim()}`.trim();
+      }
+    } else {
+      introLines.push(line.trim());
+    }
+  }
+
+  pushCurrentQuestion();
+
+  if (questions.length < 2) return null;
+
+  return {
+    intro: introLines.join("\n").trim(),
+    questions,
+  };
 }
 
 export function buildQuizFollowupConfig(

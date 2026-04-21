@@ -7,6 +7,7 @@ Single ``/api/v1/ws`` endpoint for turn-based execution and replayable streaming
 Supported client message ``type`` values:
 
 - ``message`` / ``start_turn`` — start a new turn from a payload.
+- ``ping`` — heartbeat check, returns ``{"type": "pong"}``.
 - ``subscribe_turn`` — stream events of an existing turn (with ``after_seq``).
 - ``subscribe_session`` — stream events of the active turn for a session.
 - ``resume_from`` — resume an in-flight turn after reconnection.
@@ -115,6 +116,10 @@ async def unified_websocket(ws: WebSocket) -> None:
                 continue
 
             msg_type = msg.get("type")
+
+            if msg_type == "ping":
+                await safe_send({"type": "pong"})
+                continue
 
             if msg_type in {"message", "start_turn"}:
                 from deeptutor.services.session import get_turn_runtime_manager

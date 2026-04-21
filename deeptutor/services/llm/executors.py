@@ -10,7 +10,10 @@ import uuid
 
 from openai import AsyncOpenAI, BadRequestError
 
-from deeptutor.services.llm.capabilities import disable_response_format_at_runtime
+from deeptutor.services.llm.capabilities import (
+    disable_response_format_at_runtime,
+    get_effective_temperature,
+)
 from deeptutor.services.llm.openai_http_client import openai_client_kwargs
 from deeptutor.services.llm.provider_registry import find_by_name, strip_provider_prefix
 
@@ -161,7 +164,12 @@ async def sdk_complete(
     )
 
     max_tokens_val = _coerce_int(kwargs.pop("max_tokens", 4096), 4096)
-    temperature_val = _coerce_float(kwargs.pop("temperature", 0.7), 0.7)
+    requested_temperature = _coerce_float(kwargs.pop("temperature", 0.7), 0.7)
+    temperature_val = get_effective_temperature(
+        provider_name,
+        resolved_model,
+        requested_temperature,
+    )
 
     payload: dict[str, Any] = {
         "model": resolved_model,
@@ -228,7 +236,12 @@ async def sdk_stream(
     )
 
     max_tokens_val = _coerce_int(kwargs.pop("max_tokens", 4096), 4096)
-    temperature_val = _coerce_float(kwargs.pop("temperature", 0.7), 0.7)
+    requested_temperature = _coerce_float(kwargs.pop("temperature", 0.7), 0.7)
+    temperature_val = get_effective_temperature(
+        provider_name,
+        resolved_model,
+        requested_temperature,
+    )
 
     payload: dict[str, Any] = {
         "model": resolved_model,
