@@ -83,6 +83,44 @@ class DeepQuestionCapability(BaseCapability):
                 await stream.result(followup_payload, source=self.name)
             return
 
+        quiz_submission_context = overrides.get("quiz_submission_context") or {}
+        if isinstance(quiz_submission_context, dict) and quiz_submission_context.get("questions"):
+            from deeptutor.agents.question.agents.quiz_submission_agent import QuizSubmissionAgent
+
+            agent = QuizSubmissionAgent(
+                language=context.language,
+                api_key=llm_config.api_key,
+                base_url=llm_config.base_url,
+                api_version=llm_config.api_version,
+            )
+            agent.set_trace_callback(self._build_trace_bridge(stream))
+            async with stream.stage("generation", source=self.name):
+                await stream.thinking(
+                    "Grading quiz submission...",
+                    source=self.name,
+                    stage="generation",
+                )
+                submission_result = await agent.process(
+                    submitted_answers=context.user_message,
+                    quiz_context=quiz_submission_context,
+                    history_context=str(
+                        context.metadata.get("conversation_context_text", "") or ""
+                    ).strip(),
+                )
+                response = str(submission_result.get("response") or "").strip()
+                if response:
+                    await stream.content(response, source=self.name, stage="generation")
+                result_payload: dict[str, Any] = {
+                    "response": response or "Quiz submission graded.",
+                    "mode": "quiz_submission",
+                    "structured_result": submission_result.get("structured_result") or {},
+                }
+                cost_meta = self._collect_cost_summary("question")
+                if cost_meta:
+                    result_payload["metadata"] = {"cost_summary": cost_meta}
+                await stream.result(result_payload, source=self.name)
+            return
+
         mode = str(overrides.get("mode", "custom") or "custom").strip().lower()
         topic = str(overrides.get("topic") or context.user_message or "").strip()
         num_questions = int(overrides.get("num_questions", 1) or 1)
@@ -462,6 +500,12 @@ class DeepQuestionCapability(BaseCapability):
             tot = update.get("total", "")
             qid = update.get("question_id", "")
             batch = update.get("batch", "")
+            if stage == "generation" and status == "building_set":
+                return "Building your quiz"
+            if stage == "generation" and status == "validating_set":
+                return "Checking quiz quality"
+        if update_type == "result" and str(update.get("question_id") or "").strip() == "quiz_set_repair":
+            return "Quiz set format repaired"
             parts = [f"[{stage}]" if stage else ""]
             if status:
                 parts.append(status)

@@ -1,4 +1,4 @@
-import { apiUrl } from "@/lib/api";
+import { apiFetch } from "@/lib/api";
 
 // ── Real notebook system (file-backed under data/user/workspace/notebook) ──
 //
@@ -43,7 +43,7 @@ export interface NotebookDetail extends NotebookSummary {
 }
 
 export async function listNotebooks(): Promise<NotebookSummary[]> {
-  const response = await fetch(apiUrl("/api/v1/notebook/list"), {
+  const response = await apiFetch("/api/v1/notebook/list", {
     cache: "no-store",
   });
   if (!response.ok) throw new Error(`Request failed: ${response.status}`);
@@ -52,7 +52,7 @@ export async function listNotebooks(): Promise<NotebookSummary[]> {
 }
 
 export async function getNotebook(notebookId: string): Promise<NotebookDetail> {
-  const response = await fetch(apiUrl(`/api/v1/notebook/${notebookId}`), {
+  const response = await apiFetch(`/api/v1/notebook/${notebookId}`, {
     cache: "no-store",
   });
   if (!response.ok) throw new Error(`Request failed: ${response.status}`);
@@ -65,7 +65,7 @@ export async function createNotebook(payload: {
   color?: string;
   icon?: string;
 }): Promise<NotebookSummary> {
-  const response = await fetch(apiUrl("/api/v1/notebook/create"), {
+  const response = await apiFetch("/api/v1/notebook/create", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
@@ -84,7 +84,7 @@ export async function updateNotebook(
   notebookId: string,
   payload: { name?: string; description?: string; color?: string; icon?: string },
 ): Promise<NotebookSummary> {
-  const response = await fetch(apiUrl(`/api/v1/notebook/${notebookId}`), {
+  const response = await apiFetch(`/api/v1/notebook/${notebookId}`, {
     method: "PUT",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(payload),
@@ -95,7 +95,7 @@ export async function updateNotebook(
 }
 
 export async function deleteNotebook(notebookId: string): Promise<void> {
-  const response = await fetch(apiUrl(`/api/v1/notebook/${notebookId}`), {
+  const response = await apiFetch(`/api/v1/notebook/${notebookId}`, {
     method: "DELETE",
   });
   if (!response.ok) throw new Error(`Request failed: ${response.status}`);
@@ -105,10 +105,9 @@ export async function deleteNotebookRecord(
   notebookId: string,
   recordId: string,
 ): Promise<void> {
-  const response = await fetch(
-    apiUrl(`/api/v1/notebook/${notebookId}/records/${recordId}`),
-    { method: "DELETE" },
-  );
+  const response = await apiFetch(`/api/v1/notebook/${notebookId}/records/${recordId}`, {
+    method: "DELETE",
+  });
   if (!response.ok) throw new Error(`Request failed: ${response.status}`);
 }
 
@@ -169,15 +168,14 @@ export async function listNotebookEntries(filter: {
   if (filter.limit !== undefined) params.set("limit", String(filter.limit));
   if (filter.offset !== undefined) params.set("offset", String(filter.offset));
   const query = params.toString();
-  const response = await fetch(
-    apiUrl(`/api/v1/question-notebook/entries${query ? `?${query}` : ""}`),
-    { cache: "no-store" },
-  );
+  const response = await apiFetch(`/api/v1/question-notebook/entries${query ? `?${query}` : ""}`, {
+    cache: "no-store",
+  });
   return expectJson<NotebookEntryListResponse>(response);
 }
 
 export async function getNotebookEntry(entryId: number): Promise<NotebookEntry> {
-  const response = await fetch(apiUrl(`/api/v1/question-notebook/entries/${entryId}`), {
+  const response = await apiFetch(`/api/v1/question-notebook/entries/${entryId}`, {
     cache: "no-store",
   });
   return expectJson<NotebookEntry>(response);
@@ -188,9 +186,7 @@ export async function lookupNotebookEntry(
   questionId: string,
 ): Promise<NotebookEntry | null> {
   const params = new URLSearchParams({ session_id: sessionId, question_id: questionId });
-  const response = await fetch(
-    apiUrl(`/api/v1/question-notebook/entries/lookup/by-question?${params}`),
-  );
+  const response = await apiFetch(`/api/v1/question-notebook/entries/lookup/by-question?${params}`);
   if (response.status === 404) return null;
   return expectJson<NotebookEntry>(response);
 }
@@ -199,7 +195,7 @@ export async function updateNotebookEntry(
   entryId: number,
   updates: { bookmarked?: boolean; followup_session_id?: string },
 ): Promise<void> {
-  const response = await fetch(apiUrl(`/api/v1/question-notebook/entries/${entryId}`), {
+  const response = await apiFetch(`/api/v1/question-notebook/entries/${entryId}`, {
     method: "PATCH",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(updates),
@@ -219,7 +215,7 @@ export async function upsertNotebookEntry(data: {
   user_answer?: string;
   is_correct?: boolean;
 }): Promise<NotebookEntry> {
-  const response = await fetch(apiUrl("/api/v1/question-notebook/entries/upsert"), {
+  const response = await apiFetch("/api/v1/question-notebook/entries/upsert", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
@@ -233,7 +229,7 @@ export async function upsertNotebookEntry(data: {
 }
 
 export async function deleteNotebookEntry(entryId: number): Promise<void> {
-  const response = await fetch(apiUrl(`/api/v1/question-notebook/entries/${entryId}`), {
+  const response = await apiFetch(`/api/v1/question-notebook/entries/${entryId}`, {
     method: "DELETE",
   });
   await expectJson<{ deleted: boolean }>(response);
@@ -242,14 +238,11 @@ export async function deleteNotebookEntry(entryId: number): Promise<void> {
 // ── Entry ↔ Category ────────────────────────────────────────────
 
 export async function addEntryToCategory(entryId: number, categoryId: number): Promise<void> {
-  const response = await fetch(
-    apiUrl(`/api/v1/question-notebook/entries/${entryId}/categories`),
-    {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ category_id: categoryId }),
-    },
-  );
+  const response = await apiFetch(`/api/v1/question-notebook/entries/${entryId}/categories`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ category_id: categoryId }),
+  });
   await expectJson<{ added: boolean }>(response);
 }
 
@@ -257,8 +250,8 @@ export async function removeEntryFromCategory(
   entryId: number,
   categoryId: number,
 ): Promise<void> {
-  const response = await fetch(
-    apiUrl(`/api/v1/question-notebook/entries/${entryId}/categories/${categoryId}`),
+  const response = await apiFetch(
+    `/api/v1/question-notebook/entries/${entryId}/categories/${categoryId}`,
     { method: "DELETE" },
   );
   await expectJson<{ removed: boolean }>(response);
@@ -267,14 +260,14 @@ export async function removeEntryFromCategory(
 // ── Categories ──────────────────────────────────────────────────
 
 export async function listCategories(): Promise<NotebookCategory[]> {
-  const response = await fetch(apiUrl("/api/v1/question-notebook/categories"), {
+  const response = await apiFetch("/api/v1/question-notebook/categories", {
     cache: "no-store",
   });
   return expectJson<NotebookCategory[]>(response);
 }
 
 export async function createCategory(name: string): Promise<NotebookCategory> {
-  const response = await fetch(apiUrl("/api/v1/question-notebook/categories"), {
+  const response = await apiFetch("/api/v1/question-notebook/categories", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ name }),
@@ -283,7 +276,7 @@ export async function createCategory(name: string): Promise<NotebookCategory> {
 }
 
 export async function renameCategory(categoryId: number, name: string): Promise<void> {
-  const response = await fetch(apiUrl(`/api/v1/question-notebook/categories/${categoryId}`), {
+  const response = await apiFetch(`/api/v1/question-notebook/categories/${categoryId}`, {
     method: "PATCH",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ name }),
@@ -292,7 +285,7 @@ export async function renameCategory(categoryId: number, name: string): Promise<
 }
 
 export async function deleteCategory(categoryId: number): Promise<void> {
-  const response = await fetch(apiUrl(`/api/v1/question-notebook/categories/${categoryId}`), {
+  const response = await apiFetch(`/api/v1/question-notebook/categories/${categoryId}`, {
     method: "DELETE",
   });
   await expectJson<{ deleted: boolean }>(response);

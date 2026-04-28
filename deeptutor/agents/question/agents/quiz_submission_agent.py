@@ -12,6 +12,7 @@ from typing import Any
 
 from deeptutor.agents.base_agent import BaseAgent
 from deeptutor.core.trace import build_trace_metadata, new_call_id
+from deeptutor.services.practice.domain_normalization import normalize_practice_domain
 from deeptutor.utils.json_parser import parse_json_response
 
 
@@ -151,9 +152,12 @@ class QuizSubmissionAgent(BaseAgent):
                 "   - `domain`\n"
                 "   - `explanation`（1-2 句，简洁完整）\n"
                 "   - `coaching_note`（可选，1 句指出学生易错点）\n"
-                "4. 领域名称尽量稳定且简洁，例如 Helping Relationships。\n"
-                "5. 空白答案要标记为未作答且判错。\n"
-                "6. 只返回 JSON。"
+                '4. `strongest_areas`: 0-3 个简短优势领域或主题。\n'
+                '5. `weakest_areas`: 0-3 个最值得复习的领域或主题。\n'
+                '6. `recommended_next_step`: 1 句明确的下一步建议。\n'
+                "7. 领域名称尽量稳定且简洁，例如 Helping Relationships。\n"
+                "8. 空白答案要标记为未作答且判错。\n"
+                "9. 只返回 JSON。"
             )
         return (
             f"Learner submission:\n{answers_text}\n\n"
@@ -171,9 +175,12 @@ class QuizSubmissionAgent(BaseAgent):
             "   - `domain`\n"
             "   - `explanation` (compact but complete, 1-2 sentences)\n"
             "   - `coaching_note` (optional, one short sentence about the likely misconception)\n"
-            "4. Keep domain labels stable and short when possible.\n"
-            "5. Treat blank answers as unanswered and incorrect.\n"
-            "6. Return valid JSON only."
+            "4. `strongest_areas`: 0-3 short areas the learner appears strongest in.\n"
+            "5. `weakest_areas`: 0-3 short areas or domains that most need review.\n"
+            "6. `recommended_next_step`: one direct learner-facing next step.\n"
+            "7. Keep domain labels stable and short when possible.\n"
+            "8. Treat blank answers as unanswered and incorrect.\n"
+            "9. Return valid JSON only."
         )
 
     @staticmethod
@@ -313,12 +320,14 @@ class QuizSubmissionAgent(BaseAgent):
                         or ""
                     ).strip(),
                     "coaching_note": str(model_item.get("coaching_note") or "").strip(),
-                    "domain": str(
-                        model_item.get("domain")
-                        or question.get("domain")
-                        or question.get("concentration")
-                        or ""
-                    ).strip(),
+                    "domain": normalize_practice_domain(
+                        str(
+                            model_item.get("domain")
+                            or question.get("domain")
+                            or question.get("concentration")
+                            or ""
+                        ).strip()
+                    ),
                     "difficulty": str(
                         model_item.get("difficulty")
                         or question.get("difficulty")
@@ -330,14 +339,113 @@ class QuizSubmissionAgent(BaseAgent):
         score = self._build_score(normalized_question_results)
         domain_breakdown = self._build_domain_breakdown(normalized_question_results)
         summary = str(payload.get("overall_summary") or "").strip()
+        strongest_areas, weakest_areas = self._derive_strengths_and_weak_spots(
+            question_results=normalized_question_results,
+            domain_breakdown=domain_breakdown,
+            provided_strengths=payload.get("strongest_areas"),
+            provided_weak_spots=payload.get("weakest_areas"),
+        )
+        recommended_next_step = self._derive_recommended_next_step(
+            payload.get("recommended_next_step"),
+            weakest_areas=weakest_areas,
+            question_results=normalized_question_results,
+        )
         return {
             "submission_state": "graded",
             "overall_summary": summary,
+            "strongest_areas": strongest_areas,
+            "weakest_areas": weakest_areas,
+            "recommended_next_step": recommended_next_step,
             "missing_question_numbers": [],
             "score": score,
             "domain_breakdown": domain_breakdown,
             "question_results": normalized_question_results,
         }
+
+    @staticmethod
+    def _normalize_string_list(value: Any, *, normalize_domains: bool = False) -> list[str]:
+        if not isinstance(value, list):
+            return []
+        cleaned: list[str] = []
+        seen: set[str] = set()
+        for item in value:
+            text = str(item or "").strip()
+            if not text:
+                continue
+            normalized = normalize_practice_domain(text) if normalize_domains else text
+            key = normalized.lower()
+            if key in seen:
+                continue
+            seen.add(key)
+            cleaned.append(normalized)
+        return cleaned
+
+    def _derive_strengths_and_weak_spots(
+        self,
+        *,
+        question_results: list[dict[str, Any]],
+        domain_breakdown: list[dict[str, Any]],
+        provided_strengths: Any,
+        provided_weak_spots: Any,
+    ) -> tuple[list[str], list[str]]:
+        strengths = self._normalize_string_list(provided_strengths, normalize_domains=True)
+        weak_spots = self._normalize_string_list(provided_weak_spots, normalize_domains=True)
+        if strengths and weak_spots:
+            return strengths[:3], weak_spots[:3]
+
+        sorted_domains = [
+            item for item in domain_breakdown if str(item.get("domain") or "").strip()
+        ]
+        sorted_domains.sort(
+            key=lambda item: (
+                float(item.get("percent") or 0.0),
+                int(item.get("correct") or 0),
+                -int(item.get("total") or 0),
+            )
+        )
+        derived_weak = [
+            str(item.get("domain") or "").strip()
+            for item in sorted_domains[:3]
+            if str(item.get("domain") or "").strip()
+        ]
+        derived_strong = [
+            str(item.get("domain") or "").strip()
+            for item in reversed(sorted_domains[-3:])
+            if str(item.get("domain") or "").strip()
+        ]
+
+        if not derived_weak:
+            missed_topics = [
+                str(item.get("domain") or item.get("difficulty") or "").strip()
+                for item in question_results
+                if not bool(item.get("is_correct"))
+            ]
+            derived_weak = [topic for topic in missed_topics if topic][:3]
+
+        return (strengths or derived_strong)[:3], (weak_spots or derived_weak)[:3]
+
+    def _derive_recommended_next_step(
+        self,
+        provided: Any,
+        *,
+        weakest_areas: list[str],
+        question_results: list[dict[str, Any]],
+    ) -> str:
+        recommendation = str(provided or "").strip()
+        if recommendation:
+            return recommendation
+        unanswered = sum(1 for item in question_results if not bool(item.get("is_answered")))
+        if unanswered:
+            return (
+                f"Revisit the unanswered items first, then retry a shorter quiz on "
+                f"{', '.join(weakest_areas[:2]) or 'your weakest areas'}."
+            )
+        if weakest_areas:
+            return (
+                f"Review {', '.join(weakest_areas[:2])}, then run a shorter follow-up quiz "
+                "or flashcard pass focused on those weak spots."
+            )
+        return "Review the missed items once more, then run a shorter follow-up quiz to confirm the gains."
 
     @staticmethod
     def _index_question_results(raw_results: Any) -> dict[str, dict[str, Any]]:
@@ -442,6 +550,10 @@ class QuizSubmissionAgent(BaseAgent):
         summary = str(structured_result.get("overall_summary") or "").strip()
         if summary:
             lines.extend(["", summary])
+
+        recommended_next_step = str(structured_result.get("recommended_next_step") or "").strip()
+        if recommended_next_step:
+            lines.extend(["", f"Next step: {recommended_next_step}"])
 
         domain_breakdown = structured_result.get("domain_breakdown") or []
         if isinstance(domain_breakdown, list) and domain_breakdown:

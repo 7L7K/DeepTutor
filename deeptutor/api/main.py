@@ -1,5 +1,6 @@
-from contextlib import asynccontextmanager
 import logging
+import os
+from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
@@ -165,10 +166,21 @@ async def selective_access_log(request, call_next):
     return response
 
 
+def _cors_origins() -> list[str]:
+    raw = os.getenv("DEEPTUTOR_CORS_ORIGINS", "").strip()
+    if raw:
+        return [origin.strip() for origin in raw.split(",") if origin.strip()]
+    return [
+        "http://127.0.0.1:3001",
+        "http://localhost:3001",
+        "https://teeechr.gesahni.com",
+    ]
+
+
 # Configure CORS
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # In production, replace with specific frontend origin
+    allow_origins=_cors_origins(),
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -198,6 +210,7 @@ app.mount(
 # Import routers only after runtime settings are initialized.
 # Some router modules load YAML settings at import time.
 from deeptutor.api.routers import (
+    access,
     agent_config,
     chat,
     co_writer,
@@ -221,6 +234,7 @@ from deeptutor.api.routers import (
 )
 
 # Include routers
+app.include_router(access.router, prefix="/api/v1/access", tags=["access"])
 app.include_router(solve.router, prefix="/api/v1", tags=["solve"])
 app.include_router(chat.router, prefix="/api/v1", tags=["chat"])
 app.include_router(question.router, prefix="/api/v1/question", tags=["question"])

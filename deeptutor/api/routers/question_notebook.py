@@ -6,9 +6,10 @@ from __future__ import annotations
 
 import logging
 
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, Field
 
+from deeptutor.api.routers.access import get_current_tester
 from deeptutor.services.session import get_sqlite_session_store
 
 logger = logging.getLogger(__name__)
@@ -83,13 +84,15 @@ class UpsertEntryRequest(BaseModel):
 # ── Entry endpoints ──────────────────────────────────────────────
 
 @router.post("/entries/upsert")
-async def upsert_single_entry(payload: UpsertEntryRequest):
+async def upsert_single_entry(payload: UpsertEntryRequest, tester: dict = Depends(get_current_tester)):
     store = get_sqlite_session_store()
+    if await store.get_session(payload.session_id, tester_id=tester["id"]) is None:
+        raise HTTPException(status_code=404, detail="Session not found")
     try:
         await store.upsert_notebook_entries(payload.session_id, [payload.model_dump()])
     except ValueError as e:
         raise HTTPException(status_code=404, detail=str(e))
-    entry = await store.find_notebook_entry(payload.session_id, payload.question_id)
+    entry = await store.find_notebook_entry(payload.session_id, payload.question_id, tester_id=tester["id"])
     if entry is None:
         raise HTTPException(status_code=500, detail="Upsert failed")
     return entry
@@ -101,6 +104,7 @@ async def list_entries(
     is_correct: bool | None = Query(default=None),
     limit: int = Query(default=50, ge=1, le=200),
     offset: int = Query(default=0, ge=0),
+    tester: dict = Depends(get_current_tester),
 ) -> NotebookEntryListResponse:
     store = get_sqlite_session_store()
     result = await store.list_notebook_entries(
@@ -109,6 +113,7 @@ async def list_entries(
         is_correct=is_correct,
         limit=limit,
         offset=offset,
+        tester_id=tester["id"],
     )
     return NotebookEntryListResponse(
         items=[NotebookEntryItem(**item) for item in result["items"]],
@@ -117,39 +122,43 @@ async def list_entries(
 
 
 @router.get("/entries/lookup/by-question")
-async def lookup_entry(session_id: str = Query(...), question_id: str = Query(...)):
+async def lookup_entry(
+    session_id: str = Query(...),
+    question_id: str = Query(...),
+    tester: dict = Depends(get_current_tester),
+):
     store = get_sqlite_session_store()
-    entry = await store.find_notebook_entry(session_id, question_id)
+    entry = await store.find_notebook_entry(session_id, question_id, tester_id=tester["id"])
     if entry is None:
         raise HTTPException(status_code=404, detail="Entry not found")
     return entry
 
 
 @router.get("/entries/{entry_id}", response_model=NotebookEntryItem)
-async def get_entry(entry_id: int) -> NotebookEntryItem:
+async def get_entry(entry_id: int, tester: dict = Depends(get_current_tester)) -> NotebookEntryItem:
     store = get_sqlite_session_store()
-    entry = await store.get_notebook_entry(entry_id)
+    entry = await store.get_notebook_entry(entry_id, tester_id=tester["id"])
     if entry is None:
         raise HTTPException(status_code=404, detail="Entry not found")
     return NotebookEntryItem(**entry)
 
 
 @router.patch("/entries/{entry_id}")
-async def update_entry(entry_id: int, payload: EntryUpdateRequest):
+async def update_entry(entry_id: int, payload: EntryUpdateRequest, tester: dict = Depends(get_current_tester)):
     store = get_sqlite_session_store()
     updates = payload.model_dump(exclude_none=True)
     if not updates:
         raise HTTPException(status_code=400, detail="No fields to update")
-    updated = await store.update_notebook_entry(entry_id, updates)
+    updated = await store.update_notebook_entry(entry_id, updates, tester_id=tester["id"])
     if not updated:
         raise HTTPException(status_code=404, detail="Entry not found")
     return {"updated": True, "id": entry_id}
 
 
 @router.delete("/entries/{entry_id}")
-async def delete_entry(entry_id: int):
+async def delete_entry(entry_id: int, tester: dict = Depends(get_current_tester)):
     store = get_sqlite_session_store()
-    deleted = await store.delete_notebook_entry(entry_id)
+    deleted = await store.delete_notebook_entry(entry_id, tester_id=tester["id"])
     if not deleted:
         raise HTTPException(status_code=404, detail="Entry not found")
     return {"deleted": True, "id": entry_id}
@@ -158,9 +167,13 @@ async def delete_entry(entry_id: int):
 # ── Entry ↔ Category linking ────────────────────────────────────
 
 @router.post("/entries/{entry_id}/categories")
-async def add_entry_to_category(entry_id: int, payload: CategoryAddRequest):
+async def add_entry_to_category(
+    entry_id: int,
+    payload: CategoryAddRequest,
+    tester: dict = Depends(get_current_tester),
+):
     store = get_sqlite_session_store()
-    entry = await store.get_notebook_entry(entry_id)
+    entry = await store.get_notebook_entry(entry_id, tester_id=tester["id"])
     if entry is None:
         raise HTTPException(status_code=404, detail="Entry not found")
     ok = await store.add_entry_to_category(entry_id, payload.category_id)
@@ -170,8 +183,14 @@ async def add_entry_to_category(entry_id: int, payload: CategoryAddRequest):
 
 
 @router.delete("/entries/{entry_id}/categories/{category_id}")
-async def remove_entry_from_category(entry_id: int, category_id: int):
+async def remove_entry_from_category(
+    entry_id: int,
+    category_id: int,
+    tester: dict = Depends(get_current_tester),
+):
     store = get_sqlite_session_store()
+    if await store.get_notebook_entry(entry_id, tester_id=tester["id"]) is None:
+        raise HTTPException(status_code=404, detail="Entry not found")
     removed = await store.remove_entry_from_category(entry_id, category_id)
     if not removed:
         raise HTTPException(status_code=404, detail="Link not found")

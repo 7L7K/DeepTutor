@@ -15,7 +15,7 @@ from deeptutor.core.trace import build_trace_metadata, new_call_id
 from deeptutor.tools.rag_tool import rag_search
 
 
-BATCH_SIZE = 5
+BATCH_SIZE = 10
 
 
 class IdeaAgent(BaseAgent):

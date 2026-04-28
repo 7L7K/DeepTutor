@@ -3,9 +3,11 @@ from __future__ import annotations
 import hashlib
 import json
 import re
+import time
 from typing import Any
 
 from deeptutor.logging import get_logger
+from deeptutor.services.knowledge_scope import to_internal_kb_names
 from deeptutor.services.llm import get_llm_client, get_token_limit_kwargs, supports_response_format
 from deeptutor.services.rag.service import RAGService
 from deeptutor.services.session import get_sqlite_session_store
@@ -47,9 +49,11 @@ class FlashcardService:
         card_count: int,
         style: str,
         reuse_existing: bool = True,
+        tester_id: str = "local-default",
     ) -> tuple[dict[str, Any], bool]:
         normalized_topic = " ".join(topic.strip().split())
         normalized_kbs = [name.strip() for name in knowledge_base_names if name.strip()]
+        internal_kbs = to_internal_kb_names(normalized_kbs, tester_id)
         if source_type not in {"topic", "knowledge"}:
             raise ValueError("source_type must be 'topic' or 'knowledge'")
         if source_type == "topic" and not normalized_topic:
@@ -65,19 +69,30 @@ class FlashcardService:
             style=style,
         )
         if reuse_existing:
-            existing = await self._store.find_flashcard_deck_by_fingerprint(fingerprint)
+            existing = await self._store.find_flashcard_deck_by_fingerprint(fingerprint, tester_id=tester_id)
             if existing is not None:
+                logger.info(
+                    f"Flashcard deck reused: source_type={source_type} "
+                    f"requested={card_count} deck_id={existing.get('id')}"
+                )
                 return existing, True
 
+        started_at = time.perf_counter()
+        source_started_at = time.perf_counter()
         source_context = await self._build_source_context(
             source_type=source_type,
             topic=normalized_topic,
-            knowledge_base_names=normalized_kbs,
+            knowledge_base_names=internal_kbs,
+        )
+        logger.info(
+            f"Flashcard source context ready: source_type={source_type} "
+            f"requested={card_count} kb_count={len(normalized_kbs)} "
+            f"elapsed={time.perf_counter() - source_started_at:.2f}s"
         )
         payload = await self._generate_cards_with_llm(
             source_type=source_type,
             topic=normalized_topic,
-            knowledge_base_names=normalized_kbs,
+            knowledge_base_names=internal_kbs,
             card_count=card_count,
             style=style,
             source_context=source_context,
@@ -101,7 +116,7 @@ class FlashcardService:
             seen_fronts.add(dedupe_key)
             cleaned_cards.append(
                 {
-                    "id": f"{fingerprint}_card_{index}",
+                    "id": f"{tester_id}_{fingerprint}_card_{index}",
                     "front": front,
                     "back": back,
                     "hint": self._normalize_hint(card.get("hint")),
@@ -121,7 +136,8 @@ class FlashcardService:
         )
         deck = await self._store.save_flashcard_deck(
             {
-                "id": f"deck_{fingerprint}",
+                "id": f"deck_{tester_id}_{fingerprint}",
+                "tester_id": tester_id,
                 "source_type": source_type,
                 "title": title,
                 "topic": normalized_topic,
@@ -138,21 +154,214 @@ class FlashcardService:
                 "cards": cleaned_cards,
             }
         )
+        logger.info(
+            f"Flashcard deck generated: source_type={source_type} "
+            f"requested={card_count} saved={len(cleaned_cards)} "
+            f"deck_id={deck.get('id')} elapsed={time.perf_counter() - started_at:.2f}s"
+        )
         return deck, False
 
-    async def list_decks(self, *, limit: int = 12, offset: int = 0) -> list[dict[str, Any]]:
-        return await self._store.list_flashcard_decks(limit=limit, offset=offset)
+    async def generate_progressive_deck(
+        self,
+        *,
+        source_type: str,
+        topic: str,
+        knowledge_base_names: list[str],
+        card_count: int,
+        style: str,
+        reuse_existing: bool = True,
+        first_batch_size: int = 5,
+        tester_id: str = "local-default",
+    ) -> tuple[dict[str, Any], bool, bool]:
+        normalized_topic = " ".join(topic.strip().split())
+        normalized_kbs = [name.strip() for name in knowledge_base_names if name.strip()]
+        internal_kbs = to_internal_kb_names(normalized_kbs, tester_id)
+        requested_count = max(5, int(card_count or 10))
+        first_count = min(max(1, int(first_batch_size or 5)), requested_count)
+        if requested_count <= first_count:
+            deck, reused = await self.generate_deck(
+                source_type=source_type,
+                topic=normalized_topic,
+                knowledge_base_names=normalized_kbs,
+                card_count=requested_count,
+                style=style,
+                reuse_existing=reuse_existing,
+                tester_id=tester_id,
+            )
+            return deck, reused, False
 
-    async def get_deck(self, deck_id: str) -> dict[str, Any] | None:
-        return await self._store.get_flashcard_deck(deck_id)
+        fingerprint = self.build_generation_fingerprint(
+            source_type=source_type,
+            topic=normalized_topic,
+            knowledge_base_names=normalized_kbs,
+            card_count=requested_count,
+            style=style,
+        )
+        if reuse_existing:
+            existing = await self._store.find_flashcard_deck_by_fingerprint(fingerprint, tester_id=tester_id)
+            if existing is not None:
+                return existing, True, False
 
-    async def record_review(self, *, deck_id: str, card_id: str, rating: str) -> dict[str, Any]:
+        source_context = await self._build_source_context(
+            source_type=source_type,
+            topic=normalized_topic,
+            knowledge_base_names=internal_kbs,
+        )
+        payload = await self._generate_cards_with_llm(
+            source_type=source_type,
+            topic=normalized_topic,
+            knowledge_base_names=internal_kbs,
+            card_count=first_count,
+            style=style,
+            source_context=source_context,
+        )
+        cards = self._clean_generated_cards(
+            payload.get("cards"),
+            fingerprint=f"{tester_id}_{fingerprint}",
+            card_count=first_count,
+            start_index=1,
+        )
+        if not cards:
+            raise ValueError("Flashcard generation returned unusable cards")
+
+        title = str(payload.get("title") or normalized_topic or "Knowledge deck").strip()[:200]
+        deck = await self._store.save_flashcard_deck(
+            {
+                "id": f"deck_{tester_id}_{fingerprint}",
+                "tester_id": tester_id,
+                "source_type": source_type,
+                "title": title,
+                "topic": normalized_topic,
+                "source_summary": self._build_source_summary(
+                    source_type=source_type,
+                    knowledge_base_names=normalized_kbs,
+                ),
+                "source_kb_names": normalized_kbs,
+                "style": style,
+                "generation_fingerprint": fingerprint,
+                "generation_settings": {
+                    "card_count": requested_count,
+                    "style": style,
+                    "reuse_existing": reuse_existing,
+                    "progressive": True,
+                    "status": "partial",
+                    "requested_count": requested_count,
+                    "ready_count": len(cards),
+                },
+                "source_context": source_context,
+                "cards": cards,
+            }
+        )
+        return deck, False, True
+
+    async def complete_progressive_deck(
+        self,
+        *,
+        deck_id: str,
+        source_type: str,
+        topic: str,
+        knowledge_base_names: list[str],
+        card_count: int,
+        style: str,
+        tester_id: str = "local-default",
+    ) -> dict[str, Any]:
+        deck = await self._store.get_flashcard_deck(deck_id, tester_id=tester_id)
+        if deck is None:
+            raise ValueError(f"Flashcard deck not found: {deck_id}")
+        existing_cards = deck.get("cards") if isinstance(deck.get("cards"), list) else []
+        ready_count = len(existing_cards)
+        remaining = max(0, int(card_count or 0) - ready_count)
+        if remaining <= 0:
+            return deck
+        source_context = deck.get("source_context") if isinstance(deck.get("source_context"), list) else []
+        avoid_fronts = [
+            str(card.get("front") or "").strip()
+            for card in existing_cards
+            if isinstance(card, dict) and str(card.get("front") or "").strip()
+        ]
+        payload = await self._generate_cards_with_llm(
+            source_type=source_type,
+            topic=topic,
+            knowledge_base_names=to_internal_kb_names(knowledge_base_names, tester_id),
+            card_count=remaining,
+            style=style,
+            source_context=source_context,
+            avoid_fronts=avoid_fronts,
+        )
+        cards = self._clean_generated_cards(
+            payload.get("cards"),
+            fingerprint=deck_id.removeprefix("deck_"),
+            card_count=remaining,
+            start_index=ready_count + 1,
+            seen_fronts={self._normalize_card_key(front) for front in avoid_fronts},
+        )
+        status = "complete" if cards else "failed"
+        next_ready_count = ready_count + len(cards)
+        return await self._store.append_flashcard_cards(
+            deck_id,
+            cards,
+            {
+                **(deck.get("generation_settings") or {}),
+                "progressive": True,
+                "status": status if next_ready_count >= int(card_count or 0) else "partial",
+                "requested_count": int(card_count or 0),
+                "ready_count": next_ready_count,
+            },
+            tester_id=tester_id,
+        )
+
+    def _clean_generated_cards(
+        self,
+        cards: Any,
+        *,
+        fingerprint: str,
+        card_count: int,
+        start_index: int = 1,
+        seen_fronts: set[str] | None = None,
+    ) -> list[dict[str, Any]]:
+        if not isinstance(cards, list):
+            return []
+        cleaned_cards: list[dict[str, Any]] = []
+        seen = set(seen_fronts or set())
+        for offset, card in enumerate(cards[:card_count], start=0):
+            if not isinstance(card, dict):
+                continue
+            front = self._normalize_card_front(card.get("front"))
+            back = self._normalize_card_back(card.get("back"))
+            if not front or not back:
+                continue
+            dedupe_key = self._normalize_card_key(front)
+            if dedupe_key in seen:
+                continue
+            seen.add(dedupe_key)
+            card_number = start_index + offset
+            cleaned_cards.append(
+                {
+                    "id": f"{fingerprint}_card_{card_number}",
+                    "front": front,
+                    "back": back,
+                    "hint": self._normalize_hint(card.get("hint")),
+                    "tag": self._normalize_tag(card.get("tag")),
+                    "source_ref": str(card.get("source_ref") or "").strip(),
+                }
+            )
+            if len(cleaned_cards) >= card_count:
+                break
+        return cleaned_cards
+
+    async def list_decks(self, *, limit: int = 12, offset: int = 0, tester_id: str = "local-default") -> list[dict[str, Any]]:
+        return await self._store.list_flashcard_decks(limit=limit, offset=offset, tester_id=tester_id)
+
+    async def get_deck(self, deck_id: str, tester_id: str = "local-default") -> dict[str, Any] | None:
+        return await self._store.get_flashcard_deck(deck_id, tester_id=tester_id)
+
+    async def record_review(self, *, deck_id: str, card_id: str, rating: str, tester_id: str = "local-default") -> dict[str, Any]:
         if rating not in {"got_it", "missed", "skipped"}:
             raise ValueError("rating must be got_it, missed, or skipped")
-        return await self._store.record_flashcard_review(deck_id, card_id, rating)
+        return await self._store.record_flashcard_review(deck_id, card_id, rating, tester_id=tester_id)
 
-    async def restart_deck(self, deck_id: str) -> dict[str, Any]:
-        return await self._store.reset_flashcard_reviews(deck_id)
+    async def restart_deck(self, deck_id: str, tester_id: str = "local-default") -> dict[str, Any]:
+        return await self._store.reset_flashcard_reviews(deck_id, tester_id=tester_id)
 
     async def complete_session(
         self,
@@ -160,8 +369,9 @@ class FlashcardService:
         deck_id: str,
         review_mode: str,
         card_ids: list[str] | None = None,
+        tester_id: str = "local-default",
     ) -> tuple[dict[str, Any], dict[str, Any]]:
-        deck = await self.get_deck(deck_id)
+        deck = await self.get_deck(deck_id, tester_id=tester_id)
         if deck is None:
             raise ValueError(f"Flashcard deck not found: {deck_id}")
         if review_mode not in {"full_deck", "missed_only"}:
@@ -232,9 +442,10 @@ class FlashcardService:
                 "analysis_weak_spots": analysis.get("weak_spots") or [],
                 "analysis_recommended_next_step": analysis.get("recommended_next_step") or "",
                 "analysis_focus_topics": analysis.get("focus_topics") or [],
-            }
+            },
+            tester_id=tester_id,
         )
-        refreshed_deck = await self.get_deck(deck_id)
+        refreshed_deck = await self.get_deck(deck_id, tester_id=tester_id)
         if refreshed_deck is None:
             raise ValueError(f"Flashcard deck not found: {deck_id}")
         return refreshed_deck, session_review
@@ -244,6 +455,7 @@ class FlashcardService:
         *,
         knowledge_base_names: list[str],
         hint: str = "",
+        tester_id: str = "local-default",
     ) -> list[str]:
         normalized_kbs = [name.strip() for name in knowledge_base_names if name.strip()]
         if not normalized_kbs:
@@ -251,7 +463,7 @@ class FlashcardService:
         source_context = await self._build_source_context(
             source_type="knowledge",
             topic=hint,
-            knowledge_base_names=normalized_kbs,
+            knowledge_base_names=to_internal_kb_names(normalized_kbs, tester_id),
         )
         if not source_context:
             return []
@@ -305,6 +517,7 @@ class FlashcardService:
         card_count: int,
         style: str,
         source_context: list[dict[str, Any]],
+        avoid_fronts: list[str] | None = None,
     ) -> dict[str, Any]:
         llm_config = self._llm.config
         kwargs: dict[str, Any] = {}
@@ -329,7 +542,7 @@ class FlashcardService:
                 )
             context_block = "\n\nGrounding context:\n" + "\n\n---\n\n".join(rendered)
 
-        candidate_count = min(max(card_count + 4, card_count), 48)
+        candidate_count = min(max(card_count, 1), 48)
         user_prompt = (
             f"Generate {candidate_count} flashcards.\n"
             f"Source type: {source_type}\n"
@@ -351,12 +564,23 @@ class FlashcardService:
             "- make the deck feel like a focused study set, not a generic list"
             f"{context_block}"
         )
+        if avoid_fronts:
+            user_prompt += (
+                "\n\nAvoid duplicating these existing card fronts:\n"
+                + "\n".join(f"- {front}" for front in avoid_fronts[:20])
+            )
 
+        llm_started_at = time.perf_counter()
         raw = await self._llm.complete(
             prompt=user_prompt,
             system_prompt=system_prompt,
             temperature=0.2,
             **kwargs,
+        )
+        logger.info(
+            f"Flashcard LLM generation complete: source_type={source_type} "
+            f"requested={card_count} candidate_count={candidate_count} "
+            f"model={llm_config.model} elapsed={time.perf_counter() - llm_started_at:.2f}s"
         )
         payload = parse_json_response(raw, logger_instance=logger, fallback={})
         if not isinstance(payload, dict):

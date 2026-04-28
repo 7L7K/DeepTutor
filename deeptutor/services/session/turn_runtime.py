@@ -13,6 +13,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from deeptutor.core.stream import StreamEvent, StreamEventType
+from deeptutor.services.knowledge_scope import to_internal_kb_names
 from deeptutor.services.path_service import get_path_service
 from deeptutor.services.session.sqlite_store import SQLiteSessionStore, get_sqlite_session_store
 
@@ -204,11 +205,15 @@ class TurnRuntimeManager:
         self._executions: dict[str, _TurnExecution] = {}
 
     async def start_turn(self, payload: dict[str, Any]) -> tuple[dict[str, Any], dict[str, Any]]:
+        tester_id = str(payload.get("_tester_id") or "").strip()
+        if not tester_id:
+            raise RuntimeError("Not signed in")
         capability = str(payload.get("capability") or "chat")
         raw_config = dict(payload.get("config", {}) or {})
         runtime_only_keys = (
             "_persist_user_message",
             "followup_question_context",
+            "quiz_submission_context",
             "answer_now_context",
         )
         runtime_only_config = {
@@ -227,7 +232,10 @@ class TurnRuntimeManager:
             "capability": capability,
             "config": {**validated_public_config, **runtime_only_config},
         }
-        session = await self.store.ensure_session(payload.get("session_id"))
+        try:
+            session = await self.store.ensure_session(payload.get("session_id"), tester_id=tester_id)
+        except ValueError as exc:
+            raise RuntimeError("Session not found") from exc
         await self.store.update_session_preferences(
             session["id"],
             {
@@ -273,7 +281,10 @@ class TurnRuntimeManager:
         self,
         turn_id: str,
         after_seq: int = 0,
+        tester_id: str | None = None,
     ) -> AsyncIterator[dict[str, Any]]:
+        if tester_id and not await self.store.turn_belongs_to_tester(turn_id, tester_id):
+            return
         backlog = await self.store.get_turn_events(turn_id, after_seq=after_seq)
         last_seq = after_seq
         for item in backlog:
@@ -323,11 +334,14 @@ class TurnRuntimeManager:
         self,
         session_id: str,
         after_seq: int = 0,
+        tester_id: str | None = None,
     ) -> AsyncIterator[dict[str, Any]]:
+        if tester_id and not await self.store.get_session(session_id, tester_id=tester_id):
+            return
         active_turn = await self.store.get_active_turn(session_id)
         if active_turn is None:
             return
-        async for item in self.subscribe_turn(active_turn["id"], after_seq=after_seq):
+        async for item in self.subscribe_turn(active_turn["id"], after_seq=after_seq, tester_id=tester_id):
             yield item
 
     async def _run_turn(self, execution: _TurnExecution) -> None:
@@ -412,7 +426,10 @@ class TurnRuntimeManager:
                     if not history_session_id:
                         continue
 
-                    history_session = await self.store.get_session(history_session_id)
+                    history_session = await self.store.get_session(
+                        history_session_id,
+                        tester_id=str(payload.get("_tester_id") or ""),
+                    )
                     if not history_session:
                         continue
 
@@ -502,13 +519,18 @@ class TurnRuntimeManager:
                     attachments=attachment_records,
                 )
 
+            scoped_knowledge_bases = to_internal_kb_names(
+                [str(name) for name in (payload.get("knowledge_bases") or [])],
+                str(payload.get("_tester_id") or ""),
+            )
+
             context = UnifiedContext(
                 session_id=session_id,
                 user_message=effective_user_message,
                 conversation_history=conversation_history,
                 enabled_tools=payload.get("tools"),
                 active_capability=payload.get("capability"),
-                knowledge_bases=payload.get("knowledge_bases", []),
+                knowledge_bases=scoped_knowledge_bases,
                 attachments=attachments,
                 config_overrides=request_config,
                 language=payload.get("language", "en"),

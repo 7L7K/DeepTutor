@@ -1,4 +1,4 @@
-import { apiUrl } from "@/lib/api";
+import { apiFetch } from "@/lib/api";
 import { invalidateClientCache, withClientCache } from "@/lib/client-cache";
 
 const KNOWLEDGE_CACHE_PREFIX = "knowledge:";
@@ -21,7 +21,7 @@ export async function listKnowledgeBases(options?: { force?: boolean }) {
   return withClientCache<KnowledgeBaseSummary[]>(
     `${KNOWLEDGE_CACHE_PREFIX}list`,
     async () => {
-      const response = await fetch(apiUrl("/api/v1/knowledge/list"), {
+      const response = await apiFetch("/api/v1/knowledge/list", {
         cache: "no-store",
       });
       const data = await response.json();
@@ -41,7 +41,7 @@ export async function listRagProviders(options?: { force?: boolean }) {
   return withClientCache<RagProviderSummary[]>(
     `${KNOWLEDGE_CACHE_PREFIX}providers`,
     async () => {
-      const response = await fetch(apiUrl("/api/v1/knowledge/rag-providers"), {
+      const response = await apiFetch("/api/v1/knowledge/rag-providers", {
         cache: "no-store",
       });
       const data = await response.json();

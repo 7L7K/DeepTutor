@@ -18,6 +18,7 @@ from deeptutor.agents.research.request_config import (
 _RUNTIME_ONLY_KEYS = {
     "_persist_user_message",
     "followup_question_context",
+    "quiz_submission_context",
     # "answer_now" is a universal escape hatch: the orchestrator re-routes
     # any capability to chat when this is present. It is never declared on
     # any per-capability ``RequestConfig`` schema, so we strip it before

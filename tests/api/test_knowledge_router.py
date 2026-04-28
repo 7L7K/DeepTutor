@@ -26,6 +26,11 @@ def _build_app() -> FastAPI:
     if FastAPI is None or router is None:  # pragma: no cover - guarded by pytestmark
         raise RuntimeError("fastapi is not installed")
     app = FastAPI()
+    app.dependency_overrides[knowledge_router_module.get_current_tester] = lambda: {
+        "id": "tester-1",
+        "tester_id": "tester-1",
+        "display_name": "Tester One",
+    }
     app.include_router(router, prefix="/api/v1/knowledge")
     return app
 
@@ -116,8 +121,8 @@ def test_create_kb_does_not_require_llm_precheck(monkeypatch, tmp_path: Path) ->
     body = response.json()
     assert body["name"] == "kb-new"
     assert isinstance(body.get("task_id"), str) and body["task_id"]
-    assert manager.config["knowledge_bases"]["kb-new"]["rag_provider"] == "llamaindex"
-    assert manager.config["knowledge_bases"]["kb-new"]["needs_reindex"] is False
+    assert manager.config["knowledge_bases"]["tester-1__kb-new"]["rag_provider"] == "llamaindex"
+    assert manager.config["knowledge_bases"]["tester-1__kb-new"]["needs_reindex"] is False
 
 
 def test_create_coerces_legacy_provider_to_llamaindex(monkeypatch, tmp_path: Path) -> None:
@@ -139,13 +144,13 @@ def test_create_coerces_legacy_provider_to_llamaindex(monkeypatch, tmp_path: Pat
         )
 
     assert response.status_code == 200
-    assert manager.config["knowledge_bases"]["kb-legacy"]["rag_provider"] == "llamaindex"
+    assert manager.config["knowledge_bases"]["tester-1__kb-legacy"]["rag_provider"] == "llamaindex"
 
 
 def test_upload_returns_409_when_kb_needs_reindex(monkeypatch, tmp_path: Path) -> None:
     manager = _FakeKBManager(tmp_path / "knowledge_bases")
-    manager.config["knowledge_bases"]["legacy-kb"] = {
-        "path": "legacy-kb",
+    manager.config["knowledge_bases"]["tester-1__legacy-kb"] = {
+        "path": "tester-1__legacy-kb",
         "rag_provider": "llamaindex",
         "needs_reindex": True,
         "status": "needs_reindex",
@@ -161,8 +166,8 @@ def test_upload_returns_409_when_kb_needs_reindex(monkeypatch, tmp_path: Path) -
 
 def test_upload_ready_kb_returns_task_id(monkeypatch, tmp_path: Path) -> None:
     manager = _FakeKBManager(tmp_path / "knowledge_bases")
-    manager.config["knowledge_bases"]["ready-kb"] = {
-        "path": "ready-kb",
+    manager.config["knowledge_bases"]["tester-1__ready-kb"] = {
+        "path": "tester-1__ready-kb",
         "rag_provider": "llamaindex",
         "needs_reindex": False,
         "status": "ready",

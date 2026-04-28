@@ -30,7 +30,7 @@ import {
   Upload,
   X,
 } from "lucide-react";
-import { apiUrl, wsUrl } from "@/lib/api";
+import { apiFetch, apiUrl, wsUrl } from "@/lib/api";
 import {
   invalidateKnowledgeCaches,
   listKnowledgeBases,
@@ -336,7 +336,9 @@ function KnowledgePageContent() {
       error: null,
     });
 
-    const source = new EventSource(apiUrl(`/api/v1/knowledge/tasks/${taskId}/stream`));
+    const source = new EventSource(apiUrl(`/api/v1/knowledge/tasks/${taskId}/stream`), {
+      withCredentials: true,
+    });
     logSourcesRef.current[kind] = source;
 
     let settled = false;
@@ -544,7 +546,7 @@ function KnowledgePageContent() {
       form.append("rag_provider", selectedProvider);
       newKbFiles.forEach((file) => form.append("files", file));
 
-      const res = await fetch(apiUrl("/api/v1/knowledge/create"), {
+      const res = await apiFetch("/api/v1/knowledge/create", {
         method: "POST",
         body: form,
       });
@@ -599,7 +601,7 @@ function KnowledgePageContent() {
       uploadFiles.forEach((file) => form.append("files", file));
       if (selectedProvider) form.append("rag_provider", selectedProvider);
 
-      const res = await fetch(apiUrl(`/api/v1/knowledge/${targetKb}/upload`), {
+      const res = await apiFetch(`/api/v1/knowledge/${targetKb}/upload`, {
         method: "POST",
         body: form,
       });
@@ -644,14 +646,14 @@ function KnowledgePageContent() {
   };
 
   const setDefaultKnowledgeBase = async (kbName: string) => {
-    await fetch(apiUrl(`/api/v1/knowledge/default/${kbName}`), { method: "PUT" });
+    await apiFetch(`/api/v1/knowledge/default/${kbName}`, { method: "PUT" });
     invalidateKnowledgeCaches();
     await loadAll();
   };
 
   const deleteKnowledgeBase = async (kbName: string) => {
     if (!window.confirm(t('Delete knowledge base "{{name}}"?', { name: kbName }))) return;
-    await fetch(apiUrl(`/api/v1/knowledge/${kbName}`), { method: "DELETE" });
+    await apiFetch(`/api/v1/knowledge/${kbName}`, { method: "DELETE" });
     invalidateKnowledgeCaches();
     await loadAll();
   };
@@ -777,6 +779,17 @@ function KnowledgePageContent() {
 
   const uploadDisabled =
     !uploadTarget || !uploadFiles.length || !!uploadingKb || Boolean(uploadBlockedReason);
+  const createMissingName = !newKbName.trim();
+  const createMissingFiles = !newKbFiles.length;
+  const createDisabled = creating || createMissingName || createMissingFiles;
+  const createBlockedReason =
+    createMissingName && createMissingFiles
+      ? t("Name the knowledge base and choose at least one file before creating it.")
+      : createMissingName
+        ? t("Add a knowledge base name before creating it.")
+        : createMissingFiles
+          ? t("Choose at least one PDF, note, or study guide before creating it.")
+          : null;
 
   return (
     <div className="h-full overflow-y-auto bg-[var(--background)] [scrollbar-gutter:stable]">
@@ -788,7 +801,7 @@ function KnowledgePageContent() {
               {t("Knowledge")}
             </h1>
             <p className="mt-1 text-[13px] text-[var(--muted-foreground)]">
-              {t("Manage your knowledge bases and notebooks in one place.")}
+              {t("Upload notes, PDFs, or study guides so Chat, Practice, and Flashcards can stay grounded in your material.")}
             </p>
           </div>
 
@@ -894,12 +907,18 @@ function KnowledgePageContent() {
 
                   <button
                     onClick={createKnowledgeBase}
-                    disabled={creating || !newKbName.trim() || !newKbFiles.length}
+                    disabled={createDisabled}
                     className="inline-flex items-center gap-1.5 rounded-lg bg-[var(--primary)] px-3.5 py-1.5 text-[13px] font-medium text-[var(--primary-foreground)] transition-opacity disabled:cursor-not-allowed disabled:opacity-40"
                   >
                     {creating ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Plus size={14} />}
                     {t("Create")}
                   </button>
+
+                  {createBlockedReason && (
+                    <div className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-[12px] text-amber-700 dark:border-amber-900 dark:bg-amber-950/30 dark:text-amber-300">
+                      {createBlockedReason}
+                    </div>
+                  )}
 
                   {(createProcess.taskId || createProcess.logs.length > 0 || createProcess.executing) && (
                     <div className="space-y-2">
@@ -1144,8 +1163,19 @@ function KnowledgePageContent() {
                 })}
 
                 {!combinedKbs.length && (
-                  <div className="rounded-lg border border-dashed border-[var(--border)] px-6 py-10 text-center text-[13px] text-[var(--muted-foreground)]">
-                    {t("No knowledge bases yet. Create one to get started.")}
+                  <div className="rounded-2xl border border-dashed border-[var(--border)] bg-[var(--background)] px-6 py-8 text-center">
+                    <div className="mx-auto mb-3 flex h-10 w-10 items-center justify-center rounded-full bg-[var(--primary)]/10 text-[var(--primary)]">
+                      <BookOpen size={18} />
+                    </div>
+                    <div className="text-[14px] font-semibold text-[var(--foreground)]">
+                      {t("Add your first study source")}
+                    </div>
+                    <div className="mx-auto mt-2 max-w-md text-[13px] leading-6 text-[var(--muted-foreground)]">
+                      {t("Create a knowledge base, then upload class notes, PDFs, exam guides, or textbook chapters. Grounded sources can be selected later in Chat, Practice quizzes, and Flashcards.")}
+                    </div>
+                    <div className="mt-4 text-[12px] font-medium text-[var(--muted-foreground)]">
+                      {t("No source badges will show on generated study material until a real knowledge base is used.")}
+                    </div>
                   </div>
                 )}
               </div>

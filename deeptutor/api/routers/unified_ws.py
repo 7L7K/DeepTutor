@@ -14,6 +14,8 @@ from typing import Any
 
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 
+from deeptutor.services.access import ACCESS_COOKIE_NAME, InvalidAccessToken, get_access_manager
+
 router = APIRouter()
 logger = logging.getLogger(__name__)
 
@@ -21,6 +23,15 @@ logger = logging.getLogger(__name__)
 @router.websocket("/ws")
 async def unified_websocket(ws: WebSocket) -> None:
     await ws.accept()
+    try:
+        tester = await get_access_manager().get_tester_from_token(
+            ws.cookies.get(ACCESS_COOKIE_NAME, "")
+        )
+    except InvalidAccessToken:
+        await ws.send_json({"type": "error", "content": "Not signed in."})
+        await ws.close(code=1008)
+        return
+    tester_id = tester["id"]
     closed = False
     subscription_tasks: dict[str, asyncio.Task[None]] = {}
 
@@ -48,7 +59,11 @@ async def unified_websocket(ws: WebSocket) -> None:
 
         async def _forward() -> None:
             runtime = get_turn_runtime_manager()
-            async for event in runtime.subscribe_turn(turn_id, after_seq=after_seq):
+            async for event in runtime.subscribe_turn(
+                turn_id,
+                after_seq=after_seq,
+                tester_id=tester_id,
+            ):
                 await safe_send(event)
 
         await stop_subscription(turn_id)
@@ -59,7 +74,11 @@ async def unified_websocket(ws: WebSocket) -> None:
 
         async def _forward() -> None:
             runtime = get_turn_runtime_manager()
-            async for event in runtime.subscribe_session(session_id, after_seq=after_seq):
+            async for event in runtime.subscribe_session(
+                session_id,
+                after_seq=after_seq,
+                tester_id=tester_id,
+            ):
                 await safe_send(event)
 
         key = f"session:{session_id}"
@@ -77,11 +96,16 @@ async def unified_websocket(ws: WebSocket) -> None:
 
             msg_type = msg.get("type")
 
+            if msg_type == "ping":
+                await safe_send({"type": "pong"})
+                continue
+
             if msg_type in {"message", "start_turn"}:
                 from deeptutor.services.session import get_turn_runtime_manager
 
                 runtime = get_turn_runtime_manager()
                 try:
+                    msg["_tester_id"] = tester_id
                     _, turn = await runtime.start_turn(msg)
                 except RuntimeError as exc:
                     await safe_send(

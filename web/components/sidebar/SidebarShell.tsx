@@ -6,14 +6,10 @@ import { usePathname, useRouter } from "next/navigation";
 import { useState, type ReactNode } from "react";
 import {
   BookOpen,
-  Bot,
-  Brain,
-  GraduationCap,
   MessageSquare,
   NotebookPen,
   PanelLeftClose,
   PanelLeftOpen,
-  PenLine,
   Plus,
   Settings,
   SquarePen,
@@ -21,7 +17,6 @@ import {
 } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import SessionList from "@/components/SessionList";
-import { TutorBotRecent } from "@/components/sidebar/TutorBotRecent";
 import type { SessionSummary } from "@/lib/session-api";
 
 interface NavEntry {
@@ -33,12 +28,8 @@ interface NavEntry {
 const PRIMARY_NAV: NavEntry[] = [
   { href: "/chat", label: "Chat", icon: MessageSquare },
   { href: "/practice", label: "Practice", icon: SquarePen },
-  { href: "/agents", label: "TutorBot", icon: Bot },
-  { href: "/co-writer", label: "Co-Writer", icon: PenLine },
-  { href: "/guide", label: "Guided Learning", icon: GraduationCap },
+  { href: "/practice/flashcards", label: "Flashcards", icon: NotebookPen },
   { href: "/knowledge", label: "Knowledge", icon: BookOpen },
-  { href: "/notebook", label: "Notebook", icon: NotebookPen },
-  { href: "/memory", label: "Memory", icon: Brain },
 ];
 
 const SECONDARY_NAV: NavEntry[] = [{ href: "/settings", label: "Settings", icon: Settings }];
@@ -74,6 +65,13 @@ export function SidebarShell({
   const { t } = useTranslation();
   const [collapsed, setCollapsed] = useState(false);
 
+  const isNavActive = (href: string) => {
+    if (href === "/practice") {
+      return pathname === "/practice";
+    }
+    return pathname === href || pathname.startsWith(`${href}/`);
+  };
+
   const handleNewChat = () => {
     if (onNewChat) {
       onNewChat();
@@ -104,7 +102,7 @@ export function SidebarShell({
 
         <nav className="flex flex-col items-center gap-px pt-1">
           {PRIMARY_NAV.map((item) => {
-            const active = pathname.startsWith(item.href);
+            const active = isNavActive(item.href);
             return (
               <div key={item.href} className="flex flex-col items-center">
                 <Link
@@ -117,8 +115,6 @@ export function SidebarShell({
                 >
                   <item.icon size={16} strokeWidth={active ? 1.9 : 1.5} />
                 </Link>
-                {item.href === "/agents" && <TutorBotRecent collapsed />}
-
               </div>
             );
           })}
@@ -128,7 +124,7 @@ export function SidebarShell({
 
         <div className="flex flex-col items-center gap-px pb-1">
           {SECONDARY_NAV.map((item) => {
-            const active = pathname.startsWith(item.href);
+            const active = isNavActive(item.href);
             return (
               <Link
                 key={item.href}
@@ -188,9 +184,8 @@ export function SidebarShell({
           </button>
 
           {PRIMARY_NAV.map((item) => {
-            const active = pathname.startsWith(item.href);
+            const active = isNavActive(item.href);
             const hasSessionsBelow = item.href === "/chat" && showSessions && onSelectSession && onRenameSession && onDeleteSession;
-            const hasBots = item.href === "/agents";
             return (
               <div key={item.href}>
                 <Link
@@ -217,7 +212,6 @@ export function SidebarShell({
                     />
                   </div>
                 )}
-                {hasBots && <TutorBotRecent />}
               </div>
             );
           })}
@@ -230,7 +224,7 @@ export function SidebarShell({
       {/* Secondary nav + footer */}
       <div className="border-t border-[var(--border)]/40 px-2 py-2">
         {SECONDARY_NAV.map((item) => {
-          const active = pathname.startsWith(item.href);
+          const active = isNavActive(item.href);
           return (
             <Link
               key={item.href}

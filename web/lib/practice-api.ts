@@ -1,4 +1,4 @@
-import { apiUrl } from "@/lib/api";
+import { apiFetch } from "@/lib/api";
 
 export interface PracticeQuizSnapshotQuestion {
   question_id: string;
@@ -49,6 +49,9 @@ export interface PracticeQuestionResult {
 export interface PracticeStructuredResult {
   submission_state: "graded" | "incomplete";
   overall_summary?: string;
+  strongest_areas?: string[];
+  weakest_areas?: string[];
+  recommended_next_step?: string;
   missing_question_numbers: number[];
   score: PracticeStructuredScore;
   domain_breakdown: PracticeDomainBreakdown[];
@@ -76,6 +79,8 @@ export interface PracticeAttemptItem {
 export interface PracticeAttempt {
   id: string;
   session_id: string;
+  title?: string;
+  topic?: string;
   source_type?: string;
   source_capability?: string;
   source_session_id?: string | null;
@@ -116,6 +121,7 @@ async function expectJson<T>(response: Response): Promise<T> {
 }
 
 export async function createPracticeAttempt(payload: {
+  session_id?: string | null;
   source_type?: string;
   source_session_id?: string | null;
   title?: string;
@@ -125,7 +131,7 @@ export async function createPracticeAttempt(payload: {
   time_limit_seconds?: number | null;
   quiz_snapshot: PracticeQuizSnapshot;
 }): Promise<PracticeAttempt> {
-  const response = await fetch(apiUrl("/api/v1/practice/attempts"), {
+  const response = await apiFetch("/api/v1/practice/attempts", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(payload),
@@ -135,7 +141,7 @@ export async function createPracticeAttempt(payload: {
 }
 
 export async function getPracticeAttempt(attemptId: string): Promise<PracticeAttempt> {
-  const response = await fetch(apiUrl(`/api/v1/practice/attempts/${attemptId}`), {
+  const response = await apiFetch(`/api/v1/practice/attempts/${attemptId}`, {
     cache: "no-store",
   });
   const data = await expectJson<{ attempt: PracticeAttempt }>(response);
@@ -151,7 +157,7 @@ export async function savePracticeAttemptResults(
     structured_result: PracticeStructuredResult;
   },
 ): Promise<PracticeAttempt> {
-  const response = await fetch(apiUrl(`/api/v1/practice/attempts/${attemptId}/results`), {
+  const response = await apiFetch(`/api/v1/practice/attempts/${attemptId}/results`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(payload),
@@ -161,16 +167,15 @@ export async function savePracticeAttemptResults(
 }
 
 export async function listPracticeAttempts(limit = 12, offset = 0): Promise<PracticeAttempt[]> {
-  const response = await fetch(
-    apiUrl(`/api/v1/practice/attempts?limit=${limit}&offset=${offset}`),
-    { cache: "no-store" },
-  );
+  const response = await apiFetch(`/api/v1/practice/attempts?limit=${limit}&offset=${offset}`, {
+    cache: "no-store",
+  });
   const data = await expectJson<{ attempts: PracticeAttempt[] }>(response);
   return data.attempts ?? [];
 }
 
 export async function getPracticeProgress(): Promise<PracticeDomainProgressRow[]> {
-  const response = await fetch(apiUrl("/api/v1/practice/progress"), {
+  const response = await apiFetch("/api/v1/practice/progress", {
     cache: "no-store",
   });
   const data = await expectJson<{ domains: PracticeDomainProgressRow[] }>(response);

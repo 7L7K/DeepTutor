@@ -6,9 +6,10 @@ from __future__ import annotations
 
 from typing import Any
 
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, Field, field_validator
 
+from deeptutor.api.routers.access import get_current_tester
 from deeptutor.services.session import get_sqlite_session_store
 
 router = APIRouter()
@@ -46,30 +47,36 @@ class PracticeAttemptResultSaveRequest(BaseModel):
 
 
 @router.post("/attempts")
-async def create_attempt(payload: PracticeAttemptCreateRequest):
+async def create_attempt(payload: PracticeAttemptCreateRequest, tester: dict = Depends(get_current_tester)):
     store = get_sqlite_session_store()
     try:
-        attempt = await store.create_quiz_attempt(payload.model_dump())
+        data = payload.model_dump()
+        data["tester_id"] = tester["id"]
+        attempt = await store.create_quiz_attempt(data)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
     return {"attempt": attempt}
 
 
 @router.get("/attempts/{attempt_id}")
-async def get_attempt(attempt_id: str):
+async def get_attempt(attempt_id: str, tester: dict = Depends(get_current_tester)):
     store = get_sqlite_session_store()
-    attempt = await store.get_quiz_attempt(attempt_id)
+    attempt = await store.get_quiz_attempt(attempt_id, tester_id=tester["id"])
     if attempt is None:
         raise HTTPException(status_code=404, detail="Attempt not found")
-    attempt["items"] = await store.get_quiz_attempt_items(attempt_id)
+    attempt["items"] = await store.get_quiz_attempt_items(attempt_id, tester_id=tester["id"])
     return {"attempt": attempt}
 
 
 @router.post("/attempts/{attempt_id}/results")
-async def save_attempt_results(attempt_id: str, payload: PracticeAttemptResultSaveRequest):
+async def save_attempt_results(
+    attempt_id: str,
+    payload: PracticeAttemptResultSaveRequest,
+    tester: dict = Depends(get_current_tester),
+):
     store = get_sqlite_session_store()
     try:
-        attempt = await store.save_quiz_attempt_results(attempt_id, payload.model_dump())
+        attempt = await store.save_quiz_attempt_results(attempt_id, payload.model_dump(), tester_id=tester["id"])
     except ValueError as exc:
         if "not found" in str(exc).lower():
             raise HTTPException(status_code=404, detail=str(exc))
@@ -83,6 +90,7 @@ async def list_attempts(
     offset: int = Query(default=0, ge=0),
     session_id: str | None = Query(default=None),
     source_session_id: str | None = Query(default=None),
+    tester: dict = Depends(get_current_tester),
 ):
     store = get_sqlite_session_store()
     attempts = await store.list_quiz_attempts(
@@ -90,6 +98,7 @@ async def list_attempts(
         offset=offset,
         session_id=session_id,
         source_session_id=source_session_id,
+        tester_id=tester["id"],
     )
     return {"attempts": attempts}
 
@@ -97,9 +106,11 @@ async def list_attempts(
 @router.get("/progress")
 async def get_progress(
     recent_attempt_window: int = Query(default=10, ge=1, le=50),
+    tester: dict = Depends(get_current_tester),
 ):
     store = get_sqlite_session_store()
     domains = await store.get_domain_progress_summary(
         recent_attempt_window=recent_attempt_window,
+        tester_id=tester["id"],
     )
     return {"domains": domains, "recent_attempt_window": recent_attempt_window}

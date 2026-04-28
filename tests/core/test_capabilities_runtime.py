@@ -398,6 +398,106 @@ async def test_deep_question_capability_uses_single_call_followup_agent(
     assert result_event.metadata["question_id"] == "q_3"
 
 
+@pytest.mark.asyncio
+async def test_deep_question_capability_routes_quiz_submission_context(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    captured: dict[str, Any] = {}
+
+    class FakeCoordinator:
+        def __init__(self, **_kwargs: Any) -> None:
+            raise AssertionError("Coordinator should not be constructed for quiz submissions")
+
+    class FakeQuizSubmissionAgent:
+        def __init__(self, **kwargs: Any) -> None:
+            captured["init"] = kwargs
+            self._trace_callback = None
+
+        def set_trace_callback(self, callback) -> None:
+            self._trace_callback = callback
+
+        async def process(self, **kwargs: Any) -> dict[str, Any]:
+            captured["process"] = kwargs
+            return {
+                "response": "Scored 1/1 (100%).",
+                "structured_result": {
+                    "submission_state": "graded",
+                    "score": {"correct": 1, "total": 1, "percent": 100.0},
+                },
+            }
+
+    monkeypatch.setattr(
+        "deeptutor.agents.question.coordinator.AgentCoordinator",
+        FakeCoordinator,
+    )
+    monkeypatch.setattr(
+        "deeptutor.agents.question.agents.quiz_submission_agent.QuizSubmissionAgent",
+        FakeQuizSubmissionAgent,
+    )
+    monkeypatch.setattr(
+        "deeptutor.services.llm.config.get_llm_config",
+        lambda: SimpleNamespace(api_key="k", base_url="u", api_version="v1"),
+    )
+
+    context = UnifiedContext(
+        user_message="1A",
+        language="en",
+        config_overrides={
+            "quiz_submission_context": {
+                "title": "Interactive quiz submission",
+                "intro": "Answer all items.",
+                "answer_map": [{"index": 1, "question_id": "q1", "answer": "A"}],
+                "questions": [
+                    {
+                        "question_id": "q1",
+                        "question": "Which response is best?",
+                        "question_type": "choice",
+                        "options": {"A": "Reflect feeling", "B": "Give advice"},
+                    }
+                ],
+            }
+        },
+        metadata={"conversation_context_text": "recent quiz context"},
+    )
+    capability = DeepQuestionCapability()
+    events = await _collect_events(lambda bus: capability.run(context, bus))
+
+    assert captured["process"]["submitted_answers"] == "1A"
+    assert captured["process"]["quiz_context"]["questions"][0]["question_id"] == "q1"
+    assert captured["process"]["history_context"] == "recent quiz context"
+    assert any(
+        event.type == StreamEventType.CONTENT and "Scored 1/1" in event.content
+        for event in events
+    )
+    result_event = next(event for event in events if event.type == StreamEventType.RESULT)
+    assert result_event.metadata["mode"] == "quiz_submission"
+    assert result_event.metadata["structured_result"]["submission_state"] == "graded"
+
+
+def test_deep_question_request_config_allows_runtime_quiz_submission_context() -> None:
+    from deeptutor.capabilities.request_contracts import validate_capability_config
+
+    validated = validate_capability_config(
+        "deep_question",
+        {
+            "mode": "custom",
+            "num_questions": 3,
+            "quiz_submission_context": {"questions": [{"question_id": "q1"}]},
+        },
+    )
+
+    assert validated == {
+        "mode": "custom",
+        "topic": "",
+        "num_questions": 3,
+        "difficulty": "",
+        "question_type": "",
+        "preference": "",
+        "paper_path": "",
+        "max_questions": 10,
+    }
+
+
 def test_deep_question_capability_humanizes_question_progress_labels() -> None:
     assert DeepQuestionCapability._humanize_question_id("q_3") == "Question 3"
     assert (
