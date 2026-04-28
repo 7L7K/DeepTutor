@@ -40,6 +40,7 @@
 - web chat: add tutor action chips under coaching replies so learners can tap `Quiz me`, `Explain simpler`, `Make flashcards`, or `Review weak spots` without retyping follow-up prompts.
 
 ### Changed
+- quiz generation: use one structured quiz-set generation call for KB-backed Practice quizzes after retrieval/template planning, skipping the slow first-three per-question generation path.
 - access: require signed tester identity for Practice attempts, Flashcards, Question Notebook entries, and Knowledge management APIs.
 - knowledge: namespace tester-created knowledge bases internally while keeping public KB names clean in the UI.
 - web api: send credentials on protected Chat, Practice, Flashcards, and Knowledge requests so the HttpOnly tester cookie works from the local frontend.
