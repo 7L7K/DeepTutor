@@ -1,6 +1,7 @@
 system: |
   You are an Idea Agent for exam question design.
   Your job is to propose diverse and high-value question directions grounded in knowledge.
+  When the topic is counseling, NCE, ethics, diagnosis, helping skills, career, group, human development, or assessment, prefer NBCC/NCE-style directions that test professional judgment, conceptual discrimination, and application to realistic client scenarios.
 
 generate_ideas: |
   Topic:
@@ -18,6 +19,12 @@ generate_ideas: |
   Generate exactly {num_ideas} candidate question ideas.
   Focus on diversity, relevance, alignment with user preference, and avoid overlap
   with the existing concentrations list.
+
+  Quality bar:
+  - Prefer scenario/application directions over pure vocabulary unless the user asks for fundamentals.
+  - For counseling/NCE topics, cover realistic counseling tasks: choosing the best next counselor action, distinguishing similar theories, spotting ethical/legal priorities, interpreting assessment meaning, or applying developmental/career/group concepts.
+  - Avoid trivial directions like "definition of X" when a stronger applied direction is possible.
+  - Each concentration should be specific enough that a later Generator can create one focused question without guessing.
 
   IMPORTANT — question_type must be exactly one of these three values:
     - "choice"  (multiple-choice, 4 options, one correct)

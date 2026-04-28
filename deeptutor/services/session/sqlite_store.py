@@ -95,6 +95,18 @@ class SQLiteSessionStore:
                     preferences_json TEXT DEFAULT '{}'
                 );
 
+                CREATE TABLE IF NOT EXISTS testers (
+                    id TEXT PRIMARY KEY,
+                    display_name TEXT NOT NULL,
+                    code_hash TEXT NOT NULL,
+                    created_at REAL NOT NULL,
+                    last_seen_at REAL,
+                    disabled_at REAL
+                );
+
+                CREATE INDEX IF NOT EXISTS idx_testers_disabled
+                    ON testers(disabled_at, created_at DESC);
+
                 CREATE TABLE IF NOT EXISTS messages (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
                     session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
@@ -331,6 +343,108 @@ class SQLiteSessionStore:
         conn.row_factory = sqlite3.Row
         conn.execute("PRAGMA foreign_keys = ON")
         return conn
+
+    @staticmethod
+    def _serialize_tester(row: sqlite3.Row) -> dict[str, Any]:
+        return {
+            "id": row["id"],
+            "tester_id": row["id"],
+            "display_name": row["display_name"],
+            "created_at": row["created_at"],
+            "last_seen_at": row["last_seen_at"],
+            "disabled_at": row["disabled_at"],
+            "disabled": row["disabled_at"] is not None,
+        }
+
+    def _upsert_tester_sync(
+        self,
+        tester_id: str,
+        display_name: str,
+        code_hash: str,
+        disabled_at: float | None = None,
+    ) -> dict[str, Any]:
+        now = time.time()
+        resolved_id = str(tester_id or "").strip()
+        resolved_name = str(display_name or "").strip()
+        resolved_hash = str(code_hash or "").strip()
+        if not resolved_id:
+            raise ValueError("tester_id is required")
+        if not resolved_name:
+            raise ValueError("display_name is required")
+        if not resolved_hash:
+            raise ValueError("code_hash is required")
+        with self._connect() as conn:
+            conn.execute(
+                """
+                INSERT INTO testers (id, display_name, code_hash, created_at, last_seen_at, disabled_at)
+                VALUES (?, ?, ?, ?, NULL, ?)
+                ON CONFLICT(id) DO UPDATE SET
+                    display_name = excluded.display_name,
+                    code_hash = excluded.code_hash,
+                    disabled_at = excluded.disabled_at
+                """,
+                (resolved_id, resolved_name[:120], resolved_hash, now, disabled_at),
+            )
+            row = conn.execute("SELECT * FROM testers WHERE id = ?", (resolved_id,)).fetchone()
+            conn.commit()
+        return self._serialize_tester(row)
+
+    async def upsert_tester(
+        self,
+        tester_id: str,
+        display_name: str,
+        code_hash: str,
+        disabled_at: float | None = None,
+    ) -> dict[str, Any]:
+        return await self._run(
+            self._upsert_tester_sync,
+            tester_id,
+            display_name,
+            code_hash,
+            disabled_at,
+        )
+
+    def _list_testers_for_access_sync(self) -> list[dict[str, Any]]:
+        with self._connect() as conn:
+            rows = conn.execute(
+                """
+                SELECT *
+                FROM testers
+                ORDER BY created_at ASC
+                """
+            ).fetchall()
+        return [
+            {
+                **self._serialize_tester(row),
+                "code_hash": row["code_hash"],
+            }
+            for row in rows
+        ]
+
+    async def list_testers_for_access(self) -> list[dict[str, Any]]:
+        return await self._run(self._list_testers_for_access_sync)
+
+    def _get_tester_sync(self, tester_id: str) -> dict[str, Any] | None:
+        with self._connect() as conn:
+            row = conn.execute("SELECT * FROM testers WHERE id = ?", (tester_id,)).fetchone()
+        return self._serialize_tester(row) if row is not None else None
+
+    async def get_tester(self, tester_id: str) -> dict[str, Any] | None:
+        return await self._run(self._get_tester_sync, tester_id)
+
+    def _touch_tester_seen_sync(self, tester_id: str) -> dict[str, Any] | None:
+        now = time.time()
+        with self._connect() as conn:
+            conn.execute(
+                "UPDATE testers SET last_seen_at = ? WHERE id = ? AND disabled_at IS NULL",
+                (now, tester_id),
+            )
+            row = conn.execute("SELECT * FROM testers WHERE id = ?", (tester_id,)).fetchone()
+            conn.commit()
+        return self._serialize_tester(row) if row is not None else None
+
+    async def touch_tester_seen(self, tester_id: str) -> dict[str, Any] | None:
+        return await self._run(self._touch_tester_seen_sync, tester_id)
 
     def _create_session_sync(
         self, title: str | None = None, session_id: str | None = None

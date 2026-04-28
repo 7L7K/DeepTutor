@@ -96,6 +96,94 @@ class Generator(BaseAgent):
             },
         )
 
+    async def process_quiz_set(
+        self,
+        templates: list[QuestionTemplate],
+        user_topic: str = "",
+        preference: str = "",
+        history_context: str = "",
+    ) -> list[QAPair]:
+        """
+        Generate a complete quiz set in one structured LLM call, then repair
+        only the specific items that fail validation.
+        """
+        if not templates:
+            return []
+
+        available_tools = self._build_available_tools_text()
+        raw_set_response, set_payload = await self._generate_quiz_set_payload(
+            templates=templates,
+            user_topic=user_topic,
+            preference=preference,
+            history_context=history_context,
+            available_tools=available_tools,
+        )
+        if self._quiz_set_needs_repair(set_payload, templates):
+            repaired_payload = await self._repair_quiz_set_payload(
+                raw_response=raw_set_response,
+                templates=templates,
+                user_topic=user_topic,
+                preference=preference,
+                history_context=history_context,
+                available_tools=available_tools,
+            )
+            if repaired_payload:
+                set_payload = repaired_payload
+        item_payloads = self._extract_quiz_set_items(set_payload, templates)
+
+        qa_pairs: list[QAPair] = []
+        accepted_questions: list[str] = []
+        enabled_tools = self._enabled_tool_names()
+
+        for template, payload in zip(templates, item_payloads):
+            knowledge_context = str(template.metadata.get("knowledge_context", "")).strip()
+            normalized, validation = await self._validate_and_repair_payload(
+                template=template,
+                payload=payload,
+                user_topic=user_topic,
+                preference=preference,
+                history_context=history_context,
+                knowledge_context=knowledge_context,
+                available_tools=available_tools,
+                previous_questions=self._format_previous_questions(accepted_questions),
+                set_level_seen_questions=accepted_questions,
+            )
+
+            question_text = str(normalized.get("question", "") or "").strip()
+            if question_text:
+                accepted_questions.append(question_text)
+
+            qa_pairs.append(
+                QAPair(
+                    question_id=template.question_id,
+                    question=question_text,
+                    correct_answer=str(normalized.get("correct_answer", "") or "").strip(),
+                    explanation=str(normalized.get("explanation", "") or "").strip(),
+                    question_type=str(
+                        normalized.get("question_type", template.question_type)
+                    ).strip()
+                    or template.question_type,
+                    options=(
+                        normalized.get("options")
+                        if isinstance(normalized.get("options"), dict)
+                        else None
+                    ),
+                    concentration=template.concentration,
+                    difficulty=template.difficulty,
+                    validation=validation,
+                    metadata={
+                        "source": template.source,
+                        "reference_question": template.reference_question,
+                        "enabled_tools": enabled_tools,
+                        "available_tools": available_tools,
+                        "knowledge_context": knowledge_context,
+                        "generation_mode": "quiz_set",
+                    },
+                )
+            )
+
+        return qa_pairs
+
     def _build_available_tools_text(self) -> str:
         enabled_tools = self._enabled_tool_names()
         if not enabled_tools:
@@ -106,6 +194,104 @@ class Generator(BaseAgent):
             language=self.language,
             kb_name=self.kb_name or "",
         )
+
+    async def _generate_quiz_set_payload(
+        self,
+        templates: list[QuestionTemplate],
+        user_topic: str,
+        preference: str,
+        history_context: str,
+        available_tools: str,
+    ) -> tuple[str, dict[str, Any]]:
+        system_prompt = self.get_prompt("system", "")
+        user_prompt_template = self.get_prompt("generate_set", "")
+        if not user_prompt_template:
+            user_prompt_template = (
+                "Templates:\n{templates}\n\n"
+                "User topic: {user_topic}\n"
+                "Preference: {preference}\n"
+                "Conversation context: {history_context}\n"
+                "Knowledge context by template:\n{knowledge_context_bundle}\n"
+                "Enabled tools: {available_tools}\n\n"
+                'Return JSON {"questions":[{"question_id":"","question_type":"","question":"","options":{},"correct_answer":"","explanation":""}]}'
+            )
+
+        template_dicts = [
+            self._strip_template_knowledge_context(template) for template in templates
+        ]
+        user_prompt = user_prompt_template.format(
+            templates=json.dumps(template_dicts, ensure_ascii=False, indent=2),
+            user_topic=user_topic or "(none)",
+            preference=preference or "(none)",
+            history_context=history_context or "(none)",
+            knowledge_context_bundle=self._format_template_knowledge_contexts(templates),
+            available_tools=available_tools,
+        )
+
+        chunks: list[str] = []
+        async for chunk in self.stream_llm(
+            user_prompt=user_prompt,
+            system_prompt=system_prompt or "",
+            response_format={"type": "json_object"},
+            stage="generator_build_quiz_set",
+            trace_meta=build_trace_metadata(
+                call_id=new_call_id("quiz-set"),
+                phase="generation",
+                label=f"Generate quiz set ({len(templates)} questions)",
+                call_kind="llm_generation",
+                trace_id="quiz-set",
+            ),
+            max_tokens=max(4096, min(12000, len(templates) * 900)),
+        ):
+            chunks.append(chunk)
+        raw_response = "".join(chunks)
+        return raw_response, self._parse_json_like(raw_response)
+
+    async def _repair_quiz_set_payload(
+        self,
+        raw_response: str,
+        templates: list[QuestionTemplate],
+        user_topic: str,
+        preference: str,
+        history_context: str,
+        available_tools: str,
+    ) -> dict[str, Any]:
+        repair_prompt = (
+            "You are repairing an invalid full-quiz JSON response.\n\n"
+            f"Templates:\n{json.dumps([self._strip_template_knowledge_context(t) for t in templates], ensure_ascii=False, indent=2)}\n\n"
+            f"User topic:\n{user_topic or '(none)'}\n\n"
+            f"User preference:\n{preference or '(none)'}\n\n"
+            f"Conversation context:\n{history_context or '(none)'}\n\n"
+            f"Enabled tools:\n{available_tools}\n\n"
+            f"Invalid or incomplete quiz-set response:\n{raw_response or '(empty)'}\n\n"
+            "Rewrite this as valid JSON for the complete quiz set.\n"
+            "Hard rules:\n"
+            "- Return exactly one question for each template.\n"
+            "- Preserve each template.question_id.\n"
+            "- Respect each template.question_type exactly.\n"
+            "- For choice questions, provide exactly 4 options (A-D), a correct option key, and a concise explanation.\n"
+            "- For written/coding questions, provide no options.\n"
+            "- Avoid duplicate or near-duplicate questions across the set.\n"
+            "- Return JSON only in the form {\"questions\": [...]}.\n"
+        )
+
+        chunks: list[str] = []
+        async for chunk in self.stream_llm(
+            user_prompt=repair_prompt,
+            system_prompt="You repair malformed full-quiz JSON and return valid JSON only.",
+            response_format={"type": "json_object"},
+            stage="generator_repair_quiz_set",
+            trace_meta=build_trace_metadata(
+                call_id=new_call_id("quiz-set-repair"),
+                phase="generation",
+                label="Repair quiz set format",
+                call_kind="llm_generation",
+                trace_id="quiz-set",
+            ),
+            max_tokens=max(4096, min(12000, len(templates) * 900)),
+        ):
+            chunks.append(chunk)
+        return self._parse_json_like("".join(chunks))
 
     async def _generate_payload(
         self,
@@ -189,10 +375,15 @@ class Generator(BaseAgent):
         knowledge_context: str,
         available_tools: str,
         previous_questions: str = "",
+        set_level_seen_questions: list[str] | None = None,
     ) -> tuple[dict[str, Any], dict[str, Any]]:
         expected_type = self._normalize_question_type(template.question_type)
         normalized = self._normalize_payload_shape(expected_type, payload)
-        issues = self._collect_payload_issues(expected_type, normalized)
+        issues = self._collect_payload_issues(
+            expected_type,
+            normalized,
+            seen_questions=set_level_seen_questions or [],
+        )
         repaired = False
 
         if issues:
@@ -209,7 +400,11 @@ class Generator(BaseAgent):
             )
             if repaired_payload:
                 candidate = self._normalize_payload_shape(expected_type, repaired_payload)
-                candidate_issues = self._collect_payload_issues(expected_type, candidate)
+                candidate_issues = self._collect_payload_issues(
+                    expected_type,
+                    candidate,
+                    seen_questions=set_level_seen_questions or [],
+                )
                 if not candidate_issues or len(candidate_issues) <= len(issues):
                     normalized = candidate
                     issues = candidate_issues
@@ -327,11 +522,21 @@ class Generator(BaseAgent):
         cls,
         expected_type: str,
         payload: dict[str, Any],
+        seen_questions: list[str] | None = None,
     ) -> list[str]:
         issues: list[str] = []
         question = str(payload.get("question", "") or "")
         correct_answer = str(payload.get("correct_answer", "") or "").strip()
         options = payload.get("options")
+        normalized_question = cls._normalize_question_text(question)
+
+        if not question:
+            issues.append("missing_question")
+        elif normalized_question and any(
+            normalized_question == cls._normalize_question_text(existing)
+            for existing in (seen_questions or [])
+        ):
+            issues.append("duplicate_question")
 
         if expected_type == "choice":
             option_keys = set(options.keys()) if isinstance(options, dict) else set()
@@ -347,13 +552,15 @@ class Generator(BaseAgent):
             ):
                 issues.append("non_choice_payload_looks_like_multiple_choice")
 
-        if not question:
-            issues.append("missing_question")
         if not correct_answer:
             issues.append("missing_correct_answer")
         if not str(payload.get("explanation", "") or "").strip():
             issues.append("missing_explanation")
         return issues
+
+    @staticmethod
+    def _normalize_question_text(question: str) -> str:
+        return re.sub(r"\W+", " ", str(question or "").strip().lower()).strip()
 
     @staticmethod
     def _payload_looks_like_choice(
@@ -411,6 +618,59 @@ class Generator(BaseAgent):
                 k: v for k, v in template_dict["metadata"].items() if k != "knowledge_context"
             }
         return template_dict
+
+    @staticmethod
+    def _extract_quiz_set_items(
+        payload: dict[str, Any],
+        templates: list[QuestionTemplate],
+    ) -> list[dict[str, Any]]:
+        raw_items = payload.get("questions")
+        if not isinstance(raw_items, list):
+            raw_items = []
+
+        by_id: dict[str, dict[str, Any]] = {}
+        ordered: list[dict[str, Any]] = []
+        for item in raw_items:
+            if not isinstance(item, dict):
+                continue
+            question_id = str(item.get("question_id", "") or "").strip()
+            if question_id:
+                by_id[question_id] = item
+            ordered.append(item)
+
+        extracted: list[dict[str, Any]] = []
+        for index, template in enumerate(templates):
+            payload_item = by_id.get(template.question_id)
+            if payload_item is None and index < len(ordered):
+                payload_item = ordered[index]
+            extracted.append(payload_item if isinstance(payload_item, dict) else {})
+        return extracted
+
+    @classmethod
+    def _quiz_set_needs_repair(
+        cls,
+        payload: dict[str, Any],
+        templates: list[QuestionTemplate],
+    ) -> bool:
+        items = cls._extract_quiz_set_items(payload, templates)
+        non_empty = sum(1 for item in items if isinstance(item, dict) and item)
+        if non_empty < len(templates):
+            return True
+        return False
+
+    @staticmethod
+    def _format_template_knowledge_contexts(
+        templates: list[QuestionTemplate],
+    ) -> str:
+        sections: list[str] = []
+        for template in templates:
+            knowledge_context = str(template.metadata.get("knowledge_context", "")).strip()
+            if not knowledge_context:
+                continue
+            sections.append(
+                f"{template.question_id} ({template.concentration}):\n{knowledge_context}"
+            )
+        return "\n\n".join(sections) if sections else "(none)"
 
     @classmethod
     def _format_previous_questions(cls, questions: list[str] | None) -> str:

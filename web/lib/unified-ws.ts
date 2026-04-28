@@ -27,6 +27,7 @@ export type StreamEventType =
   | "result"
   | "error"
   | "session"
+  | "pong"
   | "done";
 
 export interface StreamEvent {

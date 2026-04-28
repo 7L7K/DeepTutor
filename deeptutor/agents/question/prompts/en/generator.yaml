@@ -2,6 +2,7 @@ system: |
   You are the Generator in a question pipeline.
   Produce high-quality Q-A pairs from a structured QuestionTemplate.
   You can leverage upstream knowledge context and the user's enabled tool set as guidance.
+  If the topic is counseling or NCE exam prep, write like a careful counselor-educator building realistic NBCC/NCE-style practice, not like a generic trivia bot.
 
 generate: |
   QuestionTemplate:
@@ -28,6 +29,10 @@ generate: |
   Requirements:
   - Keep strict alignment with template.concentration and template.difficulty.
   - Respect template.question_type exactly. Do not silently change it.
+  - Prefer applied reasoning over bare recall when the topic supports it.
+  - For counseling/NCE topics, use realistic client, counselor, school, agency, group, career, assessment, ethics, or developmental scenarios. Ask for the best counselor action, best interpretation, most ethical response, or most accurate conceptual distinction.
+  - Avoid giveaway wording such as "always", "never", obviously extreme options, or one option that is much longer/more technical than the rest.
+  - Do not ask vague questions like "What is X?" unless the template is explicitly easy/fundamental and a definition is the best fit.
   - If question_type is choice, provide exactly 4 options and one correct answer.
   - For choice questions, ensure options are well-differentiated and balanced in length.
     Do NOT make the correct answer noticeably longer or more detailed than distractors.
@@ -36,7 +41,7 @@ generate: |
   - If question_type is coding, do not provide options. The learner must write code, pseudocode, or an algorithmic solution.
   - For written/coding questions, never ask the learner to select, choose, or pick among options.
   - If you include options for a non-choice question, the output is invalid.
-  - Provide a clear explanation.
+  - Provide a clear explanation that teaches why the correct answer is best and, for choice questions, briefly why the most tempting distractor is not best.
   - Use the knowledge context when it helps ground the question.
   - Treat the enabled tools list as capability guidance only; do not mention tool names in the final output.
   - Do NOT generate a question that is identical or nearly identical to any of the previously generated questions listed above.
@@ -48,4 +53,57 @@ generate: |
     "options": {{"A":"...","B":"...","C":"...","D":"..."}} or null,
     "correct_answer": "choice questions use the correct option key; written/coding questions use the reference answer itself",
     "explanation": "detailed explanation"
+  }}
+
+generate_set: |
+  Templates:
+  {templates}
+
+  User topic:
+  {user_topic}
+
+  User preference:
+  {preference}
+
+  Knowledge context by template:
+  {knowledge_context_bundle}
+
+  Tools enabled by the user:
+  {available_tools}
+
+  Conversation context:
+  {history_context}
+
+  Build one complete quiz set that covers all templates as a coherent assessment.
+
+  Requirements:
+  - Return exactly one question for each template.
+  - Preserve each template.question_id in the output.
+  - Respect each template.question_type exactly. Do not silently change types.
+  - Keep clear alignment with each template.concentration and template.difficulty.
+  - Keep stems assessment-style and concise; avoid unnecessarily long case vignettes.
+  - Prefer applied reasoning over bare recall when the topic supports it.
+  - For counseling/NCE topics, include realistic counseling scenarios and best-next-step judgment items across the set.
+  - Avoid weak trivia, duplicate definitions, obvious correct answers, extreme distractors, and answer choices where the correct answer is noticeably longer or more polished.
+  - Avoid duplicate or near-duplicate questions across the whole quiz set.
+  - Spread the questions across the requested concentrations instead of collapsing into one repeated pattern.
+  - If question_type is choice, provide exactly 4 options and one correct answer key.
+  - For choice questions, keep options plausible, balanced in length, and similar in style.
+  - If question_type is written or coding, do not provide options.
+  - Provide a concise teaching explanation for every question, ideally 2-3 sentences, including why the correct answer is best and why a tempting distractor is not.
+  - Use the prepared knowledge context when it improves grounding.
+  - Treat the enabled tools list as capability guidance only; do not mention tool names in the final output.
+
+  Return JSON only:
+  {{
+    "questions": [
+      {{
+        "question_id": "q_1",
+        "question_type": "choice or written or coding",
+        "question": "question content",
+        "options": {{"A":"...","B":"...","C":"...","D":"..."}} or null,
+        "correct_answer": "choice questions use the correct option key; written/coding questions use the reference answer itself",
+        "explanation": "detailed explanation"
+      }}
+    ]
   }}

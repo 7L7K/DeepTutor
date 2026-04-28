@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import { useSearchParams } from "next/navigation";
 import { useEffect, useState } from "react";
 import {
   ArrowLeft,
@@ -40,10 +41,11 @@ const FLASHCARD_STYLES = [
 
 export default function FlashcardsWorkspace() {
   const { t } = useTranslation();
+  const searchParams = useSearchParams();
   const [stage, setStage] = useState<FlashcardStage>("setup");
   const [sourceType, setSourceType] = useState<FlashcardSource>("topic");
   const [topic, setTopic] = useState("NCE ethics boundaries");
-  const [cardCount, setCardCount] = useState<number>(20);
+  const [cardCount, setCardCount] = useState<number>(10);
   const [styleId, setStyleId] = useState<(typeof FLASHCARD_STYLES)[number]["id"]>("mixed");
   const [knowledgeBases, setKnowledgeBases] = useState<KnowledgeBaseSummary[]>([]);
   const [selectedKnowledgeBases, setSelectedKnowledgeBases] = useState<string[]>([]);
@@ -59,6 +61,12 @@ export default function FlashcardsWorkspace() {
   const [errorText, setErrorText] = useState("");
   const [isWorking, setIsWorking] = useState(false);
   const isKnowledgeAvailable = knowledgeBases.length > 0;
+
+  useEffect(() => {
+    const seededTopic = searchParams.get("topic")?.trim();
+    if (!seededTopic) return;
+    setTopic(seededTopic);
+  }, [searchParams]);
 
   useEffect(() => {
     let cancelled = false;
@@ -120,6 +128,34 @@ export default function FlashcardsWorkspace() {
     }
   }, [isKnowledgeAvailable, sourceType]);
 
+  useEffect(() => {
+    if (!deck || deck.generationStatus !== "partial") return;
+    setStatusText(
+      `Starter deck ready: ${deck.readyCardCount}/${deck.requestedCardCount} cards. Building the rest...`,
+    );
+    const timeout = window.setTimeout(async () => {
+      try {
+        const loadedDeck = await getFlashcardDeck(deck.id);
+        setDeck(loadedDeck);
+        setStudyCardIds((current) => {
+          if (current.length === 0) return loadedDeck.cards.map((card) => card.id);
+          const known = new Set(current);
+          return [
+            ...current,
+            ...loadedDeck.cards.map((card) => card.id).filter((cardId) => !known.has(cardId)),
+          ];
+        });
+        if (loadedDeck.generationStatus === "complete" || loadedDeck.readyCardCount >= loadedDeck.requestedCardCount) {
+          setStatusText("Deck complete. More cards were added while you were here.");
+          await refreshRecentDecks();
+        }
+      } catch (error) {
+        console.error("Failed to refresh progressive flashcard deck", error);
+      }
+    }, 3000);
+    return () => window.clearTimeout(timeout);
+  }, [deck]);
+
   async function refreshRecentDecks() {
     const decks = await listFlashcardDecks(8, 0);
     setRecentDecks(decks);
@@ -175,7 +211,13 @@ export default function FlashcardsWorkspace() {
       setCardIndex(0);
       setFlipped(false);
       setStage("overview");
-      setStatusText(result.reusedExisting ? "Loaded your existing deck." : "Flashcard deck generated.");
+      setStatusText(
+        result.reusedExisting
+          ? "Loaded your existing deck."
+          : result.deck.generationStatus === "partial"
+            ? `Starter deck ready: ${result.deck.readyCardCount}/${result.deck.requestedCardCount} cards. Building the rest...`
+            : "Flashcard deck generated.",
+      );
     } catch (error) {
       console.error("Failed to generate flashcards", error);
       setErrorText(error instanceof Error ? error.message : "Failed to generate flashcards.");
@@ -414,10 +456,10 @@ export default function FlashcardsWorkspace() {
                     </div>
                     <div className="mt-2 text-[12px] text-[var(--muted-foreground)]">
                       {!isKnowledgeAvailable
-                        ? t("Knowledge decks unlock after you add a knowledge base. Topic decks are ready now.")
+                        ? t("Knowledge decks unlock after you add sources in Knowledge. Topic starter decks are ready now.")
                         : sourceType === "knowledge"
                           ? t("Ground this deck in selected knowledge-base excerpts.")
-                          : t("Generate a focused deck directly from your topic prompt.")}
+                          : t("Generate a focused starter deck directly from your topic prompt.")}
                     </div>
                   </div>
 
@@ -532,7 +574,7 @@ export default function FlashcardsWorkspace() {
                   <div className="rounded-2xl border border-dashed border-[var(--border)] bg-[var(--card)] px-4 py-4 text-[13px] text-[var(--muted-foreground)]">
                     {sourceType === "knowledge"
                       ? t("Grounded decks use excerpts from the selected knowledge bases and save automatically when generated.")
-                      : t("Topic decks are AI-generated from your typed focus and save automatically for later review.")}
+                      : t("Topic decks are ungrounded AI starter decks. Add Knowledge sources when you need cards tied to uploaded material.")}
                   </div>
 
                   <button
@@ -542,7 +584,7 @@ export default function FlashcardsWorkspace() {
                     className="inline-flex w-full items-center justify-center gap-2 rounded-2xl bg-[var(--primary)] px-4 py-3 text-[14px] font-semibold text-white transition-opacity disabled:opacity-40"
                   >
                     <BrainCircuit size={16} />
-                    {t("Generate flashcards")}
+                    {t("Build starter deck")}
                   </button>
                 </div>
               </div>
@@ -1055,7 +1097,7 @@ export default function FlashcardsWorkspace() {
                 ))
               ) : (
                 <div className="rounded-2xl border border-dashed border-[var(--border)] bg-[var(--background)] px-4 py-5 text-[13px] leading-6 text-[var(--muted-foreground)]">
-                  {t("No flashcard decks yet. Generate one from a topic or selected knowledge bases.")}
+                  {t("No flashcard decks yet. Build a 10-card starter deck from a topic, or add Knowledge sources for grounded cards.")}
                 </div>
               )}
             </div>

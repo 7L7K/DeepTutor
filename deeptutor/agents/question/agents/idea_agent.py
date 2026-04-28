@@ -15,7 +15,7 @@ from deeptutor.services.prompt.language import append_language_directive
 from deeptutor.tools.rag_tool import rag_search
 from deeptutor.utils.json_parser import parse_json_response
 
-BATCH_SIZE = 5
+BATCH_SIZE = 10
 
 
 class IdeaAgent(BaseAgent):

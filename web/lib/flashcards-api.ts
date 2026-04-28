@@ -1,4 +1,4 @@
-import { apiUrl } from "@/lib/api";
+import { apiFetch } from "@/lib/api";
 
 export type FlashcardSource = "topic" | "knowledge";
 export type FlashcardStyle = "mixed" | "definition" | "concept";
@@ -23,6 +23,12 @@ interface ApiFlashcardDeck {
   source_kb_names: string[];
   style: FlashcardStyle;
   card_count: number;
+  generation_settings?: {
+    status?: string;
+    requested_count?: number;
+    ready_count?: number;
+    progressive?: boolean;
+  };
   created_at: number;
   updated_at: number;
   last_reviewed_at?: number | null;
@@ -70,6 +76,9 @@ export interface FlashcardDeck {
   sourceKbNames: string[];
   style: FlashcardStyle;
   cardCount: number;
+  generationStatus: string;
+  requestedCardCount: number;
+  readyCardCount: number;
   createdAt: number;
   updatedAt: number;
   lastReviewedAt?: number | null;
@@ -137,6 +146,9 @@ function normalizeDeck(deck: ApiFlashcardDeck): FlashcardDeck {
       },
     ]),
   );
+  const generationSettings = deck.generation_settings ?? {};
+  const requestedCardCount = Number(generationSettings.requested_count ?? deck.card_count ?? cards.length);
+  const readyCardCount = Number(generationSettings.ready_count ?? cards.length);
   return {
     id: deck.id,
     sourceType: deck.source_type,
@@ -146,6 +158,9 @@ function normalizeDeck(deck: ApiFlashcardDeck): FlashcardDeck {
     sourceKbNames: deck.source_kb_names ?? [],
     style: deck.style,
     cardCount: deck.card_count,
+    generationStatus: generationSettings.status || "complete",
+    requestedCardCount,
+    readyCardCount,
     createdAt: deck.created_at,
     updatedAt: deck.updated_at,
     lastReviewedAt: deck.last_reviewed_at,
@@ -188,7 +203,7 @@ export async function createFlashcardDeck(payload: {
   style: FlashcardStyle;
   reuseExisting?: boolean;
 }): Promise<{ deck: FlashcardDeck; reusedExisting: boolean }> {
-  const response = await fetch(apiUrl("/api/v1/practice/flashcards/generate"), {
+  const response = await apiFetch("/api/v1/practice/flashcards/generate", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
@@ -208,16 +223,15 @@ export async function createFlashcardDeck(payload: {
 }
 
 export async function listFlashcardDecks(limit = 12, offset = 0): Promise<FlashcardDeck[]> {
-  const response = await fetch(
-    apiUrl(`/api/v1/practice/flashcards/decks?limit=${limit}&offset=${offset}`),
-    { cache: "no-store" },
-  );
+  const response = await apiFetch(`/api/v1/practice/flashcards/decks?limit=${limit}&offset=${offset}`, {
+    cache: "no-store",
+  });
   const data = await expectJson<{ decks: ApiFlashcardDeck[] }>(response);
   return (data.decks ?? []).map(normalizeDeck);
 }
 
 export async function getFlashcardDeck(deckId: string): Promise<FlashcardDeck> {
-  const response = await fetch(apiUrl(`/api/v1/practice/flashcards/decks/${deckId}`), {
+  const response = await apiFetch(`/api/v1/practice/flashcards/decks/${deckId}`, {
     cache: "no-store",
   });
   const data = await expectJson<{ deck: ApiFlashcardDeck }>(response);
@@ -229,7 +243,7 @@ export async function reviewFlashcardCard(
   cardId: string,
   rating: Exclude<FlashcardRating, "new">,
 ): Promise<FlashcardDeck> {
-  const response = await fetch(apiUrl(`/api/v1/practice/flashcards/decks/${deckId}/reviews`), {
+  const response = await apiFetch(`/api/v1/practice/flashcards/decks/${deckId}/reviews`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ card_id: cardId, rating }),
@@ -239,7 +253,7 @@ export async function reviewFlashcardCard(
 }
 
 export async function resetFlashcardDeckReviews(deckId: string): Promise<FlashcardDeck> {
-  const response = await fetch(apiUrl(`/api/v1/practice/flashcards/decks/${deckId}/restart`), {
+  const response = await apiFetch(`/api/v1/practice/flashcards/decks/${deckId}/restart`, {
     method: "POST",
   });
   const data = await expectJson<{ deck: ApiFlashcardDeck }>(response);
@@ -250,7 +264,7 @@ export async function completeFlashcardPass(
   deckId: string,
   payload: { reviewMode: FlashcardReviewMode; cardIds: string[] },
 ): Promise<{ deck: FlashcardDeck; sessionReview: FlashcardSessionReview }> {
-  const response = await fetch(apiUrl(`/api/v1/practice/flashcards/decks/${deckId}/complete`), {
+  const response = await apiFetch(`/api/v1/practice/flashcards/decks/${deckId}/complete`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
@@ -272,7 +286,7 @@ export async function getFlashcardTopicSuggestions(payload: {
   knowledgeBaseNames: string[];
   hint?: string;
 }): Promise<string[]> {
-  const response = await fetch(apiUrl("/api/v1/practice/flashcards/topic-suggestions"), {
+  const response = await apiFetch("/api/v1/practice/flashcards/topic-suggestions", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({

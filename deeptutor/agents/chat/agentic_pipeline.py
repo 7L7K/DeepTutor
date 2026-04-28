@@ -49,6 +49,15 @@ SIMPLE_CHAT_RE = re.compile(
     r"^(hi|hello|hey|yo|sup|what's up|whats up|good morning|good afternoon|good evening)[!.?\s]*$",
     re.IGNORECASE,
 )
+DIRECT_CHAT_MAX_CHARS = 320
+DIRECT_CHAT_PREFIX_RE = re.compile(
+    r"^(say|tell me|explain|define|summarize|help me|can you|could you|what is|what are|why is|how do|how can|i want|i need|start|make)\b",
+    re.IGNORECASE,
+)
+DIRECT_CHAT_EXCLUDED_RE = re.compile(
+    r"\b(upload|attached|attachment|pdf|image|file|knowledge base|research report|deep research|web search|cite sources|use sources|generate flashcards|make flashcards|create flashcards|generate quiz|create quiz|practice quiz)\b",
+    re.IGNORECASE,
+)
 
 CHAT_STAGE_KEYS: tuple[str, ...] = (
     "responding",
@@ -275,7 +284,13 @@ class AgenticChatPipeline:
         message = (context.user_message or "").strip()
         if not message:
             return False
-        return bool(SIMPLE_CHAT_RE.fullmatch(message))
+        if SIMPLE_CHAT_RE.fullmatch(message):
+            return True
+        if len(message) > DIRECT_CHAT_MAX_CHARS:
+            return False
+        if DIRECT_CHAT_EXCLUDED_RE.search(message):
+            return False
+        return bool(DIRECT_CHAT_PREFIX_RE.search(message))
 
     async def _stage_simple_chat_reply(
         self,
@@ -302,9 +317,9 @@ class AgenticChatPipeline:
                 ),
             )
             reply = (
-                "Hi! How can I help you today?"
+                "Hey, I'm here. What are we studying today: a quick explanation, a few practice questions, or flashcards?"
                 if not context.language.lower().startswith("zh")
-                else "你好！今天想让我帮你做什么？"
+                else "你好，我在。今天想学什么：快速讲解、几道练习题，还是做一组闪卡？"
             )
             await stream.content(
                 reply,

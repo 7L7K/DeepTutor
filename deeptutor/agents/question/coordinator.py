@@ -13,7 +13,9 @@ from collections.abc import Callable
 from datetime import datetime
 import json
 import logging
+import os
 from pathlib import Path
+import time
 from typing import Any
 
 from deeptutor.agents.question.agents.generator import Generator
@@ -23,6 +25,9 @@ from deeptutor.services.config import PROJECT_ROOT, load_config_with_main
 from deeptutor.services.path_service import get_path_service
 from deeptutor.tools.question.pdf_parser import parse_pdf_with_mineru
 from deeptutor.tools.question.question_extractor import extract_questions_from_paper
+
+
+PROGRESSIVE_QUIZ_FIRST_BATCH = 3
 
 
 class AgentCoordinator:
@@ -38,6 +43,7 @@ class AgentCoordinator:
         language: str = "en",
         tool_flags_override: dict[str, bool] | None = None,
         enable_idea_rag: bool = True,
+        model: str | None = None,
     ) -> None:
         self.kb_name = kb_name
         self.output_dir = output_dir
@@ -45,6 +51,7 @@ class AgentCoordinator:
         self._api_key = api_key
         self._base_url = base_url
         self._api_version = api_version
+        self._model = model or os.getenv("PRACTICE_QUIZ_MODEL") or os.getenv("QUESTION_GENERATION_MODEL")
         self._ws_callback: Callable | None = None
         self._trace_callback: Callable | None = None
         self.enable_idea_rag = enable_idea_rag
@@ -87,6 +94,7 @@ class AgentCoordinator:
             api_key=self._api_key,
             base_url=self._base_url,
             api_version=self._api_version,
+            model=self._model,
         )
         agent.set_trace_callback(self._trace_callback)
         return agent
@@ -99,6 +107,7 @@ class AgentCoordinator:
             api_key=self._api_key,
             base_url=self._base_url,
             api_version=self._api_version,
+            model=self._model,
         )
         agent.set_trace_callback(self._trace_callback)
         return agent
@@ -113,6 +122,7 @@ class AgentCoordinator:
         history_context: str = "",
         attachments: list[Any] | None = None,
     ) -> dict[str, Any]:
+        started_at = time.perf_counter()
         self._current_batch_dir = self._create_batch_dir("custom")
         requested = max(1, int(num_questions or 1))
         idea_agent = self._create_idea_agent()
@@ -149,6 +159,7 @@ class AgentCoordinator:
                 },
             )
 
+            batch_started_at = time.perf_counter()
             idea_result = await idea_agent.process(
                 user_topic=user_topic,
                 preference=preference,
@@ -162,6 +173,7 @@ class AgentCoordinator:
             batch_templates = idea_result.get("templates", [])
             if not isinstance(batch_templates, list):
                 batch_templates = []
+            batch_elapsed = time.perf_counter() - batch_started_at
 
             for template in batch_templates:
                 if not isinstance(template, QuestionTemplate):
@@ -175,8 +187,14 @@ class AgentCoordinator:
                     "batch": batch_number,
                     "requested": batch_size,
                     "generated": len(batch_templates),
+                    "elapsed_seconds": round(batch_elapsed, 3),
                     "knowledge_context": idea_result.get("knowledge_context", ""),
                 }
+            )
+            self.logger.info(
+                f"Practice quiz ideation batch complete: batch={batch_number} "
+                f"requested={batch_size} generated={len(batch_templates)} "
+                f"elapsed={batch_elapsed:.2f}s"
             )
             await self._send_ws_update(
                 "templates_ready",
@@ -205,11 +223,18 @@ class AgentCoordinator:
             },
         )
 
+        generation_started_at = time.perf_counter()
         qa_pairs = await self._generation_loop(
             templates=templates[:requested],
             user_topic=user_topic,
             preference=preference,
             history_context=history_context,
+        )
+        generation_elapsed = time.perf_counter() - generation_started_at
+        self.logger.info(
+            f"Practice quiz generation complete: requested={requested} "
+            f"templates={len(templates[:requested])} questions={len(qa_pairs)} "
+            f"generation_elapsed={generation_elapsed:.2f}s total_elapsed={time.perf_counter() - started_at:.2f}s"
         )
         return self._build_summary(
             source="topic",
@@ -271,53 +296,30 @@ class AgentCoordinator:
         generator = self._create_generator()
         results: list[dict[str, Any]] = []
         total = len(templates)
-        generated_questions: list[str] = []
+        await self._send_ws_update(
+            "progress",
+            {
+                "stage": "generation",
+                "status": "building_set",
+                "current": 0,
+                "total": total,
+            },
+        )
 
-        for idx, template in enumerate(templates, 1):
-            await self._send_ws_update(
-                "question_update",
-                {
-                    "question_id": template.question_id,
-                    "status": "generating",
-                    "current": idx,
-                    "total": total,
-                },
+        async def emit_result(
+            idx: int,
+            template: QuestionTemplate,
+            qa_pair: QAPair,
+        ) -> None:
+            success = not bool((qa_pair.metadata or {}).get("error")) and bool(
+                (qa_pair.validation or {}).get("schema_ok", True)
             )
-
-            success = True
-            try:
-                qa_pair = await generator.process(
-                    template=template,
-                    user_topic=user_topic,
-                    preference=preference,
-                    history_context=history_context,
-                    previous_questions=generated_questions or None,
-                )
-            except Exception as exc:
-                success = False
-                self.logger.warning(f"Generation failed for {template.question_id}: {exc}")
-                qa_pair = QAPair(
-                    question_id=template.question_id,
-                    question=f"[Generation failed] {template.concentration}",
-                    correct_answer="N/A",
-                    explanation=str(exc),
-                    question_type=template.question_type,
-                    concentration=template.concentration,
-                    difficulty=template.difficulty,
-                    metadata={"error": str(exc)},
-                )
-
             result = {
                 "template": template.__dict__,
                 "qa_pair": qa_pair.__dict__,
                 "success": success,
             }
             results.append(result)
-
-            # Track successfully generated question text for diversity enforcement
-            if success and qa_pair.question:
-                generated_questions.append(qa_pair.question)
-
             await self._send_ws_update(
                 "result",
                 {
@@ -327,20 +329,115 @@ class AgentCoordinator:
                     "success": success,
                 },
             )
+
+        accepted_questions: list[str] = []
+        started_at = time.perf_counter()
+        first_ready_at: float | None = None
+        progressive_count = min(PROGRESSIVE_QUIZ_FIRST_BATCH, total)
+
+        for idx, template in enumerate(templates[:progressive_count], 1):
             await self._send_ws_update(
                 "progress",
                 {
                     "stage": "generation",
-                    "status": "running",
-                    "current": idx,
+                    "status": "building_first_questions",
+                    "current": idx - 1,
                     "total": total,
-                    "question_id": template.question_id,
                 },
             )
+            try:
+                qa_pair = await generator.process(
+                    template=template,
+                    user_topic=user_topic,
+                    preference=preference,
+                    history_context=history_context,
+                    previous_questions=accepted_questions,
+                )
+            except Exception as exc:
+                self.logger.warning(f"Progressive question generation failed: {exc}")
+                qa_pair = QAPair(
+                    question_id=template.question_id,
+                    question=f"[Generation failed] {template.concentration}",
+                    correct_answer="N/A",
+                    explanation=str(exc),
+                    question_type=template.question_type,
+                    concentration=template.concentration,
+                    difficulty=template.difficulty,
+                    metadata={"error": str(exc), "generation_mode": "progressive_single"},
+                )
+
+            question_text = str(qa_pair.question or "").strip()
+            if question_text and not (qa_pair.metadata or {}).get("error"):
+                accepted_questions.append(question_text)
+            if first_ready_at is None:
+                first_ready_at = time.perf_counter() - started_at
+                self.logger.info(
+                    f"First quiz question ready in {first_ready_at:.2f}s using progressive generation"
+                )
+            await emit_result(idx, template, qa_pair)
+
+        remaining_templates = templates[progressive_count:]
+        if remaining_templates:
+            await self._send_ws_update(
+                "progress",
+                {
+                    "stage": "generation",
+                    "status": "building_remaining_set",
+                    "current": len(results),
+                    "total": total,
+                },
+            )
+            remaining_history_context = history_context
+            if accepted_questions:
+                remaining_history_context = (
+                    f"{history_context}\n\nAlready generated questions to avoid duplicating:\n"
+                    + "\n".join(f"- {question}" for question in accepted_questions)
+                ).strip()
+            try:
+                qa_pairs = await generator.process_quiz_set(
+                    templates=remaining_templates,
+                    user_topic=user_topic,
+                    preference=preference,
+                    history_context=remaining_history_context,
+                )
+            except Exception as exc:
+                self.logger.warning(f"Remaining quiz-set generation failed: {exc}")
+                qa_pairs = [
+                    QAPair(
+                        question_id=template.question_id,
+                        question=f"[Generation failed] {template.concentration}",
+                        correct_answer="N/A",
+                        explanation=str(exc),
+                        question_type=template.question_type,
+                        concentration=template.concentration,
+                        difficulty=template.difficulty,
+                        metadata={"error": str(exc), "generation_mode": "quiz_set"},
+                    )
+                    for template in remaining_templates
+                ]
+
+            await self._send_ws_update(
+                "progress",
+                {
+                    "stage": "generation",
+                    "status": "validating_set",
+                    "current": len(results),
+                    "total": total,
+                },
+            )
+            for offset, (template, qa_pair) in enumerate(
+                zip(remaining_templates, qa_pairs, strict=False),
+                progressive_count + 1,
+            ):
+                await emit_result(offset, template, qa_pair)
 
         await self._send_ws_update(
             "progress",
             {"stage": "complete", "completed": len(results), "total": total},
+        )
+        self.logger.info(
+            f"Quiz generation completed: first_ready={first_ready_at or 0.0:.2f}s "
+            f"total={time.perf_counter() - started_at:.2f}s questions={len(results)}"
         )
         return results
 

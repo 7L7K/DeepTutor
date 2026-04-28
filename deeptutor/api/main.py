@@ -265,6 +265,7 @@ app.mount(
 # Import routers only after runtime settings are initialized.
 # Some router modules load YAML settings at import time.
 from deeptutor.api.routers import (
+    access,
     agent_config,
     attachments,
     auth,
@@ -299,6 +300,10 @@ app.include_router(auth.router, prefix="/api/v1/auth", tags=["auth"])
 from deeptutor.api.routers.auth import require_auth  # noqa: E402
 
 _auth = [Depends(require_auth)]
+
+# Optional private-tester access-code routes. They are separate from upstream
+# auth and are used only by deployments that opt into the tester gate.
+app.include_router(access.router, prefix="/api/v1/access", tags=["access"])
 
 app.include_router(
     multi_user_router,

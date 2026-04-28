@@ -120,7 +120,9 @@ export async function apiFetch(
   input: RequestInfo | URL,
   init?: RequestInit,
 ): Promise<Response> {
-  const res = await fetch(input, { credentials: "include", ...init });
+  const resolvedInput =
+    typeof input === "string" && input.startsWith("/") ? apiUrl(input) : input;
+  const res = await fetch(resolvedInput, { credentials: "include", ...init });
 
   if (res.status === 401 && AUTH_ENABLED && typeof window !== "undefined") {
     const next = encodeURIComponent(window.location.pathname);

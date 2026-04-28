@@ -40,6 +40,17 @@ import {
   type QuizQuestion,
 } from "@/lib/quiz-types";
 import {
+  PRACTICE_QUIZ_INTENTS,
+  applyPracticeQuizIntent,
+  buildFlashcardSeedTopic,
+  buildPracticeAssessmentSummary,
+  buildPracticeQuizPreference,
+  buildRetryTopic,
+  getPracticeQuizIntent,
+  resolvePracticeAttemptSessionId,
+  type PracticeQuizIntentId,
+} from "@/lib/practice-quiz";
+import {
   UnifiedWSClient,
   type StartTurnMessage,
   type StreamEvent,
@@ -49,34 +60,11 @@ const PRACTICE_TOOLS = ["rag", "web_search", "code_execution"];
 
 type PracticePhase = "setup" | "generating" | "taking" | "submitting" | "results";
 
-type QuizPreset =
-  | "10"
-  | "20"
-  | "25"
-  | "easy"
-  | "mixed"
-  | "hard"
-  | "ethics"
-  | "untimed"
-  | "exam";
-
 interface PracticeQuizDefinition {
   title: string;
   intro: string;
   questions: QuizQuestion[];
 }
-
-const PRESET_LABELS: Array<{ id: QuizPreset; label: string }> = [
-  { id: "10", label: "10 questions" },
-  { id: "20", label: "20 questions" },
-  { id: "25", label: "25 questions" },
-  { id: "easy", label: "Easy" },
-  { id: "mixed", label: "Mixed" },
-  { id: "hard", label: "Hard" },
-  { id: "ethics", label: "Ethics only" },
-  { id: "untimed", label: "Untimed" },
-  { id: "exam", label: "Exam mode" },
-];
 
 function buildPracticeTitle(config: DeepQuestionFormConfig): string {
   if (config.mode === "mimic") {
@@ -97,6 +85,28 @@ function buildPracticeIntro(config: DeepQuestionFormConfig, examMode: boolean, t
       : "Untimed study mode.",
   ];
   return lines.join(" ");
+}
+
+function quizQuestionFromStreamEvent(event: StreamEvent): QuizQuestion | null {
+  const payload = (event as StreamEvent & { question?: Record<string, unknown> }).question;
+  if (!payload || typeof payload !== "object" || !payload.question) return null;
+  return {
+    question_id: String(payload.question_id ?? `practice_q_${Date.now()}`),
+    question: String(payload.question ?? ""),
+    question_type: (payload.question_type as QuizQuestion["question_type"]) ?? "written",
+    options: payload.options as Record<string, string> | undefined,
+    correct_answer: String(payload.correct_answer ?? ""),
+    explanation: String(payload.explanation ?? ""),
+    difficulty: payload.difficulty ? String(payload.difficulty) : undefined,
+    concentration: payload.concentration ? String(payload.concentration) : undefined,
+    knowledge_context:
+      payload.metadata &&
+      typeof payload.metadata === "object" &&
+      "knowledge_context" in payload.metadata &&
+      payload.metadata.knowledge_context
+        ? String(payload.metadata.knowledge_context)
+        : undefined,
+  };
 }
 
 function buildPracticeSnapshot(
@@ -264,9 +274,10 @@ async function runPracticeTurn(
 
 export default function PracticeWorkspace() {
   const { t } = useTranslation();
-  const { state: chatState } = useUnifiedChat();
+  const { state: chatState, selectedSessionId } = useUnifiedChat();
 
   const [phase, setPhase] = useState<PracticePhase>("setup");
+  const [activeIntent, setActiveIntent] = useState<PracticeQuizIntentId>("diagnostic");
   const [quizConfig, setQuizConfig] = useState<DeepQuestionFormConfig>({
     ...DEFAULT_QUIZ_CONFIG,
     topic: "NBCC NCE diagnostic",
@@ -274,6 +285,7 @@ export default function PracticeWorkspace() {
     difficulty: "medium",
     question_type: "choice",
   });
+  const [quizSettingsCollapsed, setQuizSettingsCollapsed] = useState(false);
   const [quizPdf, setQuizPdf] = useState<File | null>(null);
   const [examMode, setExamMode] = useState(false);
   const [timerMinutes, setTimerMinutes] = useState(20);
@@ -382,43 +394,12 @@ export default function PracticeWorkspace() {
     );
   }
 
-  function applyPreset(preset: QuizPreset) {
-    switch (preset) {
-      case "10":
-      case "20":
-      case "25":
-        setQuizConfig((current) => ({
-          ...current,
-          num_questions: Number(preset),
-        }));
-        if (preset === "20") setTimerMinutes((current) => (current < 30 ? 30 : current));
-        if (preset === "25") setTimerMinutes((current) => (current < 35 ? 35 : current));
-        return;
-      case "easy":
-        setQuizConfig((current) => ({ ...current, difficulty: "easy" }));
-        return;
-      case "mixed":
-        setQuizConfig((current) => ({ ...current, difficulty: "auto" }));
-        return;
-      case "hard":
-        setQuizConfig((current) => ({ ...current, difficulty: "hard" }));
-        return;
-      case "ethics":
-        setQuizConfig((current) => ({
-          ...current,
-          topic: "NBCC NCE professional orientation and ethical practice",
-        }));
-        return;
-      case "untimed":
-        setExamMode(false);
-        return;
-      case "exam":
-        setExamMode(true);
-        setTimerMinutes((current) => (current > 0 ? current : 20));
-        return;
-      default:
-        return;
-    }
+  function handleSelectIntent(intentId: PracticeQuizIntentId) {
+    setActiveIntent(intentId);
+    const nextState = applyPracticeQuizIntent(quizConfig, intentId);
+    setQuizConfig(nextState.quizConfig);
+    setExamMode(nextState.examMode);
+    setTimerMinutes(nextState.timerMinutes);
   }
 
   async function handleGenerateQuiz() {
@@ -426,9 +407,18 @@ export default function PracticeWorkspace() {
     setStatusText("Generating practice quiz...");
     setPhase("generating");
     autoSubmittedRef.current = false;
+    setActiveQuiz(null);
+    setActiveAttempt(null);
+    setAnswers({});
+    setCurrentQuestionIndex(0);
+    setStartedAtMs(null);
+    setCurrentTimeMs(Date.now());
 
     try {
-      const config = buildQuizWSConfig(quizConfig);
+      const config = buildQuizWSConfig({
+        ...quizConfig,
+        preference: buildPracticeQuizPreference(quizConfig, activeIntent),
+      });
       const attachments =
         quizConfig.mode === "mimic" && quizPdf
           ? [
@@ -439,6 +429,9 @@ export default function PracticeWorkspace() {
               },
             ]
           : [];
+      let readyQuestionCount = 0;
+      const streamingQuestions: QuizQuestion[] = [];
+      const streamingQuestionIds = new Set<string>();
 
       const resultEvent = await runPracticeTurn(
         {
@@ -452,6 +445,26 @@ export default function PracticeWorkspace() {
           config,
         },
         (event) => {
+          if (event.type === "result") {
+            readyQuestionCount += 1;
+            const question = quizQuestionFromStreamEvent(event);
+            if (question && !examMode && !streamingQuestionIds.has(question.question_id)) {
+              streamingQuestionIds.add(question.question_id);
+              streamingQuestions.push(question);
+              setActiveQuiz({
+                title: buildPracticeTitle(quizConfig),
+                intro: `${buildPracticeIntro(quizConfig, examMode, timerMinutes)} ${streamingQuestions.length}/${quizConfig.num_questions} ready. You can start now; submit unlocks when the full quiz is saved.`,
+                questions: [...streamingQuestions],
+              });
+              setPhase("taking");
+            }
+            setStatusText(
+              readyQuestionCount === 1
+                ? "First question ready. Building the rest..."
+                : `${readyQuestionCount} questions ready. Building the rest...`,
+            );
+            return;
+          }
           if (event.type === "thinking" || event.type === "progress" || event.type === "observation") {
             setStatusText(event.content || "Generating practice quiz...");
           }
@@ -472,7 +485,16 @@ export default function PracticeWorkspace() {
         intro: buildPracticeIntro(quizConfig, examMode, timerMinutes),
         questions: normalizedQuestions,
       };
+      const attemptSessionId = resolvePracticeAttemptSessionId({
+        turnSessionId: resultEvent.session_id ?? null,
+        selectedSessionId,
+        chatSessionId: chatState.sessionId,
+      });
+      if (!attemptSessionId) {
+        throw new Error("Practice quiz generated, but no session id was available for saving the attempt.");
+      }
       const attempt = await createPracticeAttempt({
+        session_id: attemptSessionId,
         source_type: "practice",
         source_session_id: resultEvent.session_id ?? null,
         title: quiz.title,
@@ -485,9 +507,7 @@ export default function PracticeWorkspace() {
 
       setActiveQuiz(quiz);
       setActiveAttempt(attempt);
-      setAnswers({});
-      setCurrentQuestionIndex(0);
-      setStartedAtMs(null);
+      setCurrentQuestionIndex((value) => Math.min(value, Math.max(0, quiz.questions.length - 1)));
       setCurrentTimeMs(Date.now());
       setResultsFilter("wrong");
       setPhase("taking");
@@ -573,7 +593,43 @@ export default function PracticeWorkspace() {
     autoSubmittedRef.current = false;
   }
 
+  function prepareRetryFromWeakDomains() {
+    if (!attemptResult) return;
+    setQuizConfig((current) => ({
+      ...current,
+      mode: "custom",
+      topic: buildRetryTopic(activeAttempt?.topic || current.topic, attemptResult),
+      num_questions: Math.min(12, Math.max(6, weakDomains.length * 4 || 8)),
+      difficulty: "medium",
+      question_type: "choice",
+    }));
+    setActiveIntent("diagnostic");
+    setExamMode(false);
+    setTimerMinutes(20);
+    setResultsFilter("wrong");
+    setPhase("setup");
+  }
+
   const attemptResult = activeAttempt?.result_summary as PracticeStructuredResult | undefined;
+  const weakDomains = useMemo(
+    () => (attemptResult ? attemptResult.weakest_areas ?? [] : []),
+    [attemptResult],
+  );
+  const strongestAreas = useMemo(
+    () => (attemptResult ? attemptResult.strongest_areas ?? [] : []),
+    [attemptResult],
+  );
+  const assessmentSummary = useMemo(
+    () =>
+      buildPracticeAssessmentSummary(
+        quizConfig,
+        activeIntent,
+        examMode,
+        timerMinutes,
+        selectedKnowledgeBases.length,
+      ),
+    [activeIntent, examMode, quizConfig, selectedKnowledgeBases.length, timerMinutes],
+  );
 
   return (
     <div className="h-full overflow-y-auto bg-[radial-gradient(circle_at_top_left,rgba(67,56,202,0.08),transparent_28%),radial-gradient(circle_at_top_right,rgba(14,165,233,0.08),transparent_22%),var(--background)]">
@@ -650,19 +706,46 @@ export default function PracticeWorkspace() {
               <div className="space-y-5">
                 <div className="space-y-2">
                   <div className="text-[12px] font-semibold uppercase tracking-[0.18em] text-[var(--muted-foreground)]">
-                    {t("Quiz Setup")}
+                    {t("Assessment Intent")}
                   </div>
-                  <div className="flex flex-wrap gap-2">
-                    {PRESET_LABELS.map((preset) => (
-                      <button
-                        key={preset.id}
-                        type="button"
-                        onClick={() => applyPreset(preset.id)}
-                        className="rounded-full border border-[var(--border)] bg-[var(--background)] px-3 py-1.5 text-[12px] font-medium text-[var(--muted-foreground)] transition-colors hover:border-[var(--primary)]/30 hover:text-[var(--foreground)]"
-                      >
-                        {t(preset.label)}
-                      </button>
-                    ))}
+                  <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
+                    {PRACTICE_QUIZ_INTENTS.map((intent) => {
+                      const active = activeIntent === intent.id;
+                      return (
+                        <button
+                          key={intent.id}
+                          type="button"
+                          onClick={() => handleSelectIntent(intent.id)}
+                          className={`rounded-2xl border px-4 py-4 text-left transition-colors ${
+                            active
+                              ? "border-[var(--primary)] bg-[var(--primary)]/8"
+                              : "border-[var(--border)] bg-[var(--background)] hover:border-[var(--primary)]/30"
+                          }`}
+                        >
+                          <div className="flex items-center justify-between gap-3">
+                            <div className="text-[14px] font-semibold text-[var(--foreground)]">
+                              {t(intent.label)}
+                            </div>
+                            {active ? (
+                              <span className="rounded-full bg-[var(--primary)] px-2 py-1 text-[10px] font-semibold uppercase tracking-[0.14em] text-white">
+                                {t("Selected")}
+                              </span>
+                            ) : null}
+                          </div>
+                          <div className="mt-2 text-[13px] leading-6 text-[var(--muted-foreground)]">
+                            {t(intent.description)}
+                          </div>
+                          <div className="mt-3 flex flex-wrap gap-2">
+                            <span className="rounded-full border border-[var(--border)] bg-[var(--card)] px-2.5 py-1 text-[11px] font-medium text-[var(--muted-foreground)]">
+                              {intent.numQuestions} {t("questions")}
+                            </span>
+                            <span className="rounded-full border border-[var(--border)] bg-[var(--card)] px-2.5 py-1 text-[11px] font-medium text-[var(--muted-foreground)]">
+                              {t(intent.examMode ? "Timed" : "Untimed")}
+                            </span>
+                          </div>
+                        </button>
+                      );
+                    })}
                   </div>
                 </div>
 
@@ -689,11 +772,27 @@ export default function PracticeWorkspace() {
                         onChange={setQuizConfig}
                         uploadedPdf={quizPdf}
                         onUploadPdf={setQuizPdf}
+                        collapsed={quizSettingsCollapsed}
+                        onToggleCollapsed={() => setQuizSettingsCollapsed((current) => !current)}
                       />
                     </div>
                   </div>
 
                   <div className="space-y-4 rounded-2xl border border-[var(--border)] bg-[var(--background)]/70 p-4">
+                    <div className="rounded-2xl border border-[var(--border)] bg-[var(--card)] px-4 py-4">
+                      <div className="text-[12px] font-semibold uppercase tracking-[0.18em] text-[var(--muted-foreground)]">
+                        {t("Assessment summary")}
+                      </div>
+                      <div className="mt-2 text-[14px] font-medium text-[var(--foreground)]">
+                        {assessmentSummary}
+                      </div>
+                      <ul className="mt-3 space-y-2 text-[13px] leading-6 text-[var(--muted-foreground)]">
+                        {getPracticeQuizIntent(activeIntent).qualityNotes.slice(0, 2).map((note) => (
+                          <li key={note}>{t(note)}</li>
+                        ))}
+                      </ul>
+                    </div>
+
                     <div className="flex items-center justify-between gap-3">
                       <div>
                         <div className="text-[12px] font-semibold uppercase tracking-[0.18em] text-[var(--muted-foreground)]">
@@ -771,7 +870,7 @@ export default function PracticeWorkspace() {
                       className="inline-flex w-full items-center justify-center gap-2 rounded-2xl bg-[var(--primary)] px-4 py-3 text-[14px] font-semibold text-white transition-opacity disabled:opacity-40"
                     >
                       <BrainCircuit size={16} />
-                      {t("Generate practice quiz")}
+                      {t(`Generate ${getPracticeQuizIntent(activeIntent).label.toLowerCase()}`)}
                     </button>
                   </div>
                 </div>
@@ -919,10 +1018,11 @@ export default function PracticeWorkspace() {
                     <button
                       type="button"
                       onClick={() => void handleSubmitQuiz(false)}
-                      className="inline-flex items-center gap-2 rounded-xl bg-[var(--primary)] px-4 py-2 text-[13px] font-semibold text-white"
+                      disabled={!activeAttempt}
+                      className="inline-flex items-center gap-2 rounded-xl bg-[var(--primary)] px-4 py-2 text-[13px] font-semibold text-white transition-opacity disabled:opacity-50"
                     >
                       <Send size={14} />
-                      {t("Submit quiz")}
+                      {activeAttempt ? t("Submit quiz") : t("Finalizing quiz...")}
                     </button>
                   </div>
                 </div>
@@ -978,7 +1078,7 @@ export default function PracticeWorkspace() {
                         : "border border-[var(--border)] text-[var(--muted-foreground)]"
                     }`}
                   >
-                    {t("Review missed only")}
+                    {t("Review weak spots")}
                   </button>
                   <button
                     type="button"
@@ -993,6 +1093,19 @@ export default function PracticeWorkspace() {
                   </button>
                   <button
                     type="button"
+                    onClick={prepareRetryFromWeakDomains}
+                    className="rounded-full border border-[var(--border)] px-3 py-1.5 text-[12px] font-semibold text-[var(--muted-foreground)]"
+                  >
+                    {t("Retry missed domains")}
+                  </button>
+                  <Link
+                    href={`/practice/flashcards?topic=${encodeURIComponent(buildFlashcardSeedTopic(activeAttempt.topic || "", attemptResult))}`}
+                    className="rounded-full border border-[var(--border)] px-3 py-1.5 text-[12px] font-semibold text-[var(--muted-foreground)]"
+                  >
+                    {t("Make flashcards from this")}
+                  </Link>
+                  <button
+                    type="button"
                     onClick={resetToSetup}
                     className="inline-flex items-center gap-1 rounded-full border border-[var(--border)] px-3 py-1.5 text-[12px] font-semibold text-[var(--muted-foreground)]"
                   >
@@ -1004,8 +1117,79 @@ export default function PracticeWorkspace() {
                     className="inline-flex items-center gap-1 rounded-full border border-[var(--border)] px-3 py-1.5 text-[12px] font-semibold text-[var(--muted-foreground)]"
                   >
                     <ArrowLeft size={13} />
-                    {t("Back to chat")}
+                    {t("Review misses in chat")}
                   </Link>
+                </div>
+              </div>
+
+              <div className="grid gap-4 lg:grid-cols-3">
+                <div className="rounded-[28px] border border-[var(--border)] bg-[var(--card)] p-5 shadow-[0_16px_50px_rgba(15,23,42,0.06)]">
+                  <div className="text-[12px] font-semibold uppercase tracking-[0.18em] text-[var(--muted-foreground)]">
+                    {t("Next study move")}
+                  </div>
+                  <div className="mt-3 text-[14px] leading-7 text-[var(--foreground)]">
+                    {attemptResult.recommended_next_step || t("Review the misses first, then make a short flashcard deck from the weakest domains.")}
+                  </div>
+                  <div className="mt-4 text-[12px] leading-5 text-[var(--muted-foreground)]">
+                    {t("This result can become a retry quiz, a focused flashcard deck, or a chat review instead of ending as a score.")}
+                  </div>
+                </div>
+                <div className="rounded-[28px] border border-[var(--border)] bg-[var(--card)] p-5 shadow-[0_16px_50px_rgba(15,23,42,0.06)]">
+                  <div className="text-[12px] font-semibold uppercase tracking-[0.18em] text-[var(--muted-foreground)]">
+                    {t("Coach read")}
+                  </div>
+                  <div className="mt-3 text-[14px] leading-7 text-[var(--foreground)]">
+                    {attemptResult.overall_summary || t("Detailed quiz results are ready below.")}
+                  </div>
+                  {attemptResult.recommended_next_step ? (
+                    <div className="mt-4 rounded-2xl border border-[var(--border)] bg-[var(--background)] px-4 py-3 text-[13px] text-[var(--muted-foreground)]">
+                      {attemptResult.recommended_next_step}
+                    </div>
+                  ) : null}
+                </div>
+
+                <div className="rounded-[28px] border border-[var(--border)] bg-[var(--card)] p-5 shadow-[0_16px_50px_rgba(15,23,42,0.06)]">
+                  <div className="text-[12px] font-semibold uppercase tracking-[0.18em] text-[var(--muted-foreground)]">
+                    {t("Strongest areas")}
+                  </div>
+                  <div className="mt-4 flex flex-wrap gap-2">
+                    {strongestAreas.length > 0 ? (
+                      strongestAreas.map((area) => (
+                        <span
+                          key={area}
+                          className="rounded-full bg-emerald-500/12 px-3 py-1 text-[12px] font-medium text-emerald-700 dark:text-emerald-300"
+                        >
+                          {area}
+                        </span>
+                      ))
+                    ) : (
+                      <div className="text-[13px] text-[var(--muted-foreground)]">
+                        {t("Strong areas will show up here once the grader can distinguish them clearly.")}
+                      </div>
+                    )}
+                  </div>
+                </div>
+
+                <div className="rounded-[28px] border border-[var(--border)] bg-[var(--card)] p-5 shadow-[0_16px_50px_rgba(15,23,42,0.06)]">
+                  <div className="text-[12px] font-semibold uppercase tracking-[0.18em] text-[var(--muted-foreground)]">
+                    {t("Weak spots")}
+                  </div>
+                  <div className="mt-4 flex flex-wrap gap-2">
+                    {weakDomains.length > 0 ? (
+                      weakDomains.map((area) => (
+                        <span
+                          key={area}
+                          className="rounded-full bg-rose-500/12 px-3 py-1 text-[12px] font-medium text-rose-700 dark:text-rose-300"
+                        >
+                          {area}
+                        </span>
+                      ))
+                    ) : (
+                      <div className="text-[13px] text-[var(--muted-foreground)]">
+                        {t("Weak spots will appear here when the results surface can confidently name them.")}
+                      </div>
+                    )}
+                  </div>
                 </div>
               </div>
 
