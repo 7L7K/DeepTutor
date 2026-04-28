@@ -29,7 +29,27 @@ class FakeIdeaAgent:
 
 
 class FakeGenerator:
+    single_calls = 0
+    set_calls = 0
+
+    async def process(self, **kwargs):
+        type(self).single_calls += 1
+        template = kwargs["template"]
+        return QAPair(
+            question_id=template.question_id,
+            question=f"Single question for {template.concentration}",
+            correct_answer="A",
+            explanation="single",
+            question_type=template.question_type,
+            options={"A": "Correct", "B": "Wrong", "C": "Wrong", "D": "Wrong"},
+            concentration=template.concentration,
+            difficulty=template.difficulty,
+            validation={"schema_ok": True, "repaired": False, "issues": []},
+            metadata={"generation_mode": "progressive_single"},
+        )
+
     async def process_quiz_set(self, **kwargs):
+        type(self).set_calls += 1
         return [
             QAPair(
                 question_id="q_1",
@@ -69,8 +89,8 @@ class FakeGenerator:
 
 
 class StubCoordinator(AgentCoordinator):
-    def __init__(self, tmp_path: Path) -> None:
-        super().__init__(output_dir=str(tmp_path), enable_idea_rag=False)
+    def __init__(self, tmp_path: Path, kb_name: str | None = None) -> None:
+        super().__init__(output_dir=str(tmp_path), enable_idea_rag=False, kb_name=kb_name)
 
     def _create_idea_agent(self):  # type: ignore[override]
         return FakeIdeaAgent()
@@ -80,6 +100,8 @@ class StubCoordinator(AgentCoordinator):
 
 
 def test_coordinator_generate_from_topic_preserves_summary_results_contract(tmp_path: Path) -> None:
+    FakeGenerator.single_calls = 0
+    FakeGenerator.set_calls = 0
     coordinator = StubCoordinator(tmp_path)
 
     summary = asyncio.run(
@@ -96,4 +118,27 @@ def test_coordinator_generate_from_topic_preserves_summary_results_contract(tmp_
     assert summary["completed"] == 2
     assert len(summary["results"]) == 2
     assert summary["results"][0]["qa_pair"]["question_id"] == "q_1"
-    assert summary["results"][1]["qa_pair"]["metadata"]["generation_mode"] == "quiz_set"
+    assert summary["results"][1]["qa_pair"]["question"]
+    assert FakeGenerator.single_calls == 2
+    assert FakeGenerator.set_calls == 0
+
+
+def test_kb_backed_quiz_generation_skips_progressive_single_calls(tmp_path: Path) -> None:
+    FakeGenerator.single_calls = 0
+    FakeGenerator.set_calls = 0
+    coordinator = StubCoordinator(tmp_path, kb_name="tester-1__nce-2026")
+
+    summary = asyncio.run(
+        coordinator.generate_from_topic(
+            user_topic="NCE review",
+            preference="use the KB",
+            num_questions=2,
+            difficulty="medium",
+            question_type="choice",
+        )
+    )
+
+    assert summary["success"] is True
+    assert len(summary["results"]) == 2
+    assert FakeGenerator.single_calls == 0
+    assert FakeGenerator.set_calls == 1

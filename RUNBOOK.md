@@ -173,9 +173,14 @@ selected public KB name
 -> backend scopes it to <tester-id>__<kb-name>
 -> RAG retrieval pulls relevant excerpts
 -> idea agent uses excerpts to create question templates
--> generator model writes questions, answers, distractors, and explanations
+-> generator model writes the full quiz set in one structured call
 -> quiz submission agent grades submitted answers
 ```
+
+KB-backed Practice quizzes intentionally skip the first-three progressive
+single-question generation path. That progressive path is useful for generic
+topic quizzes because it can show early questions quickly, but it adds latency
+for KB-backed runs after retrieval has already produced grounded context.
 
 Flashcards flow with a KB:
 

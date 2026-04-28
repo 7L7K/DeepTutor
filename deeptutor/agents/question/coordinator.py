@@ -335,7 +335,14 @@ class AgentCoordinator:
         accepted_questions: list[str] = []
         started_at = time.perf_counter()
         first_ready_at: float | None = None
-        progressive_count = min(PROGRESSIVE_QUIZ_FIRST_BATCH, total)
+        progressive_count = 0 if self._should_use_fast_kb_set_generation(total) else min(
+            PROGRESSIVE_QUIZ_FIRST_BATCH,
+            total,
+        )
+        if progressive_count == 0 and total:
+            self.logger.info(
+                f"Using fast KB-backed quiz-set generation: kb={self.kb_name} questions={total}"
+            )
 
         for idx, template in enumerate(templates[:progressive_count], 1):
             await self._send_ws_update(
@@ -442,6 +449,16 @@ class AgentCoordinator:
             f"total={time.perf_counter() - started_at:.2f}s questions={len(results)}"
         )
         return results
+
+    def _should_use_fast_kb_set_generation(self, total_questions: int) -> bool:
+        """Skip per-question progressive calls for KB-backed quizzes.
+
+        With a selected KB, retrieval already happened during ideation and each
+        template carries its knowledge context. Generating the full set in one
+        structured call avoids the slow first-three single-call warmup that made
+        KB-backed practice feel stuck on later questions.
+        """
+        return bool(self.kb_name) and total_questions > 1
 
     async def _parse_exam_to_templates(
         self,
