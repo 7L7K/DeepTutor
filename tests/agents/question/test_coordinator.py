@@ -19,23 +19,33 @@ def _stub_config(monkeypatch: pytest.MonkeyPatch) -> None:
 
 class FakeIdeaAgent:
     calls = 0
+    retrieval_calls = 0
+
+    async def retrieve_context_for_topic(self, user_topic: str, **kwargs):
+        type(self).retrieval_calls += 1
+        return {
+            "retrievals": [{"query": user_topic, "answer": "KB context"}],
+            "knowledge_context": "KB context",
+            "retrieval_queries": [user_topic],
+        }
 
     async def process(self, **kwargs):
         type(self).calls += 1
+        num_ideas = int(kwargs.get("num_ideas") or 2)
+        candidates = [
+            ("core conditions", "choice", "medium"),
+            ("group dynamics", "choice", "medium"),
+            ("career development", "choice", "medium"),
+        ]
         return {
             "templates": [
                 QuestionTemplate(
                     question_id="",
-                    concentration="core conditions",
-                    question_type="choice",
-                    difficulty="medium",
-                ),
-                QuestionTemplate(
-                    question_id="",
-                    concentration="group dynamics",
-                    question_type="choice",
-                    difficulty="medium",
-                ),
+                    concentration=concentration,
+                    question_type=question_type,
+                    difficulty=difficulty,
+                )
+                for concentration, question_type, difficulty in candidates[:num_ideas]
             ],
             "knowledge_context": "stub context",
         }
@@ -81,8 +91,17 @@ class FakeGenerator:
 
 
 class StubCoordinator(AgentCoordinator):
-    def __init__(self, tmp_path: Path, kb_name: str | None = None) -> None:
-        super().__init__(output_dir=str(tmp_path), enable_idea_rag=False, kb_name=kb_name)
+    def __init__(
+        self,
+        tmp_path: Path,
+        kb_name: str | None = None,
+        enable_idea_rag: bool = False,
+    ) -> None:
+        super().__init__(
+            output_dir=str(tmp_path),
+            enable_idea_rag=enable_idea_rag,
+            kb_name=kb_name,
+        )
 
     def _create_idea_agent(self):  # type: ignore[override]
         return FakeIdeaAgent()
@@ -120,6 +139,7 @@ def test_coordinator_generate_from_topic_uses_direct_templates_by_default(tmp_pa
 
 def test_kb_backed_quiz_generation_streams_first_question_before_set(tmp_path: Path) -> None:
     FakeIdeaAgent.calls = 0
+    FakeIdeaAgent.retrieval_calls = 0
     FakeGenerator.single_calls = 0
     FakeGenerator.set_calls = 0
     coordinator = StubCoordinator(tmp_path, kb_name="tester-1__nce-2026")
@@ -138,9 +158,43 @@ def test_kb_backed_quiz_generation_streams_first_question_before_set(tmp_path: P
     assert len(summary["results"]) == 2
     assert summary["trace"].get("ideation_skipped") is not True
     assert FakeIdeaAgent.calls == 1
+    assert FakeIdeaAgent.retrieval_calls == 0
     assert FakeGenerator.single_calls == 1
     assert FakeGenerator.set_calls == 1
     assert summary["results"][0]["qa_pair"]["metadata"]["generation_mode"] == "progressive_single"
+    assert summary["results"][1]["qa_pair"]["metadata"]["generation_mode"] == "quiz_set"
+
+
+def test_kb_backed_quiz_streams_direct_grounded_first_question_before_ideation(tmp_path: Path) -> None:
+    FakeIdeaAgent.calls = 0
+    FakeIdeaAgent.retrieval_calls = 0
+    FakeGenerator.single_calls = 0
+    FakeGenerator.set_calls = 0
+    coordinator = StubCoordinator(
+        tmp_path,
+        kb_name="tester-1__nce-2026",
+        enable_idea_rag=True,
+    )
+
+    summary = asyncio.run(
+        coordinator.generate_from_topic(
+            user_topic="NCE review",
+            preference="use the KB",
+            num_questions=2,
+            difficulty="medium",
+            question_type="choice",
+        )
+    )
+
+    assert summary["success"] is True
+    assert len(summary["results"]) == 2
+    assert FakeIdeaAgent.retrieval_calls == 1
+    assert FakeIdeaAgent.calls == 1
+    assert FakeGenerator.single_calls == 1
+    assert FakeGenerator.set_calls == 1
+    assert summary["results"][0]["template"]["metadata"]["direct_streamed_first"] is True
+    assert summary["results"][0]["template"]["metadata"]["knowledge_context"] == "KB context"
+    assert summary["results"][0]["qa_pair"]["metadata"]["generation_mode"] == "direct_kb_first"
     assert summary["results"][1]["qa_pair"]["metadata"]["generation_mode"] == "quiz_set"
 
 
@@ -149,6 +203,7 @@ def test_kb_backed_progressive_first_batch_can_be_disabled(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     FakeIdeaAgent.calls = 0
+    FakeIdeaAgent.retrieval_calls = 0
     FakeGenerator.single_calls = 0
     FakeGenerator.set_calls = 0
     monkeypatch.setenv("PRACTICE_QUIZ_PROGRESSIVE_FIRST_BATCH", "0")
