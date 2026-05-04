@@ -9,6 +9,7 @@ Simplified architecture:
 
 from __future__ import annotations
 
+import asyncio
 from collections.abc import Callable
 from datetime import datetime
 import json
@@ -18,16 +19,13 @@ from pathlib import Path
 import time
 from typing import Any
 
-from deeptutor.agents.question.agents.generator import Generator
-from deeptutor.agents.question.agents.idea_agent import BATCH_SIZE, IdeaAgent
 from deeptutor.agents.question.models import QAPair, QuestionTemplate
 from deeptutor.services.config import PROJECT_ROOT, load_config_with_main
 from deeptutor.services.path_service import get_path_service
-from deeptutor.tools.question.pdf_parser import parse_pdf_with_mineru
-from deeptutor.tools.question.question_extractor import extract_questions_from_paper
 
 
-PROGRESSIVE_QUIZ_FIRST_BATCH = 3
+DEFAULT_KB_PROGRESSIVE_QUIZ_FIRST_BATCH = 1
+IDEA_BATCH_SIZE = 10
 
 
 class AgentCoordinator:
@@ -87,6 +85,8 @@ class AgentCoordinator:
                 self.logger.debug(f"WS update failed: {exc}")
 
     def _create_idea_agent(self) -> IdeaAgent:
+        from deeptutor.agents.question.agents.idea_agent import IdeaAgent
+
         agent = IdeaAgent(
             kb_name=self.kb_name,
             enable_rag=self.enable_idea_rag,
@@ -100,6 +100,8 @@ class AgentCoordinator:
         return agent
 
     def _create_generator(self) -> Generator:
+        from deeptutor.agents.question.agents.generator import Generator
+
         agent = Generator(
             kb_name=self.kb_name,
             language=self.language,
@@ -125,6 +127,45 @@ class AgentCoordinator:
         started_at = time.perf_counter()
         self._current_batch_dir = self._create_batch_dir("custom")
         requested = max(1, int(num_questions or 1))
+        if self._should_skip_topic_ideation():
+            templates = self._build_direct_topic_templates(
+                user_topic=user_topic,
+                requested=requested,
+                difficulty=difficulty,
+                question_type=question_type,
+            )
+            await self._send_ws_update(
+                "templates_ready",
+                {
+                    "stage": "ideation",
+                    "count": len(templates),
+                    "generated_total": len(templates),
+                    "requested_total": requested,
+                    "templates": [t.__dict__ for t in templates],
+                    "skipped": True,
+                },
+            )
+            generation_started_at = time.perf_counter()
+            qa_pairs = await self._generation_loop(
+                templates=templates,
+                user_topic=user_topic,
+                preference=preference,
+                history_context=history_context,
+            )
+            generation_elapsed = time.perf_counter() - generation_started_at
+            self.logger.info(
+                f"Practice quiz direct generation complete: requested={requested} "
+                f"questions={len(qa_pairs)} generation_elapsed={generation_elapsed:.2f}s "
+                f"total_elapsed={time.perf_counter() - started_at:.2f}s"
+            )
+            return self._build_summary(
+                source="topic",
+                requested=requested,
+                templates=templates,
+                qa_pairs=qa_pairs,
+                trace={"ideation_skipped": True, "batches": []},
+            )
+
         idea_agent = self._create_idea_agent()
         templates: list[QuestionTemplate] = []
         batch_trace: list[dict[str, Any]] = []
@@ -146,7 +187,7 @@ class AgentCoordinator:
         batch_number = 0
         while len(templates) < requested:
             batch_number += 1
-            batch_size = min(BATCH_SIZE, requested - len(templates))
+            batch_size = min(IDEA_BATCH_SIZE, requested - len(templates))
             await self._send_ws_update(
                 "progress",
                 {
@@ -333,14 +374,69 @@ class AgentCoordinator:
         accepted_questions: list[str] = []
         started_at = time.perf_counter()
         first_ready_at: float | None = None
-        progressive_count = 0 if self._should_use_fast_kb_set_generation(total) else min(
-            PROGRESSIVE_QUIZ_FIRST_BATCH,
-            total,
-        )
+        progressive_count = self._progressive_first_batch_size(total)
         if progressive_count == 0 and total:
             self.logger.info(
-                f"Using fast KB-backed quiz-set generation: kb={self.kb_name} questions={total}"
+                f"Using fast quiz-set generation: kb={self.kb_name or '(none)'} questions={total}"
             )
+
+        if self._should_use_parallel_direct_generation(templates):
+            await self._send_ws_update(
+                "progress",
+                {
+                    "stage": "generation",
+                    "status": "building_parallel_questions",
+                    "current": 0,
+                    "total": total,
+                },
+            )
+
+            async def build_single(
+                idx: int,
+                template: QuestionTemplate,
+            ) -> tuple[int, QuestionTemplate, QAPair]:
+                try:
+                    qa_pair = await generator.process(
+                        template=template,
+                        user_topic=user_topic,
+                        preference=preference,
+                        history_context=history_context,
+                        previous_questions=[],
+                    )
+                except Exception as exc:
+                    self.logger.warning(f"Parallel question generation failed: {exc}")
+                    qa_pair = QAPair(
+                        question_id=template.question_id,
+                        question=f"[Generation failed] {template.concentration}",
+                        correct_answer="N/A",
+                        explanation=str(exc),
+                        question_type=template.question_type,
+                        concentration=template.concentration,
+                        difficulty=template.difficulty,
+                        metadata={"error": str(exc), "generation_mode": "parallel_single"},
+                    )
+                return idx, template, qa_pair
+
+            built_questions = await asyncio.gather(
+                *[
+                    build_single(idx, template)
+                    for idx, template in enumerate(templates, 1)
+                ]
+            )
+            for idx, template, qa_pair in sorted(built_questions, key=lambda item: item[0]):
+                if first_ready_at is None:
+                    first_ready_at = time.perf_counter() - started_at
+                await emit_result(idx, template, qa_pair)
+
+            await self._send_ws_update(
+                "progress",
+                {"stage": "complete", "completed": len(results), "total": total},
+            )
+            self.logger.info(
+                f"Quiz parallel generation completed: first_ready={first_ready_at or 0.0:.2f}s "
+                f"total={time.perf_counter() - started_at:.2f}s questions={len(results)}"
+            )
+            return results
 
         for idx, template in enumerate(templates[:progressive_count], 1):
             await self._send_ws_update(
@@ -448,15 +544,103 @@ class AgentCoordinator:
         )
         return results
 
-    def _should_use_fast_kb_set_generation(self, total_questions: int) -> bool:
-        """Skip per-question progressive calls for KB-backed quizzes.
+    def _progressive_first_batch_size(self, total_questions: int) -> int:
+        """Return how many questions should stream before the remaining set call.
 
-        With a selected KB, retrieval already happened during ideation and each
-        template carries its knowledge context. Generating the full set in one
-        structured call avoids the slow first-three single-call warmup that made
-        KB-backed practice feel stuck on later questions.
+        Topic-only quizzes stay on the single set call because they are already
+        much faster. KB-backed quizzes need a first usable question quickly so
+        the Practice page is not blank while the grounded set finishes.
         """
-        return bool(self.kb_name) and total_questions > 1
+        if total_questions <= 1:
+            return 0
+
+        raw = os.getenv("PRACTICE_QUIZ_PROGRESSIVE_FIRST_BATCH", "").strip().lower()
+        if raw in {"0", "false", "no", "off", "none"}:
+            configured = 0
+        elif raw:
+            try:
+                configured = int(raw)
+            except ValueError:
+                configured = DEFAULT_KB_PROGRESSIVE_QUIZ_FIRST_BATCH if self.kb_name else 0
+        else:
+            configured = DEFAULT_KB_PROGRESSIVE_QUIZ_FIRST_BATCH if self.kb_name else 0
+        return min(max(0, configured), total_questions)
+
+    @staticmethod
+    def _should_use_parallel_direct_generation(templates: list[QuestionTemplate]) -> bool:
+        raw = os.getenv("PRACTICE_QUIZ_PARALLEL_DIRECT", "").strip().lower()
+        if not raw:
+            return False
+        if raw in {"0", "false", "no", "off"}:
+            return False
+        return len(templates) > 1 and all(
+            bool((template.metadata or {}).get("ideation_skipped"))
+            for template in templates
+        )
+
+    def _should_skip_topic_ideation(self) -> bool:
+        raw = os.getenv("PRACTICE_QUIZ_SKIP_IDEATION", "").strip().lower()
+        if raw in {"0", "false", "no", "off", "ideation"}:
+            return False
+        if raw in {"always", "force"}:
+            return True
+        if raw in {"1", "true", "yes", "on", "direct"}:
+            return not bool(self.kb_name)
+        return not bool(self.kb_name)
+
+    @staticmethod
+    def _build_direct_topic_templates(
+        *,
+        user_topic: str,
+        requested: int,
+        difficulty: str,
+        question_type: str,
+    ) -> list[QuestionTemplate]:
+        normalized_difficulty = difficulty.strip().lower()
+        normalized_question_type = question_type.strip().lower()
+        resolved_difficulty = (
+            normalized_difficulty
+            if normalized_difficulty and normalized_difficulty != "auto"
+            else "medium"
+        )
+        resolved_question_type = (
+            normalized_question_type
+            if normalized_question_type and normalized_question_type != "auto"
+            else "choice"
+        )
+        topic = user_topic.strip() or "target study topic"
+        lenses = [
+            "best next counselor action",
+            "ethical priority",
+            "boundary decision",
+            "risk and documentation judgment",
+            "supervision or consultation response",
+            "client welfare and informed consent",
+            "case application",
+            "common distractor distinction",
+            "policy and professional-role judgment",
+            "follow-up intervention",
+        ]
+        templates: list[QuestionTemplate] = []
+        for idx in range(1, requested + 1):
+            lens = lenses[(idx - 1) % len(lenses)]
+            templates.append(
+                QuestionTemplate(
+                    question_id=f"q_{idx}",
+                    concentration=f"{topic} - {lens}",
+                    question_type=resolved_question_type,
+                    difficulty=resolved_difficulty,
+                    source="custom",
+                    metadata={
+                        "idea_id": f"direct_{idx}",
+                        "rationale": "Direct template generated to avoid a separate ideation LLM call.",
+                        "knowledge_context": "Retrieval disabled.",
+                        "retrieval_queries": [],
+                        "ideation_skipped": True,
+                    },
+                )
+            )
+        return templates
 
     async def _parse_exam_to_templates(
         self,
@@ -464,7 +648,12 @@ class AgentCoordinator:
         max_questions: int,
         paper_mode: str,
     ) -> tuple[list[QuestionTemplate], dict[str, Any]]:
-        await self._send_ws_update("progress", {"stage": "parsing", "status": "running"})
+        from deeptutor.tools.question.pdf_parser import parse_pdf_with_mineru
+        from deeptutor.tools.question.question_extractor import extract_questions_from_paper
+
+        await self._send_ws_update(
+            "progress", {"stage": "parsing", "status": "running"}
+        )
 
         paper_path = Path(exam_paper_path)
         output_base = (

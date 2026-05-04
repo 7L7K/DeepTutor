@@ -18,7 +18,10 @@ def _stub_config(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 class FakeIdeaAgent:
+    calls = 0
+
     async def process(self, **kwargs):
+        type(self).calls += 1
         return {
             "templates": [
                 QuestionTemplate(
@@ -42,59 +45,39 @@ class FakeGenerator:
     single_calls = 0
     set_calls = 0
 
-    _pairs = [
-        QAPair(
-            question_id="q_1",
-            question="Which response best demonstrates unconditional positive regard?",
-            correct_answer="A",
-            explanation="Acceptance without judgment fits unconditional positive regard.",
-            question_type="choice",
-            options={
-                "A": "Offering acceptance without judgment",
-                "B": "Interpreting resistance immediately",
-                "C": "Redirecting away from feelings",
-                "D": "Assigning a diagnosis first",
-            },
-            concentration="core conditions",
-            difficulty="medium",
-            validation={"schema_ok": True, "repaired": False, "issues": []},
-            metadata={"generation_mode": "quiz_set"},
-        ),
-        QAPair(
-            question_id="q_2",
-            question="A counseling group is becoming dominated by one member. What should the facilitator do first?",
-            correct_answer="B",
-            explanation="The facilitator should rebalance participation while keeping the group process visible.",
-            question_type="choice",
-            options={
-                "A": "Ignore it so the group self-corrects",
-                "B": "Name the pattern and invite quieter members in",
-                "C": "End the group early",
-                "D": "Remove the dominant member immediately",
-            },
-            concentration="group dynamics",
-            difficulty="medium",
-            validation={"schema_ok": True, "repaired": False, "issues": []},
-            metadata={"generation_mode": "quiz_set"},
-        ),
-    ]
-
     async def process(self, **kwargs):
         type(self).single_calls += 1
         template = kwargs["template"]
-        index = max(0, int(str(template.question_id).split("_")[-1]) - 1)
-        pair = self._pairs[index]
         return QAPair(
-            **{
-                **pair.__dict__,
-                "question": f"Single question for {template.concentration}",
-                "metadata": {"generation_mode": "progressive_single"},
-            }
+            question_id=template.question_id,
+            question=f"Single question for {template.concentration}",
+            correct_answer="A",
+            explanation="single",
+            question_type=template.question_type,
+            options={"A": "Correct", "B": "Wrong", "C": "Wrong", "D": "Wrong"},
+            concentration=template.concentration,
+            difficulty=template.difficulty,
+            validation={"schema_ok": True, "repaired": False, "issues": []},
+            metadata={"generation_mode": "progressive_single"},
         )
 
     async def process_quiz_set(self, **kwargs):
         type(self).set_calls += 1
-        return self._pairs
+        return [
+            QAPair(
+                question_id=template.question_id,
+                question=f"Set question for {template.concentration}",
+                correct_answer="A",
+                explanation="set",
+                question_type=template.question_type,
+                options={"A": "Correct", "B": "Wrong", "C": "Wrong", "D": "Wrong"},
+                concentration=template.concentration,
+                difficulty=template.difficulty,
+                validation={"schema_ok": True, "repaired": False, "issues": []},
+                metadata={"generation_mode": "quiz_set"},
+            )
+            for template in kwargs["templates"]
+        ]
 
 
 class StubCoordinator(AgentCoordinator):
@@ -108,7 +91,8 @@ class StubCoordinator(AgentCoordinator):
         return FakeGenerator()
 
 
-def test_coordinator_generate_from_topic_preserves_summary_results_contract(tmp_path: Path) -> None:
+def test_coordinator_generate_from_topic_uses_direct_templates_by_default(tmp_path: Path) -> None:
+    FakeIdeaAgent.calls = 0
     FakeGenerator.single_calls = 0
     FakeGenerator.set_calls = 0
     coordinator = StubCoordinator(tmp_path)
@@ -128,11 +112,14 @@ def test_coordinator_generate_from_topic_preserves_summary_results_contract(tmp_
     assert len(summary["results"]) == 2
     assert summary["results"][0]["qa_pair"]["question_id"] == "q_1"
     assert summary["results"][1]["qa_pair"]["question"]
-    assert FakeGenerator.single_calls == 2
-    assert FakeGenerator.set_calls == 0
+    assert summary["trace"]["ideation_skipped"] is True
+    assert FakeIdeaAgent.calls == 0
+    assert FakeGenerator.single_calls == 0
+    assert FakeGenerator.set_calls == 1
 
 
-def test_kb_backed_quiz_generation_skips_progressive_single_calls(tmp_path: Path) -> None:
+def test_kb_backed_quiz_generation_streams_first_question_before_set(tmp_path: Path) -> None:
+    FakeIdeaAgent.calls = 0
     FakeGenerator.single_calls = 0
     FakeGenerator.set_calls = 0
     coordinator = StubCoordinator(tmp_path, kb_name="tester-1__nce-2026")
@@ -149,5 +136,61 @@ def test_kb_backed_quiz_generation_skips_progressive_single_calls(tmp_path: Path
 
     assert summary["success"] is True
     assert len(summary["results"]) == 2
+    assert summary["trace"].get("ideation_skipped") is not True
+    assert FakeIdeaAgent.calls == 1
+    assert FakeGenerator.single_calls == 1
+    assert FakeGenerator.set_calls == 1
+    assert summary["results"][0]["qa_pair"]["metadata"]["generation_mode"] == "progressive_single"
+    assert summary["results"][1]["qa_pair"]["metadata"]["generation_mode"] == "quiz_set"
+
+
+def test_kb_backed_progressive_first_batch_can_be_disabled(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    FakeIdeaAgent.calls = 0
+    FakeGenerator.single_calls = 0
+    FakeGenerator.set_calls = 0
+    monkeypatch.setenv("PRACTICE_QUIZ_PROGRESSIVE_FIRST_BATCH", "0")
+    coordinator = StubCoordinator(tmp_path, kb_name="tester-1__nce-2026")
+
+    summary = asyncio.run(
+        coordinator.generate_from_topic(
+            user_topic="NCE review",
+            preference="use the KB",
+            num_questions=2,
+            difficulty="medium",
+            question_type="choice",
+        )
+    )
+
+    assert summary["success"] is True
+    assert FakeIdeaAgent.calls == 1
+    assert FakeGenerator.single_calls == 0
+    assert FakeGenerator.set_calls == 1
+
+
+def test_topic_quiz_can_skip_ideation_with_direct_templates(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    FakeGenerator.single_calls = 0
+    FakeGenerator.set_calls = 0
+    monkeypatch.setenv("PRACTICE_QUIZ_SKIP_IDEATION", "true")
+    coordinator = StubCoordinator(tmp_path)
+
+    summary = asyncio.run(
+        coordinator.generate_from_topic(
+            user_topic="NCE ethics boundaries",
+            preference="diagnostic",
+            num_questions=2,
+            difficulty="medium",
+            question_type="choice",
+        )
+    )
+
+    assert summary["success"] is True
+    assert summary["trace"]["ideation_skipped"] is True
+    assert summary["results"][0]["template"]["metadata"]["ideation_skipped"] is True
     assert FakeGenerator.single_calls == 0
     assert FakeGenerator.set_calls == 1
