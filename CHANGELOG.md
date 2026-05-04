@@ -50,6 +50,7 @@
 - flashcards: default OpenAI GPT-5 flashcard generation to the Responses structured-output path with a chat-completions fallback.
 - quiz generation: keep parallel direct generation and Responses structured output behind opt-in flags after live timing showed the direct-template chat path was faster and steadier.
 - quiz generation: stream the first KB-backed Practice quiz question before the remaining set call so the quiz page becomes usable while grounded generation continues.
+- quiz generation: build the first KB-backed Practice question from retrieved context before the template ideation call so the first visible question is no longer blocked on full planning.
 - access: require signed tester identity for Practice attempts, Flashcards, Question Notebook entries, and Knowledge management APIs.
 - knowledge: namespace tester-created knowledge bases internally while keeping public KB names clean in the UI.
 - web api: send credentials on protected Chat, Practice, Flashcards, and Knowledge requests so the HttpOnly tester cookie works from the local frontend.

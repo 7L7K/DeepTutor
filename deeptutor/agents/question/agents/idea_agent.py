@@ -48,19 +48,28 @@ class IdeaAgent(BaseAgent):
         target_question_type: str = "",
         existing_concentrations: list[str] | None = None,
         batch_number: int | None = None,
+        knowledge_context_override: str | None = None,
+        retrieval_queries_override: list[str] | None = None,
     ) -> dict[str, Any]:
         """
         Build grounded question templates in a single pass.
         """
         batch_size = max(1, min(int(num_ideas or 1), BATCH_SIZE))
         trace_id = f"batch-{batch_number}" if batch_number is not None else "ideation"
-        if self.enable_rag and self.kb_name:
-            retrievals = await self._retrieve_context(
+        if knowledge_context_override is not None:
+            retrievals = [
+                {"query": query, "answer": "", "provider": "preloaded"}
+                for query in (retrieval_queries_override or [])
+            ]
+            knowledge_context = knowledge_context_override
+        elif self.enable_rag and self.kb_name:
+            context_result = await self.retrieve_context_for_topic(
                 user_topic,
                 trace_id=trace_id,
                 batch_number=batch_number,
             )
-            knowledge_context = self._build_context(retrievals)
+            retrievals = context_result["retrievals"]
+            knowledge_context = context_result["knowledge_context"]
         else:
             retrievals = []
             knowledge_context = "Retrieval disabled."
@@ -84,6 +93,25 @@ class IdeaAgent(BaseAgent):
             "retrievals": retrievals,
             "knowledge_context": knowledge_context,
             "batch_size": batch_size,
+        }
+
+    async def retrieve_context_for_topic(
+        self,
+        user_topic: str,
+        trace_id: str,
+        batch_number: int | None = None,
+    ) -> dict[str, Any]:
+        retrievals = await self._retrieve_context(
+            user_topic,
+            trace_id=trace_id,
+            batch_number=batch_number,
+        )
+        return {
+            "retrievals": retrievals,
+            "knowledge_context": self._build_context(retrievals),
+            "retrieval_queries": [
+                item.get("query", "") for item in retrievals if isinstance(item, dict)
+            ],
         }
 
     async def _retrieve_context(
