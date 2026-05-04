@@ -88,7 +88,16 @@ function buildPracticeIntro(config: DeepQuestionFormConfig, examMode: boolean, t
 }
 
 function quizQuestionFromStreamEvent(event: StreamEvent): QuizQuestion | null {
-  const payload = (event as StreamEvent & { question?: Record<string, unknown> }).question;
+  const directPayload = (event as StreamEvent & { question?: Record<string, unknown> }).question;
+  const metadataPayload =
+    event.metadata &&
+    typeof event.metadata === "object" &&
+    "question" in event.metadata &&
+    event.metadata.question &&
+    typeof event.metadata.question === "object"
+      ? (event.metadata.question as Record<string, unknown>)
+      : undefined;
+  const payload = directPayload ?? metadataPayload;
   if (!payload || typeof payload !== "object" || !payload.question) return null;
   return {
     question_id: String(payload.question_id ?? `practice_q_${Date.now()}`),
@@ -445,12 +454,12 @@ export default function PracticeWorkspace() {
           config,
         },
         (event) => {
-          if (event.type === "result") {
+          const streamedQuestion = quizQuestionFromStreamEvent(event);
+          if (streamedQuestion) {
             readyQuestionCount += 1;
-            const question = quizQuestionFromStreamEvent(event);
-            if (question && !examMode && !streamingQuestionIds.has(question.question_id)) {
-              streamingQuestionIds.add(question.question_id);
-              streamingQuestions.push(question);
+            if (!examMode && !streamingQuestionIds.has(streamedQuestion.question_id)) {
+              streamingQuestionIds.add(streamedQuestion.question_id);
+              streamingQuestions.push(streamedQuestion);
               setActiveQuiz({
                 title: buildPracticeTitle(quizConfig),
                 intro: `${buildPracticeIntro(quizConfig, examMode, timerMinutes)} ${streamingQuestions.length}/${quizConfig.num_questions} ready. You can start now; submit unlocks when the full quiz is saved.`,

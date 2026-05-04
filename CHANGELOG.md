@@ -40,7 +40,16 @@
 - web chat: add tutor action chips under coaching replies so learners can tap `Quiz me`, `Explain simpler`, `Make flashcards`, or `Review weak spots` without retyping follow-up prompts.
 
 ### Changed
-- quiz generation: use one structured quiz-set generation call for KB-backed Practice quizzes after retrieval/template planning, skipping the slow first-three per-question generation path.
+- practice mode: make flashcard source badges visible across setup, overview, and study, and give missed-only review its own completion framing with the saved coach review.
+- flashcards: add stage-level generation diagnostics and an experimental `FLASHCARD_USE_RESPONSES` path for OpenAI Responses API structured-output benchmarking on KB-backed decks.
+- quiz generation: use one structured quiz-set generation call for generated Practice quizzes after template planning, skipping the slow first-three per-question generation path for topic and KB-backed quizzes.
+- flashcards: add a dedicated `FLASHCARD_GENERATION_MODEL` override so deck generation can use a faster model without changing the global chat model.
+- quiz generation: add low-reasoning and optional direct-template fast paths so GPT-5-mini quizzes can skip the separate ideation LLM call without falling back to GPT-4o.
+- flashcards: pass `FLASHCARD_GENERATION_REASONING_EFFORT` through generation calls so GPT-5-mini flashcards can return starter cards faster.
+- quiz generation: default topic-only Practice quiz creation to direct templates plus one GPT-5-mini quiz-set call, while keeping KB-backed quizzes on the grounded ideation path.
+- flashcards: default OpenAI GPT-5 flashcard generation to the Responses structured-output path with a chat-completions fallback.
+- quiz generation: keep parallel direct generation and Responses structured output behind opt-in flags after live timing showed the direct-template chat path was faster and steadier.
+- quiz generation: stream the first KB-backed Practice quiz question before the remaining set call so the quiz page becomes usable while grounded generation continues.
 - access: require signed tester identity for Practice attempts, Flashcards, Question Notebook entries, and Knowledge management APIs.
 - knowledge: namespace tester-created knowledge bases internally while keeping public KB names clean in the UI.
 - web api: send credentials on protected Chat, Practice, Flashcards, and Knowledge requests so the HttpOnly tester cookie works from the local frontend.

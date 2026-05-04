@@ -23,6 +23,7 @@ rsync -az --delete \
   --exclude='__pycache__' \
   --exclude='*.pyc' \
   --exclude='.pytest_cache' \
+  --exclude='.uv-cache' \
   --exclude='.ruff_cache' \
   --exclude='.mypy_cache' \
   --exclude='.env' \
