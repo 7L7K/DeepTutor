@@ -25,7 +25,7 @@ from deeptutor.services.path_service import get_path_service
 
 
 DEFAULT_KB_PROGRESSIVE_QUIZ_FIRST_BATCH = 1
-DEFAULT_KB_PROGRESSIVE_WARMUP_COUNT = 5
+DEFAULT_KB_STARTER_PAGE_SIZE = 5
 IDEA_BATCH_SIZE = 10
 DEFAULT_REMAINING_QUIZ_BATCH_SIZE = 10
 DEFAULT_REMAINING_QUIZ_CONCURRENCY = 2
@@ -586,44 +586,43 @@ class AgentCoordinator:
         remaining_templates = templates[progressive_count:]
         warmup_count = 0
         streamed_before_warmup = progressive_count + external_streamed_count
+        starter_page_count = 0
         if streamed_before_warmup:
-            warmup_count = self._progressive_warmup_extra_count(
+            starter_page_count = self._starter_page_extra_count(
                 total + external_streamed_count,
                 streamed_before_warmup,
             )
-            warmup_count = min(warmup_count, len(remaining_templates))
-        if warmup_count:
-            warmup_templates = remaining_templates[:warmup_count]
+            starter_page_count = min(starter_page_count, len(remaining_templates))
+        if starter_page_count:
+            starter_templates = remaining_templates[:starter_page_count]
             await self._send_ws_update(
                 "progress",
                 {
                     "stage": "generation",
-                    "status": "building_streamed_warmup",
+                    "status": "building_starter_page",
                     "current": len(results),
                     "total": total,
-                    "warmup_count": len(warmup_templates),
+                    "page_size": len(starter_templates),
                 },
             )
+            starter_history_context = history_context
+            if accepted_questions:
+                starter_history_context = (
+                    f"{history_context}\n\nAlready generated questions to avoid duplicating:\n"
+                    + "\n".join(f"- {question}" for question in accepted_questions)
+                ).strip()
 
-            async def build_warmup_single(
-                idx: int,
-                template: QuestionTemplate,
-            ) -> tuple[int, QuestionTemplate, QAPair]:
-                try:
-                    qa_pair = await generator.process(
-                        template=template,
-                        user_topic=user_topic,
-                        preference=preference,
-                        history_context=history_context,
-                        previous_questions=accepted_questions,
-                    )
-                    qa_pair.metadata = {
-                        **(qa_pair.metadata or {}),
-                        "generation_mode": "progressive_warmup_single",
-                    }
-                except Exception as exc:
-                    self.logger.warning(f"Warmup question generation failed: {exc}")
-                    qa_pair = QAPair(
+            try:
+                starter_pairs = await generator.process_quiz_set(
+                    templates=starter_templates,
+                    user_topic=user_topic,
+                    preference=preference,
+                    history_context=starter_history_context,
+                )
+            except Exception as exc:
+                self.logger.warning(f"Starter page generation failed: {exc}")
+                starter_pairs = [
+                    QAPair(
                         question_id=template.question_id,
                         question=f"[Generation failed] {template.concentration}",
                         correct_answer="N/A",
@@ -631,41 +630,26 @@ class AgentCoordinator:
                         question_type=template.question_type,
                         concentration=template.concentration,
                         difficulty=template.difficulty,
-                        metadata={
-                            "error": str(exc),
-                            "generation_mode": "progressive_warmup_single",
-                        },
+                        metadata={"error": str(exc), "generation_mode": "starter_page"},
                     )
-                return idx, template, qa_pair
+                    for template in starter_templates
+                ]
 
-            pending_warmup = {
-                asyncio.create_task(
-                    build_warmup_single(progressive_count + offset, template)
-                ): progressive_count + offset
-                for offset, template in enumerate(warmup_templates, 1)
-            }
-            completed_warmup: dict[int, tuple[QuestionTemplate, QAPair]] = {}
-            next_warmup_to_emit = progressive_count + 1
+            for offset, (template, qa_pair) in enumerate(
+                zip(starter_templates, starter_pairs, strict=False),
+                progressive_count + 1,
+            ):
+                qa_pair.metadata = {
+                    **(qa_pair.metadata or {}),
+                    "generation_mode": "starter_page",
+                }
+                await emit_result(offset, template, qa_pair)
+                question_text = str(qa_pair.question or "").strip()
+                if question_text and not (qa_pair.metadata or {}).get("error"):
+                    accepted_questions.append(question_text)
 
-            while pending_warmup:
-                done, _pending = await asyncio.wait(
-                    pending_warmup.keys(),
-                    return_when=asyncio.FIRST_COMPLETED,
-                )
-                for task in done:
-                    pending_warmup.pop(task, None)
-                    idx, template, qa_pair = task.result()
-                    completed_warmup[idx] = (template, qa_pair)
-
-                while next_warmup_to_emit in completed_warmup:
-                    template, qa_pair = completed_warmup.pop(next_warmup_to_emit)
-                    await emit_result(next_warmup_to_emit, template, qa_pair)
-                    question_text = str(qa_pair.question or "").strip()
-                    if question_text and not (qa_pair.metadata or {}).get("error"):
-                        accepted_questions.append(question_text)
-                    next_warmup_to_emit += 1
-
-            remaining_templates = remaining_templates[warmup_count:]
+            warmup_count = starter_page_count
+            remaining_templates = remaining_templates[starter_page_count:]
 
         if remaining_templates:
             remaining_start_index = progressive_count + warmup_count
@@ -887,23 +871,23 @@ class AgentCoordinator:
             return 0
         return min(1, self._progressive_first_batch_size(total_questions))
 
-    def _progressive_warmup_extra_count(
+    def _starter_page_extra_count(
         self,
         total_questions: int,
         already_streamed: int,
     ) -> int:
         if not self.kb_name or total_questions <= already_streamed:
             return 0
-        raw = os.getenv("PRACTICE_QUIZ_PROGRESSIVE_WARMUP_COUNT", "").strip().lower()
+        raw = os.getenv("PRACTICE_QUIZ_STARTER_PAGE_SIZE", "").strip().lower()
         if raw in {"0", "false", "no", "off", "none"}:
-            target = already_streamed
-        elif raw:
+            return 0
+        if raw:
             try:
                 target = int(raw)
             except ValueError:
-                target = DEFAULT_KB_PROGRESSIVE_WARMUP_COUNT
+                target = DEFAULT_KB_STARTER_PAGE_SIZE
         else:
-            target = DEFAULT_KB_PROGRESSIVE_WARMUP_COUNT
+            target = DEFAULT_KB_STARTER_PAGE_SIZE
         target = min(max(0, target), total_questions, 10)
         return max(0, target - already_streamed)
 
