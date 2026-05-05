@@ -25,6 +25,7 @@ from deeptutor.services.path_service import get_path_service
 
 
 DEFAULT_KB_PROGRESSIVE_QUIZ_FIRST_BATCH = 1
+DEFAULT_KB_PROGRESSIVE_WARMUP_COUNT = 5
 IDEA_BATCH_SIZE = 10
 DEFAULT_REMAINING_QUIZ_BATCH_SIZE = 10
 DEFAULT_REMAINING_QUIZ_CONCURRENCY = 2
@@ -380,6 +381,7 @@ class AgentCoordinator:
             preference=preference,
             history_context=history_context,
             progressive_count_override=0 if early_results else None,
+            external_streamed_count=len(early_results),
         )
         qa_pairs = [*early_results, *remaining_pairs]
         generation_elapsed = time.perf_counter() - generation_started_at
@@ -445,6 +447,7 @@ class AgentCoordinator:
         preference: str,
         history_context: str = "",
         progressive_count_override: int | None = None,
+        external_streamed_count: int = 0,
     ) -> list[dict[str, Any]]:
         generator = self._create_generator()
         results: list[dict[str, Any]] = []
@@ -581,7 +584,91 @@ class AgentCoordinator:
             await emit_result(idx, template, qa_pair)
 
         remaining_templates = templates[progressive_count:]
+        warmup_count = 0
+        streamed_before_warmup = progressive_count + external_streamed_count
+        if streamed_before_warmup:
+            warmup_count = self._progressive_warmup_extra_count(
+                total + external_streamed_count,
+                streamed_before_warmup,
+            )
+            warmup_count = min(warmup_count, len(remaining_templates))
+        if warmup_count:
+            warmup_templates = remaining_templates[:warmup_count]
+            await self._send_ws_update(
+                "progress",
+                {
+                    "stage": "generation",
+                    "status": "building_streamed_warmup",
+                    "current": len(results),
+                    "total": total,
+                    "warmup_count": len(warmup_templates),
+                },
+            )
+
+            async def build_warmup_single(
+                idx: int,
+                template: QuestionTemplate,
+            ) -> tuple[int, QuestionTemplate, QAPair]:
+                try:
+                    qa_pair = await generator.process(
+                        template=template,
+                        user_topic=user_topic,
+                        preference=preference,
+                        history_context=history_context,
+                        previous_questions=accepted_questions,
+                    )
+                    qa_pair.metadata = {
+                        **(qa_pair.metadata or {}),
+                        "generation_mode": "progressive_warmup_single",
+                    }
+                except Exception as exc:
+                    self.logger.warning(f"Warmup question generation failed: {exc}")
+                    qa_pair = QAPair(
+                        question_id=template.question_id,
+                        question=f"[Generation failed] {template.concentration}",
+                        correct_answer="N/A",
+                        explanation=str(exc),
+                        question_type=template.question_type,
+                        concentration=template.concentration,
+                        difficulty=template.difficulty,
+                        metadata={
+                            "error": str(exc),
+                            "generation_mode": "progressive_warmup_single",
+                        },
+                    )
+                return idx, template, qa_pair
+
+            pending_warmup = {
+                asyncio.create_task(
+                    build_warmup_single(progressive_count + offset, template)
+                ): progressive_count + offset
+                for offset, template in enumerate(warmup_templates, 1)
+            }
+            completed_warmup: dict[int, tuple[QuestionTemplate, QAPair]] = {}
+            next_warmup_to_emit = progressive_count + 1
+
+            while pending_warmup:
+                done, _pending = await asyncio.wait(
+                    pending_warmup.keys(),
+                    return_when=asyncio.FIRST_COMPLETED,
+                )
+                for task in done:
+                    pending_warmup.pop(task, None)
+                    idx, template, qa_pair = task.result()
+                    completed_warmup[idx] = (template, qa_pair)
+
+                while next_warmup_to_emit in completed_warmup:
+                    template, qa_pair = completed_warmup.pop(next_warmup_to_emit)
+                    await emit_result(next_warmup_to_emit, template, qa_pair)
+                    question_text = str(qa_pair.question or "").strip()
+                    if question_text and not (qa_pair.metadata or {}).get("error"):
+                        accepted_questions.append(question_text)
+                    next_warmup_to_emit += 1
+
+            remaining_templates = remaining_templates[warmup_count:]
+
         if remaining_templates:
+            remaining_start_index = progressive_count + warmup_count
             remaining_history_context = history_context
             if accepted_questions:
                 remaining_history_context = (
@@ -683,7 +770,7 @@ class AgentCoordinator:
                     )
                     for offset, (template, qa_pair) in enumerate(
                         zip(chunk, qa_pairs, strict=False),
-                        progressive_count + chunk_start + 1,
+                        remaining_start_index + chunk_start + 1,
                     ):
                         await emit_result(offset, template, qa_pair)
                         question_text = str(qa_pair.question or "").strip()
@@ -799,6 +886,26 @@ class AgentCoordinator:
         if not self.kb_name or not self.enable_idea_rag:
             return 0
         return min(1, self._progressive_first_batch_size(total_questions))
+
+    def _progressive_warmup_extra_count(
+        self,
+        total_questions: int,
+        already_streamed: int,
+    ) -> int:
+        if not self.kb_name or total_questions <= already_streamed:
+            return 0
+        raw = os.getenv("PRACTICE_QUIZ_PROGRESSIVE_WARMUP_COUNT", "").strip().lower()
+        if raw in {"0", "false", "no", "off", "none"}:
+            target = already_streamed
+        elif raw:
+            try:
+                target = int(raw)
+            except ValueError:
+                target = DEFAULT_KB_PROGRESSIVE_WARMUP_COUNT
+        else:
+            target = DEFAULT_KB_PROGRESSIVE_WARMUP_COUNT
+        target = min(max(0, target), total_questions, 10)
+        return max(0, target - already_streamed)
 
     def _should_skip_kb_ideation(self) -> bool:
         if not self.kb_name or not self.enable_idea_rag:
