@@ -55,6 +55,7 @@
 - practice exams: show streamed exam-simulation questions as soon as they are ready while keeping submission locked until the full attempt is saved.
 - quiz generation: skip multi-call KB ideation for Practice quizzes by default after the first retrieval, using NCE-domain direct templates grounded with the retrieved knowledge context.
 - quiz generation: stream the first five KB-backed Practice questions as fast single-question warmup calls before the remaining concurrent set batches.
+- quiz generation: replace q2-q5 warmup singles with one starter-page generation call so Practice exams stream an initial page instead of several separate early calls.
 - access: require signed tester identity for Practice attempts, Flashcards, Question Notebook entries, and Knowledge management APIs.
 - knowledge: namespace tester-created knowledge bases internally while keeping public KB names clean in the UI.
 - web api: send credentials on protected Chat, Practice, Flashcards, and Knowledge requests so the HttpOnly tester cookie works from the local frontend.

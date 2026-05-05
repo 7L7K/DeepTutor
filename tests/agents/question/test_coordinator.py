@@ -174,10 +174,10 @@ def test_kb_backed_quiz_generation_streams_first_question_before_set(tmp_path: P
     assert summary["trace"].get("ideation_skipped") is not True
     assert FakeIdeaAgent.calls == 1
     assert FakeIdeaAgent.retrieval_calls == 0
-    assert FakeGenerator.single_calls == 2
-    assert FakeGenerator.set_calls == 0
+    assert FakeGenerator.single_calls == 1
+    assert FakeGenerator.set_calls == 1
     assert summary["results"][0]["qa_pair"]["metadata"]["generation_mode"] == "progressive_single"
-    assert summary["results"][1]["qa_pair"]["metadata"]["generation_mode"] == "progressive_warmup_single"
+    assert summary["results"][1]["qa_pair"]["metadata"]["generation_mode"] == "starter_page"
 
 
 def test_kb_backed_quiz_streams_direct_grounded_first_question_before_ideation(tmp_path: Path) -> None:
@@ -205,16 +205,16 @@ def test_kb_backed_quiz_streams_direct_grounded_first_question_before_ideation(t
     assert len(summary["results"]) == 2
     assert FakeIdeaAgent.retrieval_calls == 1
     assert FakeIdeaAgent.calls == 0
-    assert FakeGenerator.single_calls == 2
-    assert FakeGenerator.set_calls == 0
+    assert FakeGenerator.single_calls == 1
+    assert FakeGenerator.set_calls == 1
     assert summary["results"][0]["template"]["metadata"]["direct_streamed_first"] is True
     assert summary["results"][0]["template"]["metadata"]["knowledge_context"] == "KB context"
     assert summary["results"][1]["template"]["metadata"]["direct_kb_templates"] is True
     assert summary["results"][0]["qa_pair"]["metadata"]["generation_mode"] == "direct_kb_first"
-    assert summary["results"][1]["qa_pair"]["metadata"]["generation_mode"] == "progressive_warmup_single"
+    assert summary["results"][1]["qa_pair"]["metadata"]["generation_mode"] == "starter_page"
 
 
-def test_kb_backed_quiz_streams_first_five_questions_as_warmup(
+def test_kb_backed_quiz_streams_first_five_questions_as_starter_page(
     tmp_path: Path,
 ) -> None:
     FakeIdeaAgent.calls = 0
@@ -241,17 +241,17 @@ def test_kb_backed_quiz_streams_first_five_questions_as_warmup(
     assert len(summary["results"]) == 6
     assert FakeIdeaAgent.retrieval_calls == 1
     assert FakeIdeaAgent.calls == 0
-    assert FakeGenerator.single_calls == 5
-    assert FakeGenerator.set_calls == 1
+    assert FakeGenerator.single_calls == 1
+    assert FakeGenerator.set_calls == 2
     assert [
         item["qa_pair"]["metadata"]["generation_mode"]
         for item in summary["results"][:5]
     ] == [
         "direct_kb_first",
-        "progressive_warmup_single",
-        "progressive_warmup_single",
-        "progressive_warmup_single",
-        "progressive_warmup_single",
+        "starter_page",
+        "starter_page",
+        "starter_page",
+        "starter_page",
     ]
     assert [item["qa_pair"]["question_id"] for item in summary["results"]] == [
         "q_1",
@@ -270,7 +270,7 @@ def test_remaining_quiz_generation_runs_in_configured_chunks(tmp_path: Path, mon
     FakeGenerator.active_set_calls = 0
     FakeGenerator.max_active_set_calls = 0
     monkeypatch.setenv("PRACTICE_QUIZ_REMAINING_BATCH_SIZE", "1")
-    monkeypatch.setenv("PRACTICE_QUIZ_PROGRESSIVE_WARMUP_COUNT", "1")
+    monkeypatch.setenv("PRACTICE_QUIZ_STARTER_PAGE_SIZE", "1")
     coordinator = StubCoordinator(
         tmp_path,
         kb_name="tester-1__nce-2026",
@@ -323,8 +323,8 @@ def test_kb_ideation_can_be_enabled_for_progressive_quiz(tmp_path: Path, monkeyp
     assert summary["success"] is True
     assert FakeIdeaAgent.retrieval_calls == 1
     assert FakeIdeaAgent.calls == 1
-    assert FakeGenerator.single_calls == 2
-    assert FakeGenerator.set_calls == 0
+    assert FakeGenerator.single_calls == 1
+    assert FakeGenerator.set_calls == 1
 
 
 def test_remaining_quiz_chunks_run_with_bounded_concurrency(tmp_path: Path, monkeypatch) -> None:
@@ -337,7 +337,7 @@ def test_remaining_quiz_chunks_run_with_bounded_concurrency(tmp_path: Path, monk
     FakeGenerator.set_delay_seconds = 0.01
     monkeypatch.setenv("PRACTICE_QUIZ_REMAINING_BATCH_SIZE", "1")
     monkeypatch.setenv("PRACTICE_QUIZ_REMAINING_CONCURRENCY", "2")
-    monkeypatch.setenv("PRACTICE_QUIZ_PROGRESSIVE_WARMUP_COUNT", "1")
+    monkeypatch.setenv("PRACTICE_QUIZ_STARTER_PAGE_SIZE", "1")
     coordinator = StubCoordinator(
         tmp_path,
         kb_name="tester-1__nce-2026",
