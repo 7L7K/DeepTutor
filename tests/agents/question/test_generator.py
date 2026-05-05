@@ -63,6 +63,7 @@ class ResponsesRoutingGenerator(Generator):
         self._responses_payload = responses_payload or {}
         self._responses_error = responses_error
         self.responses_calls = 0
+        self.minimal_responses_calls = 0
         self.chat_calls = 0
 
     def get_prompt(self, key: str, default: str = "") -> str:  # type: ignore[override]
@@ -89,6 +90,12 @@ class ResponsesRoutingGenerator(Generator):
 
     async def _generate_quiz_set_payload_with_responses(self, **kwargs):  # type: ignore[override]
         self.responses_calls += 1
+        if self._responses_error:
+            raise self._responses_error
+        return '{"questions":[]}', self._responses_payload
+
+    async def _generate_starter_quiz_set_payload_with_responses(self, **kwargs):  # type: ignore[override]
+        self.minimal_responses_calls += 1
         if self._responses_error:
             raise self._responses_error
         return '{"questions":[]}', self._responses_payload
@@ -370,6 +377,54 @@ def test_quiz_set_responses_timeout_falls_back_to_chat_without_duplicates() -> N
     assert generator.responses_calls == 1
     assert generator.chat_calls == 1
     assert quiz_set[0].metadata["generation_api"] == "chat_completions"
+
+
+def test_quiz_set_responses_minimal_defers_explanations_without_repair() -> None:
+    generator = ResponsesRoutingGenerator(
+        responses_payload={
+            "questions": [
+                {
+                    "question_id": "q_1",
+                    "question_type": "choice",
+                    "question": "Which response best reflects empathy?",
+                    "options": {
+                        "A": "Reflect the feeling",
+                        "B": "Give advice",
+                        "C": "Change topics",
+                        "D": "Label the client",
+                    },
+                    "correct_answer": "A",
+                    "explanation": "",
+                }
+            ],
+            "_diagnostics": {"api": "responses_minimal", "deferred_explanations": True},
+        }
+    )
+    template = QuestionTemplate(
+        question_id="q_1",
+        concentration="empathy",
+        question_type="choice",
+        difficulty="medium",
+    )
+
+    quiz_set = asyncio.run(
+        generator.process_quiz_set(
+            templates=[template],
+            user_topic="counseling",
+            preference="",
+            history_context="",
+            generation_api="responses_minimal",
+        )
+    )
+
+    assert len(quiz_set) == 1
+    assert generator.minimal_responses_calls == 1
+    assert generator.responses_calls == 0
+    assert generator.chat_calls == 0
+    assert quiz_set[0].metadata["generation_api"] == "responses_minimal"
+    assert quiz_set[0].metadata["explanation_deferred"] is True
+    assert quiz_set[0].validation["schema_ok"] is True
+    assert quiz_set[0].validation["repaired"] is False
 
 
 def test_generator_process_quiz_set_repairs_whole_set_before_item_repairs() -> None:

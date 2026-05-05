@@ -926,6 +926,8 @@ class AgentCoordinator:
     @staticmethod
     def _normalize_generation_api(value: str, default: str = "chat") -> str:
         normalized = str(value or "").strip().lower()
+        if normalized in {"responses_minimal", "responses-starter-minimal"}:
+            return "responses_minimal"
         if normalized in {"responses", "response"}:
             return "responses"
         if normalized in {"chat", "chat_completions", "completions", "model-call"}:
