@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import importlib
 
 import pytest
@@ -11,13 +12,17 @@ pytest.importorskip("fastapi")
 
 FastAPI = pytest.importorskip("fastapi").FastAPI
 TestClient = pytest.importorskip("fastapi.testclient").TestClient
-router = importlib.import_module("deeptutor.api.routers.flashcards").router
+flashcards_router_module = importlib.import_module("deeptutor.api.routers.flashcards")
+router = flashcards_router_module.router
 
 
 class _FakeLLM:
     class _Config:
         binding = "openai"
         model = "gpt-5-mini"
+        api_key = "test-key"
+        base_url = "https://api.openai.com/v1"
+        extra_headers = None
 
     config = _Config()
 
@@ -71,6 +76,11 @@ class _FakeRAG:
         }
 
 
+class _EmptyRAG:
+    async def search(self, query: str, kb_name: str, **kwargs):
+        return {"query": query, "content": "", "sources": []}
+
+
 def _build_app() -> FastAPI:
     app = FastAPI()
     app.include_router(router, prefix="/api/v1/practice/flashcards")
@@ -83,6 +93,7 @@ def service(tmp_path, monkeypatch) -> FlashcardService:
     instance = FlashcardService()
     instance._store = store
     instance._llm = _FakeLLM()
+    instance._use_responses = False
     instance._rag = _FakeRAG()
     monkeypatch.setattr(
         "deeptutor.api.routers.flashcards.get_flashcard_service",
@@ -185,3 +196,102 @@ def test_complete_pass_and_topic_suggestions(service: FlashcardService) -> None:
         )
         assert suggestions_resp.status_code == 200
         assert "Dual relationships" in suggestions_resp.json()["suggestions"]
+
+
+def test_missed_only_completion_persists_latest_coach_review(service: FlashcardService) -> None:
+    with TestClient(_build_app()) as client:
+        generated = client.post(
+            "/api/v1/practice/flashcards/generate",
+            json={
+                "source_type": "knowledge",
+                "topic": "NCE ethics boundaries",
+                "knowledge_base_names": ["kb-one"],
+                "card_count": 10,
+                "style": "mixed",
+            },
+        ).json()["deck"]
+        missed_card_id = generated["cards"][0]["id"]
+
+        client.post(
+            f"/api/v1/practice/flashcards/decks/{generated['id']}/reviews",
+            json={"card_id": missed_card_id, "rating": "missed"},
+        )
+        complete_resp = client.post(
+            f"/api/v1/practice/flashcards/decks/{generated['id']}/complete",
+            json={"review_mode": "missed_only", "card_ids": [missed_card_id]},
+        )
+
+        assert complete_resp.status_code == 200
+        payload = complete_resp.json()
+        assert payload["session_review"]["review_mode"] == "missed_only"
+        assert payload["session_review"]["cards_reviewed"] == 1
+        assert payload["deck"]["latest_session_review"]["review_mode"] == "missed_only"
+        assert payload["deck"]["latest_session_review"]["analysis_summary"]
+
+
+def test_empty_kb_context_fails_before_llm(service: FlashcardService) -> None:
+    service._rag = _EmptyRAG()
+
+    with TestClient(_build_app()) as client:
+        response = client.post(
+            "/api/v1/practice/flashcards/generate",
+            json={
+                "source_type": "knowledge",
+                "topic": "no matching context",
+                "knowledge_base_names": ["kb-empty"],
+                "card_count": 10,
+                "style": "mixed",
+            },
+        )
+
+    assert response.status_code == 400
+    assert "did not return usable study context" in response.json()["detail"]
+
+
+def test_flashcard_generation_can_use_responses_path(service: FlashcardService, monkeypatch) -> None:
+    calls: list[dict[str, object]] = []
+
+    async def fake_responses_generation(**kwargs):
+        calls.append(kwargs)
+        return {
+            "title": "Responses Deck",
+            "cards": [
+                {
+                    "front": f"Responses card {index}",
+                    "back": "A concise generated answer.",
+                    "hint": "",
+                    "tag": "Recall",
+                    "source_ref": "",
+                }
+                for index in range(1, 4)
+            ],
+        }
+
+    service._use_responses = True
+    monkeypatch.setattr(service, "_generate_cards_with_responses", fake_responses_generation)
+
+    deck, reused_existing = asyncio.run(
+        service.generate_deck(
+            source_type="topic",
+            topic="NCE ethics boundaries",
+            knowledge_base_names=[],
+            card_count=10,
+            style="mixed",
+        )
+    )
+
+    assert reused_existing is False
+    assert len(deck["cards"]) == 3
+    assert calls
+    assert calls[0]["source_type"] == "topic"
+
+
+def test_flashcard_generation_defaults_chat_and_low_reasoning_for_openai_gpt5(monkeypatch) -> None:
+    class Config:
+        binding = "openai"
+        model = "gpt-5-mini"
+
+    monkeypatch.delenv("FLASHCARD_USE_RESPONSES", raising=False)
+
+    assert FlashcardService._resolve_use_responses(Config()) is False
+    assert FlashcardService._resolve_reasoning_effort(Config()) == "low"

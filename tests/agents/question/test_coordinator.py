@@ -59,6 +59,7 @@ class FakeGenerator:
     active_set_calls = 0
     max_active_set_calls = 0
     set_delay_seconds = 0.0
+    set_generation_apis: list[str | None] = []
 
     async def process(self, **kwargs):
         type(self).single_calls += 1
@@ -78,6 +79,7 @@ class FakeGenerator:
 
     async def process_quiz_set(self, **kwargs):
         type(self).set_calls += 1
+        type(self).set_generation_apis.append(kwargs.get("generation_api"))
         type(self).active_set_calls += 1
         type(self).max_active_set_calls = max(
             type(self).max_active_set_calls,
@@ -125,10 +127,11 @@ class StubCoordinator(AgentCoordinator):
         return FakeGenerator()
 
 
-def test_coordinator_generate_from_topic_uses_direct_templates_by_default(tmp_path: Path) -> None:
+def test_coordinator_generate_from_topic_uses_direct_templates_by_default(tmp_path: Path, monkeypatch) -> None:
     FakeIdeaAgent.calls = 0
     FakeGenerator.single_calls = 0
     FakeGenerator.set_calls = 0
+    monkeypatch.delenv("PRACTICE_QUIZ_PROGRESSIVE_FIRST_BATCH", raising=False)
     coordinator = StubCoordinator(tmp_path)
 
     summary = asyncio.run(
@@ -216,11 +219,14 @@ def test_kb_backed_quiz_streams_direct_grounded_first_question_before_ideation(t
 
 def test_kb_backed_quiz_streams_first_five_questions_as_starter_page(
     tmp_path: Path,
+    monkeypatch,
 ) -> None:
     FakeIdeaAgent.calls = 0
     FakeIdeaAgent.retrieval_calls = 0
     FakeGenerator.single_calls = 0
     FakeGenerator.set_calls = 0
+    FakeGenerator.set_generation_apis = []
+    monkeypatch.setenv("PRACTICE_STARTER_PAGE_API", "chat")
     coordinator = StubCoordinator(
         tmp_path,
         kb_name="tester-1__nce-2026",
@@ -253,6 +259,47 @@ def test_kb_backed_quiz_streams_first_five_questions_as_starter_page(
         "starter_page",
         "starter_page",
     ]
+    assert [item["qa_pair"]["question_id"] for item in summary["results"]] == [
+        "q_1",
+        "q_2",
+        "q_3",
+        "q_4",
+        "q_5",
+        "q_6",
+    ]
+    assert FakeGenerator.set_generation_apis == ["chat", "chat"]
+
+
+def test_kb_starter_page_can_use_responses_while_background_stays_chat(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    FakeIdeaAgent.calls = 0
+    FakeIdeaAgent.retrieval_calls = 0
+    FakeGenerator.single_calls = 0
+    FakeGenerator.set_calls = 0
+    FakeGenerator.set_generation_apis = []
+    monkeypatch.setenv("PRACTICE_STARTER_PAGE_API", "responses")
+    coordinator = StubCoordinator(
+        tmp_path,
+        kb_name="tester-1__nce-2026",
+        enable_idea_rag=True,
+    )
+
+    summary = asyncio.run(
+        coordinator.generate_from_topic(
+            user_topic="NCE review",
+            preference="use the KB",
+            num_questions=6,
+            difficulty="medium",
+            question_type="choice",
+        )
+    )
+
+    assert summary["success"] is True
+    assert len(summary["results"]) == 6
+    assert FakeGenerator.set_calls == 2
+    assert FakeGenerator.set_generation_apis == ["responses", "chat"]
     assert [item["qa_pair"]["question_id"] for item in summary["results"]] == [
         "q_1",
         "q_2",
@@ -404,6 +451,7 @@ def test_topic_quiz_can_skip_ideation_with_direct_templates(
     FakeGenerator.single_calls = 0
     FakeGenerator.set_calls = 0
     monkeypatch.setenv("PRACTICE_QUIZ_SKIP_IDEATION", "true")
+    monkeypatch.delenv("PRACTICE_QUIZ_PROGRESSIVE_FIRST_BATCH", raising=False)
     coordinator = StubCoordinator(tmp_path)
 
     summary = asyncio.run(

@@ -3,22 +3,51 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
+import os
 import re
+import time
 from typing import Any
 
-from deeptutor.services.llm import get_llm_client, get_token_limit_kwargs, supports_response_format
-from deeptutor.services.rag.service import RAGService
+from pydantic import BaseModel, Field
+
+from deeptutor.services.llm import (
+    LLMClient,
+    get_llm_client,
+    get_llm_config,
+    get_token_limit_kwargs,
+    supports_response_format,
+)
 from deeptutor.services.session import get_sqlite_session_store
 from deeptutor.utils.json_parser import parse_json_response
 
 logger = logging.getLogger(__name__)
 
 
+class _GeneratedFlashcard(BaseModel):
+    front: str = Field(description="A concise active-recall prompt.")
+    back: str = Field(description="A concise answer, ideally one or two short sentences.")
+    hint: str = ""
+    tag: str = Field(description="One of Definition, Concept, Scenario, or Recall.")
+    source_ref: str = ""
+
+
+class _GeneratedFlashcardDeck(BaseModel):
+    title: str
+    cards: list[_GeneratedFlashcard]
+
+
 class FlashcardService:
     def __init__(self) -> None:
         self._store = get_sqlite_session_store()
-        self._llm = get_llm_client()
-        self._rag = RAGService()
+        flashcard_model = os.getenv("FLASHCARD_GENERATION_MODEL", "").strip()
+        if flashcard_model:
+            llm_config = get_llm_config().model_copy(update={"model": flashcard_model})
+            self._llm = LLMClient(llm_config)
+        else:
+            self._llm = get_llm_client()
+        self._reasoning_effort = self._resolve_reasoning_effort(self._llm.config)
+        self._use_responses = self._resolve_use_responses(self._llm.config)
+        self._rag: Any | None = None
 
     @staticmethod
     def build_generation_fingerprint(
@@ -111,6 +140,13 @@ class FlashcardService:
             )
             if len(cleaned_cards) >= card_count:
                 break
+        self._log_cleaning_matrix(
+            source_type=source_type,
+            requested_count=card_count,
+            raw_cards=cards,
+            cleaned_cards=cleaned_cards,
+            phase="generate_deck",
+        )
         if not cleaned_cards:
             raise ValueError("Flashcard generation returned unusable cards")
 
@@ -271,16 +307,36 @@ class FlashcardService:
     ) -> list[dict[str, Any]]:
         if source_type != "knowledge":
             return []
+        if self._rag is None:
+            from deeptutor.services.rag.service import RAGService
 
+            self._rag = RAGService()
         query = topic.strip() or "Create high-yield study flashcards from this material."
         results: list[dict[str, Any]] = []
+        total_started_at = time.perf_counter()
         for kb_name in knowledge_base_names:
+            kb_started_at = time.perf_counter()
             try:
                 rag_result = await self._rag.search(query=query, kb_name=kb_name, top_k=4)
             except Exception as exc:
                 logger.warning("Flashcard RAG lookup failed for %s: %s", kb_name, exc)
                 continue
             content = str(rag_result.get("content") or rag_result.get("answer") or "").strip()
+            elapsed = time.perf_counter() - kb_started_at
+            logger.info(
+                "Flashcard RAG matrix: "
+                + json.dumps(
+                    {
+                        "kb_name": kb_name,
+                        "query_chars": len(query),
+                        "elapsed_seconds": round(elapsed, 3),
+                        "content_chars": len(content),
+                        "source_count": len(rag_result.get("sources") or []),
+                        "usable": bool(content),
+                    },
+                    sort_keys=True,
+                )
+            )
             if not content:
                 continue
             results.append(
@@ -291,9 +347,34 @@ class FlashcardService:
                 }
             )
         if not results:
+            logger.info(
+                "Flashcard source matrix: "
+                + json.dumps(
+                    {
+                        "source_type": source_type,
+                        "kb_count": len(knowledge_base_names),
+                        "usable_context_count": 0,
+                        "elapsed_seconds": round(time.perf_counter() - total_started_at, 3),
+                    },
+                    sort_keys=True,
+                )
+            )
             raise ValueError(
                 "The selected knowledge bases did not return usable study context. Try a topic deck or re-check the KBs."
             )
+        logger.info(
+            "Flashcard source matrix: "
+            + json.dumps(
+                {
+                    "source_type": source_type,
+                    "kb_count": len(knowledge_base_names),
+                    "usable_context_count": len(results),
+                    "excerpt_chars": sum(len(str(item.get("excerpt") or "")) for item in results),
+                    "elapsed_seconds": round(time.perf_counter() - total_started_at, 3),
+                },
+                sort_keys=True,
+            )
+        )
         return results
 
     async def _generate_cards_with_llm(
@@ -307,11 +388,83 @@ class FlashcardService:
         source_context: list[dict[str, Any]],
     ) -> dict[str, Any]:
         llm_config = self._llm.config
+        system_prompt, user_prompt, candidate_count = self._build_generation_prompts(
+            source_type=source_type,
+            topic=topic,
+            knowledge_base_names=knowledge_base_names,
+            card_count=card_count,
+            style=style,
+            source_context=source_context,
+        )
+        if self._should_use_responses_api(llm_config):
+            try:
+                return await self._generate_cards_with_responses(
+                    llm_config=llm_config,
+                    system_prompt=system_prompt,
+                    user_prompt=user_prompt,
+                    source_type=source_type,
+                    card_count=card_count,
+                    candidate_count=candidate_count,
+                    source_context=source_context,
+                )
+            except Exception as exc:
+                logger.warning(
+                    "Flashcard Responses generation failed; falling back to chat completions: %s",
+                    exc,
+                )
+
         kwargs: dict[str, Any] = {}
         if supports_response_format(llm_config.binding, llm_config.model):
             kwargs["response_format"] = {"type": "json_object"}
         kwargs.update(get_token_limit_kwargs(llm_config.model, max_tokens=2200))
+        if self._reasoning_effort:
+            kwargs["reasoning_effort"] = self._reasoning_effort
 
+        llm_started_at = time.perf_counter()
+        raw = await self._llm.complete(
+            prompt=user_prompt,
+            system_prompt=system_prompt,
+            temperature=0.2,
+            **kwargs,
+        )
+        elapsed = time.perf_counter() - llm_started_at
+        payload = parse_json_response(raw, logger_instance=logger, fallback={})
+        if not isinstance(payload, dict):
+            raise ValueError("Flashcard generation returned invalid JSON")
+        payload["_diagnostics"] = {
+            "api": "chat_completions",
+            "model": llm_config.model,
+            "reasoning_effort": self._reasoning_effort or None,
+            "elapsed_seconds": round(elapsed, 3),
+            "requested_count": card_count,
+            "candidate_count": candidate_count,
+            "source_context_count": len(source_context),
+            "source_excerpt_chars": sum(len(str(item.get("excerpt") or "")) for item in source_context),
+            "raw_card_count": len(payload.get("cards")) if isinstance(payload.get("cards"), list) else 0,
+        }
+        self._log_generation_matrix(
+            api="chat_completions",
+            model=llm_config.model,
+            source_type=source_type,
+            requested_count=card_count,
+            candidate_count=candidate_count,
+            source_context=source_context,
+            elapsed_seconds=elapsed,
+            payload=payload,
+        )
+        return payload
+
+    def _build_generation_prompts(
+        self,
+        *,
+        source_type: str,
+        topic: str,
+        knowledge_base_names: list[str],
+        card_count: int,
+        style: str,
+        source_context: list[dict[str, Any]],
+        avoid_fronts: list[str] | None = None,
+    ) -> tuple[str, str, int]:
         system_prompt = (
             "You create study-ready flashcard decks for learners. "
             "Return only a JSON object with keys title and cards. "
@@ -351,17 +504,171 @@ class FlashcardService:
             "- make the deck feel like a focused study set, not a generic list"
             f"{context_block}"
         )
+        if avoid_fronts:
+            user_prompt += (
+                "\n\nAvoid duplicating these existing card fronts:\n"
+                + "\n".join(f"- {front}" for front in avoid_fronts[:20])
+            )
+        return system_prompt, user_prompt, candidate_count
 
-        raw = await self._llm.complete(
-            prompt=user_prompt,
-            system_prompt=system_prompt,
-            temperature=0.2,
-            **kwargs,
+    def _should_use_responses_api(self, llm_config: Any) -> bool:
+        if not self._use_responses:
+            return False
+        binding = str(getattr(llm_config, "binding", "") or "").strip().lower()
+        return binding == "openai" and bool(getattr(llm_config, "api_key", ""))
+
+    @staticmethod
+    def _resolve_reasoning_effort(llm_config: Any) -> str:
+        configured = os.getenv("FLASHCARD_GENERATION_REASONING_EFFORT", "").strip()
+        if configured:
+            return configured
+        model = str(getattr(llm_config, "model", "") or "").strip().lower()
+        return "low" if model.startswith("gpt-5") else ""
+
+    @staticmethod
+    def _resolve_use_responses(llm_config: Any) -> bool:
+        configured = os.getenv("FLASHCARD_USE_RESPONSES", "").strip().lower()
+        if configured in {"0", "false", "no", "off"}:
+            return False
+        if configured in {"1", "true", "yes", "on"}:
+            return True
+        return False
+
+    async def _generate_cards_with_responses(
+        self,
+        *,
+        llm_config: Any,
+        system_prompt: str,
+        user_prompt: str,
+        source_type: str,
+        card_count: int,
+        candidate_count: int,
+        source_context: list[dict[str, Any]],
+    ) -> dict[str, Any]:
+        from deeptutor.services.llm.structured_responses import generate_structured_response
+
+        result = await generate_structured_response(
+            model=llm_config.model,
+            instructions=system_prompt,
+            input_data=user_prompt,
+            api_key=llm_config.api_key,
+            base_url=llm_config.base_url,
+            default_headers=llm_config.extra_headers,
+            pydantic_model=_GeneratedFlashcardDeck,
+            max_output_tokens=2200,
+            prompt_cache_key=self._prompt_cache_key(source_type=source_type),
+            store=False,
+            reasoning_effort=self._reasoning_effort or None,
         )
-        payload = parse_json_response(raw, logger_instance=logger, fallback={})
-        if not isinstance(payload, dict):
-            raise ValueError("Flashcard generation returned invalid JSON")
+        elapsed = result.latency_ms / 1000.0
+        payload = dict(result.parsed)
+        usage = result.usage or {}
+        input_details = usage.get("input_tokens_details") or {}
+        output_details = usage.get("output_tokens_details") or {}
+        payload["_diagnostics"] = {
+            "api": "responses",
+            "model": result.model,
+            "reasoning_effort": self._reasoning_effort or None,
+            "elapsed_seconds": round(elapsed, 3),
+            "requested_count": card_count,
+            "candidate_count": candidate_count,
+            "source_context_count": len(source_context),
+            "source_excerpt_chars": sum(len(str(item.get("excerpt") or "")) for item in source_context),
+            "raw_card_count": len(payload.get("cards")) if isinstance(payload.get("cards"), list) else 0,
+            "request_id": result.request_id,
+            "input_tokens": usage.get("input_tokens"),
+            "cached_tokens": input_details.get("cached_tokens"),
+            "output_tokens": usage.get("output_tokens"),
+            "reasoning_tokens": output_details.get("reasoning_tokens"),
+        }
+        self._log_generation_matrix(
+            api="responses",
+            model=llm_config.model,
+            source_type=source_type,
+            requested_count=card_count,
+            candidate_count=candidate_count,
+            source_context=source_context,
+            elapsed_seconds=elapsed,
+            payload=payload,
+            request_id=result.request_id,
+            usage=usage,
+        )
         return payload
+
+    @staticmethod
+    def _prompt_cache_key(*, source_type: str) -> str:
+        return f"deeptutor-flashcards-v1-{source_type}"
+
+    def _log_generation_matrix(
+        self,
+        *,
+        api: str,
+        model: str,
+        source_type: str,
+        requested_count: int,
+        candidate_count: int,
+        source_context: list[dict[str, Any]],
+        elapsed_seconds: float,
+        payload: dict[str, Any],
+        request_id: str | None = None,
+        usage: dict[str, Any] | None = None,
+    ) -> None:
+        cards = payload.get("cards")
+        raw_card_count = len(cards) if isinstance(cards, list) else 0
+        usage = usage or {}
+        input_details = usage.get("input_tokens_details") or {}
+        output_details = usage.get("output_tokens_details") or {}
+        logger.info(
+            "Flashcard generation matrix: "
+            + json.dumps(
+                {
+                    "api": api,
+                    "model": model,
+                    "reasoning_effort": self._reasoning_effort or None,
+                    "source_type": source_type,
+                    "requested_count": requested_count,
+                    "candidate_count": candidate_count,
+                    "source_context_count": len(source_context),
+                    "source_excerpt_chars": sum(
+                        len(str(item.get("excerpt") or "")) for item in source_context
+                    ),
+                    "elapsed_seconds": round(elapsed_seconds, 3),
+                    "raw_card_count": raw_card_count,
+                    "request_id": request_id,
+                    "input_tokens": usage.get("input_tokens"),
+                    "cached_tokens": input_details.get("cached_tokens"),
+                    "output_tokens": usage.get("output_tokens"),
+                    "reasoning_tokens": output_details.get("reasoning_tokens"),
+                },
+                sort_keys=True,
+            )
+        )
+
+    def _log_cleaning_matrix(
+        self,
+        *,
+        source_type: str,
+        requested_count: int,
+        raw_cards: Any,
+        cleaned_cards: list[dict[str, Any]],
+        phase: str,
+    ) -> None:
+        raw_count = len(raw_cards) if isinstance(raw_cards, list) else 0
+        logger.info(
+            "Flashcard cleaning matrix: "
+            + json.dumps(
+                {
+                    "phase": phase,
+                    "source_type": source_type,
+                    "requested_count": requested_count,
+                    "raw_card_count": raw_count,
+                    "cleaned_card_count": len(cleaned_cards),
+                    "dropped_count": max(0, raw_count - len(cleaned_cards)),
+                    "status": "ok" if cleaned_cards else "empty_after_cleaning",
+                },
+                sort_keys=True,
+            )
+        )
 
     async def _generate_session_analysis(
         self,
@@ -390,6 +697,8 @@ class FlashcardService:
         if supports_response_format(llm_config.binding, llm_config.model):
             kwargs["response_format"] = {"type": "json_object"}
         kwargs.update(get_token_limit_kwargs(llm_config.model, max_tokens=1200))
+        if self._reasoning_effort:
+            kwargs["reasoning_effort"] = self._reasoning_effort
 
         tag_summary = [
             {
@@ -480,6 +789,8 @@ class FlashcardService:
         if supports_response_format(llm_config.binding, llm_config.model):
             kwargs["response_format"] = {"type": "json_object"}
         kwargs.update(get_token_limit_kwargs(llm_config.model, max_tokens=700))
+        if self._reasoning_effort:
+            kwargs["reasoning_effort"] = self._reasoning_effort
 
         rendered = []
         for item in source_context[:3]:

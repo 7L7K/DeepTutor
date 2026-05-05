@@ -6,14 +6,37 @@ Generator - Generate Q-A pairs from QuestionTemplate in a single LLM call.
 from __future__ import annotations
 
 import json
+import os
 import re
 from typing import Any
+
+from pydantic import BaseModel, Field
 
 from deeptutor.agents.base_agent import BaseAgent
 from deeptutor.agents.question.models import QAPair, QuestionTemplate
 from deeptutor.core.trace import build_trace_metadata, new_call_id
 from deeptutor.runtime.registry.tool_registry import get_tool_registry
 from deeptutor.services.prompt.language import append_language_directive
+
+
+class _GeneratedQuizOptions(BaseModel):
+    A: str
+    B: str
+    C: str
+    D: str
+
+
+class _GeneratedQuizQuestion(BaseModel):
+    question_id: str
+    question_type: str
+    question: str = Field(description="The question stem.")
+    options: _GeneratedQuizOptions
+    correct_answer: str
+    explanation: str
+
+
+class _GeneratedQuizSet(BaseModel):
+    questions: list[_GeneratedQuizQuestion]
 
 
 class Generator(BaseAgent):
@@ -102,6 +125,7 @@ class Generator(BaseAgent):
         user_topic: str = "",
         preference: str = "",
         history_context: str = "",
+        generation_api: str | None = None,
     ) -> list[QAPair]:
         """
         Generate a complete quiz set in one structured LLM call, then repair
@@ -117,6 +141,7 @@ class Generator(BaseAgent):
             preference=preference,
             history_context=history_context,
             available_tools=available_tools,
+            generation_api=generation_api,
         )
         if self._quiz_set_needs_repair(set_payload, templates):
             repaired_payload = await self._repair_quiz_set_payload(
@@ -178,6 +203,8 @@ class Generator(BaseAgent):
                         "available_tools": available_tools,
                         "knowledge_context": knowledge_context,
                         "generation_mode": "quiz_set",
+                        "generation_api": set_payload.get("_diagnostics", {}).get("api")
+                        or "chat_completions",
                     },
                 )
             )
@@ -202,6 +229,7 @@ class Generator(BaseAgent):
         preference: str,
         history_context: str,
         available_tools: str,
+        generation_api: str | None = None,
     ) -> tuple[str, dict[str, Any]]:
         system_prompt = self.get_prompt("system", "")
         user_prompt_template = self.get_prompt("generate_set", "")
@@ -228,6 +256,16 @@ class Generator(BaseAgent):
             available_tools=available_tools,
         )
 
+        if self._should_use_quiz_responses_api(generation_api):
+            try:
+                return await self._generate_quiz_set_payload_with_responses(
+                    templates=templates,
+                    user_prompt=user_prompt,
+                    system_prompt=system_prompt or "",
+                )
+            except Exception as exc:
+                self.logger.warning(f"Quiz Responses generation failed; falling back to chat completions: {exc}")
+
         chunks: list[str] = []
         async for chunk in self.stream_llm(
             user_prompt=user_prompt,
@@ -246,6 +284,53 @@ class Generator(BaseAgent):
             chunks.append(chunk)
         raw_response = "".join(chunks)
         return raw_response, self._parse_json_like(raw_response)
+
+    async def _generate_quiz_set_payload_with_responses(
+        self,
+        *,
+        templates: list[QuestionTemplate],
+        user_prompt: str,
+        system_prompt: str,
+    ) -> tuple[str, dict[str, Any]]:
+        from deeptutor.services.llm.structured_responses import generate_structured_response
+
+        result = await generate_structured_response(
+            model=self.get_model(),
+            instructions=system_prompt or "Generate a valid practice quiz JSON set.",
+            input_data=user_prompt,
+            api_key=self.api_key,
+            base_url=self.base_url,
+            pydantic_model=_GeneratedQuizSet,
+            max_output_tokens=max(2048, min(8000, len(templates) * 650)),
+            prompt_cache_key="deeptutor-practice-quiz-v1",
+            store=False,
+            reasoning_effort=self.get_reasoning_effort(),
+        )
+        payload = dict(result.parsed)
+        usage = result.usage or {}
+        input_details = usage.get("input_tokens_details") or {}
+        output_details = usage.get("output_tokens_details") or {}
+        payload["_diagnostics"] = {
+            "api": "responses",
+            "model": result.model,
+            "latency_ms": round(result.latency_ms, 3),
+            "request_id": result.request_id,
+            "input_tokens": usage.get("input_tokens"),
+            "cached_tokens": input_details.get("cached_tokens"),
+            "output_tokens": usage.get("output_tokens"),
+            "reasoning_tokens": output_details.get("reasoning_tokens"),
+        }
+        return result.raw_text, payload
+
+    def _should_use_quiz_responses_api(self, generation_api: str | None = None) -> bool:
+        configured = str(generation_api or "").strip().lower()
+        if not configured:
+            configured = os.getenv("PRACTICE_QUIZ_USE_RESPONSES", "").strip().lower()
+        if configured in {"chat", "0", "false", "no", "off"}:
+            return False
+        if configured in {"responses", "1", "true", "yes", "on"}:
+            return bool(self.api_key)
+        return False
 
     async def _repair_quiz_set_payload(
         self,
@@ -346,6 +431,7 @@ class Generator(BaseAgent):
                 trace_id=template.question_id,
                 question_id=template.question_id,
             ),
+            max_tokens=900,
         ):
             _chunks.append(_c)
         response = "".join(_chunks)
