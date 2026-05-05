@@ -29,6 +29,11 @@ def _build_app() -> FastAPI:
     if FastAPI is None or router is None:  # pragma: no cover - guarded by pytestmark
         raise RuntimeError("fastapi is not installed")
     app = FastAPI()
+    app.dependency_overrides[knowledge_router_module.get_current_tester] = lambda: {
+        "id": "tester-1",
+        "tester_id": "tester-1",
+        "display_name": "Tester One",
+    }
     app.include_router(router, prefix="/api/v1/knowledge")
     return app
 
@@ -152,8 +157,8 @@ def test_create_kb_does_not_require_llm_precheck(monkeypatch, tmp_path: Path) ->
     body = response.json()
     assert body["name"] == "kb-new"
     assert isinstance(body.get("task_id"), str) and body["task_id"]
-    assert manager.config["knowledge_bases"]["kb-new"]["rag_provider"] == "llamaindex"
-    assert manager.config["knowledge_bases"]["kb-new"]["needs_reindex"] is False
+    assert manager.config["knowledge_bases"]["tester-1__kb-new"]["rag_provider"] == "llamaindex"
+    assert manager.config["knowledge_bases"]["tester-1__kb-new"]["needs_reindex"] is False
 
 
 def test_create_coerces_legacy_provider_to_llamaindex(monkeypatch, tmp_path: Path) -> None:
@@ -175,7 +180,7 @@ def test_create_coerces_legacy_provider_to_llamaindex(monkeypatch, tmp_path: Pat
         )
 
     assert response.status_code == 200
-    assert manager.config["knowledge_bases"]["kb-legacy"]["rag_provider"] == "llamaindex"
+    assert manager.config["knowledge_bases"]["tester-1__kb-legacy"]["rag_provider"] == "llamaindex"
 
 
 def test_create_rejects_invalid_files_before_registering_kb(monkeypatch, tmp_path: Path) -> None:
@@ -232,13 +237,19 @@ def test_create_normalizes_uploaded_extension_to_lowercase(monkeypatch, tmp_path
 
     assert response.status_code == 200
     assert response.json()["files"] == ["报告.pdf"]
-    assert (tmp_path / "knowledge_bases" / "kb-uppercase" / "raw" / "报告.pdf").exists()
+    assert (
+        tmp_path
+        / "knowledge_bases"
+        / "tester-1__kb-uppercase"
+        / "raw"
+        / "报告.pdf"
+    ).exists()
 
 
 def test_upload_returns_409_when_kb_needs_reindex(monkeypatch, tmp_path: Path) -> None:
     manager = _FakeKBManager(tmp_path / "knowledge_bases")
-    manager.config["knowledge_bases"]["legacy-kb"] = {
-        "path": "legacy-kb",
+    manager.config["knowledge_bases"]["tester-1__legacy-kb"] = {
+        "path": "tester-1__legacy-kb",
         "rag_provider": "llamaindex",
         "needs_reindex": True,
         "status": "needs_reindex",
@@ -254,8 +265,8 @@ def test_upload_returns_409_when_kb_needs_reindex(monkeypatch, tmp_path: Path) -
 
 def test_upload_ready_kb_returns_task_id(monkeypatch, tmp_path: Path) -> None:
     manager = _FakeKBManager(tmp_path / "knowledge_bases")
-    manager.config["knowledge_bases"]["ready-kb"] = {
-        "path": "ready-kb",
+    manager.config["knowledge_bases"]["tester-1__ready-kb"] = {
+        "path": "tester-1__ready-kb",
         "rag_provider": "llamaindex",
         "needs_reindex": False,
         "status": "ready",
@@ -278,11 +289,11 @@ def test_upload_ready_kb_returns_task_id(monkeypatch, tmp_path: Path) -> None:
 
 def test_list_files_accepts_default_alias(monkeypatch, tmp_path: Path) -> None:
     manager = _FakeKBManager(tmp_path / "knowledge_bases")
-    manager.config["knowledge_bases"]["actual-kb"] = {
-        "path": "actual-kb",
+    manager.config["knowledge_bases"]["tester-1__actual-kb"] = {
+        "path": "tester-1__actual-kb",
         "status": "ready",
     }
-    raw_dir = manager.base_dir / "actual-kb" / "raw"
+    raw_dir = manager.base_dir / "tester-1__actual-kb" / "raw"
     raw_dir.mkdir(parents=True)
     (raw_dir / "demo.txt").write_text("hello", encoding="utf-8")
     monkeypatch.setattr(knowledge_router_module, "get_kb_manager", lambda: manager)
@@ -296,18 +307,18 @@ def test_list_files_accepts_default_alias(monkeypatch, tmp_path: Path) -> None:
 
 def test_list_files_preserves_kb_named_default(monkeypatch, tmp_path: Path) -> None:
     manager = _FakeKBManager(tmp_path / "knowledge_bases")
-    manager.config["knowledge_bases"]["actual-kb"] = {
-        "path": "actual-kb",
+    manager.config["knowledge_bases"]["tester-1__actual-kb"] = {
+        "path": "tester-1__actual-kb",
         "status": "ready",
     }
-    manager.config["knowledge_bases"]["default"] = {
-        "path": "default",
+    manager.config["knowledge_bases"]["tester-1__default"] = {
+        "path": "tester-1__default",
         "status": "ready",
     }
-    actual_raw = manager.base_dir / "actual-kb" / "raw"
+    actual_raw = manager.base_dir / "tester-1__actual-kb" / "raw"
     actual_raw.mkdir(parents=True)
     (actual_raw / "actual.txt").write_text("hello", encoding="utf-8")
-    default_raw = manager.base_dir / "default" / "raw"
+    default_raw = manager.base_dir / "tester-1__default" / "raw"
     default_raw.mkdir(parents=True)
     (default_raw / "default.txt").write_text("hello", encoding="utf-8")
     monkeypatch.setattr(knowledge_router_module, "get_kb_manager", lambda: manager)
@@ -321,8 +332,8 @@ def test_list_files_preserves_kb_named_default(monkeypatch, tmp_path: Path) -> N
 
 def test_reindex_accepts_default_alias(monkeypatch, tmp_path: Path) -> None:
     manager = _FakeKBManager(tmp_path / "knowledge_bases")
-    manager.config["knowledge_bases"]["actual-kb"] = {
-        "path": "actual-kb",
+    manager.config["knowledge_bases"]["tester-1__actual-kb"] = {
+        "path": "tester-1__actual-kb",
         "status": "ready",
     }
     monkeypatch.setattr(knowledge_router_module, "get_kb_manager", lambda: manager)
@@ -351,13 +362,13 @@ def test_reindex_accepts_default_alias(monkeypatch, tmp_path: Path) -> None:
     body = response.json()
     assert body["noop"] is False
     assert isinstance(body.get("task_id"), str) and body["task_id"]
-    assert manager.config["knowledge_bases"]["actual-kb"]["status"] == "initializing"
+    assert manager.config["knowledge_bases"]["tester-1__actual-kb"]["status"] == "initializing"
 
 
 def test_reindex_error_status_bypasses_existing_match_noop(monkeypatch, tmp_path: Path) -> None:
     manager = _FakeKBManager(tmp_path / "knowledge_bases")
-    manager.config["knowledge_bases"]["failed-kb"] = {
-        "path": "failed-kb",
+    manager.config["knowledge_bases"]["tester-1__failed-kb"] = {
+        "path": "tester-1__failed-kb",
         "status": "error",
         "progress": {"stage": "error", "message": "previous indexing failed"},
     }
@@ -391,15 +402,15 @@ def test_reindex_error_status_bypasses_existing_match_noop(monkeypatch, tmp_path
     body = response.json()
     assert body["noop"] is False
     assert isinstance(body.get("task_id"), str) and body["task_id"]
-    assert manager.config["knowledge_bases"]["failed-kb"]["status"] == "initializing"
+    assert manager.config["knowledge_bases"]["tester-1__failed-kb"]["status"] == "initializing"
 
 
 def test_reindex_bypasses_existing_match_when_vectors_are_invalid(
     monkeypatch, tmp_path: Path
 ) -> None:
     manager = _FakeKBManager(tmp_path / "knowledge_bases")
-    manager.config["knowledge_bases"]["bad-index-kb"] = {
-        "path": "bad-index-kb",
+    manager.config["knowledge_bases"]["tester-1__bad-index-kb"] = {
+        "path": "tester-1__bad-index-kb",
         "status": "ready",
     }
     monkeypatch.setattr(knowledge_router_module, "get_kb_manager", lambda: manager)
@@ -409,7 +420,7 @@ def test_reindex_bypasses_existing_match_when_vectors_are_invalid(
         def hash(self) -> str:
             return "sig"
 
-    kb_dir = manager.base_dir / "bad-index-kb"
+    kb_dir = manager.base_dir / "tester-1__bad-index-kb"
     version_dir = kb_dir / "version-1"
     version_dir.mkdir(parents=True)
     (version_dir / "docstore.json").write_text("{}", encoding="utf-8")
@@ -439,7 +450,7 @@ def test_reindex_bypasses_existing_match_when_vectors_are_invalid(
     body = response.json()
     assert body["noop"] is False
     assert isinstance(body.get("task_id"), str) and body["task_id"]
-    assert manager.config["knowledge_bases"]["bad-index-kb"]["status"] == "initializing"
+    assert manager.config["knowledge_bases"]["tester-1__bad-index-kb"]["status"] == "initializing"
 
 
 def test_update_config_coerces_legacy_provider_to_llamaindex() -> None:

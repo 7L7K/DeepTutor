@@ -1,13 +1,13 @@
 ---
 name: deep-solve
-description: "Multi-stage problem solving via DeepTutor (plan → reason → write)."
+description: "Multi-stage problem solving via TEEECHR (plan → reason → write)."
 metadata: {"nanobot":{"emoji":"🧠","requires":{"bins":["deeptutor"]}}}
 always: false
 ---
 
 # Deep Solve
 
-Use the `exec` tool to invoke DeepTutor's multi-stage solver for complex math, science, or engineering problems.
+Use the `exec` tool to invoke TEEECHR's multi-stage solver for complex math, science, or engineering problems.
 
 ## When to Use
 

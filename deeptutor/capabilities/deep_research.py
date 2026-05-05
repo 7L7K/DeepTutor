@@ -10,7 +10,6 @@ from __future__ import annotations
 
 import asyncio
 from typing import Any
-
 from deeptutor.capabilities.request_contracts import get_capability_request_schema
 from deeptutor.core.capability_protocol import BaseCapability, CapabilityManifest
 from deeptutor.core.context import UnifiedContext
@@ -29,11 +28,11 @@ class DeepResearchCapability(BaseCapability):
     )
 
     async def run(self, context: UnifiedContext, stream: StreamBus) -> None:
+        from deeptutor.agents.research.research_pipeline import ResearchPipeline
         from deeptutor.agents.research.request_config import (
             build_research_runtime_config,
             validate_research_request_config,
         )
-        from deeptutor.agents.research.research_pipeline import ResearchPipeline
         from deeptutor.capabilities._answer_now import extract_answer_now_context
         from deeptutor.services.config import load_config_with_main
         from deeptutor.services.llm.config import get_llm_config
@@ -47,7 +46,9 @@ class DeepResearchCapability(BaseCapability):
         kb_name = context.knowledge_bases[0] if context.knowledge_bases else None
         topic = context.user_message
         enabled_tools = set(
-            self.manifest.tools_used if context.enabled_tools is None else context.enabled_tools
+            self.manifest.tools_used
+            if context.enabled_tools is None
+            else context.enabled_tools
         )
         request_config = validate_research_request_config(context.config_overrides)
 
@@ -192,9 +193,7 @@ class DeepResearchCapability(BaseCapability):
 
         async def _trace_cb(update: dict[str, Any]) -> None:
             event = str(update.get("event", "") or "")
-            stage = _normalize_stage(
-                str(update.get("phase") or update.get("stage") or "researching")
-            )
+            stage = _normalize_stage(str(update.get("phase") or update.get("stage") or "researching"))
             raw_stage = str(update.get("stage") or "")
             base_metadata = {
                 key: value
@@ -328,10 +327,11 @@ class DeepResearchCapability(BaseCapability):
                 conversation_history=conversation_history,
                 attachments=context.attachments,
             )
-            sub_topics_data = []
-            for item in outline_items:
-                model_dump = getattr(item, "model_dump", None)
-                sub_topics_data.append(model_dump() if callable(model_dump) else item)
+            sub_topics_data = (
+                [item.model_dump() for item in outline_items]
+                if hasattr(outline_items[0], "model_dump")
+                else outline_items
+            )
 
             outline_md = self._outline_to_markdown(topic, sub_topics_data)
             await stream.content(outline_md, source=self.name, stage="decomposing")
@@ -345,16 +345,8 @@ class DeepResearchCapability(BaseCapability):
                         "mode": request_config.mode,
                         "depth": request_config.depth,
                         "sources": list(request_config.sources),
-                        **(
-                            {"manual_subtopics": request_config.manual_subtopics}
-                            if request_config.manual_subtopics is not None
-                            else {}
-                        ),
-                        **(
-                            {"manual_max_iterations": request_config.manual_max_iterations}
-                            if request_config.manual_max_iterations is not None
-                            else {}
-                        ),
+                        **({"manual_subtopics": request_config.manual_subtopics} if request_config.manual_subtopics is not None else {}),
+                        **({"manual_max_iterations": request_config.manual_max_iterations} if request_config.manual_max_iterations is not None else {}),
                     },
                 },
                 source=self.name,
@@ -362,13 +354,14 @@ class DeepResearchCapability(BaseCapability):
             return
 
         pre_outline = [
-            {"title": item.title, "overview": item.overview} for item in confirmed_outline
+            {"title": item.title, "overview": item.overview}
+            for item in confirmed_outline
         ]
 
         pipeline = ResearchPipeline(
             config=config,
             api_key=llm_config.api_key,
-            base_url=llm_config.base_url or "",
+            base_url=llm_config.base_url,
             api_version=llm_config.api_version,
             kb_name=kb_name,
             progress_callback=_progress_cb,
@@ -378,9 +371,7 @@ class DeepResearchCapability(BaseCapability):
         )
 
         async with stream.stage("researching", source=self.name):
-            await stream.thinking(
-                f"Researching topic: {topic}", source=self.name, stage="researching"
-            )
+            await stream.thinking(f"Researching topic: {topic}", source=self.name, stage="researching")
             result = await pipeline.run(topic=topic)
 
         report = result.get("report", "")
@@ -409,22 +400,45 @@ class DeepResearchCapability(BaseCapability):
             format_trace_summary,
             join_chunks,
             labeled_block,
-            load_answer_now_prompts,
             make_skip_notice,
             stream_synthesis,
         )
 
+        is_zh = context.language.lower().startswith("zh")
         original = str(payload.get("original_user_message") or context.user_message).strip()
         partial = str(payload.get("partial_response") or "").strip()
         trace_summary = format_trace_summary(payload.get("events"), language=context.language)
 
-        prompts = load_answer_now_prompts("research", context.language)
-        system_prompt = str(prompts.get("system", "")).strip()
-        user_prompt = str(prompts.get("user_template", "")).format(
-            original=original,
-            current_draft=labeled_block("Current Draft", partial),
-            research_trace=labeled_block("Research Trace", trace_summary),
-        )
+        if is_zh:
+            system_prompt = (
+                "你是 TEEECHR 的研究报告写作组件。用户已经在等待，"
+                "请根据当前已经收集到的研究 trace（包括 rephrase、decompose、检索结果、"
+                "笔记/纲要等）直接输出一篇结构清晰的研究报告。"
+                "不要再继续检索或调用工具。如果证据稀薄，请在报告中标注信息覆盖度。"
+                "使用 Markdown，包含 1) 引言、2) 主体小节（按你能识别的子主题）、3) 结论。"
+            )
+            user_prompt = (
+                f"研究主题：{original}\n\n"
+                f"{labeled_block('Current Draft', partial)}\n\n"
+                f"{labeled_block('Research Trace', trace_summary)}\n\n"
+                "请基于以上材料立即输出最终报告。"
+            )
+        else:
+            system_prompt = (
+                "You are TEEECHR's research-report writer. The user is "
+                "waiting, so produce a structured research report right now "
+                "from whatever evidence has streamed so far (rephrase, "
+                "decompose, search hits, notes/outline, ...). Do not retrieve "
+                "more evidence and do not call tools. If coverage is thin, "
+                "say so explicitly in the report. Use Markdown with: 1) intro, "
+                "2) body sections (one per identifiable subtopic), 3) conclusion."
+            )
+            user_prompt = (
+                f"Research topic: {original}\n\n"
+                f"{labeled_block('Current Draft', partial)}\n\n"
+                f"{labeled_block('Research Trace', trace_summary)}\n\n"
+                "Produce the final research report from this material now."
+            )
 
         trace_meta = build_answer_now_trace_metadata(
             capability=self.name, phase="reporting", label="Answer now"
@@ -461,7 +475,9 @@ class DeepResearchCapability(BaseCapability):
         )
 
     @staticmethod
-    def _outline_to_markdown(topic: str, sub_topics: list[dict[str, str]]) -> str:
+    def _outline_to_markdown(
+        topic: str, sub_topics: list[dict[str, str]]
+    ) -> str:
         """Serialize an outline to Markdown so it is persisted in session history."""
         lines = [f"**Research Outline — {topic}**\n"]
         for i, item in enumerate(sub_topics, 1):

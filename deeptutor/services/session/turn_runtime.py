@@ -5,24 +5,19 @@ Turn-level runtime manager for unified chat streaming.
 from __future__ import annotations
 
 import asyncio
-from collections.abc import AsyncIterator, Callable, Sequence
 import contextlib
-from contextvars import Token
-from dataclasses import dataclass, field
 import json
 import logging
-from typing import TYPE_CHECKING, Any, Literal
+from collections.abc import AsyncIterator
+from dataclasses import dataclass, field
+from typing import Any
 
 from deeptutor.core.stream import StreamEvent, StreamEventType
+from deeptutor.services.knowledge_scope import to_internal_kb_names
 from deeptutor.services.path_service import get_path_service
 from deeptutor.services.session.sqlite_store import SQLiteSessionStore, get_sqlite_session_store
 
-if TYPE_CHECKING:
-    from deeptutor.services.llm.config import LLMConfig
-
 logger = logging.getLogger(__name__)
-
-MemoryReference = Literal["summary", "profile"]
 
 
 def _should_capture_assistant_content(event: StreamEvent) -> bool:
@@ -40,144 +35,6 @@ def _clip_text(value: str, limit: int = 4000) -> str:
     if len(text) <= limit:
         return text
     return text[:limit].rstrip() + "\n...[truncated]"
-
-
-def _extract_memory_references(payload: dict[str, Any]) -> list[MemoryReference]:
-    """Return the explicit public memory files requested for this turn."""
-    refs = payload.get("memory_references", []) or []
-    if not isinstance(refs, list):
-        return []
-
-    out: list[MemoryReference] = []
-    for item in refs:
-        if item in {"summary", "profile"} and item not in out:
-            out.append(item)
-    return out
-
-
-def _string_list(value: Any) -> list[str]:
-    if not isinstance(value, list):
-        return []
-    return [item for item in value if isinstance(item, str) and item]
-
-
-def _llm_selection_dict(value: Any) -> dict[str, str] | None:
-    from deeptutor.services.model_selection import LLMSelection
-
-    selection = LLMSelection.from_payload(value)
-    return selection.to_dict() if selection else None
-
-
-def _request_snapshot_metadata(
-    *,
-    payload: dict[str, Any],
-    content: str,
-    capability: str,
-    config: dict[str, Any],
-    attachments: list[dict[str, Any]],
-    notebook_references: list[Any],
-    history_references: list[Any],
-    question_notebook_references: list[Any],
-    book_references: list[Any],
-    requested_skills: list[str],
-    memory_references: Sequence[str],
-    llm_selection: dict[str, str] | None,
-) -> dict[str, Any]:
-    """Persist the front-end context chips with the user message."""
-    snapshot: dict[str, Any] = {
-        "content": content,
-        "capability": capability,
-        "enabledTools": _string_list(payload.get("tools")),
-        "knowledgeBases": _string_list(payload.get("knowledge_bases")),
-        "language": str(payload.get("language", "en") or "en"),
-    }
-    if attachments:
-        snapshot["attachments"] = attachments
-    if config:
-        snapshot["config"] = dict(config)
-    if notebook_references:
-        snapshot["notebookReferences"] = notebook_references
-    if history_references:
-        snapshot["historyReferences"] = history_references
-    if question_notebook_references:
-        snapshot["questionNotebookReferences"] = question_notebook_references
-    if book_references:
-        snapshot["bookReferences"] = book_references
-    if requested_skills:
-        snapshot["skills"] = requested_skills
-    if memory_references:
-        snapshot["memoryReferences"] = memory_references
-    if llm_selection:
-        snapshot["llmSelection"] = llm_selection
-    return {"request_snapshot": snapshot}
-
-
-def _format_question_bank_entry(entry: dict[str, Any]) -> str:
-    """Render a single Question Bank entry as a structured Markdown block."""
-    lines: list[str] = []
-    title = str(entry.get("session_title", "") or "Untitled session")
-    difficulty = str(entry.get("difficulty", "") or "").strip()
-    qtype = str(entry.get("question_type", "") or "").strip()
-    is_correct = bool(entry.get("is_correct"))
-
-    badges: list[str] = []
-    if qtype:
-        badges.append(qtype)
-    if difficulty:
-        badges.append(difficulty)
-    badges.append("correct" if is_correct else "incorrect")
-    badge_text = " · ".join(badges)
-
-    lines.append(f"### Question (from {title}) [{badge_text}]")
-    lines.append(_clip_text(str(entry.get("question", "") or ""), limit=2000))
-
-    options = entry.get("options") or {}
-    if isinstance(options, dict) and options:
-        lines.append("")
-        lines.append("**Options:**")
-        for key in sorted(options.keys()):
-            lines.append(f"- {key}. {options[key]}")
-
-    user_answer = str(entry.get("user_answer", "") or "").strip()
-    correct_answer = str(entry.get("correct_answer", "") or "").strip()
-    if user_answer:
-        lines.append("")
-        lines.append(f"**User's Answer:** {_clip_text(user_answer, limit=1000)}")
-    if correct_answer:
-        lines.append(f"**Reference Answer:** {_clip_text(correct_answer, limit=1500)}")
-
-    explanation = str(entry.get("explanation", "") or "").strip()
-    if explanation:
-        lines.append("")
-        lines.append("**Explanation:**")
-        lines.append(_clip_text(explanation, limit=2000))
-
-    return "\n".join(lines)
-
-
-async def _build_question_bank_context(
-    store: SQLiteSessionStore,
-    entry_ids: list[Any],
-) -> str:
-    """Fetch the requested Question Bank entries and render them as context."""
-    seen: set[int] = set()
-    blocks: list[str] = []
-    for raw in entry_ids:
-        try:
-            entry_id = int(raw)
-        except (TypeError, ValueError):
-            continue
-        if entry_id in seen:
-            continue
-        seen.add(entry_id)
-        try:
-            entry = await store.get_notebook_entry(entry_id)
-        except Exception:
-            entry = None
-        if not entry:
-            continue
-        blocks.append(_format_question_bank_entry(entry))
-    return "\n\n---\n\n".join(blocks)
 
 
 def _extract_followup_question_context(
@@ -230,17 +87,6 @@ def _extract_persist_user_message(config: dict[str, Any] | None) -> bool:
     return bool(raw)
 
 
-def _extract_regenerate_flag(config: dict[str, Any] | None) -> bool:
-    if not isinstance(config, dict):
-        return False
-    raw = config.pop("_regenerate", False)
-    if isinstance(raw, bool):
-        return raw
-    if isinstance(raw, str):
-        return raw.strip().lower() in {"true", "1", "yes"}
-    return bool(raw)
-
-
 def _format_followup_question_context(context: dict[str, Any], language: str = "en") -> str:
     options = context.get("options") or {}
     option_lines = []
@@ -250,7 +96,11 @@ def _format_followup_question_context(context: dict[str, Any], language: str = "
                 option_lines.append(f"{key}. {value}")
     correctness = context.get("is_correct")
     correctness_text = (
-        "correct" if correctness is True else "incorrect" if correctness is False else "unknown"
+        "correct"
+        if correctness is True
+        else "incorrect"
+        if correctness is False
+        else "unknown"
     )
 
     if str(language or "en").lower().startswith("zh"):
@@ -355,18 +205,21 @@ class TurnRuntimeManager:
         self._executions: dict[str, _TurnExecution] = {}
 
     async def start_turn(self, payload: dict[str, Any]) -> tuple[dict[str, Any], dict[str, Any]]:
+        tester_id = str(payload.get("_tester_id") or "").strip()
+        if not tester_id:
+            raise RuntimeError("Not signed in")
         capability = str(payload.get("capability") or "chat")
         raw_config = dict(payload.get("config", {}) or {})
         runtime_only_keys = (
             "_persist_user_message",
-            "_regenerate",
-            "_regenerated_from_message_id",
-            "_superseded_turn_id",
             "followup_question_context",
+            "quiz_submission_context",
             "answer_now_context",
         )
         runtime_only_config = {
-            key: raw_config.pop(key) for key in runtime_only_keys if key in raw_config
+            key: raw_config.pop(key)
+            for key in runtime_only_keys
+            if key in raw_config
         }
         try:
             from deeptutor.capabilities.request_contracts import validate_capability_config
@@ -379,39 +232,19 @@ class TurnRuntimeManager:
             "capability": capability,
             "config": {**validated_public_config, **runtime_only_config},
         }
-        session = await self.store.ensure_session(payload.get("session_id"))
-        preferences = session.get("preferences") or {}
-        raw_llm_selection = payload.get("llm_selection")
-        if raw_llm_selection is None:
-            raw_llm_selection = preferences.get("llm_selection")
         try:
-            llm_selection = _llm_selection_dict(raw_llm_selection)
+            session = await self.store.ensure_session(payload.get("session_id"), tester_id=tester_id)
         except ValueError as exc:
-            raise RuntimeError(str(exc)) from exc
-        if llm_selection:
-            from deeptutor.services.config import get_model_catalog_service
-            from deeptutor.services.model_selection import (
-                LLMSelection,
-                apply_llm_selection_to_catalog,
-            )
-
-            try:
-                apply_llm_selection_to_catalog(
-                    get_model_catalog_service().load(),
-                    LLMSelection.from_payload(llm_selection),
-                )
-            except ValueError as exc:
-                raise RuntimeError(str(exc)) from exc
-        payload = {**payload, "llm_selection": llm_selection}
-        preference_update: dict[str, Any] = {
-            "capability": capability,
-            "tools": list(payload.get("tools") or []),
-            "knowledge_bases": list(payload.get("knowledge_bases") or []),
-            "language": str(payload.get("language") or "en"),
-        }
-        if llm_selection:
-            preference_update["llm_selection"] = llm_selection
-        await self.store.update_session_preferences(session["id"], preference_update)
+            raise RuntimeError("Session not found") from exc
+        await self.store.update_session_preferences(
+            session["id"],
+            {
+                "capability": capability,
+                "tools": list(payload.get("tools") or []),
+                "knowledge_bases": list(payload.get("knowledge_bases") or []),
+                "language": str(payload.get("language") or "en"),
+            },
+        )
         turn = await self.store.create_turn(session["id"], capability=capability)
         execution = _TurnExecution(
             turn_id=turn["id"],
@@ -419,140 +252,18 @@ class TurnRuntimeManager:
             capability=capability,
             payload=dict(payload),
         )
-        session_metadata: dict[str, Any] = {
-            "session_id": session["id"],
-            "turn_id": turn["id"],
-        }
-        regenerated_from = runtime_only_config.get("_regenerated_from_message_id")
-        if regenerated_from is not None:
-            session_metadata["regenerated_from_message_id"] = regenerated_from
-        superseded_turn_id = runtime_only_config.get("_superseded_turn_id")
-        if superseded_turn_id:
-            session_metadata["superseded_turn_id"] = str(superseded_turn_id)
-        if runtime_only_config.get("_regenerate"):
-            session_metadata["regenerate"] = True
         await self._persist_and_publish(
             execution,
             StreamEvent(
                 type=StreamEventType.SESSION,
                 source="turn_runtime",
-                metadata=session_metadata,
+                metadata={"session_id": session["id"], "turn_id": turn["id"]},
             ),
         )
         async with self._lock:
             self._executions[turn["id"]] = execution
             execution.task = asyncio.create_task(self._run_turn(execution))
         return session, turn
-
-    async def regenerate_last_turn(
-        self,
-        session_id: str,
-        overrides: dict[str, Any] | None = None,
-    ) -> tuple[dict[str, Any], dict[str, Any]]:
-        """Re-run the prior user message in ``session_id``.
-
-        Deletes the trailing assistant message (if any), then dispatches a new
-        turn with ``_persist_user_message=False`` and ``_regenerate=True`` so
-        the runtime knows not to duplicate the user row or refresh long-term
-        memory a second time. The original user message stays in place.
-        """
-        session_id = str(session_id or "").strip()
-        if not session_id:
-            raise RuntimeError("nothing_to_regenerate")
-
-        session = await self.store.get_session(session_id)
-        if session is None:
-            raise RuntimeError("nothing_to_regenerate")
-
-        active = await self.store.get_active_turn(session_id)
-        if active is not None:
-            raise RuntimeError("regenerate_busy")
-
-        last_user = await self.store.get_last_message(session_id, role="user")
-        if last_user is None:
-            raise RuntimeError("nothing_to_regenerate")
-
-        last_message = await self.store.get_last_message(session_id)
-        previous_turn_id: str | None = None
-        if last_message is not None and last_message.get("role") == "assistant":
-            for event in last_message.get("events") or []:
-                turn_id = str((event or {}).get("turn_id") or "")
-                if turn_id:
-                    previous_turn_id = turn_id
-                    break
-            await self.store.delete_message(int(last_message["id"]))
-
-        preferences = session.get("preferences") or {}
-        overrides = overrides or {}
-        snapshot = {}
-        metadata = last_user.get("metadata") or {}
-        if isinstance(metadata, dict):
-            candidate = metadata.get("request_snapshot") or metadata.get("requestSnapshot")
-            if isinstance(candidate, dict):
-                snapshot = candidate
-
-        capability = str(
-            overrides.get("capability")
-            or last_user.get("capability")
-            or preferences.get("capability")
-            or "chat"
-        )
-        tools = list(
-            overrides.get("tools")
-            if overrides.get("tools") is not None
-            else preferences.get("tools") or []
-        )
-        knowledge_bases = list(
-            overrides.get("knowledge_bases")
-            if overrides.get("knowledge_bases") is not None
-            else preferences.get("knowledge_bases") or []
-        )
-        language = str(overrides.get("language") or preferences.get("language") or "en")
-
-        config: dict[str, Any] = dict(overrides.get("config") or {})
-        config.update(
-            {
-                "_persist_user_message": False,
-                "_regenerate": True,
-                "_regenerated_from_message_id": int(last_user["id"]),
-            }
-        )
-        if previous_turn_id:
-            config["_superseded_turn_id"] = previous_turn_id
-        llm_selection = (
-            overrides.get("llm_selection")
-            if overrides.get("llm_selection") is not None
-            else snapshot.get("llmSelection") or preferences.get("llm_selection")
-        )
-
-        payload: dict[str, Any] = {
-            "session_id": session_id,
-            "capability": capability,
-            "content": str(last_user.get("content", "") or ""),
-            "tools": tools,
-            "knowledge_bases": knowledge_bases,
-            "language": language,
-            "attachments": list(last_user.get("attachments") or []),
-            "notebook_references": list(
-                overrides.get("notebook_references")
-                if overrides.get("notebook_references") is not None
-                else preferences.get("notebook_references") or []
-            ),
-            "history_references": list(
-                overrides.get("history_references")
-                if overrides.get("history_references") is not None
-                else preferences.get("history_references") or []
-            ),
-            "book_references": list(
-                overrides.get("book_references")
-                if overrides.get("book_references") is not None
-                else snapshot.get("bookReferences") or []
-            ),
-            "config": config,
-        }
-        if llm_selection:
-            payload["llm_selection"] = llm_selection
-        return await self.start_turn(payload)
 
     async def cancel_turn(self, turn_id: str) -> bool:
         async with self._lock:
@@ -570,7 +281,10 @@ class TurnRuntimeManager:
         self,
         turn_id: str,
         after_seq: int = 0,
+        tester_id: str | None = None,
     ) -> AsyncIterator[dict[str, Any]]:
+        if tester_id and not await self.store.turn_belongs_to_tester(turn_id, tester_id):
+            return
         backlog = await self.store.get_turn_events(turn_id, after_seq=after_seq)
         last_seq = after_seq
         for item in backlog:
@@ -614,19 +328,20 @@ class TurnRuntimeManager:
             async with self._lock:
                 execution = self._executions.get(turn_id)
                 if execution is not None:
-                    execution.subscribers = [
-                        sub for sub in execution.subscribers if sub is not subscriber
-                    ]
+                    execution.subscribers = [sub for sub in execution.subscribers if sub is not subscriber]
 
     async def subscribe_session(
         self,
         session_id: str,
         after_seq: int = 0,
+        tester_id: str | None = None,
     ) -> AsyncIterator[dict[str, Any]]:
+        if tester_id and not await self.store.get_session(session_id, tester_id=tester_id):
+            return
         active_turn = await self.store.get_active_turn(session_id)
         if active_turn is None:
             return
-        async for item in self.subscribe_turn(active_turn["id"], after_seq=after_seq):
+        async for item in self.subscribe_turn(active_turn["id"], after_seq=after_seq, tester_id=tester_id):
             yield item
 
     async def _run_turn(self, execution: _TurnExecution) -> None:
@@ -638,47 +353,24 @@ class TurnRuntimeManager:
         attachment_records = []
         assistant_events: list[dict[str, Any]] = []
         assistant_content = ""
-        llm_scope_token: Token[LLMConfig | None] | None = None
-        reset_active_llm_selection: Callable[[Token[LLMConfig | None] | None], None] | None = None
 
         try:
-            from deeptutor.agents.notebook import NotebookAnalysisAgent
-            from deeptutor.book.context import build_book_context
             from deeptutor.core.context import Attachment, UnifiedContext
             from deeptutor.runtime.orchestrator import ChatOrchestrator
+            from deeptutor.agents.notebook import NotebookAnalysisAgent
             from deeptutor.services.memory import get_memory_service
-            from deeptutor.services.model_selection.runtime import (
-                activate_llm_selection,
-            )
-            from deeptutor.services.model_selection.runtime import (
-                reset_llm_selection as reset_active_llm_selection,
-            )
             from deeptutor.services.notebook import notebook_manager
+            from deeptutor.services.llm.config import get_llm_config
             from deeptutor.services.session.context_builder import ContextBuilder
-            from deeptutor.services.skill import get_skill_service
 
             request_config = dict(payload.get("config", {}) or {})
             followup_question_context = _extract_followup_question_context(request_config)
             persist_user_message = _extract_persist_user_message(request_config)
-            is_regenerate = _extract_regenerate_flag(request_config)
-            request_config.pop("_regenerated_from_message_id", None)
-            request_config.pop("_superseded_turn_id", None)
             raw_user_content = str(payload.get("content", "") or "")
             notebook_references = payload.get("notebook_references", []) or []
             history_references = payload.get("history_references", []) or []
-            question_notebook_references = payload.get("question_notebook_references", []) or []
-            book_context_result = build_book_context(payload.get("book_references", []) or [])
-            book_references = book_context_result.references
-            memory_references = _extract_memory_references(payload)
             notebook_context = ""
             history_context = ""
-            question_bank_context = ""
-            book_context = book_context_result.text
-
-            import base64 as _b64
-            import uuid as _uuid
-
-            from deeptutor.services.storage import get_attachment_store
 
             for item in payload.get("attachments", []):
                 record = {
@@ -687,72 +379,9 @@ class TurnRuntimeManager:
                     "base64": item.get("base64", ""),
                     "filename": item.get("filename", ""),
                     "mime_type": item.get("mime_type", ""),
-                    "id": item.get("id", "") or _uuid.uuid4().hex[:12],
                 }
                 attachment_records.append(record)
-
-            # Persist original bytes to the attachment store before extraction
-            # so the frontend preview drawer can fetch the file later. The
-            # extractor will clear base64 on documents to keep DB rows lean,
-            # but the URL we record here outlives that pruning. Upload errors
-            # are non-fatal — extraction still runs from the in-memory base64.
-            attachment_store = get_attachment_store()
-            for record in attachment_records:
-                if record.get("url"):
-                    continue  # already hosted (e.g. legacy URL)
-                b64 = record.get("base64") or ""
-                if not b64:
-                    continue
-                try:
-                    raw_bytes = _b64.b64decode(b64, validate=False)
-                except Exception as exc:
-                    logger.warning(
-                        "skipping attachment upload for %r: invalid base64 (%s)",
-                        record.get("filename"),
-                        exc,
-                    )
-                    continue
-                try:
-                    record["url"] = await attachment_store.put(
-                        session_id=session_id,
-                        attachment_id=record["id"],
-                        filename=record.get("filename", "") or "file",
-                        data=raw_bytes,
-                        mime_type=record.get("mime_type", "") or "",
-                    )
-                except Exception as exc:
-                    logger.warning(
-                        "attachment store rejected %r: %s",
-                        record.get("filename"),
-                        exc,
-                    )
-
-            from deeptutor.utils.document_extractor import extract_documents_from_records
-
-            document_texts, attachment_records = extract_documents_from_records(attachment_records)
-            attachments = [
-                Attachment(
-                    type=r.get("type", "file"),
-                    url=r.get("url", ""),
-                    base64=r.get("base64", ""),
-                    filename=r.get("filename", ""),
-                    mime_type=r.get("mime_type", ""),
-                    id=r.get("id", ""),
-                    extracted_text=r.get("extracted_text", ""),
-                )
-                for r in attachment_records
-            ]
-            # DB persistence copy: drop base64 unconditionally now that the
-            # original bytes live in the attachment store. Image attachments
-            # used to keep base64 here (which bloated message rows); the URL
-            # is now the stable source for previews.
-            persisted_attachment_records = [
-                {
-                    **{k: v for k, v in r.items() if k != "base64"},
-                    "base64": "",
-                }
-                for r in attachment_records
-            ]
+                attachments.append(Attachment(**record))
 
             if followup_question_context:
                 existing_messages = await self.store.get_messages_for_context(session_id)
@@ -767,30 +396,16 @@ class TurnRuntimeManager:
                         capability=capability_name or "chat",
                     )
 
-            llm_config, llm_scope_token = activate_llm_selection(payload.get("llm_selection"))
+            llm_config = get_llm_config()
             builder = ContextBuilder(self.store)
-
-            async def _emit_context_event(event: StreamEvent) -> None:
-                await self._persist_and_publish(execution, event)
-
             history_result = await builder.build(
                 session_id=session_id,
                 llm_config=llm_config,
                 language=payload.get("language", "en"),
-                on_event=_emit_context_event,
+                on_event=lambda event: self._persist_and_publish(execution, event),
             )
             memory_service = get_memory_service()
-            memory_context = memory_service.build_memory_context(memory_references)
-
-            skill_service = get_skill_service()
-            requested_skills = _string_list(payload.get("skills"))
-            if not requested_skills or requested_skills == ["auto"]:
-                resolved_skills = skill_service.auto_select(raw_user_content)
-            else:
-                resolved_skills = [
-                    s for s in requested_skills if isinstance(s, str) and s != "auto"
-                ]
-            skills_context = skill_service.load_for_context(resolved_skills)
+            memory_context = memory_service.build_memory_context()
 
             if notebook_references:
                 referenced_records = notebook_manager.get_records_by_references(notebook_references)
@@ -801,7 +416,7 @@ class TurnRuntimeManager:
                     notebook_context = await analysis_agent.analyze(
                         user_question=raw_user_content,
                         records=referenced_records,
-                        emit=_emit_context_event,
+                        emit=lambda event: self._persist_and_publish(execution, event),
                     )
 
             if history_references:
@@ -811,7 +426,10 @@ class TurnRuntimeManager:
                     if not history_session_id:
                         continue
 
-                    history_session = await self.store.get_session(history_session_id)
+                    history_session = await self.store.get_session(
+                        history_session_id,
+                        tester_id=str(payload.get("_tester_id") or ""),
+                    )
                     if not history_session:
                         continue
 
@@ -824,9 +442,7 @@ class TurnRuntimeManager:
                     if not transcript_lines:
                         continue
 
-                    history_summary = str(
-                        history_session.get("compressed_summary", "") or ""
-                    ).strip()
+                    history_summary = str(history_session.get("compressed_summary", "") or "").strip()
                     if not history_summary:
                         history_summary = _clip_text(
                             " ".join(
@@ -861,7 +477,7 @@ class TurnRuntimeManager:
                     history_context = await analysis_agent.analyze(
                         user_question=raw_user_content,
                         records=history_records,
-                        emit=_emit_context_event,
+                        emit=lambda event: self._persist_and_publish(execution, event),
                     )
                     if not history_context.strip():
                         MAX_FALLBACK_CHARS = 8000
@@ -881,23 +497,12 @@ class TurnRuntimeManager:
                             total += len(part)
                         history_context = "\n\n".join(parts)
 
-            if question_notebook_references:
-                question_bank_context = await _build_question_bank_context(
-                    self.store, question_notebook_references
-                )
-
             effective_user_message = raw_user_content
             context_parts: list[str] = []
-            if document_texts:
-                context_parts.append("[Attached Documents]\n" + "\n\n".join(document_texts))
-            if book_context:
-                context_parts.append(f"[Book Context]\n{book_context}")
             if notebook_context:
                 context_parts.append(f"[Notebook Context]\n{notebook_context}")
             if history_context:
                 context_parts.append(f"[History Context]\n{history_context}")
-            if question_bank_context:
-                context_parts.append(f"[Question Bank Context]\n{question_bank_context}")
             if context_parts:
                 context_parts.append(f"[User Question]\n{raw_user_content}")
                 effective_user_message = "\n\n".join(context_parts)
@@ -911,22 +516,13 @@ class TurnRuntimeManager:
                     role="user",
                     content=raw_user_content,
                     capability=capability_name,
-                    attachments=persisted_attachment_records,
-                    metadata=_request_snapshot_metadata(
-                        payload=payload,
-                        content=raw_user_content,
-                        capability=capability_name,
-                        config=request_config,
-                        attachments=persisted_attachment_records,
-                        notebook_references=notebook_references,
-                        history_references=history_references,
-                        question_notebook_references=question_notebook_references,
-                        book_references=book_references,
-                        requested_skills=requested_skills,
-                        memory_references=memory_references,
-                        llm_selection=payload.get("llm_selection"),
-                    ),
+                    attachments=attachment_records,
                 )
+
+            scoped_knowledge_bases = to_internal_kb_names(
+                [str(name) for name in (payload.get("knowledge_bases") or [])],
+                str(payload.get("_tester_id") or ""),
+            )
 
             context = UnifiedContext(
                 session_id=session_id,
@@ -934,14 +530,13 @@ class TurnRuntimeManager:
                 conversation_history=conversation_history,
                 enabled_tools=payload.get("tools"),
                 active_capability=payload.get("capability"),
-                knowledge_bases=payload.get("knowledge_bases", []),
+                knowledge_bases=scoped_knowledge_bases,
                 attachments=attachments,
                 config_overrides=request_config,
                 language=payload.get("language", "en"),
                 notebook_context=notebook_context,
                 history_context=history_context,
                 memory_context=memory_context,
-                skills_context=skills_context,
                 metadata={
                     "conversation_summary": history_result.conversation_summary,
                     "conversation_context_text": conversation_context_text,
@@ -951,17 +546,7 @@ class TurnRuntimeManager:
                     "question_followup_context": followup_question_context or {},
                     "notebook_references": notebook_references,
                     "history_references": history_references,
-                    "question_notebook_references": question_notebook_references,
-                    "book_references": book_references,
-                    "book_context": book_context,
-                    "book_context_warnings": book_context_result.warnings,
-                    "memory_references": memory_references,
-                    "question_bank_context": question_bank_context,
                     "memory_context": memory_context,
-                    "active_skills": resolved_skills,
-                    "llm_selection": payload.get("llm_selection") or {},
-                    "llm_model": str(getattr(llm_config, "model", "") or ""),
-                    "llm_provider": str(getattr(llm_config, "provider_name", "") or ""),
                 },
             )
 
@@ -983,17 +568,16 @@ class TurnRuntimeManager:
                 events=assistant_events,
             )
             await self.store.update_turn_status(turn_id, "completed")
-            if not is_regenerate:
-                try:
-                    await memory_service.refresh_from_turn(
-                        user_message=raw_user_content,
-                        assistant_message=assistant_content,
-                        session_id=session_id,
-                        capability=capability_name or "chat",
-                        language=str(payload.get("language", "en") or "en"),
-                    )
-                except Exception:
-                    logger.debug("Failed to refresh lightweight memory", exc_info=True)
+            try:
+                await memory_service.refresh_from_turn(
+                    user_message=raw_user_content,
+                    assistant_message=assistant_content,
+                    session_id=session_id,
+                    capability=capability_name or "chat",
+                    language=str(payload.get("language", "en") or "en"),
+                )
+            except Exception:
+                logger.debug("Failed to refresh lightweight memory", exc_info=True)
         except asyncio.CancelledError:
             await self.store.update_turn_status(turn_id, "cancelled", "Turn cancelled")
             await self._persist_and_publish(
@@ -1035,8 +619,6 @@ class TurnRuntimeManager:
                 ),
             )
         finally:
-            if llm_scope_token is not None and reset_active_llm_selection is not None:
-                reset_active_llm_selection(llm_scope_token)
             async with self._lock:
                 current = self._executions.get(turn_id)
                 if current is not None:

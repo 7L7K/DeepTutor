@@ -6,9 +6,10 @@ from __future__ import annotations
 
 import logging
 
-from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel, Field, field_validator
+from fastapi import APIRouter, Depends, HTTPException, Query
 
+from deeptutor.api.routers.access import get_current_tester
 from deeptutor.services.session import get_sqlite_session_store
 
 logger = logging.getLogger(__name__)
@@ -68,46 +69,55 @@ def _format_quiz_results_message(answers: list[QuizResultItem]) -> str:
 async def list_sessions(
     limit: int = Query(default=50, ge=1, le=200),
     offset: int = Query(default=0, ge=0),
+    tester: dict = Depends(get_current_tester),
 ):
     store = get_sqlite_session_store()
-    sessions = await store.list_sessions(limit=limit, offset=offset)
+    sessions = await store.list_sessions(limit=limit, offset=offset, tester_id=tester["id"])
     return {"sessions": sessions}
 
 
 @router.get("/{session_id}")
-async def get_session(session_id: str):
+async def get_session(session_id: str, tester: dict = Depends(get_current_tester)):
     store = get_sqlite_session_store()
-    session = await store.get_session_with_messages(session_id)
+    session = await store.get_session_with_messages(session_id, tester_id=tester["id"])
     if session is None:
         raise HTTPException(status_code=404, detail="Session not found")
     return session
 
 
 @router.patch("/{session_id}")
-async def rename_session(session_id: str, payload: SessionRenameRequest):
+async def rename_session(
+    session_id: str,
+    payload: SessionRenameRequest,
+    tester: dict = Depends(get_current_tester),
+):
     store = get_sqlite_session_store()
-    updated = await store.update_session_title(session_id, payload.title)
+    updated = await store.update_session_title(session_id, payload.title, tester_id=tester["id"])
     if not updated:
         raise HTTPException(status_code=404, detail="Session not found")
-    session = await store.get_session(session_id)
+    session = await store.get_session(session_id, tester_id=tester["id"])
     return {"session": session}
 
 
 @router.delete("/{session_id}")
-async def delete_session(session_id: str):
+async def delete_session(session_id: str, tester: dict = Depends(get_current_tester)):
     store = get_sqlite_session_store()
-    deleted = await store.delete_session(session_id)
+    deleted = await store.delete_session(session_id, tester_id=tester["id"])
     if not deleted:
         raise HTTPException(status_code=404, detail="Session not found")
     return {"deleted": True, "session_id": session_id}
 
 
 @router.post("/{session_id}/quiz-results")
-async def record_quiz_results(session_id: str, payload: QuizResultsRequest):
+async def record_quiz_results(
+    session_id: str,
+    payload: QuizResultsRequest,
+    tester: dict = Depends(get_current_tester),
+):
     if not payload.answers:
         raise HTTPException(status_code=400, detail="Quiz results are required")
     store = get_sqlite_session_store()
-    session = await store.get_session(session_id)
+    session = await store.get_session(session_id, tester_id=tester["id"])
     if session is None:
         raise HTTPException(status_code=404, detail="Session not found")
     content = _format_quiz_results_message(payload.answers)
@@ -124,9 +134,7 @@ async def record_quiz_results(session_id: str, payload: QuizResultsRequest):
             [item.model_dump() for item in payload.answers],
         )
     except Exception:
-        logger.warning(
-            "Failed to upsert notebook entries for session %s", session_id, exc_info=True
-        )
+        logger.warning("Failed to upsert notebook entries for session %s", session_id, exc_info=True)
     return {
         "recorded": True,
         "session_id": session_id,

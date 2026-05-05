@@ -7,7 +7,7 @@ import sqlite3
 import pytest
 
 from deeptutor.services.path_service import PathService
-from deeptutor.services.session.sqlite_store import SQLiteSessionStore
+from deeptutor.services.session.sqlite_store import DEFAULT_TESTER_ID, SQLiteSessionStore
 
 
 def test_sqlite_store_defaults_to_data_user_chat_history_db(tmp_path: Path) -> None:
@@ -49,6 +49,40 @@ def test_sqlite_store_migrates_legacy_chat_history_db(tmp_path: Path) -> None:
     finally:
         service._project_root = original_root
         service._user_data_dir = original_user_dir
+
+
+def test_sqlite_store_adds_default_owner_to_legacy_tables(tmp_path: Path) -> None:
+    db_path = tmp_path / "legacy_owner.db"
+    with sqlite3.connect(db_path) as conn:
+        conn.executescript(
+            """
+            CREATE TABLE sessions (
+                id TEXT PRIMARY KEY,
+                title TEXT NOT NULL DEFAULT 'New conversation',
+                created_at REAL NOT NULL,
+                updated_at REAL NOT NULL,
+                compressed_summary TEXT DEFAULT '',
+                summary_up_to_msg_id INTEGER DEFAULT 0,
+                preferences_json TEXT DEFAULT '{}'
+            );
+            INSERT INTO sessions (id, title, created_at, updated_at)
+            VALUES ('legacy-session', 'Legacy', 1.0, 1.0);
+            """
+        )
+        conn.commit()
+
+    store = SQLiteSessionStore(db_path=db_path)
+    session = asyncio.run(store.get_session("legacy-session"))
+    assert session is not None
+    assert session["tester_id"] == DEFAULT_TESTER_ID
+
+    with sqlite3.connect(store.db_path) as conn:
+        for table in ("sessions", "notebook_entries", "practice_attempts", "flashcard_decks"):
+            columns = {row[1] for row in conn.execute(f"PRAGMA table_info({table})").fetchall()}
+            assert "tester_id" in columns
+        tester = conn.execute("SELECT id, disabled_at FROM testers WHERE id = ?", (DEFAULT_TESTER_ID,)).fetchone()
+        assert tester is not None
+        assert tester[1] is not None
 
 
 @pytest.fixture

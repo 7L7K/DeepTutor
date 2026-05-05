@@ -18,6 +18,7 @@ from uuid import uuid4
 from fastapi import (
     APIRouter,
     BackgroundTasks,
+    Depends,
     File,
     Form,
     HTTPException,
@@ -28,6 +29,7 @@ from fastapi import (
 from fastapi.responses import FileResponse, StreamingResponse
 from pydantic import BaseModel
 
+from deeptutor.api.routers.access import get_current_tester
 from deeptutor.api.utils.progress_broadcaster import ProgressBroadcaster
 from deeptutor.api.utils.task_id_manager import TaskIDManager
 from deeptutor.api.utils.task_log_stream import capture_task_logs, get_task_stream_manager
@@ -36,7 +38,13 @@ from deeptutor.knowledge.initializer import KnowledgeBaseInitializer
 from deeptutor.knowledge.manager import KnowledgeBaseManager
 from deeptutor.knowledge.naming import validate_knowledge_base_name
 from deeptutor.knowledge.progress_tracker import ProgressStage, ProgressTracker
+from deeptutor.services.access import ACCESS_COOKIE_NAME, InvalidAccessToken, get_access_manager
 from deeptutor.services.config import PROJECT_ROOT, load_config_with_main
+from deeptutor.services.knowledge_scope import (
+    is_visible_kb_name,
+    to_internal_kb_name,
+    to_public_kb_name,
+)
 from deeptutor.services.rag.factory import DEFAULT_PROVIDER
 from deeptutor.services.rag.file_routing import FileTypeRouter
 from deeptutor.utils.document_validator import DocumentValidator
@@ -276,12 +284,44 @@ def _resolve_registered_kb_name(manager: KnowledgeBaseManager, kb_name: str | No
     raise HTTPException(status_code=404, detail=f"Knowledge base '{requested}' not found")
 
 
+def _resolve_tester_kb_name(
+    manager: KnowledgeBaseManager,
+    kb_name: str | None,
+    tester_id: str,
+) -> str:
+    """Resolve a tester-visible route KB name, preserving default aliases."""
+    requested = str(kb_name or "").strip()
+    scoped_requested = to_internal_kb_name(requested, tester_id) if requested else requested
+    kb_names = manager.list_knowledge_bases()
+
+    if scoped_requested and scoped_requested in kb_names:
+        return scoped_requested
+
+    if requested.lower() in DEFAULT_KB_ALIASES:
+        default_kb = manager.get_default()
+        if (
+            default_kb
+            and default_kb in kb_names
+            and is_visible_kb_name(default_kb, tester_id)
+        ):
+            return default_kb
+        raise HTTPException(status_code=404, detail="No default knowledge base is configured")
+
+    return _resolve_registered_kb_name(manager, scoped_requested)
+
+
 def _load_kb_entry_or_404(manager: KnowledgeBaseManager, kb_name: str) -> dict:
     manager.config = manager._load_config()
     kb_entry = manager.config.get("knowledge_bases", {}).get(kb_name)
     if kb_entry is None:
         raise HTTPException(status_code=404, detail=f"Knowledge base '{kb_name}' not found")
     return kb_entry
+
+
+def _public_info_payload(info: dict, tester_id: str) -> dict:
+    payload = dict(info)
+    payload["name"] = to_public_kb_name(str(payload.get("name") or ""), tester_id)
+    return payload
 
 
 def _assert_kb_writable_or_409(kb_name: str, kb_entry: dict) -> None:
@@ -568,26 +608,32 @@ async def get_supported_file_types():
 
 
 @router.get("/configs")
-async def get_all_kb_configs():
+async def get_all_kb_configs(tester: dict = Depends(get_current_tester)):
     """Get all knowledge base configurations from centralized config file."""
     try:
         from deeptutor.services.config import get_kb_config_service
 
         service = get_kb_config_service()
-        return service.get_all_configs()
+        configs = service.get_all_configs()
+        return {
+            to_public_kb_name(name, tester["id"]): config
+            for name, config in configs.items()
+            if is_visible_kb_name(name, tester["id"])
+        }
     except Exception as e:
         logger.error(f"Error getting KB configs: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 
 @router.get("/{kb_name}/config")
-async def get_kb_config(kb_name: str):
+async def get_kb_config(kb_name: str, tester: dict = Depends(get_current_tester)):
     """Get configuration for a specific knowledge base."""
     try:
         from deeptutor.services.config import get_kb_config_service
 
         service = get_kb_config_service()
-        config = service.get_kb_config(kb_name)
+        internal_name = to_internal_kb_name(kb_name, tester["id"])
+        config = service.get_kb_config(internal_name)
         return {"kb_name": kb_name, "config": config}
     except Exception as e:
         logger.error(f"Error getting config for KB '{kb_name}': {e}")
@@ -595,7 +641,7 @@ async def get_kb_config(kb_name: str):
 
 
 @router.put("/{kb_name}/config")
-async def update_kb_config(kb_name: str, config: dict):
+async def update_kb_config(kb_name: str, config: dict, tester: dict = Depends(get_current_tester)):
     """Update configuration for a specific knowledge base."""
     try:
         from deeptutor.services.config import get_kb_config_service
@@ -604,8 +650,13 @@ async def update_kb_config(kb_name: str, config: dict):
             config["rag_provider"] = _validate_registered_provider(config.get("rag_provider"))
 
         service = get_kb_config_service()
-        service.set_kb_config(kb_name, config)
-        return {"status": "success", "kb_name": kb_name, "config": service.get_kb_config(kb_name)}
+        internal_name = to_internal_kb_name(kb_name, tester["id"])
+        service.set_kb_config(internal_name, config)
+        return {
+            "status": "success",
+            "kb_name": kb_name,
+            "config": service.get_kb_config(internal_name),
+        }
     except HTTPException:
         raise
     except Exception as e:
@@ -628,11 +679,15 @@ async def sync_configs_from_metadata():
 
 
 @router.get("/default")
-async def get_default_kb():
+async def get_default_kb(tester: dict = Depends(get_current_tester)):
     """Get the default knowledge base."""
     try:
         manager = get_kb_manager()
         default_kb = manager.get_default()
+        if default_kb and not is_visible_kb_name(default_kb, tester["id"]):
+            default_kb = None
+        elif default_kb:
+            default_kb = to_public_kb_name(default_kb, tester["id"])
         return {"default_kb": default_kb}
     except Exception as e:
         logger.error(f"Error getting default KB: {e}")
@@ -640,16 +695,17 @@ async def get_default_kb():
 
 
 @router.put("/default/{kb_name}")
-async def set_default_kb(kb_name: str):
+async def set_default_kb(kb_name: str, tester: dict = Depends(get_current_tester)):
     """Set the default knowledge base."""
     try:
         manager = get_kb_manager()
+        internal_name = to_internal_kb_name(kb_name, tester["id"])
 
         # Verify KB exists
-        if kb_name not in manager.list_knowledge_bases():
+        if internal_name not in manager.list_knowledge_bases():
             raise HTTPException(status_code=404, detail=f"Knowledge base '{kb_name}' not found")
 
-        manager.set_default(kb_name)
+        manager.set_default(internal_name)
         return {"status": "success", "default_kb": kb_name}
     except HTTPException:
         raise
@@ -659,11 +715,15 @@ async def set_default_kb(kb_name: str):
 
 
 @router.get("/list", response_model=list[KnowledgeBaseInfo])
-async def list_knowledge_bases():
+async def list_knowledge_bases(tester: dict = Depends(get_current_tester)):
     """List all available knowledge bases with their details."""
     try:
         manager = get_kb_manager()
-        kb_names = manager.list_knowledge_bases()
+        kb_names = [
+            name
+            for name in manager.list_knowledge_bases()
+            if is_visible_kb_name(name, tester["id"])
+        ]
 
         logger.debug(f"Found {len(kb_names)} knowledge bases: {kb_names}")
 
@@ -680,7 +740,7 @@ async def list_knowledge_bases():
                 logger.debug(f"Successfully got info for KB '{name}': {info.get('statistics', {})}")
                 result.append(
                     KnowledgeBaseInfo(
-                        name=info["name"],
+                        name=to_public_kb_name(info["name"], tester["id"]),
                         is_default=info["is_default"],
                         statistics=info.get("statistics", {}),
                         metadata=info.get("metadata"),
@@ -699,7 +759,7 @@ async def list_knowledge_bases():
                         logger.debug(f"KB '{name}' directory exists, creating fallback info")
                         result.append(
                             KnowledgeBaseInfo(
-                                name=name,
+                                name=to_public_kb_name(name, tester["id"]),
                                 is_default=name == manager.get_default(),
                                 statistics={
                                     "raw_documents": 0,
@@ -737,29 +797,34 @@ async def list_knowledge_bases():
 
 
 @router.get("/{kb_name}")
-async def get_knowledge_base_details(kb_name: str):
+async def get_knowledge_base_details(kb_name: str, tester: dict = Depends(get_current_tester)):
     """Get detailed info for a specific KB."""
     try:
         manager = get_kb_manager()
-        return manager.get_info(kb_name)
+        internal_name = to_internal_kb_name(kb_name, tester["id"])
+        return _public_info_payload(manager.get_info(internal_name), tester["id"])
     except ValueError:
         raise HTTPException(status_code=404, detail=f"Knowledge base '{kb_name}' not found")
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
 
-def _resolve_kb_raw_dir(kb_name: str) -> Path:
+def _resolve_kb_raw_dir(kb_name: str, tester_id: str | None = None) -> Path:
     """Resolve the raw/ directory for a KB, validating that it exists."""
     manager = get_kb_manager()
-    resolved_name = _resolve_registered_kb_name(manager, kb_name)
+    resolved_name = (
+        _resolve_tester_kb_name(manager, kb_name, tester_id)
+        if tester_id
+        else _resolve_registered_kb_name(manager, kb_name)
+    )
     kb_path = manager.get_knowledge_base_path(resolved_name)
     return kb_path / "raw"
 
 
 @router.get("/{kb_name}/files")
-async def list_kb_raw_files(kb_name: str):
+async def list_kb_raw_files(kb_name: str, tester: dict = Depends(get_current_tester)):
     """List raw documents stored under data/knowledge_bases/<kb>/raw/."""
-    raw_dir = _resolve_kb_raw_dir(kb_name)
+    raw_dir = _resolve_kb_raw_dir(kb_name, tester["id"])
     if not raw_dir.exists() or not raw_dir.is_dir():
         return {"files": []}
 
@@ -784,13 +849,17 @@ async def list_kb_raw_files(kb_name: str):
 
 
 @router.get("/{kb_name}/files/{filename:path}")
-async def serve_kb_raw_file(kb_name: str, filename: str):
+async def serve_kb_raw_file(
+    kb_name: str,
+    filename: str,
+    tester: dict = Depends(get_current_tester),
+):
     """Serve a single raw document for inline preview / download.
 
     Resolution is sandboxed to the KB's raw/ directory; any path that
     escapes via traversal yields 403.
     """
-    raw_dir = _resolve_kb_raw_dir(kb_name)
+    raw_dir = _resolve_kb_raw_dir(kb_name, tester["id"])
     if not raw_dir.exists():
         raise HTTPException(status_code=404, detail="File not found")
 
@@ -814,11 +883,12 @@ async def serve_kb_raw_file(kb_name: str, filename: str):
 
 
 @router.delete("/{kb_name}")
-async def delete_knowledge_base(kb_name: str):
+async def delete_knowledge_base(kb_name: str, tester: dict = Depends(get_current_tester)):
     """Delete a knowledge base."""
     try:
         manager = get_kb_manager()
-        success = manager.delete_knowledge_base(kb_name, confirm=True)
+        internal_name = to_internal_kb_name(kb_name, tester["id"])
+        success = manager.delete_knowledge_base(internal_name, confirm=True)
         if not success:
             raise HTTPException(status_code=400, detail="Failed to delete knowledge base")
         logger.info(f"KB '{kb_name}' deleted")
@@ -847,10 +917,13 @@ async def upload_files(
     background_tasks: BackgroundTasks,
     files: list[UploadFile] = File(...),
     rag_provider: str = Form(None),
+    tester: dict = Depends(get_current_tester),
 ):
     """Upload files to a knowledge base and process them in background."""
     try:
         manager = get_kb_manager()
+        public_name = kb_name
+        kb_name = to_internal_kb_name(kb_name, tester["id"])
         kb_path = manager.get_knowledge_base_path(kb_name)
         raw_dir = kb_path / "raw"
         raw_dir.mkdir(parents=True, exist_ok=True)
@@ -895,6 +968,7 @@ async def upload_files(
             "message": f"Uploaded {len(uploaded_files)} files. Processing in background.",
             "files": uploaded_files,
             "task_id": task_id,
+            "kb_name": public_name,
         }
     except HTTPException:
         raise
@@ -912,17 +986,22 @@ async def create_knowledge_base(
     name: str = Form(...),
     files: list[UploadFile] = File(...),
     rag_provider: str = Form(DEFAULT_PROVIDER),
+    tester: dict = Depends(get_current_tester),
 ):
     """Create a new knowledge base and initialize it with files."""
     try:
         try:
-            name = validate_knowledge_base_name(name)
+            public_name = validate_knowledge_base_name(name.strip())
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
 
         manager = get_kb_manager()
+        name = to_internal_kb_name(public_name, tester["id"])
         if name in manager.list_knowledge_bases():
-            raise HTTPException(status_code=400, detail=f"Knowledge base '{name}' already exists")
+            raise HTTPException(
+                status_code=400,
+                detail=f"Knowledge base '{public_name}' already exists",
+            )
 
         rag_provider = _validate_registered_provider(rag_provider)
         allowed_extensions = FileTypeRouter.get_supported_extensions()
@@ -986,8 +1065,8 @@ async def create_knowledge_base(
         logger.info(f"KB '{name}' created, processing {len(uploaded_files)} files in background")
 
         return {
-            "message": f"Knowledge base '{name}' created. Processing {len(uploaded_files)} files in background.",
-            "name": name,
+            "message": f"Knowledge base '{public_name}' created. Processing {len(uploaded_files)} files in background.",
+            "name": public_name,
             "files": uploaded_files,
             "task_id": task_id,
         }
@@ -1140,6 +1219,7 @@ async def run_reindex_task(kb_name: str, base_dir: str, task_id: str, signature_
 async def reindex_knowledge_base(
     kb_name: str,
     background_tasks: BackgroundTasks,
+    tester: dict = Depends(get_current_tester),
 ):
     """Re-index ``kb_name`` against the currently-active embedding model.
 
@@ -1149,7 +1229,8 @@ async def reindex_knowledge_base(
     """
     try:
         manager = get_kb_manager()
-        kb_name = _resolve_registered_kb_name(manager, kb_name)
+        public_name = kb_name
+        kb_name = _resolve_tester_kb_name(manager, kb_name, tester["id"])
         kb_entry = _load_kb_entry_or_404(manager, kb_name)
         force_reindex = str(kb_entry.get("status") or "").lower() == "error"
 
@@ -1170,7 +1251,9 @@ async def reindex_knowledge_base(
 
         kb_dir = _kb_base_dir / kb_name
         matching_version = find_matching_version(kb_dir, signature)
-        matching_valid = _matching_index_is_valid(kb_name, matching_version)
+        matching_valid = (
+            False if force_reindex else _matching_index_is_valid(kb_name, matching_version)
+        )
         if (
             matching_version
             and matching_version.get("layout") == "flat"
@@ -1179,7 +1262,7 @@ async def reindex_knowledge_base(
         ):
             return {
                 "message": (
-                    f"Knowledge base '{kb_name}' already has an index for the "
+                    f"Knowledge base '{public_name}' already has an index for the "
                     "active embedding configuration; no reindex needed."
                 ),
                 "task_id": None,
@@ -1211,7 +1294,7 @@ async def reindex_knowledge_base(
         )
 
         return {
-            "message": f"Re-indexing '{kb_name}' in the background.",
+            "message": f"Re-indexing '{public_name}' in the background.",
             "task_id": task_id,
             "signature": signature.hash(),
             "noop": False,
@@ -1224,10 +1307,11 @@ async def reindex_knowledge_base(
 
 
 @router.get("/{kb_name}/progress")
-async def get_progress(kb_name: str):
+async def get_progress(kb_name: str, tester: dict = Depends(get_current_tester)):
     """Get initialization progress for a knowledge base"""
     try:
-        progress_tracker = ProgressTracker(kb_name, _kb_base_dir)
+        internal_name = to_internal_kb_name(kb_name, tester["id"])
+        progress_tracker = ProgressTracker(internal_name, _kb_base_dir)
         progress = progress_tracker.get_progress()
 
         if progress is None:
@@ -1239,10 +1323,11 @@ async def get_progress(kb_name: str):
 
 
 @router.post("/{kb_name}/progress/clear")
-async def clear_progress(kb_name: str):
+async def clear_progress(kb_name: str, tester: dict = Depends(get_current_tester)):
     """Clear progress file for a knowledge base (useful for stuck states)"""
     try:
-        progress_tracker = ProgressTracker(kb_name, _kb_base_dir)
+        internal_name = to_internal_kb_name(kb_name, tester["id"])
+        progress_tracker = ProgressTracker(internal_name, _kb_base_dir)
         progress_tracker.clear()
         return {"status": "success", "message": f"Progress cleared for {kb_name}"}
     except Exception as e:
@@ -1253,6 +1338,16 @@ async def clear_progress(kb_name: str):
 async def websocket_progress(websocket: WebSocket, kb_name: str):
     """WebSocket endpoint for real-time progress updates"""
     await websocket.accept()
+    try:
+        tester = await get_access_manager().get_tester_from_token(
+            websocket.cookies.get(ACCESS_COOKIE_NAME, "")
+        )
+    except InvalidAccessToken:
+        await websocket.send_json({"type": "error", "message": "Not signed in"})
+        await websocket.close(code=1008)
+        return
+
+    kb_name = to_internal_kb_name(kb_name, tester["id"])
 
     broadcaster = ProgressBroadcaster.get_instance()
 
@@ -1382,7 +1477,11 @@ async def websocket_progress(websocket: WebSocket, kb_name: str):
 
 
 @router.post("/{kb_name}/link-folder", response_model=LinkedFolderInfo)
-async def link_folder(kb_name: str, request: LinkFolderRequest):
+async def link_folder(
+    kb_name: str,
+    request: LinkFolderRequest,
+    tester: dict = Depends(get_current_tester),
+):
     """
     Link a local folder to a knowledge base.
 
@@ -1396,6 +1495,7 @@ async def link_folder(kb_name: str, request: LinkFolderRequest):
     """
     try:
         manager = get_kb_manager()
+        kb_name = to_internal_kb_name(kb_name, tester["id"])
         folder_info = manager.link_folder(kb_name, request.folder_path)
         logger.info(f"Linked folder '{request.folder_path}' to KB '{kb_name}'")
         return LinkedFolderInfo(**folder_info)
@@ -1409,10 +1509,11 @@ async def link_folder(kb_name: str, request: LinkFolderRequest):
 
 
 @router.get("/{kb_name}/linked-folders", response_model=list[LinkedFolderInfo])
-async def get_linked_folders(kb_name: str):
+async def get_linked_folders(kb_name: str, tester: dict = Depends(get_current_tester)):
     """Get list of linked folders for a knowledge base."""
     try:
         manager = get_kb_manager()
+        kb_name = to_internal_kb_name(kb_name, tester["id"])
         folders = manager.get_linked_folders(kb_name)
         return [LinkedFolderInfo(**f) for f in folders]
     except ValueError:
@@ -1422,10 +1523,15 @@ async def get_linked_folders(kb_name: str):
 
 
 @router.delete("/{kb_name}/linked-folders/{folder_id}")
-async def unlink_folder(kb_name: str, folder_id: str):
+async def unlink_folder(
+    kb_name: str,
+    folder_id: str,
+    tester: dict = Depends(get_current_tester),
+):
     """Unlink a folder from a knowledge base."""
     try:
         manager = get_kb_manager()
+        kb_name = to_internal_kb_name(kb_name, tester["id"])
         success = manager.unlink_folder(kb_name, folder_id)
         if not success:
             raise HTTPException(status_code=404, detail=f"Folder '{folder_id}' not found")
@@ -1438,7 +1544,12 @@ async def unlink_folder(kb_name: str, folder_id: str):
 
 
 @router.post("/{kb_name}/sync-folder/{folder_id}")
-async def sync_folder(kb_name: str, folder_id: str, background_tasks: BackgroundTasks):
+async def sync_folder(
+    kb_name: str,
+    folder_id: str,
+    background_tasks: BackgroundTasks,
+    tester: dict = Depends(get_current_tester),
+):
     """
     Sync files from a linked folder to the knowledge base.
 
@@ -1447,6 +1558,7 @@ async def sync_folder(kb_name: str, folder_id: str, background_tasks: Background
     """
     try:
         manager = get_kb_manager()
+        kb_name = to_internal_kb_name(kb_name, tester["id"])
         kb_entry = _load_kb_entry_or_404(manager, kb_name)
         _assert_kb_writable_or_409(kb_name, kb_entry)
         kb_provider = _validate_registered_provider(

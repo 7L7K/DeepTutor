@@ -6,14 +6,50 @@ Generator - Generate Q-A pairs from QuestionTemplate in a single LLM call.
 from __future__ import annotations
 
 import json
+import os
 import re
 from typing import Any
+
+from pydantic import BaseModel, Field
 
 from deeptutor.agents.base_agent import BaseAgent
 from deeptutor.agents.question.models import QAPair, QuestionTemplate
 from deeptutor.core.trace import build_trace_metadata, new_call_id
 from deeptutor.runtime.registry.tool_registry import get_tool_registry
 from deeptutor.services.prompt.language import append_language_directive
+
+
+class _GeneratedQuizOptions(BaseModel):
+    A: str
+    B: str
+    C: str
+    D: str
+
+
+class _GeneratedQuizQuestion(BaseModel):
+    question_id: str
+    question_type: str
+    question: str = Field(description="The question stem.")
+    options: _GeneratedQuizOptions
+    correct_answer: str
+    explanation: str
+
+
+class _GeneratedQuizSet(BaseModel):
+    questions: list[_GeneratedQuizQuestion]
+
+
+class _GeneratedStarterQuizQuestion(BaseModel):
+    question_id: str
+    question: str = Field(description="The question stem.")
+    options: _GeneratedQuizOptions
+    correct_answer: str
+    concentration: str = ""
+    difficulty: str = ""
+
+
+class _GeneratedStarterQuizSet(BaseModel):
+    questions: list[_GeneratedStarterQuizQuestion]
 
 
 class Generator(BaseAgent):
@@ -96,6 +132,104 @@ class Generator(BaseAgent):
             },
         )
 
+    async def process_quiz_set(
+        self,
+        templates: list[QuestionTemplate],
+        user_topic: str = "",
+        preference: str = "",
+        history_context: str = "",
+        generation_api: str | None = None,
+    ) -> list[QAPair]:
+        """
+        Generate a complete quiz set in one structured LLM call, then repair
+        only the specific items that fail validation.
+        """
+        if not templates:
+            return []
+
+        available_tools = self._build_available_tools_text()
+        raw_set_response, set_payload = await self._generate_quiz_set_payload(
+            templates=templates,
+            user_topic=user_topic,
+            preference=preference,
+            history_context=history_context,
+            available_tools=available_tools,
+            generation_api=generation_api,
+        )
+        if self._quiz_set_needs_repair(set_payload, templates):
+            repaired_payload = await self._repair_quiz_set_payload(
+                raw_response=raw_set_response,
+                templates=templates,
+                user_topic=user_topic,
+                preference=preference,
+                history_context=history_context,
+                available_tools=available_tools,
+            )
+            if repaired_payload:
+                set_payload = repaired_payload
+        item_payloads = self._extract_quiz_set_items(set_payload, templates)
+        diagnostics = set_payload.get("_diagnostics", {})
+        deferred_explanations = bool(
+            isinstance(diagnostics, dict) and diagnostics.get("deferred_explanations")
+        )
+
+        qa_pairs: list[QAPair] = []
+        accepted_questions: list[str] = []
+        enabled_tools = self._enabled_tool_names()
+
+        for template, payload in zip(templates, item_payloads):
+            knowledge_context = str(template.metadata.get("knowledge_context", "")).strip()
+            normalized, validation = await self._validate_and_repair_payload(
+                template=template,
+                payload=payload,
+                user_topic=user_topic,
+                preference=preference,
+                history_context=history_context,
+                knowledge_context=knowledge_context,
+                available_tools=available_tools,
+                previous_questions=self._format_previous_questions(accepted_questions),
+                set_level_seen_questions=accepted_questions,
+                allow_deferred_explanation=deferred_explanations,
+            )
+
+            question_text = str(normalized.get("question", "") or "").strip()
+            if question_text:
+                accepted_questions.append(question_text)
+
+            qa_pairs.append(
+                QAPair(
+                    question_id=template.question_id,
+                    question=question_text,
+                    correct_answer=str(normalized.get("correct_answer", "") or "").strip(),
+                    explanation=str(normalized.get("explanation", "") or "").strip(),
+                    question_type=str(
+                        normalized.get("question_type", template.question_type)
+                    ).strip()
+                    or template.question_type,
+                    options=(
+                        normalized.get("options")
+                        if isinstance(normalized.get("options"), dict)
+                        else None
+                    ),
+                    concentration=template.concentration,
+                    difficulty=template.difficulty,
+                    validation=validation,
+                    metadata={
+                        "source": template.source,
+                        "reference_question": template.reference_question,
+                        "enabled_tools": enabled_tools,
+                        "available_tools": available_tools,
+                        "knowledge_context": knowledge_context,
+                        "generation_mode": "quiz_set",
+                        "generation_api": diagnostics.get("api")
+                        or "chat_completions",
+                        "explanation_deferred": deferred_explanations,
+                    },
+                )
+            )
+
+        return qa_pairs
+
     def _build_available_tools_text(self) -> str:
         enabled_tools = self._enabled_tool_names()
         if not enabled_tools:
@@ -106,6 +240,247 @@ class Generator(BaseAgent):
             language=self.language,
             kb_name=self.kb_name or "",
         )
+
+    async def _generate_quiz_set_payload(
+        self,
+        templates: list[QuestionTemplate],
+        user_topic: str,
+        preference: str,
+        history_context: str,
+        available_tools: str,
+        generation_api: str | None = None,
+    ) -> tuple[str, dict[str, Any]]:
+        system_prompt = self.get_prompt("system", "")
+        user_prompt_template = self.get_prompt("generate_set", "")
+        if not user_prompt_template:
+            user_prompt_template = (
+                "Templates:\n{templates}\n\n"
+                "User topic: {user_topic}\n"
+                "Preference: {preference}\n"
+                "Conversation context: {history_context}\n"
+                "Knowledge context by template:\n{knowledge_context_bundle}\n"
+                "Enabled tools: {available_tools}\n\n"
+                'Return JSON {"questions":[{"question_id":"","question_type":"","question":"","options":{},"correct_answer":"","explanation":""}]}'
+            )
+
+        template_dicts = [
+            self._strip_template_knowledge_context(template) for template in templates
+        ]
+        user_prompt = user_prompt_template.format(
+            templates=json.dumps(template_dicts, ensure_ascii=False, indent=2),
+            user_topic=user_topic or "(none)",
+            preference=preference or "(none)",
+            history_context=history_context or "(none)",
+            knowledge_context_bundle=self._format_template_knowledge_contexts(templates),
+            available_tools=available_tools,
+        )
+
+        if self._should_use_quiz_responses_api(generation_api):
+            try:
+                if self._responses_profile(generation_api) == "minimal":
+                    return await self._generate_starter_quiz_set_payload_with_responses(
+                        templates=templates,
+                        user_topic=user_topic,
+                        preference=preference,
+                        history_context=history_context,
+                    )
+                return await self._generate_quiz_set_payload_with_responses(
+                    templates=templates,
+                    user_prompt=user_prompt,
+                    system_prompt=system_prompt or "",
+                )
+            except Exception as exc:
+                self.logger.warning(f"Quiz Responses generation failed; falling back to chat completions: {exc}")
+
+        chunks: list[str] = []
+        async for chunk in self.stream_llm(
+            user_prompt=user_prompt,
+            system_prompt=system_prompt or "",
+            response_format={"type": "json_object"},
+            stage="generator_build_quiz_set",
+            trace_meta=build_trace_metadata(
+                call_id=new_call_id("quiz-set"),
+                phase="generation",
+                label=f"Generate quiz set ({len(templates)} questions)",
+                call_kind="llm_generation",
+                trace_id="quiz-set",
+            ),
+            max_tokens=max(4096, min(12000, len(templates) * 900)),
+        ):
+            chunks.append(chunk)
+        raw_response = "".join(chunks)
+        return raw_response, self._parse_json_like(raw_response)
+
+    async def _generate_quiz_set_payload_with_responses(
+        self,
+        *,
+        templates: list[QuestionTemplate],
+        user_prompt: str,
+        system_prompt: str,
+    ) -> tuple[str, dict[str, Any]]:
+        from deeptutor.services.llm.structured_responses import generate_structured_response
+
+        result = await generate_structured_response(
+            model=self.get_model(),
+            instructions=system_prompt or "Generate a valid practice quiz JSON set.",
+            input_data=user_prompt,
+            api_key=self.api_key,
+            base_url=self.base_url,
+            pydantic_model=_GeneratedQuizSet,
+            max_output_tokens=max(2048, min(8000, len(templates) * 650)),
+            prompt_cache_key="deeptutor-practice-quiz-v1",
+            store=False,
+            reasoning_effort=self.get_reasoning_effort(),
+        )
+        payload = dict(result.parsed)
+        usage = result.usage or {}
+        input_details = usage.get("input_tokens_details") or {}
+        output_details = usage.get("output_tokens_details") or {}
+        payload["_diagnostics"] = {
+            "api": "responses",
+            "model": result.model,
+            "latency_ms": round(result.latency_ms, 3),
+            "request_id": result.request_id,
+            "input_tokens": usage.get("input_tokens"),
+            "cached_tokens": input_details.get("cached_tokens"),
+            "output_tokens": usage.get("output_tokens"),
+            "reasoning_tokens": output_details.get("reasoning_tokens"),
+        }
+        return result.raw_text, payload
+
+    async def _generate_starter_quiz_set_payload_with_responses(
+        self,
+        *,
+        templates: list[QuestionTemplate],
+        user_topic: str,
+        preference: str,
+        history_context: str,
+    ) -> tuple[str, dict[str, Any]]:
+        from deeptutor.services.llm.structured_responses import generate_structured_response
+
+        compact_templates = [
+            {
+                "question_id": template.question_id,
+                "concentration": template.concentration,
+                "question_type": template.question_type,
+                "difficulty": template.difficulty,
+                "knowledge_context": str((template.metadata or {}).get("knowledge_context") or "")[:900],
+            }
+            for template in templates
+        ]
+        user_prompt = (
+            "Generate the first visible page of a Practice quiz.\n"
+            "Return exactly one multiple-choice question for each template.\n"
+            "Do not generate explanations yet; explanations are deferred until review.\n\n"
+            f"Topic: {user_topic or '(none)'}\n"
+            f"Preference: {preference or '(none)'}\n"
+            f"Conversation context: {history_context or '(none)'}\n"
+            f"Templates:\n{json.dumps(compact_templates, ensure_ascii=False)}\n\n"
+            "Rules:\n"
+            "- Write realistic NCE-style application questions.\n"
+            "- Keep stems concise but specific.\n"
+            "- Provide exactly four plausible options A-D.\n"
+            "- correct_answer must be the correct option key.\n"
+            "- Preserve question_id exactly.\n"
+        )
+        result = await generate_structured_response(
+            model=self.get_model(),
+            instructions=(
+                "You generate fast first-page Practice quiz questions as strict JSON. "
+                "Return no prose and no explanations."
+            ),
+            input_data=user_prompt,
+            api_key=self.api_key,
+            base_url=self.base_url,
+            pydantic_model=_GeneratedStarterQuizSet,
+            max_output_tokens=max(1200, min(3600, len(templates) * 430)),
+            prompt_cache_key="deeptutor-practice-starter-minimal-v1",
+            store=False,
+            reasoning_effort=self.get_reasoning_effort(),
+        )
+        payload = dict(result.parsed)
+        for item in payload.get("questions") or []:
+            if isinstance(item, dict):
+                item["question_type"] = "choice"
+                item.setdefault("explanation", "")
+        usage = result.usage or {}
+        input_details = usage.get("input_tokens_details") or {}
+        output_details = usage.get("output_tokens_details") or {}
+        payload["_diagnostics"] = {
+            "api": "responses_minimal",
+            "model": result.model,
+            "latency_ms": round(result.latency_ms, 3),
+            "request_id": result.request_id,
+            "deferred_explanations": True,
+            "input_tokens": usage.get("input_tokens"),
+            "cached_tokens": input_details.get("cached_tokens"),
+            "output_tokens": usage.get("output_tokens"),
+            "reasoning_tokens": output_details.get("reasoning_tokens"),
+        }
+        return result.raw_text, payload
+
+    def _should_use_quiz_responses_api(self, generation_api: str | None = None) -> bool:
+        configured = str(generation_api or "").strip().lower()
+        if not configured:
+            configured = os.getenv("PRACTICE_QUIZ_USE_RESPONSES", "").strip().lower()
+        if configured in {"chat", "0", "false", "no", "off"}:
+            return False
+        if configured in {"responses", "responses_minimal", "responses-starter-minimal", "1", "true", "yes", "on"}:
+            return bool(self.api_key)
+        return False
+
+    @staticmethod
+    def _responses_profile(generation_api: str | None = None) -> str:
+        configured = str(generation_api or "").strip().lower()
+        if configured in {"responses_minimal", "responses-starter-minimal"}:
+            return "minimal"
+        return "full"
+
+    async def _repair_quiz_set_payload(
+        self,
+        raw_response: str,
+        templates: list[QuestionTemplate],
+        user_topic: str,
+        preference: str,
+        history_context: str,
+        available_tools: str,
+    ) -> dict[str, Any]:
+        repair_prompt = (
+            "You are repairing an invalid full-quiz JSON response.\n\n"
+            f"Templates:\n{json.dumps([self._strip_template_knowledge_context(t) for t in templates], ensure_ascii=False, indent=2)}\n\n"
+            f"User topic:\n{user_topic or '(none)'}\n\n"
+            f"User preference:\n{preference or '(none)'}\n\n"
+            f"Conversation context:\n{history_context or '(none)'}\n\n"
+            f"Enabled tools:\n{available_tools}\n\n"
+            f"Invalid or incomplete quiz-set response:\n{raw_response or '(empty)'}\n\n"
+            "Rewrite this as valid JSON for the complete quiz set.\n"
+            "Hard rules:\n"
+            "- Return exactly one question for each template.\n"
+            "- Preserve each template.question_id.\n"
+            "- Respect each template.question_type exactly.\n"
+            "- For choice questions, provide exactly 4 options (A-D), a correct option key, and a concise explanation.\n"
+            "- For written/coding questions, provide no options.\n"
+            "- Avoid duplicate or near-duplicate questions across the set.\n"
+            "- Return JSON only in the form {\"questions\": [...]}.\n"
+        )
+
+        chunks: list[str] = []
+        async for chunk in self.stream_llm(
+            user_prompt=repair_prompt,
+            system_prompt="You repair malformed full-quiz JSON and return valid JSON only.",
+            response_format={"type": "json_object"},
+            stage="generator_repair_quiz_set",
+            trace_meta=build_trace_metadata(
+                call_id=new_call_id("quiz-set-repair"),
+                phase="generation",
+                label="Repair quiz set format",
+                call_kind="llm_generation",
+                trace_id="quiz-set",
+            ),
+            max_tokens=max(4096, min(12000, len(templates) * 900)),
+        ):
+            chunks.append(chunk)
+        return self._parse_json_like("".join(chunks))
 
     async def _generate_payload(
         self,
@@ -160,6 +535,7 @@ class Generator(BaseAgent):
                 trace_id=template.question_id,
                 question_id=template.question_id,
             ),
+            max_tokens=900,
         ):
             _chunks.append(_c)
         response = "".join(_chunks)
@@ -189,10 +565,17 @@ class Generator(BaseAgent):
         knowledge_context: str,
         available_tools: str,
         previous_questions: str = "",
+        set_level_seen_questions: list[str] | None = None,
+        allow_deferred_explanation: bool = False,
     ) -> tuple[dict[str, Any], dict[str, Any]]:
         expected_type = self._normalize_question_type(template.question_type)
         normalized = self._normalize_payload_shape(expected_type, payload)
-        issues = self._collect_payload_issues(expected_type, normalized)
+        issues = self._collect_payload_issues(
+            expected_type,
+            normalized,
+            seen_questions=set_level_seen_questions or [],
+            allow_deferred_explanation=allow_deferred_explanation,
+        )
         repaired = False
 
         if issues:
@@ -209,7 +592,12 @@ class Generator(BaseAgent):
             )
             if repaired_payload:
                 candidate = self._normalize_payload_shape(expected_type, repaired_payload)
-                candidate_issues = self._collect_payload_issues(expected_type, candidate)
+                candidate_issues = self._collect_payload_issues(
+                    expected_type,
+                    candidate,
+                    seen_questions=set_level_seen_questions or [],
+                    allow_deferred_explanation=allow_deferred_explanation,
+                )
                 if not candidate_issues or len(candidate_issues) <= len(issues):
                     normalized = candidate
                     issues = candidate_issues
@@ -220,6 +608,7 @@ class Generator(BaseAgent):
             "schema_ok": not issues,
             "repaired": repaired,
             "issues": issues,
+            "explanation_deferred": allow_deferred_explanation,
         }
         return normalized, validation
 
@@ -327,11 +716,22 @@ class Generator(BaseAgent):
         cls,
         expected_type: str,
         payload: dict[str, Any],
+        seen_questions: list[str] | None = None,
+        allow_deferred_explanation: bool = False,
     ) -> list[str]:
         issues: list[str] = []
         question = str(payload.get("question", "") or "")
         correct_answer = str(payload.get("correct_answer", "") or "").strip()
         options = payload.get("options")
+        normalized_question = cls._normalize_question_text(question)
+
+        if not question:
+            issues.append("missing_question")
+        elif normalized_question and any(
+            normalized_question == cls._normalize_question_text(existing)
+            for existing in (seen_questions or [])
+        ):
+            issues.append("duplicate_question")
 
         if expected_type == "choice":
             option_keys = set(options.keys()) if isinstance(options, dict) else set()
@@ -347,13 +747,15 @@ class Generator(BaseAgent):
             ):
                 issues.append("non_choice_payload_looks_like_multiple_choice")
 
-        if not question:
-            issues.append("missing_question")
         if not correct_answer:
             issues.append("missing_correct_answer")
-        if not str(payload.get("explanation", "") or "").strip():
+        if not allow_deferred_explanation and not str(payload.get("explanation", "") or "").strip():
             issues.append("missing_explanation")
         return issues
+
+    @staticmethod
+    def _normalize_question_text(question: str) -> str:
+        return re.sub(r"\W+", " ", str(question or "").strip().lower()).strip()
 
     @staticmethod
     def _payload_looks_like_choice(
@@ -411,6 +813,59 @@ class Generator(BaseAgent):
                 k: v for k, v in template_dict["metadata"].items() if k != "knowledge_context"
             }
         return template_dict
+
+    @staticmethod
+    def _extract_quiz_set_items(
+        payload: dict[str, Any],
+        templates: list[QuestionTemplate],
+    ) -> list[dict[str, Any]]:
+        raw_items = payload.get("questions")
+        if not isinstance(raw_items, list):
+            raw_items = []
+
+        by_id: dict[str, dict[str, Any]] = {}
+        ordered: list[dict[str, Any]] = []
+        for item in raw_items:
+            if not isinstance(item, dict):
+                continue
+            question_id = str(item.get("question_id", "") or "").strip()
+            if question_id:
+                by_id[question_id] = item
+            ordered.append(item)
+
+        extracted: list[dict[str, Any]] = []
+        for index, template in enumerate(templates):
+            payload_item = by_id.get(template.question_id)
+            if payload_item is None and index < len(ordered):
+                payload_item = ordered[index]
+            extracted.append(payload_item if isinstance(payload_item, dict) else {})
+        return extracted
+
+    @classmethod
+    def _quiz_set_needs_repair(
+        cls,
+        payload: dict[str, Any],
+        templates: list[QuestionTemplate],
+    ) -> bool:
+        items = cls._extract_quiz_set_items(payload, templates)
+        non_empty = sum(1 for item in items if isinstance(item, dict) and item)
+        if non_empty < len(templates):
+            return True
+        return False
+
+    @staticmethod
+    def _format_template_knowledge_contexts(
+        templates: list[QuestionTemplate],
+    ) -> str:
+        sections: list[str] = []
+        for template in templates:
+            knowledge_context = str(template.metadata.get("knowledge_context", "")).strip()
+            if not knowledge_context:
+                continue
+            sections.append(
+                f"{template.question_id} ({template.concentration}):\n{knowledge_context}"
+            )
+        return "\n\n".join(sections) if sections else "(none)"
 
     @classmethod
     def _format_previous_questions(cls, questions: list[str] | None) -> str:

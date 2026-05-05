@@ -19,7 +19,7 @@ from deeptutor.core.trace import derive_trace_metadata, merge_trace_metadata
 
 
 def _image_attachments(attachments: list[Any]) -> list[Any]:
-    """Return the image attachments to forward into multimodal LLM calls."""
+    """Return image attachments to forward into multimodal solve calls."""
     return [att for att in attachments or [] if getattr(att, "type", "") == "image"]
 
 
@@ -46,10 +46,16 @@ class DeepSolveCapability(BaseCapability):
         llm_config = get_llm_config()
         detailed = context.config_overrides.get("detailed_answer", True)
         enabled_tools = list(
-            self.manifest.tools_used if context.enabled_tools is None else context.enabled_tools
+            self.manifest.tools_used
+            if context.enabled_tools is None
+            else context.enabled_tools
         )
         rag_enabled = "rag" in enabled_tools
-        kb_name = context.knowledge_bases[0] if rag_enabled and context.knowledge_bases else None
+        kb_name = (
+            context.knowledge_bases[0]
+            if rag_enabled and context.knowledge_bases
+            else None
+        )
 
         # Consistency normalization: if rag is requested but no KB is
         # actually available, strip "rag" from the enabled tool set so the
@@ -247,7 +253,7 @@ class DeepSolveCapability(BaseCapability):
             except RuntimeError:
                 pass
 
-        setattr(solver, "_send_progress_update", _progress_bridge)
+        solver._send_progress_update = _progress_bridge
         if hasattr(solver, "set_trace_callback"):
             solver.set_trace_callback(_trace_bridge)
 
@@ -263,7 +269,7 @@ class DeepSolveCapability(BaseCapability):
                 stage="writing",
             )
 
-        setattr(solver, "_content_callback", _content_sink)
+        solver._content_callback = _content_sink
 
         result = await solver.solve(
             question=context.user_message,
@@ -309,23 +315,46 @@ class DeepSolveCapability(BaseCapability):
             format_trace_summary,
             join_chunks,
             labeled_block,
-            load_answer_now_prompts,
             make_skip_notice,
             stream_synthesis,
         )
 
+        is_zh = context.language.lower().startswith("zh")
         original = str(payload.get("original_user_message") or context.user_message).strip()
         partial = str(payload.get("partial_response") or "").strip()
         trace_summary = format_trace_summary(payload.get("events"), language=context.language)
 
-        prompts = load_answer_now_prompts("solve", context.language)
-        system_prompt = str(prompts.get("system", "")).strip()
-        user_prompt = str(prompts.get("user_template", "")).format(
-            original=original,
-            current_draft=labeled_block("Current Draft", partial),
-            execution_trace=labeled_block("Execution Trace", trace_summary),
-        )
-        notice_label = "Writing"
+        if is_zh:
+            system_prompt = (
+                "你是 TEEECHR 的写作组件。用户已经在等待，"
+                "你必须基于当前已经收集到的推理与工具调用轨迹直接输出最终答复。"
+                "不要再做新的规划或调用工具，不要提到内部阶段。"
+                "如果信息仍有缺口，请诚实说明不确定之处，但仍尽可能给出当前最有用的回答。"
+            )
+            user_prompt = (
+                f"用户原始问题：\n{original}\n\n"
+                f"{labeled_block('Current Draft', partial)}\n\n"
+                f"{labeled_block('Execution Trace', trace_summary)}\n\n"
+                "请基于以上材料立即生成给用户的最终回答。"
+            )
+            notice_label = "Writing"
+        else:
+            system_prompt = (
+                "You are the writer component of TEEECHR. The user is "
+                "already waiting, so produce the final user-facing answer "
+                "right now using only the partial reasoning trace that has "
+                "streamed so far. Do not plan further or call tools, and do "
+                "not mention internal stages. If something is still uncertain, "
+                "acknowledge it briefly while still giving the most useful "
+                "answer you can."
+            )
+            user_prompt = (
+                f"Original user request:\n{original}\n\n"
+                f"{labeled_block('Current Draft', partial)}\n\n"
+                f"{labeled_block('Execution Trace', trace_summary)}\n\n"
+                "Produce the final user-facing answer using only this context."
+            )
+            notice_label = "Writing"
 
         trace_meta = build_answer_now_trace_metadata(
             capability=self.name, phase="writing", label="Answer now"

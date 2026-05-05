@@ -6,13 +6,13 @@ always: true
 
 # Memory
 
-TutorBot shares a three-file memory system with DeepTutor. These files persist across sessions and are automatically loaded into your context.
+TutorBot shares a three-file memory system with TEEECHR. These files persist across sessions and are automatically loaded into your context.
 
 ## Structure
 
 | File | Purpose | Loaded |
 |------|---------|--------|
-| `SUMMARY.md` | Chronological log of all interactions (both DeepTutor and TutorBot) | Yes |
+| `SUMMARY.md` | Chronological log of all interactions (both TEEECHR and TutorBot) | Yes |
 | `PROFILE.md` | User identity, preferences, and recurring patterns extracted from conversations | Yes |
 | `SOUL.md` | TutorBot's persona and personality configuration | Yes |
 

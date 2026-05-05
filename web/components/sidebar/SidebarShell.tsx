@@ -12,11 +12,13 @@ import {
   LayoutGrid,
   Library,
   MessageSquare,
+  NotebookPen,
   PanelLeftClose,
   PanelLeftOpen,
   PenLine,
   Plus,
   Settings,
+  SquarePen,
   type LucideIcon,
 } from "lucide-react";
 import { useTranslation } from "react-i18next";
@@ -33,6 +35,8 @@ interface NavEntry {
 
 const PRIMARY_NAV: NavEntry[] = [
   { href: "/chat", label: "Chat", icon: MessageSquare },
+  { href: "/practice", label: "Practice", icon: SquarePen },
+  { href: "/practice/flashcards", label: "Flashcards", icon: NotebookPen },
   { href: "/agents", label: "TutorBot", icon: Bot },
   { href: "/co-writer", label: "Co-Writer", icon: PenLine },
   { href: "/book", label: "Book", icon: Library },
@@ -85,6 +89,11 @@ export function SidebarShell({
     router.push("/chat");
   };
 
+  const isNavActive = (href: string) => {
+    if (href === "/practice") return pathname === "/practice";
+    return pathname === href || pathname.startsWith(`${href}/`);
+  };
+
   /* ---- Collapsed state ---- */
   if (collapsed) {
     return (
@@ -93,12 +102,12 @@ export function SidebarShell({
         <div className="relative mb-2 flex h-9 w-9 items-center justify-center">
           <Link
             href="/"
-            aria-label="DeepTutor"
+            aria-label="TEEECHR"
             className="flex items-center justify-center transition-opacity duration-150 group-hover/sb:opacity-0"
           >
             <Image
               src="/logo-ver2.png"
-              alt="DeepTutor"
+              alt="TEEECHR"
               width={22}
               height={22}
               className="h-[22px] w-[22px] rounded-md"
@@ -129,7 +138,7 @@ export function SidebarShell({
         {/* Primary nav */}
         <nav className="flex w-full flex-col items-center gap-1 px-1.5">
           {PRIMARY_NAV.map((item) => {
-            const active = pathname.startsWith(item.href);
+            const active = isNavActive(item.href);
             return (
               <Link
                 key={item.href}
@@ -156,7 +165,7 @@ export function SidebarShell({
         <div className="flex w-full flex-col items-center gap-1 px-1.5">
           <div className="my-1 h-px w-7 bg-[var(--border)]/40" />
           {SECONDARY_NAV.map((item) => {
-            const active = pathname.startsWith(item.href);
+            const active = isNavActive(item.href);
             return (
               <Link
                 key={item.href}
@@ -200,13 +209,13 @@ export function SidebarShell({
         <Link href="/" className="group flex items-center gap-2">
           <Image
             src="/logo-ver2.png"
-            alt="DeepTutor"
+            alt="TEEECHR"
             width={22}
             height={22}
             className="h-[22px] w-[22px] transition-transform duration-200 group-hover:scale-105"
           />
           <span className="text-[16px] font-semibold leading-none tracking-[-0.02em] text-[var(--foreground)]">
-            DeepTutor
+            TEEECHR
           </span>
         </Link>
         <button
@@ -231,7 +240,7 @@ export function SidebarShell({
           </button>
 
           {PRIMARY_NAV.map((item) => {
-            const active = pathname.startsWith(item.href);
+            const active = isNavActive(item.href);
             const hasSessionsBelow =
               item.href === "/chat" &&
               showSessions &&
@@ -280,7 +289,7 @@ export function SidebarShell({
       {/* Secondary nav + footer */}
       <div className="border-t border-[var(--border)]/40 px-2 py-2">
         {SECONDARY_NAV.map((item) => {
-          const active = pathname.startsWith(item.href);
+          const active = isNavActive(item.href);
           return (
             <Link
               key={item.href}

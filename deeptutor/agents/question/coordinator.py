@@ -9,20 +9,26 @@ Simplified architecture:
 
 from __future__ import annotations
 
+import asyncio
 from collections.abc import Callable
 from datetime import datetime
 import json
-import logging
+import os
 from pathlib import Path
+import time
 from typing import Any
 
-from deeptutor.agents.question.agents.generator import Generator
-from deeptutor.agents.question.agents.idea_agent import BATCH_SIZE, IdeaAgent
 from deeptutor.agents.question.models import QAPair, QuestionTemplate
+from deeptutor.logging.logger import Logger, get_logger
 from deeptutor.services.config import PROJECT_ROOT, load_config_with_main
 from deeptutor.services.path_service import get_path_service
-from deeptutor.tools.question.pdf_parser import parse_pdf_with_mineru
-from deeptutor.tools.question.question_extractor import extract_questions_from_paper
+
+
+DEFAULT_KB_PROGRESSIVE_QUIZ_FIRST_BATCH = 1
+DEFAULT_KB_STARTER_PAGE_SIZE = 5
+IDEA_BATCH_SIZE = 10
+DEFAULT_REMAINING_QUIZ_BATCH_SIZE = 10
+DEFAULT_REMAINING_QUIZ_CONCURRENCY = 2
 
 
 class AgentCoordinator:
@@ -38,6 +44,7 @@ class AgentCoordinator:
         language: str = "en",
         tool_flags_override: dict[str, bool] | None = None,
         enable_idea_rag: bool = True,
+        model: str | None = None,
     ) -> None:
         self.kb_name = kb_name
         self.output_dir = output_dir
@@ -45,6 +52,7 @@ class AgentCoordinator:
         self._api_key = api_key
         self._base_url = base_url
         self._api_version = api_version
+        self._model = model or os.getenv("PRACTICE_QUIZ_MODEL") or os.getenv("QUESTION_GENERATION_MODEL")
         self._ws_callback: Callable | None = None
         self._trace_callback: Callable | None = None
         self.enable_idea_rag = enable_idea_rag
@@ -53,7 +61,7 @@ class AgentCoordinator:
         log_dir = self.config.get("paths", {}).get("user_log_dir") or self.config.get(
             "logging", {}
         ).get("log_dir")
-        self.logger = logging.getLogger(__name__)
+        self.logger: Logger = get_logger("QuestionCoordinator", log_dir=log_dir)
 
         question_cfg = self.config.get("capabilities", {}).get("question", {})
         generation_cfg = question_cfg.get("generation", {})
@@ -62,7 +70,9 @@ class AgentCoordinator:
             {"web_search": True, "rag": True, "code_execution": True},
         )
         self.tool_flags = (
-            tool_flags_override if isinstance(tool_flags_override, dict) else default_tool_flags
+            tool_flags_override
+            if isinstance(tool_flags_override, dict)
+            else default_tool_flags
         )
         self._current_batch_dir: Path | None = None
 
@@ -80,6 +90,8 @@ class AgentCoordinator:
                 self.logger.debug(f"WS update failed: {exc}")
 
     def _create_idea_agent(self) -> IdeaAgent:
+        from deeptutor.agents.question.agents.idea_agent import IdeaAgent
+
         agent = IdeaAgent(
             kb_name=self.kb_name,
             enable_rag=self.enable_idea_rag,
@@ -87,11 +99,14 @@ class AgentCoordinator:
             api_key=self._api_key,
             base_url=self._base_url,
             api_version=self._api_version,
+            model=self._model,
         )
         agent.set_trace_callback(self._trace_callback)
         return agent
 
     def _create_generator(self) -> Generator:
+        from deeptutor.agents.question.agents.generator import Generator
+
         agent = Generator(
             kb_name=self.kb_name,
             language=self.language,
@@ -99,6 +114,7 @@ class AgentCoordinator:
             api_key=self._api_key,
             base_url=self._base_url,
             api_version=self._api_version,
+            model=self._model,
         )
         agent.set_trace_callback(self._trace_callback)
         return agent
@@ -113,12 +129,56 @@ class AgentCoordinator:
         history_context: str = "",
         attachments: list[Any] | None = None,
     ) -> dict[str, Any]:
+        started_at = time.perf_counter()
         self._current_batch_dir = self._create_batch_dir("custom")
         requested = max(1, int(num_questions or 1))
+        has_attachments = bool(attachments)
+        if not has_attachments and self._should_skip_topic_ideation():
+            templates = self._build_direct_topic_templates(
+                user_topic=user_topic,
+                requested=requested,
+                difficulty=difficulty,
+                question_type=question_type,
+            )
+            await self._send_ws_update(
+                "templates_ready",
+                {
+                    "stage": "ideation",
+                    "count": len(templates),
+                    "generated_total": len(templates),
+                    "requested_total": requested,
+                    "templates": [t.__dict__ for t in templates],
+                    "skipped": True,
+                },
+            )
+            generation_started_at = time.perf_counter()
+            qa_pairs = await self._generation_loop(
+                templates=templates,
+                user_topic=user_topic,
+                preference=preference,
+                history_context=history_context,
+            )
+            generation_elapsed = time.perf_counter() - generation_started_at
+            self.logger.info(
+                f"Practice quiz direct generation complete: requested={requested} "
+                f"questions={len(qa_pairs)} generation_elapsed={generation_elapsed:.2f}s "
+                f"total_elapsed={time.perf_counter() - started_at:.2f}s"
+            )
+            return self._build_summary(
+                source="topic",
+                requested=requested,
+                templates=templates,
+                qa_pairs=qa_pairs,
+                trace={"ideation_skipped": True, "batches": []},
+            )
+
         idea_agent = self._create_idea_agent()
         templates: list[QuestionTemplate] = []
         batch_trace: list[dict[str, Any]] = []
         existing_concentrations: list[str] = []
+        early_results: list[dict[str, Any]] = []
+        preloaded_knowledge_context: str | None = None
+        preloaded_retrieval_queries: list[str] | None = None
 
         normalized_difficulty = difficulty.strip().lower()
         normalized_question_type = question_type.strip().lower()
@@ -133,10 +193,109 @@ class AgentCoordinator:
             else ""
         )
 
+        early_count = 0 if has_attachments else self._early_kb_first_question_count(requested)
+        if early_count:
+            context_started_at = time.perf_counter()
+            context_result = await idea_agent.retrieve_context_for_topic(
+                user_topic,
+                trace_id="early-first-question",
+                batch_number=0,
+            )
+            preloaded_knowledge_context = str(
+                context_result.get("knowledge_context") or ""
+            )
+            preloaded_retrieval_queries = [
+                str(query)
+                for query in context_result.get("retrieval_queries", [])
+                if str(query).strip()
+            ]
+            first_template = self._build_direct_topic_templates(
+                user_topic=user_topic,
+                requested=1,
+                difficulty=difficulty,
+                question_type=question_type,
+            )[0]
+            first_template.question_id = "q_1"
+            first_template.metadata = {
+                **(first_template.metadata or {}),
+                "knowledge_context": preloaded_knowledge_context[:6000],
+                "retrieval_queries": preloaded_retrieval_queries,
+                "direct_streamed_first": True,
+            }
+            await self._send_ws_update(
+                "progress",
+                {
+                    "stage": "generation",
+                    "status": "building_first_questions",
+                    "current": 0,
+                    "total": requested,
+                },
+            )
+            generator = self._create_generator()
+            first_result = await self._generate_one_question_result(
+                generator=generator,
+                idx=1,
+                template=first_template,
+                user_topic=user_topic,
+                preference=preference,
+                history_context=history_context,
+                previous_questions=[],
+                generation_mode="direct_kb_first",
+            )
+            early_results.append(first_result)
+            templates.append(first_template)
+            existing_concentrations.append(first_template.concentration)
+            self.logger.info(
+                f"First KB-backed quiz question streamed after "
+                f"{time.perf_counter() - context_started_at:.2f}s"
+            )
+
+        if early_count and not has_attachments and self._should_skip_kb_ideation():
+            direct_templates = self._build_direct_topic_templates(
+                user_topic=user_topic,
+                requested=requested,
+                difficulty=difficulty,
+                question_type=question_type,
+            )
+            generated_templates: list[QuestionTemplate] = []
+            for template in direct_templates[len(templates) : requested]:
+                template.question_id = f"q_{len(templates) + 1}"
+                template.metadata = {
+                    **(template.metadata or {}),
+                    "knowledge_context": (preloaded_knowledge_context or "")[:6000],
+                    "retrieval_queries": preloaded_retrieval_queries or [],
+                    "direct_kb_templates": True,
+                }
+                templates.append(template)
+                generated_templates.append(template)
+                existing_concentrations.append(template.concentration)
+
+            batch_trace.append(
+                {
+                    "batch": "direct_kb_templates",
+                    "requested": requested - early_count,
+                    "generated": len(generated_templates),
+                    "elapsed_seconds": 0.0,
+                    "knowledge_context": preloaded_knowledge_context or "",
+                }
+            )
+            await self._send_ws_update(
+                "templates_ready",
+                {
+                    "stage": "ideation",
+                    "count": len(generated_templates),
+                    "generated_total": len(templates),
+                    "requested_total": requested,
+                    "templates": [t.__dict__ for t in generated_templates],
+                    "skipped": True,
+                    "source": "direct_kb_templates",
+                },
+            )
+
         batch_number = 0
         while len(templates) < requested:
             batch_number += 1
-            batch_size = min(BATCH_SIZE, requested - len(templates))
+            batch_size = min(IDEA_BATCH_SIZE, requested - len(templates))
             await self._send_ws_update(
                 "progress",
                 {
@@ -149,6 +308,7 @@ class AgentCoordinator:
                 },
             )
 
+            batch_started_at = time.perf_counter()
             idea_result = await idea_agent.process(
                 user_topic=user_topic,
                 preference=preference,
@@ -158,10 +318,13 @@ class AgentCoordinator:
                 existing_concentrations=existing_concentrations,
                 batch_number=batch_number,
                 attachments=attachments,
+                knowledge_context_override=preloaded_knowledge_context,
+                retrieval_queries_override=preloaded_retrieval_queries,
             )
             batch_templates = idea_result.get("templates", [])
             if not isinstance(batch_templates, list):
                 batch_templates = []
+            batch_elapsed = time.perf_counter() - batch_started_at
 
             for template in batch_templates:
                 if not isinstance(template, QuestionTemplate):
@@ -175,8 +338,14 @@ class AgentCoordinator:
                     "batch": batch_number,
                     "requested": batch_size,
                     "generated": len(batch_templates),
+                    "elapsed_seconds": round(batch_elapsed, 3),
                     "knowledge_context": idea_result.get("knowledge_context", ""),
                 }
+            )
+            self.logger.info(
+                f"Practice quiz ideation batch complete: batch={batch_number} "
+                f"requested={batch_size} generated={len(batch_templates)} "
+                f"elapsed={batch_elapsed:.2f}s"
             )
             await self._send_ws_update(
                 "templates_ready",
@@ -191,7 +360,9 @@ class AgentCoordinator:
             )
 
             if not batch_templates:
-                self.logger.warning("Template generation returned an empty batch; stopping early.")
+                self.logger.warning(
+                    "Template generation returned an empty batch; stopping early."
+                )
                 break
 
         await self._send_ws_update(
@@ -205,11 +376,22 @@ class AgentCoordinator:
             },
         )
 
-        qa_pairs = await self._generation_loop(
-            templates=templates[:requested],
+        generation_started_at = time.perf_counter()
+        remaining_templates = templates[len(early_results) : requested]
+        remaining_pairs = await self._generation_loop(
+            templates=remaining_templates,
             user_topic=user_topic,
             preference=preference,
             history_context=history_context,
+            progressive_count_override=0 if early_results else None,
+            external_streamed_count=len(early_results),
+        )
+        qa_pairs = [*early_results, *remaining_pairs]
+        generation_elapsed = time.perf_counter() - generation_started_at
+        self.logger.info(
+            f"Practice quiz generation complete: requested={requested} "
+            f"templates={len(templates[:requested])} questions={len(qa_pairs)} "
+            f"generation_elapsed={generation_elapsed:.2f}s total_elapsed={time.perf_counter() - started_at:.2f}s"
         )
         return self._build_summary(
             source="topic",
@@ -267,35 +449,122 @@ class AgentCoordinator:
         user_topic: str,
         preference: str,
         history_context: str = "",
+        progressive_count_override: int | None = None,
+        external_streamed_count: int = 0,
     ) -> list[dict[str, Any]]:
         generator = self._create_generator()
         results: list[dict[str, Any]] = []
         total = len(templates)
-        generated_questions: list[str] = []
+        await self._send_ws_update(
+            "progress",
+            {
+                "stage": "generation",
+                "status": "building_set",
+                "current": 0,
+                "total": total,
+            },
+        )
 
-        for idx, template in enumerate(templates, 1):
+        async def emit_result(
+            idx: int,
+            template: QuestionTemplate,
+            qa_pair: QAPair,
+        ) -> None:
+            result = self._build_question_result(template, qa_pair)
+            results.append(result)
+            await self._emit_question_result(idx, template, qa_pair, result["success"])
+
+        accepted_questions: list[str] = []
+        started_at = time.perf_counter()
+        first_ready_at: float | None = None
+        progressive_count = (
+            min(max(0, progressive_count_override), total)
+            if progressive_count_override is not None
+            else self._progressive_first_batch_size(total)
+        )
+        if progressive_count == 0 and total:
+            self.logger.info(
+                f"Using fast quiz-set generation: kb={self.kb_name or '(none)'} questions={total}"
+            )
+
+        if self._should_use_parallel_direct_generation(templates):
             await self._send_ws_update(
-                "question_update",
+                "progress",
                 {
-                    "question_id": template.question_id,
-                    "status": "generating",
-                    "current": idx,
+                    "stage": "generation",
+                    "status": "building_parallel_questions",
+                    "current": 0,
                     "total": total,
                 },
             )
 
-            success = True
+            async def build_single(
+                idx: int,
+                template: QuestionTemplate,
+            ) -> tuple[int, QuestionTemplate, QAPair]:
+                try:
+                    qa_pair = await generator.process(
+                        template=template,
+                        user_topic=user_topic,
+                        preference=preference,
+                        history_context=history_context,
+                        previous_questions=[],
+                    )
+                except Exception as exc:
+                    self.logger.warning(f"Parallel question generation failed: {exc}")
+                    qa_pair = QAPair(
+                        question_id=template.question_id,
+                        question=f"[Generation failed] {template.concentration}",
+                        correct_answer="N/A",
+                        explanation=str(exc),
+                        question_type=template.question_type,
+                        concentration=template.concentration,
+                        difficulty=template.difficulty,
+                        metadata={"error": str(exc), "generation_mode": "parallel_single"},
+                    )
+                return idx, template, qa_pair
+
+            built_questions = await asyncio.gather(
+                *[
+                    build_single(idx, template)
+                    for idx, template in enumerate(templates, 1)
+                ]
+            )
+            for idx, template, qa_pair in sorted(built_questions, key=lambda item: item[0]):
+                if first_ready_at is None:
+                    first_ready_at = time.perf_counter() - started_at
+                await emit_result(idx, template, qa_pair)
+
+            await self._send_ws_update(
+                "progress",
+                {"stage": "complete", "completed": len(results), "total": total},
+            )
+            self.logger.info(
+                f"Quiz parallel generation completed: first_ready={first_ready_at or 0.0:.2f}s "
+                f"total={time.perf_counter() - started_at:.2f}s questions={len(results)}"
+            )
+            return results
+
+        for idx, template in enumerate(templates[:progressive_count], 1):
+            await self._send_ws_update(
+                "progress",
+                {
+                    "stage": "generation",
+                    "status": "building_first_questions",
+                    "current": idx - 1,
+                    "total": total,
+                },
+            )
             try:
                 qa_pair = await generator.process(
                     template=template,
                     user_topic=user_topic,
                     preference=preference,
                     history_context=history_context,
-                    previous_questions=generated_questions or None,
+                    previous_questions=accepted_questions,
                 )
             except Exception as exc:
-                success = False
-                self.logger.warning(f"Generation failed for {template.question_id}: {exc}")
+                self.logger.warning(f"Progressive question generation failed: {exc}")
                 qa_pair = QAPair(
                     question_id=template.question_id,
                     question=f"[Generation failed] {template.concentration}",
@@ -304,45 +573,471 @@ class AgentCoordinator:
                     question_type=template.question_type,
                     concentration=template.concentration,
                     difficulty=template.difficulty,
-                    metadata={"error": str(exc)},
+                    metadata={"error": str(exc), "generation_mode": "progressive_single"},
                 )
 
-            result = {
-                "template": template.__dict__,
-                "qa_pair": qa_pair.__dict__,
-                "success": success,
-            }
-            results.append(result)
+            question_text = str(qa_pair.question or "").strip()
+            if question_text and not (qa_pair.metadata or {}).get("error"):
+                accepted_questions.append(question_text)
+            if first_ready_at is None:
+                first_ready_at = time.perf_counter() - started_at
+                self.logger.info(
+                    f"First quiz question ready in {first_ready_at:.2f}s using progressive generation"
+                )
+            await emit_result(idx, template, qa_pair)
 
-            # Track successfully generated question text for diversity enforcement
-            if success and qa_pair.question:
-                generated_questions.append(qa_pair.question)
-
-            await self._send_ws_update(
-                "result",
-                {
-                    "question_id": template.question_id,
-                    "index": idx - 1,
-                    "question": qa_pair.__dict__,
-                    "success": success,
-                },
+        remaining_templates = templates[progressive_count:]
+        warmup_count = 0
+        streamed_before_warmup = progressive_count + external_streamed_count
+        starter_page_count = 0
+        if streamed_before_warmup:
+            starter_page_count = self._starter_page_extra_count(
+                total + external_streamed_count,
+                streamed_before_warmup,
             )
+            starter_page_count = min(starter_page_count, len(remaining_templates))
+        if starter_page_count:
+            starter_templates = remaining_templates[:starter_page_count]
             await self._send_ws_update(
                 "progress",
                 {
                     "stage": "generation",
-                    "status": "running",
-                    "current": idx,
+                    "status": "building_starter_page",
+                    "current": len(results),
                     "total": total,
-                    "question_id": template.question_id,
+                    "page_size": len(starter_templates),
                 },
             )
+            starter_history_context = history_context
+            if accepted_questions:
+                starter_history_context = (
+                    f"{history_context}\n\nAlready generated questions to avoid duplicating:\n"
+                    + "\n".join(f"- {question}" for question in accepted_questions)
+                ).strip()
+
+            try:
+                starter_pairs = await generator.process_quiz_set(
+                    templates=starter_templates,
+                    user_topic=user_topic,
+                    preference=preference,
+                    history_context=starter_history_context,
+                    generation_api=self._starter_page_generation_api(),
+                )
+            except Exception as exc:
+                self.logger.warning(f"Starter page generation failed: {exc}")
+                starter_pairs = [
+                    QAPair(
+                        question_id=template.question_id,
+                        question=f"[Generation failed] {template.concentration}",
+                        correct_answer="N/A",
+                        explanation=str(exc),
+                        question_type=template.question_type,
+                        concentration=template.concentration,
+                        difficulty=template.difficulty,
+                        metadata={"error": str(exc), "generation_mode": "starter_page"},
+                    )
+                    for template in starter_templates
+                ]
+
+            for offset, (template, qa_pair) in enumerate(
+                zip(starter_templates, starter_pairs, strict=False),
+                progressive_count + 1,
+            ):
+                qa_pair.metadata = {
+                    **(qa_pair.metadata or {}),
+                    "generation_mode": "starter_page",
+                }
+                await emit_result(offset, template, qa_pair)
+                question_text = str(qa_pair.question or "").strip()
+                if question_text and not (qa_pair.metadata or {}).get("error"):
+                    accepted_questions.append(question_text)
+
+            warmup_count = starter_page_count
+            remaining_templates = remaining_templates[starter_page_count:]
+
+        if remaining_templates:
+            remaining_start_index = progressive_count + warmup_count
+            remaining_history_context = history_context
+            if accepted_questions:
+                remaining_history_context = (
+                    f"{history_context}\n\nAlready generated questions to avoid duplicating:\n"
+                    + "\n".join(f"- {question}" for question in accepted_questions)
+                ).strip()
+            batch_size = self._remaining_quiz_batch_size()
+            chunks = [
+                (
+                    chunk_index,
+                    chunk_start,
+                    remaining_templates[chunk_start : chunk_start + batch_size],
+                )
+                for chunk_index, chunk_start in enumerate(
+                    range(0, len(remaining_templates), batch_size),
+                    1,
+                )
+            ]
+            concurrency = min(len(chunks), self._remaining_quiz_concurrency())
+            semaphore = asyncio.Semaphore(max(1, concurrency))
+
+            async def build_remaining_chunk(
+                chunk_index: int,
+                chunk_start: int,
+                chunk: list[QuestionTemplate],
+            ) -> tuple[int, int, list[QuestionTemplate], list[QAPair]]:
+                async with semaphore:
+                    await self._send_ws_update(
+                        "progress",
+                        {
+                            "stage": "generation",
+                            "status": "building_remaining_set",
+                            "current": len(results),
+                            "total": total,
+                            "batch_size": len(chunk),
+                            "batch": chunk_index,
+                            "batches": len(chunks),
+                            "concurrency": concurrency,
+                        },
+                    )
+                    try:
+                        qa_pairs = await generator.process_quiz_set(
+                            templates=chunk,
+                            user_topic=user_topic,
+                            preference=preference,
+                            history_context=remaining_history_context,
+                            generation_api=self._remaining_page_generation_api(),
+                        )
+                    except Exception as exc:
+                        self.logger.warning(f"Remaining quiz-set generation failed: {exc}")
+                        qa_pairs = [
+                            QAPair(
+                                question_id=template.question_id,
+                                question=f"[Generation failed] {template.concentration}",
+                                correct_answer="N/A",
+                                explanation=str(exc),
+                                question_type=template.question_type,
+                                concentration=template.concentration,
+                                difficulty=template.difficulty,
+                                metadata={"error": str(exc), "generation_mode": "quiz_set"},
+                            )
+                            for template in chunk
+                        ]
+                    return chunk_index, chunk_start, chunk, qa_pairs
+
+            pending_tasks = {
+                asyncio.create_task(build_remaining_chunk(*chunk)): chunk[0]
+                for chunk in chunks
+            }
+            completed_chunks: dict[
+                int,
+                tuple[int, list[QuestionTemplate], list[QAPair]],
+            ] = {}
+            next_chunk_to_emit = 1
+
+            while pending_tasks:
+                done, _pending = await asyncio.wait(
+                    pending_tasks.keys(),
+                    return_when=asyncio.FIRST_COMPLETED,
+                )
+                for task in done:
+                    pending_tasks.pop(task, None)
+                    chunk_index, chunk_start, chunk, qa_pairs = task.result()
+                    completed_chunks[chunk_index] = (chunk_start, chunk, qa_pairs)
+
+                while next_chunk_to_emit in completed_chunks:
+                    chunk_start, chunk, qa_pairs = completed_chunks.pop(next_chunk_to_emit)
+                    await self._send_ws_update(
+                        "progress",
+                        {
+                            "stage": "generation",
+                            "status": "validating_set",
+                            "current": len(results),
+                            "total": total,
+                            "batch_size": len(chunk),
+                            "batch": next_chunk_to_emit,
+                            "batches": len(chunks),
+                            "concurrency": concurrency,
+                        },
+                    )
+                    for offset, (template, qa_pair) in enumerate(
+                        zip(chunk, qa_pairs, strict=False),
+                        remaining_start_index + chunk_start + 1,
+                    ):
+                        await emit_result(offset, template, qa_pair)
+                        question_text = str(qa_pair.question or "").strip()
+                        if question_text and not (qa_pair.metadata or {}).get("error"):
+                            accepted_questions.append(question_text)
+
+                    next_chunk_to_emit += 1
 
         await self._send_ws_update(
             "progress",
             {"stage": "complete", "completed": len(results), "total": total},
         )
+        self.logger.info(
+            f"Quiz generation completed: first_ready={first_ready_at or 0.0:.2f}s "
+            f"total={time.perf_counter() - started_at:.2f}s questions={len(results)}"
+        )
         return results
+
+    async def _generate_one_question_result(
+        self,
+        *,
+        generator: Any,
+        idx: int,
+        template: QuestionTemplate,
+        user_topic: str,
+        preference: str,
+        history_context: str,
+        previous_questions: list[str],
+        generation_mode: str,
+    ) -> dict[str, Any]:
+        try:
+            qa_pair = await generator.process(
+                template=template,
+                user_topic=user_topic,
+                preference=preference,
+                history_context=history_context,
+                previous_questions=previous_questions,
+            )
+            qa_pair.metadata = {
+                **(qa_pair.metadata or {}),
+                "generation_mode": generation_mode,
+            }
+        except Exception as exc:
+            self.logger.warning(f"First question generation failed: {exc}")
+            qa_pair = QAPair(
+                question_id=template.question_id,
+                question=f"[Generation failed] {template.concentration}",
+                correct_answer="N/A",
+                explanation=str(exc),
+                question_type=template.question_type,
+                concentration=template.concentration,
+                difficulty=template.difficulty,
+                metadata={"error": str(exc), "generation_mode": generation_mode},
+            )
+        result = self._build_question_result(template, qa_pair)
+        await self._emit_question_result(idx, template, qa_pair, result["success"])
+        return result
+
+    @staticmethod
+    def _build_question_result(
+        template: QuestionTemplate,
+        qa_pair: QAPair,
+    ) -> dict[str, Any]:
+        success = not bool((qa_pair.metadata or {}).get("error")) and bool(
+            (qa_pair.validation or {}).get("schema_ok", True)
+        )
+        return {
+            "template": template.__dict__,
+            "qa_pair": qa_pair.__dict__,
+            "success": success,
+        }
+
+    async def _emit_question_result(
+        self,
+        idx: int,
+        template: QuestionTemplate,
+        qa_pair: QAPair,
+        success: bool,
+    ) -> None:
+        await self._send_ws_update(
+            "result",
+            {
+                "question_id": template.question_id,
+                "index": idx - 1,
+                "question": qa_pair.__dict__,
+                "success": success,
+            },
+        )
+
+    def _progressive_first_batch_size(self, total_questions: int) -> int:
+        """Return how many questions should stream before the remaining set call.
+
+        Topic-only quizzes stay on the single set call because they are already
+        much faster. KB-backed quizzes need a first usable question quickly so
+        the Practice page is not blank while the grounded set finishes.
+        """
+        if total_questions <= 1:
+            return 0
+
+        raw = os.getenv("PRACTICE_QUIZ_PROGRESSIVE_FIRST_BATCH", "").strip().lower()
+        if raw in {"0", "false", "no", "off", "none"}:
+            configured = 0
+        elif raw:
+            try:
+                configured = int(raw)
+            except ValueError:
+                configured = DEFAULT_KB_PROGRESSIVE_QUIZ_FIRST_BATCH if self.kb_name else 0
+        else:
+            configured = DEFAULT_KB_PROGRESSIVE_QUIZ_FIRST_BATCH if self.kb_name else 0
+        return min(max(0, configured), total_questions)
+
+    def _early_kb_first_question_count(self, total_questions: int) -> int:
+        if not self.kb_name or not self.enable_idea_rag:
+            return 0
+        return min(1, self._progressive_first_batch_size(total_questions))
+
+    def _starter_page_extra_count(
+        self,
+        total_questions: int,
+        already_streamed: int,
+    ) -> int:
+        if not self.kb_name or total_questions <= already_streamed:
+            return 0
+        raw = os.getenv("PRACTICE_QUIZ_STARTER_PAGE_SIZE", "").strip().lower()
+        if raw in {"0", "false", "no", "off", "none"}:
+            return 0
+        if raw:
+            try:
+                target = int(raw)
+            except ValueError:
+                target = DEFAULT_KB_STARTER_PAGE_SIZE
+        else:
+            target = DEFAULT_KB_STARTER_PAGE_SIZE
+        target = min(max(0, target), total_questions, 10)
+        return max(0, target - already_streamed)
+
+    def _should_skip_kb_ideation(self) -> bool:
+        if not self.kb_name or not self.enable_idea_rag:
+            return False
+        raw = os.getenv("PRACTICE_QUIZ_SKIP_KB_IDEATION", "").strip().lower()
+        if raw in {"0", "false", "no", "off", "ideation"}:
+            return False
+        return True
+
+    @staticmethod
+    def _remaining_quiz_batch_size() -> int:
+        raw = os.getenv("PRACTICE_QUIZ_REMAINING_BATCH_SIZE", "").strip().lower()
+        if not raw:
+            return DEFAULT_REMAINING_QUIZ_BATCH_SIZE
+        try:
+            configured = int(raw)
+        except ValueError:
+            return DEFAULT_REMAINING_QUIZ_BATCH_SIZE
+        return min(12, max(1, configured))
+
+    @staticmethod
+    def _remaining_quiz_concurrency() -> int:
+        raw = os.getenv("PRACTICE_QUIZ_REMAINING_CONCURRENCY", "").strip().lower()
+        if not raw:
+            return DEFAULT_REMAINING_QUIZ_CONCURRENCY
+        try:
+            configured = int(raw)
+        except ValueError:
+            return DEFAULT_REMAINING_QUIZ_CONCURRENCY
+        return min(4, max(1, configured))
+
+    @staticmethod
+    def _normalize_generation_api(value: str, default: str = "chat") -> str:
+        normalized = str(value or "").strip().lower()
+        if normalized in {"responses_minimal", "responses-starter-minimal"}:
+            return "responses_minimal"
+        if normalized in {"responses", "response"}:
+            return "responses"
+        if normalized in {"chat", "chat_completions", "completions", "model-call"}:
+            return "chat"
+        return default
+
+    @classmethod
+    def _starter_page_generation_api(cls) -> str:
+        raw = os.getenv("PRACTICE_STARTER_PAGE_API", "").strip()
+        if raw:
+            return cls._normalize_generation_api(raw)
+        raw = os.getenv("PRACTICE_GENERATION_API", "").strip()
+        if raw:
+            return cls._normalize_generation_api(raw)
+        raw = os.getenv("PRACTICE_QUIZ_USE_RESPONSES", "").strip().lower()
+        if raw in {"1", "true", "yes", "on"}:
+            return "responses"
+        return "chat"
+
+    @classmethod
+    def _remaining_page_generation_api(cls) -> str:
+        raw = os.getenv("PRACTICE_BACKGROUND_PAGE_API", "").strip()
+        if raw:
+            return cls._normalize_generation_api(raw)
+        raw = os.getenv("PRACTICE_REMAINING_PAGE_API", "").strip()
+        if raw:
+            return cls._normalize_generation_api(raw)
+        raw = os.getenv("PRACTICE_GENERATION_API", "").strip()
+        if raw:
+            return cls._normalize_generation_api(raw)
+        return "chat"
+
+    @staticmethod
+    def _should_use_parallel_direct_generation(templates: list[QuestionTemplate]) -> bool:
+        raw = os.getenv("PRACTICE_QUIZ_PARALLEL_DIRECT", "").strip().lower()
+        if not raw:
+            return False
+        if raw in {"0", "false", "no", "off"}:
+            return False
+        return len(templates) > 1 and all(
+            bool((template.metadata or {}).get("ideation_skipped"))
+            for template in templates
+        )
+
+    def _should_skip_topic_ideation(self) -> bool:
+        raw = os.getenv("PRACTICE_QUIZ_SKIP_IDEATION", "").strip().lower()
+        if raw in {"0", "false", "no", "off", "ideation"}:
+            return False
+        if raw in {"always", "force"}:
+            return True
+        if raw in {"1", "true", "yes", "on", "direct"}:
+            return not bool(self.kb_name)
+        return not bool(self.kb_name)
+
+    @staticmethod
+    def _build_direct_topic_templates(
+        *,
+        user_topic: str,
+        requested: int,
+        difficulty: str,
+        question_type: str,
+    ) -> list[QuestionTemplate]:
+        normalized_difficulty = difficulty.strip().lower()
+        normalized_question_type = question_type.strip().lower()
+        resolved_difficulty = (
+            normalized_difficulty
+            if normalized_difficulty and normalized_difficulty != "auto"
+            else "medium"
+        )
+        resolved_question_type = (
+            normalized_question_type
+            if normalized_question_type and normalized_question_type != "auto"
+            else "choice"
+        )
+        topic = user_topic.strip() or "target study topic"
+        lenses = [
+            "professional orientation and ethical practice",
+            "social and cultural diversity application",
+            "human growth and lifespan development",
+            "career development decision-making",
+            "counseling and helping relationships",
+            "group counseling process",
+            "assessment and testing interpretation",
+            "research and program evaluation",
+            "diagnosis and treatment planning",
+            "crisis, risk, and documentation judgment",
+        ]
+        templates: list[QuestionTemplate] = []
+        for idx in range(1, requested + 1):
+            lens = lenses[(idx - 1) % len(lenses)]
+            templates.append(
+                QuestionTemplate(
+                    question_id=f"q_{idx}",
+                    concentration=f"{topic} - {lens}",
+                    question_type=resolved_question_type,
+                    difficulty=resolved_difficulty,
+                    source="custom",
+                    metadata={
+                        "idea_id": f"direct_{idx}",
+                        "rationale": "Direct template generated to avoid a separate ideation LLM call.",
+                        "knowledge_context": "Retrieval disabled.",
+                        "retrieval_queries": [],
+                        "ideation_skipped": True,
+                    },
+                )
+            )
+        return templates
 
     async def _parse_exam_to_templates(
         self,
@@ -350,7 +1045,12 @@ class AgentCoordinator:
         max_questions: int,
         paper_mode: str,
     ) -> tuple[list[QuestionTemplate], dict[str, Any]]:
-        await self._send_ws_update("progress", {"stage": "parsing", "status": "running"})
+        from deeptutor.tools.question.pdf_parser import parse_pdf_with_mineru
+        from deeptutor.tools.question.question_extractor import extract_questions_from_paper
+
+        await self._send_ws_update(
+            "progress", {"stage": "parsing", "status": "running"}
+        )
 
         paper_path = Path(exam_paper_path)
         output_base = (
@@ -382,7 +1082,9 @@ class AgentCoordinator:
 
         json_files = list(working_dir.glob("*_questions.json"))
         if not json_files:
-            extract_success = extract_questions_from_paper(str(working_dir), output_dir=None)
+            extract_success = extract_questions_from_paper(
+                str(working_dir), output_dir=None
+            )
             if not extract_success:
                 raise RuntimeError("Failed to extract questions from parsed exam")
             json_files = list(working_dir.glob("*_questions.json"))
@@ -455,7 +1157,11 @@ class AgentCoordinator:
 
     def _create_batch_dir(self, prefix: str) -> Path:
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        base = Path(self.output_dir) if self.output_dir else get_path_service().get_question_dir()
+        base = (
+            Path(self.output_dir)
+            if self.output_dir
+            else get_path_service().get_question_dir()
+        )
         batch_dir = base / f"{prefix}_{timestamp}"
         batch_dir.mkdir(parents=True, exist_ok=True)
         return batch_dir

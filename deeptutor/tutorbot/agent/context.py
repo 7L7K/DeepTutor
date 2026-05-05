@@ -80,7 +80,7 @@ Skills with available="false" need dependencies installed first - you can try in
 
         if self.shared_memory_dir:
             name = "TutorBot"
-            tagline = "You are TutorBot, an intelligent learning companion powered by DeepTutor."
+            tagline = "You are TutorBot, an intelligent learning companion powered by TEEECHR."
         else:
             name = "TutorBot"
             tagline = "You are TutorBot, a helpful AI assistant."
@@ -108,7 +108,7 @@ Your workspace is at: {workspace_path}
 Reply directly with text for conversations. Only use the 'message' tool to send to a specific chat channel."""
 
     def _build_shared_memory(self) -> str:
-        """Build memory context from DeepTutor's shared memory (PROFILE + SUMMARY).
+        """Build memory context from TEEECHR's shared memory (PROFILE + SUMMARY).
 
         SOUL.md and other per-bot files are loaded from the workspace via
         BOOTSTRAP_FILES, so they are NOT read from the shared memory dir.

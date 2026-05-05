@@ -1,0 +1,81 @@
+## [Unreleased]
+
+### Fixed
+- practice quiz: allow runtime-only `quiz_submission_context` through deep-question validation and route interactive quiz submissions to the quiz grading agent instead of rejecting them as invalid generation config.
+- deploy: preserve remote `data/` and `outputs/` during rsync deploys so tester sessions, knowledge bases, and generated artifacts are not overwritten by the local checkout.
+- knowledge ui: explain why the Create action is blocked when a tester has not provided both a KB name and at least one file, avoiding the appearance that adding a KB did nothing.
+- chat: route short no-tool learner prompts like `say hi in one sentence` and `I want to start an exam` through the direct quick-reply path so basic chat skips the heavy thinking / observing pipeline.
+- unified ws: validate tester ownership for turn subscriptions with a direct `turns` to `sessions` lookup so signed-in private testers receive their own streamed chat events.
+- frontend runtime: rebuild the web dependency install and clear stale Next output so `/chat` can compile and show the private tester gate again.
+- access: scope session history APIs and unified websocket turn access to the signed private tester.
+- chat: make greeting-only quick replies feel like a study coach by offering explanation, practice-question, or flashcard paths instead of a generic assistant greeting.
+- practice mode: save generated quiz attempts against a real session id from the live quiz turn so `/practice` no longer fails with `session_id is required` when a learner generates a quiz outside a loaded chat thread.
+- web frontend: allow `127.0.0.1` as a Next dev origin so the in-app browser can load hydrated `/practice` and `/practice/flashcards` controls instead of rendering dead HTML.
+- web frontend: pin Turbopack's workspace root to the repo `web` app so local page requests do not hang while Next scans an unrelated higher-level lockfile root.
+- local runtime: start the Next frontend in webpack mode from the launcher because Turbopack was crashing on `/practice/flashcards` with `uncaughtException: write EPIPE`.
+- llm: force the SDK-backed OpenAI executor path to honor GPT-5 temperature constraints so chat and diagnostics work with `gpt-5-mini`.
+- chat: route plain greeting-only turns like `hi` and `hello` through a direct quick-reply path so they return a short normal answer instead of the full internal thinking / observing pipeline.
+- chat ui: keep `New chat` on a real fresh draft instead of snapping back to the previous session URL, and stop completed plain-chat turns from rendering the full internal trace panel inline.
+- chat ui: hide leaked internal-only memo replies from chat history hydration and live message rendering so older broken turns do not keep showing internal observation text to the learner.
+- navigation: expose `Practice` and `Notebook` in the main sidebar so those existing learner-facing pages are reachable without typing routes manually.
+- web chat: render quiz-like assistant replies as a clickable multiple-choice panel so learners can answer in the UI and submit one-line responses back to the thread.
+- web chat: attach hidden quiz-submission grading context when the interactive quiz UI sends answers so the assistant scores the quiz instead of treating the answer line like a fresh chat prompt.
+- web chat: route interactive quiz answer submissions through the quiz capability so grading uses the larger question-response budget instead of the shorter generic chat response cap.
+- unified ws: reply to client heartbeat pings with `pong` so practice and chat streams do not fail with `Unknown type: ping` during long-running turns.
+- tests: cover quiz text parsing variants, interactive submit routing to `deep_question`, and incomplete interactive quiz submissions that should request only missing question numbers.
+- web frontend: replace effect-driven state hydration in app-shell subscriptions and settings tour spotlight measurement so the frontend lint suite no longer fails on synchronous effect updates, while visualization error labels stay translatable.
+
+### Added
+- ops: add a `teeechr.gesahni.com` deploy script and private tester runbook covering Cloudflare DNS, VPS paths, Caddy routing, Docker containers, access-code management, websocket debugging, and static Next standalone assets.
+- access: add a frontend private tester gate that claims an access code before loading Chat, Practice, Flashcards, or Knowledge.
+- access: add private tester access-code identity endpoints, signed HttpOnly cookie support, and a tester-code management script.
+- docs: add a private tester guide for the Chat, Practice, Flashcards, and Knowledge MVP path.
+- practice mode: return flashcard starter decks progressively and poll partial decks while the remaining cards finish in the background.
+- practice mode: add a dedicated `/practice` workspace for generating quizzes, taking them with an optional soft timer, submitting without chat, and reviewing inline score/domain results.
+- practice mode: persist quiz attempts, graded items, and domain progress summaries through new practice APIs so results and study trends survive beyond a single response.
+- practice mode: add a first `/practice/flashcards` page slice so flashcards can be explored as a dedicated Practice workflow with setup, deck overview, and one-card study states before backend generation is wired.
+- practice mode: add real `/practice/flashcards` deck generation, persistence, recent-deck loading, and per-card review/restart APIs so flashcards now save as structured study assets instead of a preview-only shell.
+- practice mode: add flashcard session reviews, KB topic suggestions, and a dedicated completion state so finished decks now produce a saved coach-style write-up plus a clearer missed-cards remediation loop.
+- practice mode: add quiz assessment-intent presets, coach-style results panels, and remediation actions that can retry weak domains or seed a flashcard deck from quiz results.
+- web chat: add tutor action chips under coaching replies so learners can tap `Quiz me`, `Explain simpler`, `Make flashcards`, or `Review weak spots` without retyping follow-up prompts.
+
+### Changed
+- practice generation: switch the benchmark-winning starter-page flag to a minimal Responses structured-output profile that defers explanations, keeping chat as the fallback and background/full exam generation on the existing path.
+- practice generation: add a shared Responses structured-output adapter and a benchmark CLI for comparing chat vs Responses on starter quizzes, background batches, full exams, and flashcard decks while keeping chat as the default quiz starter fallback path.
+- quiz generation: add `PRACTICE_GENERATION_API`, `PRACTICE_STARTER_PAGE_API`, and `PRACTICE_BACKGROUND_PAGE_API` flags so only the benchmark-winning Practice quiz path can move to Responses without a whole-app migration.
+- practice mode: make flashcard source badges visible across setup, overview, and study, and give missed-only review its own completion framing with the saved coach review.
+- flashcards: add stage-level generation diagnostics and an experimental `FLASHCARD_USE_RESPONSES` path for OpenAI Responses API structured-output benchmarking on KB-backed decks.
+- quiz generation: use one structured quiz-set generation call for generated Practice quizzes after template planning, skipping the slow first-three per-question generation path for topic and KB-backed quizzes.
+- flashcards: add a dedicated `FLASHCARD_GENERATION_MODEL` override so deck generation can use a faster model without changing the global chat model.
+- quiz generation: add low-reasoning and optional direct-template fast paths so GPT-5-mini quizzes can skip the separate ideation LLM call without falling back to GPT-4o.
+- flashcards: pass `FLASHCARD_GENERATION_REASONING_EFFORT` through generation calls so GPT-5-mini flashcards can return starter cards faster.
+- quiz generation: default topic-only Practice quiz creation to direct templates plus one GPT-5-mini quiz-set call, while keeping KB-backed quizzes on the grounded ideation path.
+- flashcards: default OpenAI GPT-5 flashcard generation to the Responses structured-output path with a chat-completions fallback.
+- quiz generation: keep parallel direct generation and Responses structured output behind opt-in flags after live timing showed the direct-template chat path was faster and steadier.
+- quiz generation: stream the first KB-backed Practice quiz question before the remaining set call so the quiz page becomes usable while grounded generation continues.
+- quiz generation: build the first KB-backed Practice question from retrieved context before the template ideation call so the first visible question is no longer blocked on full planning.
+- quiz generation: split remaining Practice quiz generation into configurable concurrent chunks so larger 20-30 question exams can stream batches without waiting on one giant set call or several sequential set calls.
+- practice exams: show streamed exam-simulation questions as soon as they are ready while keeping submission locked until the full attempt is saved.
+- quiz generation: skip multi-call KB ideation for Practice quizzes by default after the first retrieval, using NCE-domain direct templates grounded with the retrieved knowledge context.
+- quiz generation: stream the first five KB-backed Practice questions as fast single-question warmup calls before the remaining concurrent set batches.
+- quiz generation: replace q2-q5 warmup singles with one starter-page generation call so Practice exams stream an initial page instead of several separate early calls.
+- access: require signed tester identity for Practice attempts, Flashcards, Question Notebook entries, and Knowledge management APIs.
+- knowledge: namespace tester-created knowledge bases internally while keeping public KB names clean in the UI.
+- web api: send credentials on protected Chat, Practice, Flashcards, and Knowledge requests so the HttpOnly tester cookie works from the local frontend.
+- data: add default private-tester ownership columns for local chat sessions, practice attempts, flashcard decks, and notebook entries.
+- practice mode: tighten quiz idea and question prompts toward realistic NCE-style application, balanced distractors, and teaching explanations before private sharing.
+- practice mode: stream the first few generated quiz questions before the remaining set finishes so learners see earlier progress during quiz creation.
+- knowledge: make the empty state explain how uploaded sources ground Chat, Practice, and Flashcards, including honest source-badge expectations.
+- practice mode: strengthen quiz-result next actions so misses clearly flow into chat review, retry quizzes, and focused flashcards.
+- navigation: focus the primary learner sidebar on Chat, Practice, Flashcards, and Knowledge, with Flashcards promoted as a first-class study lane.
+- practice mode: add `PRACTICE_QUIZ_MODEL` / `QUESTION_GENERATION_MODEL` support so quiz generation can use a faster model without changing the global chat model.
+- practice mode: allow quiz ideation batches up to 10 templates so a 10-question quiz can plan in one pass instead of two smaller batches.
+- practice mode: log quiz ideation batch timing and quiz generation timing for latency diagnosis.
+- practice mode: make flashcard generation start with 10 cards by default and stop requesting extra hidden candidates on the first pass, reducing the initial wait before a deck is usable.
+- practice mode: log flashcard source-context and LLM generation timings so latency can be measured by stage.
+- navigation: hide TutorBot, Co-Writer, and Guided Learning from the primary learner sidebar while the MVP focus is Chat, Practice, Flashcards, and Knowledge.
+- quiz grading: return structured quiz submission results alongside the learner-facing explanation so the UI can render reliable scorecards, wrong-answer review, and saved practice history.
+- quiz grading: accept answer maps for interactive submissions and allow dedicated practice flows to score incomplete/timed-out attempts while chat-based quizzes still request missing answers.
+- quiz grading: normalize common domain-label variants into stable practice domains and return stronger coaching fields like strongest areas, weakest areas, and a recommended next step.
+- quiz generation: switch Practice quiz creation from sequential per-question assembly to quiz-set generation with set-level validation and targeted item repair, reducing the stepwise generation feel while preserving the existing `summary.results` contract.
+- practice mode: gate flashcard `Knowledge` decks when no KBs are loaded, surface clearer source-trust badges, and tighten generated flashcard quality to reduce vague or duplicate cards.

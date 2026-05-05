@@ -2,30 +2,28 @@
 
 from __future__ import annotations
 
-from collections.abc import AsyncGenerator
-import logging
 import os
-from typing import Any
 import uuid
+from collections.abc import AsyncGenerator
+from typing import Any
 
 from openai import AsyncOpenAI, BadRequestError
 
-from deeptutor.services.llm.capabilities import disable_response_format_at_runtime
+from deeptutor.logging import get_logger
+from deeptutor.services.llm.capabilities import (
+    disable_response_format_at_runtime,
+    get_effective_temperature,
+)
 from deeptutor.services.llm.provider_registry import find_by_name, strip_provider_prefix
 
 from .config import get_token_limit_kwargs
 from .utils import extract_response_content
 
-logger = logging.getLogger(__name__)
+logger = get_logger("LLMExecutors")
 
 
 def _is_unsupported_response_format_error(exc: BaseException) -> bool:
-    """Detect whether a BadRequestError stems from an unsupported ``response_format``.
-
-    Examples seen in the wild:
-    - LM Studio + Gemma: ``"'response_format.type' must be 'json_schema' or 'text'"``
-    - DashScope + various models: ``"'response_format.type' specified ... not valid: 'json_object' is not supported by this model"``
-    """
+    """Detect provider 400s caused by unsupported response_format payloads."""
     text = str(exc).lower()
     if "response_format" not in text and "response format" not in text:
         return False
@@ -45,13 +43,7 @@ async def _create_with_format_fallback(
     binding: str,
     model: str,
 ) -> Any:
-    """Run ``client.chat.completions.create`` with auto-fallback on response_format errors.
-
-    Some local servers (LM Studio + Gemma/Qwen) reject ``response_format``
-    with HTTP 400. On a matching :class:`BadRequestError`, drop the offending
-    field and retry once, then cache the (binding, model) pair so future calls
-    skip ``response_format`` upfront.
-    """
+    """Retry once without response_format when a provider rejects it."""
     try:
         return await client.chat.completions.create(**payload)
     except BadRequestError as exc:
@@ -71,8 +63,8 @@ def _build_messages(
     *,
     prompt: str,
     system_prompt: str,
-    messages: list[dict[str, Any]] | None,
-) -> list[dict[str, Any]]:
+    messages: list[dict[str, object]] | None,
+) -> list[dict[str, object]]:
     if messages:
         return messages
     return [
@@ -132,19 +124,16 @@ async def sdk_complete(
     model: str,
     api_key: str | None,
     base_url: str | None,
-    messages: list[dict[str, Any]] | None = None,
+    messages: list[dict[str, object]] | None = None,
     api_version: str | None = None,
     extra_headers: dict[str, str] | None = None,
     reasoning_effort: str | None = None,
-    **kwargs: Any,
+    **kwargs: object,
 ) -> str:
     """Non-streaming completion using the openai SDK."""
     _setup_provider_env(provider_name, api_key, base_url)
     resolved_model, effective_base, effective_key = _resolve_model_and_base(
-        provider_name,
-        model,
-        api_key,
-        base_url,
+        provider_name, model, api_key, base_url,
     )
 
     default_headers: dict[str, str] = {"x-session-affinity": uuid.uuid4().hex}
@@ -159,7 +148,11 @@ async def sdk_complete(
     )
 
     max_tokens_val = _coerce_int(kwargs.pop("max_tokens", 4096), 4096)
-    temperature_val = _coerce_float(kwargs.pop("temperature", 0.7), 0.7)
+    temperature_val = get_effective_temperature(
+        provider_name,
+        resolved_model,
+        _coerce_float(kwargs.pop("temperature", 0.7), 0.7),
+    )
 
     payload: dict[str, Any] = {
         "model": resolved_model,
@@ -179,7 +172,10 @@ async def sdk_complete(
     payload.update(kwargs)
 
     response = await _create_with_format_fallback(
-        client, payload, binding=provider_name or "openai", model=resolved_model
+        client,
+        payload,
+        binding=provider_name or "openai",
+        model=resolved_model,
     )
     choices = getattr(response, "choices", None) or []
     if not choices:
@@ -198,19 +194,16 @@ async def sdk_stream(
     model: str,
     api_key: str | None,
     base_url: str | None,
-    messages: list[dict[str, Any]] | None = None,
+    messages: list[dict[str, object]] | None = None,
     api_version: str | None = None,
     extra_headers: dict[str, str] | None = None,
     reasoning_effort: str | None = None,
-    **kwargs: Any,
+    **kwargs: object,
 ) -> AsyncGenerator[str, None]:
     """Streaming completion using the openai SDK."""
     _setup_provider_env(provider_name, api_key, base_url)
     resolved_model, effective_base, effective_key = _resolve_model_and_base(
-        provider_name,
-        model,
-        api_key,
-        base_url,
+        provider_name, model, api_key, base_url,
     )
 
     default_headers: dict[str, str] = {"x-session-affinity": uuid.uuid4().hex}
@@ -225,7 +218,11 @@ async def sdk_stream(
     )
 
     max_tokens_val = _coerce_int(kwargs.pop("max_tokens", 4096), 4096)
-    temperature_val = _coerce_float(kwargs.pop("temperature", 0.7), 0.7)
+    temperature_val = get_effective_temperature(
+        provider_name,
+        resolved_model,
+        _coerce_float(kwargs.pop("temperature", 0.7), 0.7),
+    )
 
     payload: dict[str, Any] = {
         "model": resolved_model,
@@ -246,7 +243,10 @@ async def sdk_stream(
     payload.update(kwargs)
 
     stream_response = await _create_with_format_fallback(
-        client, payload, binding=provider_name or "openai", model=resolved_model
+        client,
+        payload,
+        binding=provider_name or "openai",
+        model=resolved_model,
     )
     async for chunk in stream_response:
         choices = getattr(chunk, "choices", None) or []
@@ -258,9 +258,7 @@ async def sdk_stream(
             delta = choice.get("delta")
         if delta is None:
             continue
-        raw_content = (
-            getattr(delta, "content", None) if not isinstance(delta, dict) else delta.get("content")
-        )
+        raw_content = getattr(delta, "content", None) if not isinstance(delta, dict) else delta.get("content")
         if raw_content is None:
             continue
         content = extract_response_content(delta)

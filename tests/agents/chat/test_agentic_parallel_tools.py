@@ -163,6 +163,70 @@ async def test_native_tool_loop_executes_parallel_tool_calls(
     assert acting_thinking_events == []
 
 
+def test_basic_no_tool_chat_uses_direct_reply_path(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(
+        "deeptutor.agents.chat.agentic_pipeline.get_llm_config",
+        lambda: SimpleNamespace(binding="openai", model="gpt-test", api_key="k", base_url="u", api_version=None),
+    )
+    monkeypatch.setattr(
+        "deeptutor.agents.chat.agentic_pipeline.get_tool_registry",
+        lambda: SimpleNamespace(),
+    )
+
+    pipeline = AgenticChatPipeline(language="en")
+
+    assert pipeline._should_use_simple_chat_reply(
+        UnifiedContext(
+            session_id="session-1",
+            user_message="say hi in one sentence",
+            enabled_tools=[],
+            language="en",
+        ),
+        [],
+    )
+    assert pipeline._should_use_simple_chat_reply(
+        UnifiedContext(
+            session_id="session-1",
+            user_message="I want to start an exam",
+            enabled_tools=[],
+            language="en",
+        ),
+        [],
+    )
+
+
+def test_direct_reply_path_respects_tool_and_artifact_requests(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(
+        "deeptutor.agents.chat.agentic_pipeline.get_llm_config",
+        lambda: SimpleNamespace(binding="openai", model="gpt-test", api_key="k", base_url="u", api_version=None),
+    )
+    monkeypatch.setattr(
+        "deeptutor.agents.chat.agentic_pipeline.get_tool_registry",
+        lambda: SimpleNamespace(),
+    )
+
+    pipeline = AgenticChatPipeline(language="en")
+
+    assert not pipeline._should_use_simple_chat_reply(
+        UnifiedContext(
+            session_id="session-1",
+            user_message="say hi in one sentence",
+            enabled_tools=["web_search"],
+            language="en",
+        ),
+        ["web_search"],
+    )
+    assert not pipeline._should_use_simple_chat_reply(
+        UnifiedContext(
+            session_id="session-1",
+            user_message="generate flashcards from this topic",
+            enabled_tools=[],
+            language="en",
+        ),
+        [],
+    )
+
+
 @pytest.mark.asyncio
 async def test_execute_tool_call_streams_retrieve_progress_for_rag(
     monkeypatch: pytest.MonkeyPatch,

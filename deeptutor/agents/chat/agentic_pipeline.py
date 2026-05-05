@@ -7,6 +7,7 @@ from dataclasses import asdict, dataclass
 import json
 import logging
 import os
+import re
 from typing import Any
 
 import httpx
@@ -44,6 +45,19 @@ CHAT_EXCLUDED_TOOLS = {"geogebra_analysis"}
 CHAT_OPTIONAL_TOOLS = [name for name in BUILTIN_TOOL_NAMES if name not in CHAT_EXCLUDED_TOOLS]
 MAX_PARALLEL_TOOL_CALLS = 8
 MAX_TOOL_RESULT_CHARS = 4000
+SIMPLE_CHAT_RE = re.compile(
+    r"^(hi|hello|hey|yo|sup|what's up|whats up|good morning|good afternoon|good evening)[!.?\s]*$",
+    re.IGNORECASE,
+)
+DIRECT_CHAT_MAX_CHARS = 320
+DIRECT_CHAT_PREFIX_RE = re.compile(
+    r"^(say|tell me|explain|define|summarize|help me|can you|could you|what is|what are|why is|how do|how can|i want|i need|start|make)\b",
+    re.IGNORECASE,
+)
+DIRECT_CHAT_EXCLUDED_RE = re.compile(
+    r"\b(upload|attached|attachment|pdf|image|file|knowledge base|research report|deep research|web search|cite sources|use sources|generate flashcards|make flashcards|create flashcards|generate quiz|create quiz|practice quiz)\b",
+    re.IGNORECASE,
+)
 
 CHAT_STAGE_KEYS: tuple[str, ...] = (
     "responding",
@@ -189,6 +203,21 @@ class AgenticChatPipeline:
                 stage="thinking",
                 metadata={"reason": "rag_without_kb"},
             )
+        if not requested_tools and self._should_use_simple_chat_reply(context, enabled_tools):
+            final_response, trace_meta = await self._stage_simple_chat_reply(
+                context=context,
+                stream=stream,
+            )
+            result_payload: dict[str, Any] = {
+                "response": final_response,
+                "simple_chat": True,
+                "source_trace": trace_meta.get("label", "Quick reply"),
+            }
+            cs = self._get_cost_summary()
+            if cs:
+                result_payload["metadata"] = {"cost_summary": cs}
+            await stream.result(result_payload, source="chat")
+            return
         thinking_text = await self._stage_thinking(context, enabled_tools, stream)
         tool_traces = await self._stage_acting(
             context=context,
@@ -235,6 +264,77 @@ class AgenticChatPipeline:
         if cs:
             result_payload["metadata"] = {"cost_summary": cs}
         await stream.result(result_payload, source="chat")
+
+    def _should_use_simple_chat_reply(
+        self,
+        context: UnifiedContext,
+        enabled_tools: list[str],
+    ) -> bool:
+        capability = (context.active_capability or "").strip()
+        if capability and capability != "chat":
+            return False
+        if enabled_tools:
+            return False
+        if context.attachments:
+            return False
+        if context.knowledge_bases:
+            return False
+        message = (context.user_message or "").strip()
+        if not message:
+            return False
+        if SIMPLE_CHAT_RE.fullmatch(message):
+            return True
+        if len(message) > DIRECT_CHAT_MAX_CHARS:
+            return False
+        if DIRECT_CHAT_EXCLUDED_RE.search(message):
+            return False
+        return bool(DIRECT_CHAT_PREFIX_RE.search(message))
+
+    async def _stage_simple_chat_reply(
+        self,
+        context: UnifiedContext,
+        stream: StreamBus,
+    ) -> tuple[str, dict[str, Any]]:
+        trace_meta = build_trace_metadata(
+            call_id=new_call_id("chat-quick-reply"),
+            phase="responding",
+            label="Quick reply",
+            call_kind="llm_final_response",
+            trace_id="chat-quick-reply",
+            trace_role="response",
+            trace_group="stage",
+        )
+        async with stream.stage("responding", source="chat", metadata=trace_meta):
+            await stream.progress(
+                trace_meta["label"],
+                source="chat",
+                stage="responding",
+                metadata=merge_trace_metadata(
+                    trace_meta,
+                    {"trace_kind": "call_status", "call_state": "running"},
+                ),
+            )
+            reply = (
+                "Hey, I'm here. What are we studying today: a quick explanation, a few practice questions, or flashcards?"
+                if not context.language.lower().startswith("zh")
+                else "你好，我在。今天想学什么：快速讲解、几道练习题，还是做一组闪卡？"
+            )
+            await stream.content(
+                reply,
+                source="chat",
+                stage="responding",
+                metadata=merge_trace_metadata(trace_meta, {"trace_kind": "llm_chunk"}),
+            )
+            await stream.progress(
+                "",
+                source="chat",
+                stage="responding",
+                metadata=merge_trace_metadata(
+                    trace_meta,
+                    {"trace_kind": "call_status", "call_state": "complete"},
+                ),
+            )
+            return reply, trace_meta
 
     async def _stage_thinking(
         self,

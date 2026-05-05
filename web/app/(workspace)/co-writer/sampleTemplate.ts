@@ -1,8 +1,8 @@
 const FENCE = "```";
 
-export const CO_WRITER_SAMPLE_TEMPLATE = `# DeepTutor Co-Writer
+export const CO_WRITER_SAMPLE_TEMPLATE = `# TEEECHR Co-Writer
 
-> DeepTutor's built-in writing canvas for notes, reports, tutorials, and AI-assisted drafts.
+> TEEECHR's built-in writing canvas for notes, reports, tutorials, and AI-assisted drafts.
 
 ### Features
 
@@ -10,7 +10,7 @@ export const CO_WRITER_SAMPLE_TEMPLATE = `# DeepTutor Co-Writer
 - Real-time preview for headings, tables, code, math, flowchart, and sequence diagrams
 - AI editing workflows for rewrite, shorten, and expand
 - HTML tag decoding for tags like <sub>, <sup>, <abbr>, and <mark>
-- A practical starter draft for DeepTutor product docs and learning content
+- A practical starter draft for TEEECHR product docs and learning content
 
 ## Table of Contents
 
@@ -18,23 +18,23 @@ export const CO_WRITER_SAMPLE_TEMPLATE = `# DeepTutor Co-Writer
 
 [TOC]
 
-#DeepTutor Mission
-##DeepTutor Product Surface
-###DeepTutor Learning Experience
-####DeepTutor Co-Writer
-#####DeepTutor Knowledge Layer
-######DeepTutor Agent Runtime
+#TEEECHR Mission
+##TEEECHR Product Surface
+###TEEECHR Learning Experience
+####TEEECHR Co-Writer
+#####TEEECHR Knowledge Layer
+######TEEECHR Agent Runtime
 
-#DeepTutor Docs [Project Overview](#deeptutor-mission "Jump to project overview")
-##DeepTutor Authoring [Co-Writer Section](#deeptutor-co-writer "Jump to co-writer section")
-###DeepTutor Research [Learning Note](#deeptutor-learning-note "Jump to learning note")
+#TEEECHR Docs [Project Overview](#deeptutor-mission "Jump to project overview")
+##TEEECHR Authoring [Co-Writer Section](#deeptutor-co-writer "Jump to co-writer section")
+###TEEECHR Research [Learning Note](#deeptutor-learning-note "Jump to learning note")
 
 ## Headers (Underline)
 
-DeepTutor Learning Note
+TEEECHR Learning Note
 =============
 
-DeepTutor Study Outline
+TEEECHR Study Outline
 -------------
 
 ### Characters
@@ -50,21 +50,21 @@ Superscript: X<sub>2</sub>, Subscript: O<sup>2</sup>
 
 **Abbreviation(link HTML abbr tag)**
 
-The <abbr title="Large Language Model">LLM</abbr> layer powers DeepTutor while the <abbr title="Retrieval Augmented Generation">RAG</abbr> layer provides grounded knowledge support.
+The <abbr title="Large Language Model">LLM</abbr> layer powers TEEECHR while the <abbr title="Retrieval Augmented Generation">RAG</abbr> layer provides grounded knowledge support.
 
 ### Blockquotes
 
-> DeepTutor helps students turn questions into structured understanding.
+> TEEECHR helps students turn questions into structured understanding.
 >
-> "Learn deeply, write clearly.", [DeepTutor](#deeptutor-co-writer)
+> "Learn deeply, write clearly.", [TEEECHR](#deeptutor-co-writer)
 
 ### Links
 
-[DeepTutor Overview](#deeptutor-mission)
+[TEEECHR Overview](#deeptutor-mission)
 
-[DeepTutor Co-Writer](#deeptutor-co-writer "co-writer section")
+[TEEECHR Co-Writer](#deeptutor-co-writer "co-writer section")
 
-[DeepTutor Runtime](#deeptutor-agent-runtime)
+[TEEECHR Runtime](#deeptutor-agent-runtime)
 
 [Reference link][deeptutor-doc]
 
@@ -80,7 +80,7 @@ The <abbr title="Large Language Model">LLM</abbr> layer powers DeepTutor while t
 
     from deeptutor.runtime.orchestrator import ChatOrchestrator
     orchestrator = ChatOrchestrator()
-    print("DeepTutor is ready.")
+    print("TEEECHR is ready.")
 
 #### Python
 
@@ -103,11 +103,12 @@ ${FENCE}
 
 ${FENCE}json
 {
-  "app_name": "DeepTutor",
+  "app_name": "TEEECHR",
   "default_capability": "chat",
   "enabled_tools": ["rag", "web_search", "code_execution", "reason"],
   "ui": {
-    "co_writer_template": true
+    "co_writer_template": true,
+    "notebook_export": true
   }
 }
 ${FENCE}
@@ -116,7 +117,7 @@ ${FENCE}
 
 ${FENCE}html
 <section class="deeptutor-card">
-  <h1>DeepTutor</h1>
+  <h1>TEEECHR</h1>
   <p>Write, revise, and organize learning content with AI.</p>
 </section>
 ${FENCE}
@@ -125,24 +126,24 @@ ${FENCE}
 
 ![](/logo-ver2.png)
 
-> DeepTutor brand mark used inside the co-writer template.
+> TEEECHR brand mark used inside the co-writer template.
 
 ### Lists
 
-- DeepTutor Chat
-- DeepTutor Co-Writer
-- DeepTutor Research
+- TEEECHR Chat
+- TEEECHR Co-Writer
+- TEEECHR Research
 
 1. Draft a concept note
 2. Ask AI to refine it
-3. Export the polished markdown
+3. Save it to a notebook
 
 ### Tables
 
 Feature       | Description
 ------------- | -------------
 Co-Writer     | Draft and refine Markdown content
-Chat          | Ask questions and iterate ideas
+Notebook      | Save and organize outputs
 Research      | Build structured multi-step reports
 
 | Capability    | Primary Use Case                     |
@@ -153,7 +154,7 @@ Research      | Build structured multi-step reports
 
 ### Markdown extras
 
-- [x] Draft a DeepTutor product note
+- [x] Draft a TEEECHR product note
 - [x] Add references and structure
 - [ ] Polish the final explanation
   - [ ] Check headings
@@ -173,7 +174,7 @@ $$ \sin(\alpha)^{\theta}=\sum_{i=0}^{n}(x^i + \cos(f))$$
 
 ${FENCE}flow
 st=>start: Student asks a question
-op=>operation: DeepTutor analyzes intent
+op=>operation: TEEECHR analyzes intent
 cond=>condition: Need deep workflow?
 chat=>operation: Answer with chat capability
 solve=>operation: Route to deep solve
@@ -189,11 +190,11 @@ ${FENCE}
 ### Sequence Diagram
 
 ${FENCE}seq
-Student->DeepTutor: Ask for help
-DeepTutor->KnowledgeBase: Load context
-Note right of DeepTutor: Collect memory\nand relevant knowledge
-DeepTutor-->Student: Return guided response
-Student->>DeepTutor: Request rewrite in co-writer
+Student->TEEECHR: Ask for help
+TEEECHR->Notebook: Load context
+Note right of TEEECHR: Collect memory\nand relevant knowledge
+TEEECHR-->Student: Return guided response
+Student->>TEEECHR: Request rewrite in co-writer
 ${FENCE}
 
 ### End

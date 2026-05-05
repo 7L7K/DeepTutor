@@ -120,6 +120,17 @@ export interface MessageItem {
   requestSnapshot?: MessageRequestSnapshot;
 }
 
+function isLeakedInternalChatMemo(message: SessionMessage, content: string): boolean {
+  if (message.role !== "assistant") return false;
+  if ((message.capability || "") !== "chat") return false;
+  const normalized = content.trim().toLowerCase();
+  return (
+    normalized.startsWith("internal observation note") ||
+    normalized.startsWith("internal analysis memo") ||
+    normalized.startsWith("internal memo")
+  );
+}
+
 interface SessionEntry extends ChatState {
   key: string;
   status: SessionRuntimeStatus;
@@ -700,6 +711,10 @@ export function UnifiedChatProvider({
     (messages: SessionMessage[]): MessageItem[] => {
       return messages
         .filter((message) => message.role !== "system")
+        .filter((message) => {
+          const raw = normalizeMessageContent(message.content as unknown);
+          return !isLeakedInternalChatMemo(message, raw);
+        })
         .map((message) => {
           const raw = normalizeMessageContent(message.content as unknown);
           const attachments = hydrateMessageAttachments(message.attachments);

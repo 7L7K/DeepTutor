@@ -1,4 +1,4 @@
-import { apiUrl } from "@/lib/api";
+import { apiFetch } from "@/lib/api";
 import { invalidateClientCache, withClientCache } from "@/lib/client-cache";
 
 const KNOWLEDGE_CACHE_PREFIX = "knowledge:";
@@ -37,7 +37,7 @@ export async function listKnowledgeBases(options?: { force?: boolean }) {
   return withClientCache<KnowledgeBaseSummary[]>(
     `${KNOWLEDGE_CACHE_PREFIX}list`,
     async () => {
-      const response = await fetch(apiUrl("/api/v1/knowledge/list"), {
+      const response = await apiFetch("/api/v1/knowledge/list", {
         cache: "no-store",
       });
       const data = await response.json();
@@ -57,7 +57,7 @@ export async function listRagProviders(options?: { force?: boolean }) {
   return withClientCache<RagProviderSummary[]>(
     `${KNOWLEDGE_CACHE_PREFIX}providers`,
     async () => {
-      const response = await fetch(apiUrl("/api/v1/knowledge/rag-providers"), {
+      const response = await apiFetch("/api/v1/knowledge/rag-providers", {
         cache: "no-store",
       });
       const data = await response.json();
@@ -73,12 +73,9 @@ export async function getKnowledgeUploadPolicy(options?: { force?: boolean }) {
   return withClientCache<KnowledgeUploadPolicy>(
     `${KNOWLEDGE_CACHE_PREFIX}upload-policy`,
     async () => {
-      const response = await fetch(
-        apiUrl("/api/v1/knowledge/supported-file-types"),
-        {
-          cache: "no-store",
-        },
-      );
+      const response = await apiFetch("/api/v1/knowledge/supported-file-types", {
+        cache: "no-store",
+      });
       const data = await response.json();
       return {
         extensions: Array.isArray(data?.extensions) ? data.extensions : [],
@@ -121,8 +118,8 @@ export async function listKnowledgeBaseFiles(
   return withClientCache<KnowledgeBaseFile[]>(
     `${KNOWLEDGE_CACHE_PREFIX}files:${name}`,
     async () => {
-      const response = await fetch(
-        apiUrl(`/api/v1/knowledge/${encodeURIComponent(name)}/files`),
+      const response = await apiFetch(
+        `/api/v1/knowledge/${encodeURIComponent(name)}/files`,
         { cache: "no-store" },
       );
       if (!response.ok) {
@@ -145,7 +142,7 @@ export async function listKnowledgeBaseFiles(
   );
 }
 
-/** Build the `/api/v1/...` path for a raw KB file (caller can pass to apiUrl()). */
+/** Build the `/api/v1/...` path for a raw KB file. */
 export function knowledgeBaseFilePath(
   kbName: string,
   filename: string,
@@ -185,7 +182,7 @@ export async function createKnowledgeBase(payload: {
   form.append("rag_provider", payload.provider);
   payload.files.forEach((file) => form.append("files", file));
 
-  const res = await fetch(apiUrl("/api/v1/knowledge/create"), {
+  const res = await apiFetch("/api/v1/knowledge/create", {
     method: "POST",
     body: form,
   });
@@ -207,8 +204,8 @@ export async function uploadKnowledgeBaseFiles(
   files.forEach((file) => form.append("files", file));
   if (options?.provider) form.append("rag_provider", options.provider);
 
-  const res = await fetch(
-    apiUrl(`/api/v1/knowledge/${encodeURIComponent(name)}/upload`),
+  const res = await apiFetch(
+    `/api/v1/knowledge/${encodeURIComponent(name)}/upload`,
     { method: "POST", body: form },
   );
   if (!res.ok) {
@@ -219,8 +216,8 @@ export async function uploadKnowledgeBaseFiles(
 }
 
 export async function setDefaultKnowledgeBase(name: string): Promise<void> {
-  const res = await fetch(
-    apiUrl(`/api/v1/knowledge/default/${encodeURIComponent(name)}`),
+  const res = await apiFetch(
+    `/api/v1/knowledge/default/${encodeURIComponent(name)}`,
     { method: "PUT" },
   );
   if (!res.ok) {
@@ -232,8 +229,8 @@ export async function setDefaultKnowledgeBase(name: string): Promise<void> {
 export async function reindexKnowledgeBase(
   name: string,
 ): Promise<KnowledgeTaskResponse> {
-  const res = await fetch(
-    apiUrl(`/api/v1/knowledge/${encodeURIComponent(name)}/reindex`),
+  const res = await apiFetch(
+    `/api/v1/knowledge/${encodeURIComponent(name)}/reindex`,
     { method: "POST" },
   );
   if (!res.ok) {
@@ -250,8 +247,8 @@ export async function reindexKnowledgeBase(
 }
 
 export async function deleteKnowledgeBase(name: string): Promise<void> {
-  const res = await fetch(
-    apiUrl(`/api/v1/knowledge/${encodeURIComponent(name)}`),
+  const res = await apiFetch(
+    `/api/v1/knowledge/${encodeURIComponent(name)}`,
     { method: "DELETE" },
   );
   if (!res.ok) {

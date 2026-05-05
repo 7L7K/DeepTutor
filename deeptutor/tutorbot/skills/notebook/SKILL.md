@@ -1,13 +1,13 @@
 ---
 name: notebook
-description: "Manage DeepTutor notebooks — list, create, view, import and remove records."
+description: "Manage TEEECHR notebooks — list, create, view, import and remove records."
 metadata: {"nanobot":{"emoji":"📓","requires":{"bins":["deeptutor"]}}}
 always: false
 ---
 
 # Notebook Management
 
-Use the `exec` tool to manage DeepTutor notebooks via CLI.
+Use the `exec` tool to manage TEEECHR notebooks via CLI.
 
 ## When to Use
 

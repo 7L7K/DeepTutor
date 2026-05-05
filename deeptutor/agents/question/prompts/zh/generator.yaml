@@ -48,3 +48,53 @@ generate: |
     "correct_answer": "选择题填写正确选项键；written/coding 题填写参考答案本身",
     "explanation": "详细解释"
   }}
+
+generate_set: |
+  Templates:
+  {templates}
+
+  用户主题：
+  {user_topic}
+
+  用户偏好：
+  {preference}
+
+  按模板整理的知识上下文：
+  {knowledge_context_bundle}
+
+  用户当前启用的工具：
+  {available_tools}
+
+  对话上下文：
+  {history_context}
+
+  请把整套题作为一个完整测验一次性生成出来。
+
+  要求：
+  - 对每个 template 恰好生成 1 道题。
+  - 输出中必须保留每个 template.question_id。
+  - 必须严格遵循每个 template.question_type，不要私自改题型。
+  - 严格对齐每个 template.concentration 与 template.difficulty。
+  - 题干尽量保持测验风格和简洁，不要把案例写得过长。
+  - 整套题之间不要出现重复或高度相似的问题。
+  - 各题应分散覆盖不同 concentration，不要全部变成同一种问法。
+  - 若为选择题，必须提供恰好 4 个选项且只返回 1 个正确答案键。
+  - 选择题选项应具有合理迷惑性，长度和风格尽量均衡。
+  - 若为 written 或 coding 题，不要提供选项。
+  - 每道题都要给出简洁解释，最好控制在 1-2 句。
+  - 在有帮助时使用准备好的知识上下文增强题目质量。
+  - 可将启用工具列表视为能力提示，但不要在最终题目中直接提及工具名称。
+
+  仅返回 JSON：
+  {{
+    "questions": [
+      {{
+        "question_id": "q_1",
+        "question_type": "choice 或 written 或 coding",
+        "question": "题目内容",
+        "options": {{"A":"...","B":"...","C":"...","D":"..."}} 或 null,
+        "correct_answer": "选择题填写正确选项键；written/coding 题填写参考答案本身",
+        "explanation": "详细解释"
+      }}
+    ]
+  }}

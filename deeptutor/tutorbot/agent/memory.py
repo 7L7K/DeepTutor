@@ -80,7 +80,7 @@ def _is_tool_choice_unsupported(content: str | None) -> bool:
 class MemoryStore:
     """Two-layer memory: long-term facts + grep-searchable history log.
 
-    Reads/writes go to ``data/memory/`` (shared with DeepTutor) — PROFILE.md
+    Reads/writes go to ``data/memory/`` (shared with TEEECHR) — PROFILE.md
     for long-term facts, SUMMARY.md for history.  Standalone fallback uses
     workspace/memory/MEMORY.md + HISTORY.md when no shared dir is given.
     """

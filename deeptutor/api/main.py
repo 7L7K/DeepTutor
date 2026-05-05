@@ -1,5 +1,6 @@
-from contextlib import asynccontextmanager
 import logging
+import os
+from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
@@ -136,7 +137,7 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(
-    title="DeepTutor API",
+    title="TEEECHR API",
     version="1.0.0",
     lifespan=lifespan,
     # Disable automatic trailing slash redirects to prevent protocol downgrade issues
@@ -165,10 +166,21 @@ async def selective_access_log(request, call_next):
     return response
 
 
+def _cors_origins() -> list[str]:
+    raw = os.getenv("DEEPTUTOR_CORS_ORIGINS", "").strip()
+    if raw:
+        return [origin.strip() for origin in raw.split(",") if origin.strip()]
+    return [
+        "http://127.0.0.1:3001",
+        "http://localhost:3001",
+        "https://teeechr.gesahni.com",
+    ]
+
+
 # Configure CORS
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # In production, replace with specific frontend origin
+    allow_origins=_cors_origins(),
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -198,16 +210,20 @@ app.mount(
 # Import routers only after runtime settings are initialized.
 # Some router modules load YAML settings at import time.
 from deeptutor.api.routers import (
+    access,
     agent_config,
     attachments,
     book,
     chat,
     co_writer,
     dashboard,
+    flashcards,
+    guide,
     knowledge,
     memory,
     notebook,
     plugins_api,
+    practice,
     question,
     question_notebook,
     sessions,
@@ -221,6 +237,7 @@ from deeptutor.api.routers import (
 )
 
 # Include routers
+app.include_router(access.router, prefix="/api/v1/access", tags=["access"])
 app.include_router(solve.router, prefix="/api/v1", tags=["solve"])
 app.include_router(chat.router, prefix="/api/v1", tags=["chat"])
 app.include_router(question.router, prefix="/api/v1/question", tags=["question"])
@@ -229,8 +246,11 @@ app.include_router(dashboard.router, prefix="/api/v1/dashboard", tags=["dashboar
 app.include_router(co_writer.router, prefix="/api/v1/co_writer", tags=["co_writer"])
 app.include_router(notebook.router, prefix="/api/v1/notebook", tags=["notebook"])
 app.include_router(book.router, prefix="/api/v1/book", tags=["book"])
+app.include_router(guide.router, prefix="/api/v1/guide", tags=["guide"])
 app.include_router(memory.router, prefix="/api/v1/memory", tags=["memory"])
 app.include_router(sessions.router, prefix="/api/v1/sessions", tags=["sessions"])
+app.include_router(practice.router, prefix="/api/v1/practice", tags=["practice"])
+app.include_router(flashcards.router, prefix="/api/v1/practice/flashcards", tags=["flashcards"])
 app.include_router(
     question_notebook.router, prefix="/api/v1/question-notebook", tags=["question-notebook"]
 )
@@ -249,7 +269,7 @@ app.include_router(unified_ws.router, prefix="/api/v1", tags=["unified-ws"])
 
 @app.get("/")
 async def root():
-    return {"message": "Welcome to DeepTutor API"}
+    return {"message": "Welcome to TEEECHR API"}
 
 
 if __name__ == "__main__":
