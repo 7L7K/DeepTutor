@@ -213,13 +213,22 @@ async def main() -> int:
 
     parser = argparse.ArgumentParser(description="Benchmark Practice generation chat vs Responses paths.")
     parser.add_argument("--case", choices=[*CASE_COUNTS.keys(), "all"], default="all")
-    parser.add_argument("--api", choices=["chat", "responses", "both"], default="both")
+    parser.add_argument(
+        "--api",
+        choices=["chat", "responses", "responses_minimal", "both", "all"],
+        default="both",
+    )
     parser.add_argument("--model", default=os.getenv("PRACTICE_QUIZ_MODEL") or os.getenv("LLM_MODEL") or "gpt-5-mini")
     parser.add_argument("--output", default="")
     args = parser.parse_args()
 
     cases = list(CASE_COUNTS) if args.case == "all" else [args.case]
-    apis = ["chat", "responses"] if args.api == "both" else [args.api]
+    if args.api == "all":
+        apis = ["chat", "responses", "responses_minimal"]
+    elif args.api == "both":
+        apis = ["chat", "responses"]
+    else:
+        apis = [args.api]
 
     output_path = Path(args.output) if args.output else None
     if output_path:

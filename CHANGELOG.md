@@ -40,6 +40,7 @@
 - web chat: add tutor action chips under coaching replies so learners can tap `Quiz me`, `Explain simpler`, `Make flashcards`, or `Review weak spots` without retyping follow-up prompts.
 
 ### Changed
+- practice generation: switch the benchmark-winning starter-page flag to a minimal Responses structured-output profile that defers explanations, keeping chat as the fallback and background/full exam generation on the existing path.
 - practice generation: add a shared Responses structured-output adapter and a benchmark CLI for comparing chat vs Responses on starter quizzes, background batches, full exams, and flashcard decks while keeping chat as the default quiz starter fallback path.
 - quiz generation: add `PRACTICE_GENERATION_API`, `PRACTICE_STARTER_PAGE_API`, and `PRACTICE_BACKGROUND_PAGE_API` flags so only the benchmark-winning Practice quiz path can move to Responses without a whole-app migration.
 - practice mode: make flashcard source badges visible across setup, overview, and study, and give missed-only review its own completion framing with the saved coach review.

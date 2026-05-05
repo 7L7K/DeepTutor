@@ -39,6 +39,19 @@ class _GeneratedQuizSet(BaseModel):
     questions: list[_GeneratedQuizQuestion]
 
 
+class _GeneratedStarterQuizQuestion(BaseModel):
+    question_id: str
+    question: str = Field(description="The question stem.")
+    options: _GeneratedQuizOptions
+    correct_answer: str
+    concentration: str = ""
+    difficulty: str = ""
+
+
+class _GeneratedStarterQuizSet(BaseModel):
+    questions: list[_GeneratedStarterQuizQuestion]
+
+
 class Generator(BaseAgent):
     """
     Generate a question/answer pair from one template.
@@ -155,6 +168,10 @@ class Generator(BaseAgent):
             if repaired_payload:
                 set_payload = repaired_payload
         item_payloads = self._extract_quiz_set_items(set_payload, templates)
+        diagnostics = set_payload.get("_diagnostics", {})
+        deferred_explanations = bool(
+            isinstance(diagnostics, dict) and diagnostics.get("deferred_explanations")
+        )
 
         qa_pairs: list[QAPair] = []
         accepted_questions: list[str] = []
@@ -172,6 +189,7 @@ class Generator(BaseAgent):
                 available_tools=available_tools,
                 previous_questions=self._format_previous_questions(accepted_questions),
                 set_level_seen_questions=accepted_questions,
+                allow_deferred_explanation=deferred_explanations,
             )
 
             question_text = str(normalized.get("question", "") or "").strip()
@@ -203,8 +221,9 @@ class Generator(BaseAgent):
                         "available_tools": available_tools,
                         "knowledge_context": knowledge_context,
                         "generation_mode": "quiz_set",
-                        "generation_api": set_payload.get("_diagnostics", {}).get("api")
+                        "generation_api": diagnostics.get("api")
                         or "chat_completions",
+                        "explanation_deferred": deferred_explanations,
                     },
                 )
             )
@@ -258,6 +277,13 @@ class Generator(BaseAgent):
 
         if self._should_use_quiz_responses_api(generation_api):
             try:
+                if self._responses_profile(generation_api) == "minimal":
+                    return await self._generate_starter_quiz_set_payload_with_responses(
+                        templates=templates,
+                        user_topic=user_topic,
+                        preference=preference,
+                        history_context=history_context,
+                    )
                 return await self._generate_quiz_set_payload_with_responses(
                     templates=templates,
                     user_prompt=user_prompt,
@@ -322,15 +348,93 @@ class Generator(BaseAgent):
         }
         return result.raw_text, payload
 
+    async def _generate_starter_quiz_set_payload_with_responses(
+        self,
+        *,
+        templates: list[QuestionTemplate],
+        user_topic: str,
+        preference: str,
+        history_context: str,
+    ) -> tuple[str, dict[str, Any]]:
+        from deeptutor.services.llm.structured_responses import generate_structured_response
+
+        compact_templates = [
+            {
+                "question_id": template.question_id,
+                "concentration": template.concentration,
+                "question_type": template.question_type,
+                "difficulty": template.difficulty,
+                "knowledge_context": str((template.metadata or {}).get("knowledge_context") or "")[:900],
+            }
+            for template in templates
+        ]
+        user_prompt = (
+            "Generate the first visible page of a Practice quiz.\n"
+            "Return exactly one multiple-choice question for each template.\n"
+            "Do not generate explanations yet; explanations are deferred until review.\n\n"
+            f"Topic: {user_topic or '(none)'}\n"
+            f"Preference: {preference or '(none)'}\n"
+            f"Conversation context: {history_context or '(none)'}\n"
+            f"Templates:\n{json.dumps(compact_templates, ensure_ascii=False)}\n\n"
+            "Rules:\n"
+            "- Write realistic NCE-style application questions.\n"
+            "- Keep stems concise but specific.\n"
+            "- Provide exactly four plausible options A-D.\n"
+            "- correct_answer must be the correct option key.\n"
+            "- Preserve question_id exactly.\n"
+        )
+        result = await generate_structured_response(
+            model=self.get_model(),
+            instructions=(
+                "You generate fast first-page Practice quiz questions as strict JSON. "
+                "Return no prose and no explanations."
+            ),
+            input_data=user_prompt,
+            api_key=self.api_key,
+            base_url=self.base_url,
+            pydantic_model=_GeneratedStarterQuizSet,
+            max_output_tokens=max(1200, min(3600, len(templates) * 430)),
+            prompt_cache_key="deeptutor-practice-starter-minimal-v1",
+            store=False,
+            reasoning_effort=self.get_reasoning_effort(),
+        )
+        payload = dict(result.parsed)
+        for item in payload.get("questions") or []:
+            if isinstance(item, dict):
+                item["question_type"] = "choice"
+                item.setdefault("explanation", "")
+        usage = result.usage or {}
+        input_details = usage.get("input_tokens_details") or {}
+        output_details = usage.get("output_tokens_details") or {}
+        payload["_diagnostics"] = {
+            "api": "responses_minimal",
+            "model": result.model,
+            "latency_ms": round(result.latency_ms, 3),
+            "request_id": result.request_id,
+            "deferred_explanations": True,
+            "input_tokens": usage.get("input_tokens"),
+            "cached_tokens": input_details.get("cached_tokens"),
+            "output_tokens": usage.get("output_tokens"),
+            "reasoning_tokens": output_details.get("reasoning_tokens"),
+        }
+        return result.raw_text, payload
+
     def _should_use_quiz_responses_api(self, generation_api: str | None = None) -> bool:
         configured = str(generation_api or "").strip().lower()
         if not configured:
             configured = os.getenv("PRACTICE_QUIZ_USE_RESPONSES", "").strip().lower()
         if configured in {"chat", "0", "false", "no", "off"}:
             return False
-        if configured in {"responses", "1", "true", "yes", "on"}:
+        if configured in {"responses", "responses_minimal", "responses-starter-minimal", "1", "true", "yes", "on"}:
             return bool(self.api_key)
         return False
+
+    @staticmethod
+    def _responses_profile(generation_api: str | None = None) -> str:
+        configured = str(generation_api or "").strip().lower()
+        if configured in {"responses_minimal", "responses-starter-minimal"}:
+            return "minimal"
+        return "full"
 
     async def _repair_quiz_set_payload(
         self,
@@ -462,6 +566,7 @@ class Generator(BaseAgent):
         available_tools: str,
         previous_questions: str = "",
         set_level_seen_questions: list[str] | None = None,
+        allow_deferred_explanation: bool = False,
     ) -> tuple[dict[str, Any], dict[str, Any]]:
         expected_type = self._normalize_question_type(template.question_type)
         normalized = self._normalize_payload_shape(expected_type, payload)
@@ -469,6 +574,7 @@ class Generator(BaseAgent):
             expected_type,
             normalized,
             seen_questions=set_level_seen_questions or [],
+            allow_deferred_explanation=allow_deferred_explanation,
         )
         repaired = False
 
@@ -490,6 +596,7 @@ class Generator(BaseAgent):
                     expected_type,
                     candidate,
                     seen_questions=set_level_seen_questions or [],
+                    allow_deferred_explanation=allow_deferred_explanation,
                 )
                 if not candidate_issues or len(candidate_issues) <= len(issues):
                     normalized = candidate
@@ -501,6 +608,7 @@ class Generator(BaseAgent):
             "schema_ok": not issues,
             "repaired": repaired,
             "issues": issues,
+            "explanation_deferred": allow_deferred_explanation,
         }
         return normalized, validation
 
@@ -609,6 +717,7 @@ class Generator(BaseAgent):
         expected_type: str,
         payload: dict[str, Any],
         seen_questions: list[str] | None = None,
+        allow_deferred_explanation: bool = False,
     ) -> list[str]:
         issues: list[str] = []
         question = str(payload.get("question", "") or "")
@@ -640,7 +749,7 @@ class Generator(BaseAgent):
 
         if not correct_answer:
             issues.append("missing_correct_answer")
-        if not str(payload.get("explanation", "") or "").strip():
+        if not allow_deferred_explanation and not str(payload.get("explanation", "") or "").strip():
             issues.append("missing_explanation")
         return issues
 
