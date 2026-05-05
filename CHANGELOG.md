@@ -51,6 +51,9 @@
 - quiz generation: keep parallel direct generation and Responses structured output behind opt-in flags after live timing showed the direct-template chat path was faster and steadier.
 - quiz generation: stream the first KB-backed Practice quiz question before the remaining set call so the quiz page becomes usable while grounded generation continues.
 - quiz generation: build the first KB-backed Practice question from retrieved context before the template ideation call so the first visible question is no longer blocked on full planning.
+- quiz generation: split remaining Practice quiz generation into configurable concurrent chunks so larger 20-30 question exams can stream batches without waiting on one giant set call or several sequential set calls.
+- practice exams: show streamed exam-simulation questions as soon as they are ready while keeping submission locked until the full attempt is saved.
+- quiz generation: skip multi-call KB ideation for Practice quizzes by default after the first retrieval, using NCE-domain direct templates grounded with the retrieved knowledge context.
 - access: require signed tester identity for Practice attempts, Flashcards, Question Notebook entries, and Knowledge management APIs.
 - knowledge: namespace tester-created knowledge bases internally while keeping public KB names clean in the UI.
 - web api: send credentials on protected Chat, Practice, Flashcards, and Knowledge requests so the HttpOnly tester cookie works from the local frontend.

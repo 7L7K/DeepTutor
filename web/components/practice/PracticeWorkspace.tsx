@@ -457,7 +457,7 @@ export default function PracticeWorkspace() {
           const streamedQuestion = quizQuestionFromStreamEvent(event);
           if (streamedQuestion) {
             readyQuestionCount += 1;
-            if (!examMode && !streamingQuestionIds.has(streamedQuestion.question_id)) {
+            if (!streamingQuestionIds.has(streamedQuestion.question_id)) {
               streamingQuestionIds.add(streamedQuestion.question_id);
               streamingQuestions.push(streamedQuestion);
               setActiveQuiz({

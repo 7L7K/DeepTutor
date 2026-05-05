@@ -27,6 +27,8 @@ class FakeIdeaAgent:
             ("group dynamics", "choice", "medium"),
             ("career development", "choice", "medium"),
         ]
+        while len(candidates) < num_ideas:
+            candidates.append((f"domain review {len(candidates) + 1}", "choice", "medium"))
         return {
             "templates": [
                 QuestionTemplate(
@@ -44,6 +46,9 @@ class FakeIdeaAgent:
 class FakeGenerator:
     single_calls = 0
     set_calls = 0
+    active_set_calls = 0
+    max_active_set_calls = 0
+    set_delay_seconds = 0.0
 
     async def process(self, **kwargs):
         type(self).single_calls += 1
@@ -63,21 +68,31 @@ class FakeGenerator:
 
     async def process_quiz_set(self, **kwargs):
         type(self).set_calls += 1
-        return [
-            QAPair(
-                question_id=template.question_id,
-                question=f"Set question for {template.concentration}",
-                correct_answer="A",
-                explanation="set",
-                question_type=template.question_type,
-                options={"A": "Correct", "B": "Wrong", "C": "Wrong", "D": "Wrong"},
-                concentration=template.concentration,
-                difficulty=template.difficulty,
-                validation={"schema_ok": True, "repaired": False, "issues": []},
-                metadata={"generation_mode": "quiz_set"},
-            )
-            for template in kwargs["templates"]
-        ]
+        type(self).active_set_calls += 1
+        type(self).max_active_set_calls = max(
+            type(self).max_active_set_calls,
+            type(self).active_set_calls,
+        )
+        try:
+            if type(self).set_delay_seconds:
+                await asyncio.sleep(type(self).set_delay_seconds)
+            return [
+                QAPair(
+                    question_id=template.question_id,
+                    question=f"Set question for {template.concentration}",
+                    correct_answer="A",
+                    explanation="set",
+                    question_type=template.question_type,
+                    options={"A": "Correct", "B": "Wrong", "C": "Wrong", "D": "Wrong"},
+                    concentration=template.concentration,
+                    difficulty=template.difficulty,
+                    validation={"schema_ok": True, "repaired": False, "issues": []},
+                    metadata={"generation_mode": "quiz_set"},
+                )
+                for template in kwargs["templates"]
+            ]
+        finally:
+            type(self).active_set_calls -= 1
 
 
 class StubCoordinator(AgentCoordinator):
@@ -179,13 +194,121 @@ def test_kb_backed_quiz_streams_direct_grounded_first_question_before_ideation(t
     assert summary["success"] is True
     assert len(summary["results"]) == 2
     assert FakeIdeaAgent.retrieval_calls == 1
-    assert FakeIdeaAgent.calls == 1
+    assert FakeIdeaAgent.calls == 0
     assert FakeGenerator.single_calls == 1
     assert FakeGenerator.set_calls == 1
     assert summary["results"][0]["template"]["metadata"]["direct_streamed_first"] is True
     assert summary["results"][0]["template"]["metadata"]["knowledge_context"] == "KB context"
+    assert summary["results"][1]["template"]["metadata"]["direct_kb_templates"] is True
     assert summary["results"][0]["qa_pair"]["metadata"]["generation_mode"] == "direct_kb_first"
     assert summary["results"][1]["qa_pair"]["metadata"]["generation_mode"] == "quiz_set"
+
+
+def test_remaining_quiz_generation_runs_in_configured_chunks(tmp_path: Path, monkeypatch) -> None:
+    FakeIdeaAgent.calls = 0
+    FakeIdeaAgent.retrieval_calls = 0
+    FakeGenerator.single_calls = 0
+    FakeGenerator.set_calls = 0
+    FakeGenerator.active_set_calls = 0
+    FakeGenerator.max_active_set_calls = 0
+    monkeypatch.setenv("PRACTICE_QUIZ_REMAINING_BATCH_SIZE", "1")
+    coordinator = StubCoordinator(
+        tmp_path,
+        kb_name="tester-1__nce-2026",
+        enable_idea_rag=True,
+    )
+
+    summary = asyncio.run(
+        coordinator.generate_from_topic(
+            user_topic="NCE review",
+            preference="use the KB",
+            num_questions=3,
+            difficulty="medium",
+            question_type="choice",
+        )
+    )
+
+    assert summary["success"] is True
+    assert len(summary["results"]) == 3
+    assert FakeGenerator.single_calls == 1
+    assert FakeGenerator.set_calls == 2
+    assert [item["qa_pair"]["question_id"] for item in summary["results"]] == [
+        "q_1",
+        "q_2",
+        "q_3",
+    ]
+
+
+def test_kb_ideation_can_be_enabled_for_progressive_quiz(tmp_path: Path, monkeypatch) -> None:
+    FakeIdeaAgent.calls = 0
+    FakeIdeaAgent.retrieval_calls = 0
+    FakeGenerator.single_calls = 0
+    FakeGenerator.set_calls = 0
+    monkeypatch.setenv("PRACTICE_QUIZ_SKIP_KB_IDEATION", "false")
+    coordinator = StubCoordinator(
+        tmp_path,
+        kb_name="tester-1__nce-2026",
+        enable_idea_rag=True,
+    )
+
+    summary = asyncio.run(
+        coordinator.generate_from_topic(
+            user_topic="NCE review",
+            preference="use the KB",
+            num_questions=2,
+            difficulty="medium",
+            question_type="choice",
+        )
+    )
+
+    assert summary["success"] is True
+    assert FakeIdeaAgent.retrieval_calls == 1
+    assert FakeIdeaAgent.calls == 1
+    assert FakeGenerator.single_calls == 1
+    assert FakeGenerator.set_calls == 1
+
+
+def test_remaining_quiz_chunks_run_with_bounded_concurrency(tmp_path: Path, monkeypatch) -> None:
+    FakeIdeaAgent.calls = 0
+    FakeIdeaAgent.retrieval_calls = 0
+    FakeGenerator.single_calls = 0
+    FakeGenerator.set_calls = 0
+    FakeGenerator.active_set_calls = 0
+    FakeGenerator.max_active_set_calls = 0
+    FakeGenerator.set_delay_seconds = 0.01
+    monkeypatch.setenv("PRACTICE_QUIZ_REMAINING_BATCH_SIZE", "1")
+    monkeypatch.setenv("PRACTICE_QUIZ_REMAINING_CONCURRENCY", "2")
+    coordinator = StubCoordinator(
+        tmp_path,
+        kb_name="tester-1__nce-2026",
+        enable_idea_rag=True,
+    )
+
+    try:
+        summary = asyncio.run(
+            coordinator.generate_from_topic(
+                user_topic="NCE review",
+                preference="use the KB",
+                num_questions=5,
+                difficulty="medium",
+                question_type="choice",
+            )
+        )
+    finally:
+        FakeGenerator.set_delay_seconds = 0.0
+
+    assert summary["success"] is True
+    assert len(summary["results"]) == 5
+    assert FakeGenerator.single_calls == 1
+    assert FakeGenerator.set_calls == 4
+    assert FakeGenerator.max_active_set_calls == 2
+    assert [item["qa_pair"]["question_id"] for item in summary["results"]] == [
+        "q_1",
+        "q_2",
+        "q_3",
+        "q_4",
+        "q_5",
+    ]
 
 
 def test_kb_backed_progressive_first_batch_can_be_disabled(tmp_path: Path, monkeypatch) -> None:
