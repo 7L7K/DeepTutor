@@ -1,7 +1,7 @@
 """
 TutorBot Manager — spawn / stop / manage in-process TutorBot instances.
 
-Each TutorBot instance runs as a set of asyncio tasks within the DeepTutor
+Each TutorBot instance runs as a set of asyncio tasks within the TEEECHR
 server process.  Every bot gets its own isolated workspace under
 ``data/tutorbot/{bot_id}/`` containing workspace, cron, logs, and media.
 Memory is shared across all bots via ``data/memory/``.
@@ -203,7 +203,7 @@ class TutorBotManager:
 
     @property
     def _shared_memory_dir(self) -> Path:
-        """Public memory shared by DeepTutor and all bots."""
+        """Public memory shared by TEEECHR and all bots."""
         return self._path_service.get_memory_dir()
 
     def _bot_dir(self, bot_id: str) -> Path:

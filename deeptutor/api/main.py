@@ -202,7 +202,7 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(
-    title="DeepTutor API",
+    title="TEEECHR API",
     version="1.0.0",
     lifespan=lifespan,
     # Disable automatic trailing slash redirects to prevent protocol downgrade issues
@@ -380,7 +380,7 @@ app.include_router(unified_ws.router, prefix="/api/v1", tags=["unified-ws"])
 
 @app.get("/")
 async def root():
-    return {"message": "Welcome to DeepTutor API"}
+    return {"message": "Welcome to TEEECHR API"}
 
 
 if __name__ == "__main__":

@@ -243,13 +243,13 @@ export function SidebarShell({
         <Link href="/" className="group flex items-center gap-2">
           <Image
             src="/logo-ver2.png"
-            alt="DeepTutor"
+            alt="TEEECHR"
             width={22}
             height={22}
             className="h-[22px] w-[22px] transition-transform duration-200 group-hover:scale-105"
           />
           <span className="text-[16px] font-semibold leading-none tracking-[-0.02em] text-[var(--foreground)]">
-            DeepTutor
+            TEEECHR
           </span>
         </Link>
         <button

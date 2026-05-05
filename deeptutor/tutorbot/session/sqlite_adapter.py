@@ -1,8 +1,8 @@
-"""SessionManager adapter backed by DeepTutor's SQLite store.
+"""SessionManager adapter backed by TEEECHR's SQLite store.
 
 Implements the SessionManager interface (get_or_create, save, list_sessions) but
-reads/writes through DeepTutor's SQLiteSessionStore, unifying conversation history
-for TutorBot and DeepTutor in a single database.
+reads/writes through TEEECHR's SQLiteSessionStore, unifying conversation history
+for TutorBot and TEEECHR in a single database.
 """
 
 from __future__ import annotations
@@ -17,12 +17,12 @@ from deeptutor.tutorbot.session.manager import Session
 
 
 class SQLiteSessionAdapter:
-    """Drop-in replacement for SessionManager, backed by DeepTutor SQLite."""
+    """Drop-in replacement for SessionManager, backed by TEEECHR SQLite."""
 
     def __init__(self, store: Any) -> None:
         """
         Args:
-            store: A DeepTutor SQLiteSessionStore instance.
+            store: A TEEECHR SQLiteSessionStore instance.
         """
         self.store = store
         self._cache: dict[str, Session] = {}
@@ -37,7 +37,7 @@ class SQLiteSessionAdapter:
         return Path("/dev/null")
 
     def _session_id(self, key: str) -> str:
-        """Derive a stable DeepTutor session_id from a TutorBot key (channel:chat_id)."""
+        """Derive a stable TEEECHR session_id from a TutorBot key (channel:chat_id)."""
         return f"tutorbot:{key}"
 
     def get_or_create(self, key: str) -> Session:
@@ -100,7 +100,7 @@ class SQLiteSessionAdapter:
         return Session(key=key, messages=messages)
 
     def _ensure_sqlite_session_sync(self, key: str) -> None:
-        """Ensure a corresponding DeepTutor session row exists."""
+        """Ensure a corresponding TEEECHR session row exists."""
         session_id = self._session_id(key)
         try:
             loop = asyncio.get_running_loop()

@@ -19,7 +19,7 @@ labels:
 # ---------------------------------------------------------------------------
 thinking:
   system: |-
-    You are DeepTutor's internal thinking module (NOT user-facing). Your output is a brief internal analysis memo consumed by the downstream acting / responding stages. It will never be shown to the user directly.
+    You are TEEECHR's internal thinking module (NOT user-facing). Your output is a brief internal analysis memo consumed by the downstream acting / responding stages. It will never be shown to the user directly.
 
     Output format (use natural paragraphs, no headings needed):
     - User goal: summarize what the user actually wants in 1-2 sentences.
@@ -48,7 +48,7 @@ thinking:
 # ---------------------------------------------------------------------------
 acting:
   system: |-
-    You are DeepTutor's tool-using agent. Based on the user request and prior thinking, autonomously choose and call only the enabled tools that are truly helpful.
+    You are TEEECHR's tool-using agent. Based on the user request and prior thinking, autonomously choose and call only the enabled tools that are truly helpful.
 
     Rules:
     1. Review the full enabled tool list before deciding; do not fixate on a single tool too early.
@@ -79,7 +79,7 @@ acting:
 # ---------------------------------------------------------------------------
 observing:
   system: |-
-    You are DeepTutor's observing stage. Based on the outputs from the thinking and acting stages, prepare an internal synthesis for the final answer stage. Do not answer the student directly.
+    You are TEEECHR's observing stage. Based on the outputs from the thinking and acting stages, prepare an internal synthesis for the final answer stage. Do not answer the student directly.
 
     Prioritize:
     1. confirmed facts and conclusions
@@ -99,7 +99,7 @@ observing:
 # ---------------------------------------------------------------------------
 responding:
   system: |-
-    You are DeepTutor's final response stage and the learner-facing study coach. Use the observation and tool evidence to provide a clear, direct, well-structured answer to the user.
+    You are TEEECHR's final response stage and the learner-facing study coach. Use the observation and tool evidence to provide a clear, direct, well-structured answer to the user.
 
     Requirements:
     1. Output only the final user-facing answer.
@@ -134,7 +134,7 @@ responding:
 # ---------------------------------------------------------------------------
 react_fallback:
   system: |-
-    You are DeepTutor's ReAct tool agent. Output exactly one JSON object and nothing else.
+    You are TEEECHR's ReAct tool agent. Output exactly one JSON object and nothing else.
 
     JSON format:
     {{

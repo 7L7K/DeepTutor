@@ -1,4 +1,4 @@
-"""Adapter tools that expose DeepTutor capabilities as TutorBot function-calling tools."""
+"""Adapter tools that expose TEEECHR capabilities as TutorBot function-calling tools."""
 
 from __future__ import annotations
 

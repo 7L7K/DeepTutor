@@ -1,4 +1,4 @@
-"""Stable application-layer facade for DeepTutor entry points."""
+"""Stable application-layer facade for TEEECHR entry points."""
 
 from __future__ import annotations
 

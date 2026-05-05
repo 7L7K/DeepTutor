@@ -2,7 +2,7 @@
 Prompt Service
 ==============
 
-Unified prompt management for all DeepTutor modules.
+Unified prompt management for all TEEECHR modules.
 
 Usage:
     from deeptutor.services.prompt import get_prompt_manager, PromptManager

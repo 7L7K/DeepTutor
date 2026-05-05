@@ -33,7 +33,11 @@ def _public_tester(tester: dict) -> dict:
 
 async def get_current_tester(
     response: Response,
-    access_token: str | None = Cookie(default=None, alias=ACCESS_COOKIE_NAME),
+    access_token: str | None = Cookie(
+        default=None,
+        alias=ACCESS_COOKIE_NAME,
+        title="TEEECHR tester",
+    ),
 ) -> dict:
     manager = get_access_manager()
     try:

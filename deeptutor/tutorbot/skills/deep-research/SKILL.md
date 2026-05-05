@@ -7,7 +7,7 @@ always: false
 
 # Deep Research
 
-Use the `exec` tool to invoke DeepTutor's multi-agent research pipeline for comprehensive topic analysis.
+Use the `exec` tool to invoke TEEECHR's multi-agent research pipeline for comprehensive topic analysis.
 
 ## When to Use
 

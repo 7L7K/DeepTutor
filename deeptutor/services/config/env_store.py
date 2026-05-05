@@ -96,7 +96,7 @@ class ConfigSummary:
 
 
 class EnvStore:
-    """Canonical `.env` reader/writer for local DeepTutor configuration."""
+    """Canonical `.env` reader/writer for local TEEECHR configuration."""
 
     def __init__(self, path: Path = ENV_PATH):
         self.path = path

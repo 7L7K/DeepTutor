@@ -1,5 +1,5 @@
 """
-Default configuration values for DeepTutor.
+Default configuration values for TEEECHR.
 """
 
 from pathlib import Path
