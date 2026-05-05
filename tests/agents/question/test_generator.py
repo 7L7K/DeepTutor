@@ -44,6 +44,73 @@ class StubQuizSetGenerator(Generator):
         return self._repaired_quiz_set_payload
 
 
+class _NoopLogger:
+    def warning(self, *args, **kwargs):
+        return None
+
+
+class ResponsesRoutingGenerator(Generator):
+    def __init__(
+        self,
+        *,
+        responses_payload: dict | None = None,
+        responses_error: Exception | None = None,
+    ) -> None:
+        self.tool_flags = {}
+        self.api_key = "test-key"
+        self.base_url = None
+        self.logger = _NoopLogger()
+        self._responses_payload = responses_payload or {}
+        self._responses_error = responses_error
+        self.responses_calls = 0
+        self.chat_calls = 0
+
+    def get_prompt(self, key: str, default: str = "") -> str:  # type: ignore[override]
+        if key == "generate_set":
+            return (
+                "Templates:\n{templates}\n"
+                "User topic: {user_topic}\n"
+                "Preference: {preference}\n"
+                "Conversation context: {history_context}\n"
+                "Knowledge context by template:\n{knowledge_context_bundle}\n"
+                "Enabled tools: {available_tools}\n"
+                'Return JSON {{"questions":[]}}'
+            )
+        return default
+
+    def get_model(self) -> str:  # type: ignore[override]
+        return "gpt-5-mini"
+
+    def get_reasoning_effort(self) -> str:  # type: ignore[override]
+        return "low"
+
+    def _build_available_tools_text(self) -> str:  # type: ignore[override]
+        return "(no tools available)"
+
+    async def _generate_quiz_set_payload_with_responses(self, **kwargs):  # type: ignore[override]
+        self.responses_calls += 1
+        if self._responses_error:
+            raise self._responses_error
+        return '{"questions":[]}', self._responses_payload
+
+    async def stream_llm(self, **kwargs):  # type: ignore[override]
+        self.chat_calls += 1
+        yield """
+        {
+          "questions": [
+            {
+              "question_id": "q_1",
+              "question_type": "choice",
+              "question": "Which response best reflects empathy?",
+              "options": {"A": "Reflect the feeling", "B": "Give advice", "C": "Change topics", "D": "Label the client"},
+              "correct_answer": "A",
+              "explanation": "Empathy reflects the client's feeling and meaning."
+            }
+          ]
+        }
+        """
+
+
 def test_generator_repairs_coding_question_that_looks_like_multiple_choice() -> None:
     generator = StubGenerator(
         repaired_payload={
@@ -208,6 +275,101 @@ def test_generator_process_quiz_set_repairs_duplicate_and_missing_items() -> Non
     assert quiz_set[2].validation["repaired"] is False
     assert "missing_question" in quiz_set[2].validation["issues"]
     assert quiz_set[2].metadata["generation_mode"] == "quiz_set"
+
+
+def test_quiz_set_generation_uses_chat_path_by_default(monkeypatch) -> None:
+    monkeypatch.delenv("PRACTICE_QUIZ_USE_RESPONSES", raising=False)
+    generator = ResponsesRoutingGenerator()
+    template = QuestionTemplate(
+        question_id="q_1",
+        concentration="empathy",
+        question_type="choice",
+        difficulty="medium",
+    )
+
+    quiz_set = asyncio.run(
+        generator.process_quiz_set(
+            templates=[template],
+            user_topic="counseling",
+            preference="",
+            history_context="",
+        )
+    )
+
+    assert len(quiz_set) == 1
+    assert generator.responses_calls == 0
+    assert generator.chat_calls == 1
+    assert quiz_set[0].metadata["generation_api"] == "chat_completions"
+
+
+def test_quiz_set_generation_uses_responses_when_selected() -> None:
+    generator = ResponsesRoutingGenerator(
+        responses_payload={
+            "questions": [
+                {
+                    "question_id": "q_1",
+                    "question_type": "choice",
+                    "question": "Which response best reflects empathy?",
+                    "options": {
+                        "A": "Reflect the feeling",
+                        "B": "Give advice",
+                        "C": "Change topics",
+                        "D": "Label the client",
+                    },
+                    "correct_answer": "A",
+                    "explanation": "Empathy reflects the client's feeling and meaning.",
+                }
+            ],
+            "_diagnostics": {"api": "responses"},
+        }
+    )
+    template = QuestionTemplate(
+        question_id="q_1",
+        concentration="empathy",
+        question_type="choice",
+        difficulty="medium",
+    )
+
+    quiz_set = asyncio.run(
+        generator.process_quiz_set(
+            templates=[template],
+            user_topic="counseling",
+            preference="",
+            history_context="",
+            generation_api="responses",
+        )
+    )
+
+    assert len(quiz_set) == 1
+    assert generator.responses_calls == 1
+    assert generator.chat_calls == 0
+    assert quiz_set[0].metadata["generation_api"] == "responses"
+
+
+def test_quiz_set_responses_timeout_falls_back_to_chat_without_duplicates() -> None:
+    generator = ResponsesRoutingGenerator(responses_error=TimeoutError("responses timeout"))
+    template = QuestionTemplate(
+        question_id="q_1",
+        concentration="empathy",
+        question_type="choice",
+        difficulty="medium",
+    )
+
+    quiz_set = asyncio.run(
+        generator.process_quiz_set(
+            templates=[template],
+            user_topic="counseling",
+            preference="",
+            history_context="",
+            generation_api="responses",
+        )
+    )
+
+    assert len(quiz_set) == 1
+    assert [item.question_id for item in quiz_set] == ["q_1"]
+    assert generator.responses_calls == 1
+    assert generator.chat_calls == 1
+    assert quiz_set[0].metadata["generation_api"] == "chat_completions"
 
 
 def test_generator_process_quiz_set_repairs_whole_set_before_item_repairs() -> None:

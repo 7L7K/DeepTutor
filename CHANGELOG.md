@@ -40,6 +40,8 @@
 - web chat: add tutor action chips under coaching replies so learners can tap `Quiz me`, `Explain simpler`, `Make flashcards`, or `Review weak spots` without retyping follow-up prompts.
 
 ### Changed
+- practice generation: add a shared Responses structured-output adapter and a benchmark CLI for comparing chat vs Responses on starter quizzes, background batches, full exams, and flashcard decks while keeping chat as the default quiz starter fallback path.
+- quiz generation: add `PRACTICE_GENERATION_API`, `PRACTICE_STARTER_PAGE_API`, and `PRACTICE_BACKGROUND_PAGE_API` flags so only the benchmark-winning Practice quiz path can move to Responses without a whole-app migration.
 - practice mode: make flashcard source badges visible across setup, overview, and study, and give missed-only review its own completion framing with the saved coach review.
 - flashcards: add stage-level generation diagnostics and an experimental `FLASHCARD_USE_RESPONSES` path for OpenAI Responses API structured-output benchmarking on KB-backed decks.
 - quiz generation: use one structured quiz-set generation call for generated Practice quizzes after template planning, skipping the slow first-three per-question generation path for topic and KB-backed quizzes.

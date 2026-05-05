@@ -618,6 +618,7 @@ class AgentCoordinator:
                     user_topic=user_topic,
                     preference=preference,
                     history_context=starter_history_context,
+                    generation_api=self._starter_page_generation_api(),
                 )
             except Exception as exc:
                 self.logger.warning(f"Starter page generation failed: {exc}")
@@ -699,6 +700,7 @@ class AgentCoordinator:
                             user_topic=user_topic,
                             preference=preference,
                             history_context=remaining_history_context,
+                            generation_api=self._remaining_page_generation_api(),
                         )
                     except Exception as exc:
                         self.logger.warning(f"Remaining quiz-set generation failed: {exc}")
@@ -920,6 +922,41 @@ class AgentCoordinator:
         except ValueError:
             return DEFAULT_REMAINING_QUIZ_CONCURRENCY
         return min(4, max(1, configured))
+
+    @staticmethod
+    def _normalize_generation_api(value: str, default: str = "chat") -> str:
+        normalized = str(value or "").strip().lower()
+        if normalized in {"responses", "response"}:
+            return "responses"
+        if normalized in {"chat", "chat_completions", "completions", "model-call"}:
+            return "chat"
+        return default
+
+    @classmethod
+    def _starter_page_generation_api(cls) -> str:
+        raw = os.getenv("PRACTICE_STARTER_PAGE_API", "").strip()
+        if raw:
+            return cls._normalize_generation_api(raw)
+        raw = os.getenv("PRACTICE_GENERATION_API", "").strip()
+        if raw:
+            return cls._normalize_generation_api(raw)
+        raw = os.getenv("PRACTICE_QUIZ_USE_RESPONSES", "").strip().lower()
+        if raw in {"1", "true", "yes", "on"}:
+            return "responses"
+        return "chat"
+
+    @classmethod
+    def _remaining_page_generation_api(cls) -> str:
+        raw = os.getenv("PRACTICE_BACKGROUND_PAGE_API", "").strip()
+        if raw:
+            return cls._normalize_generation_api(raw)
+        raw = os.getenv("PRACTICE_REMAINING_PAGE_API", "").strip()
+        if raw:
+            return cls._normalize_generation_api(raw)
+        raw = os.getenv("PRACTICE_GENERATION_API", "").strip()
+        if raw:
+            return cls._normalize_generation_api(raw)
+        return "chat"
 
     @staticmethod
     def _should_use_parallel_direct_generation(templates: list[QuestionTemplate]) -> bool:
