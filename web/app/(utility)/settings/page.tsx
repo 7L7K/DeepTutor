@@ -168,7 +168,7 @@ const TOUR_GUIDE_STEPS = [
   { target: "tour-llm", title: "1 / 4  —  LLM", desc: "Configure your language model endpoint. This powers all chat and reasoning." },
   { target: "tour-embedding", title: "2 / 4  —  Embedding", desc: "Set the embedding model for knowledge retrieval." },
   { target: "tour-search", title: "3 / 4  —  Search", desc: "Optional: add a web search provider for real-time information." },
-  { target: "tour-complete", title: "4 / 4  —  Complete", desc: "When you are ready, click here to test and launch DeepTutor." },
+  { target: "tour-complete", title: "4 / 4  —  Complete", desc: "When you are ready, click here to test and launch TEEECHR." },
 ];
 
 const supportedSearchProviders = [
@@ -790,7 +790,7 @@ function SettingsPageContent() {
                 {t("Setup Tour")}
               </div>
               <p className="mt-1 text-[13px] text-[var(--muted-foreground)]">
-                {t("Configure your endpoints below, run tests, then launch DeepTutor.")}
+                {t("Configure your endpoints below, run tests, then launch TEEECHR.")}
               </p>
             </div>
             <button
@@ -814,7 +814,7 @@ function SettingsPageContent() {
             </div>
             <p className="mt-1 text-[13px] text-[var(--muted-foreground)]">
               {redirectCountdown > 0
-                ? t("Redirecting to DeepTutor in {{count}}s...", { count: redirectCountdown })
+                ? t("Redirecting to TEEECHR in {{count}}s...", { count: redirectCountdown })
                 : t("Redirecting...")}
             </p>
           </div>

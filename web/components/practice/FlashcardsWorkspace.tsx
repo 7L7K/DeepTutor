@@ -28,6 +28,12 @@ import {
   type FlashcardSessionReview,
   type FlashcardSource,
 } from "@/lib/flashcards-api";
+import {
+  getCompletionNudge,
+  getCompletionTitle,
+  getDeckSourceBadges,
+  getSourceTrustBadge,
+} from "@/lib/flashcards-display";
 import { listKnowledgeBases, type KnowledgeBaseSummary } from "@/lib/knowledge-api";
 
 type FlashcardStage = "setup" | "overview" | "studying" | "complete";
@@ -38,6 +44,12 @@ const FLASHCARD_STYLES = [
   { id: "definition", label: "Definition" },
   { id: "concept", label: "Concept check" },
 ] as const;
+
+function sourceBadgeClass(sourceType: FlashcardSource) {
+  return sourceType === "knowledge"
+    ? "border-emerald-500/20 bg-emerald-500/8 text-emerald-700 dark:text-emerald-300"
+    : "border-amber-500/25 bg-amber-500/10 text-amber-700 dark:text-amber-300";
+}
 
 export default function FlashcardsWorkspace() {
   const { t } = useTranslation();
@@ -172,6 +184,11 @@ export default function FlashcardsWorkspace() {
   const remainingCount = deck?.summary.remaining ?? 0;
   const latestSessionReview = completionReview ?? deck?.latestSessionReview ?? null;
   const currentMissedCount = latestSessionReview?.missedCount ?? missedCount;
+  const selectedSourceBadge = getSourceTrustBadge(sourceType);
+  const selectedSourceBadgeClass = sourceBadgeClass(sourceType);
+  const deckSourceBadges = deck ? getDeckSourceBadges(deck) : [];
+  const completionTitle = getCompletionTitle(studyMode);
+  const completionNudge = getCompletionNudge(studyMode, currentMissedCount);
 
   function toggleKnowledgeBase(name: string) {
     setSelectedKnowledgeBases((current) =>
@@ -572,9 +589,15 @@ export default function FlashcardsWorkspace() {
                   </div>
 
                   <div className="rounded-2xl border border-dashed border-[var(--border)] bg-[var(--card)] px-4 py-4 text-[13px] text-[var(--muted-foreground)]">
-                    {sourceType === "knowledge"
-                      ? t("Grounded decks use excerpts from the selected knowledge bases and save automatically when generated.")
-                      : t("Topic decks are ungrounded AI starter decks. Add Knowledge sources when you need cards tied to uploaded material.")}
+                    <div className={`mb-3 inline-flex rounded-full border px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.14em] ${selectedSourceBadgeClass}`}>
+                      {t(selectedSourceBadge.label)}
+                    </div>
+                    <div className="font-medium text-[var(--foreground)]">{t(selectedSourceBadge.detail)}</div>
+                    <div className="mt-2">
+                      {sourceType === "knowledge"
+                        ? t("Grounded decks use excerpts from the selected knowledge bases and save automatically when generated.")
+                        : t("Topic decks are ungrounded AI starter decks. Add Knowledge sources when you need cards tied to uploaded material.")}
+                    </div>
                   </div>
 
                   <button
@@ -601,15 +624,12 @@ export default function FlashcardsWorkspace() {
                     </div>
                     <div className="mt-1 text-[30px] font-semibold text-[var(--foreground)]">{deck.title}</div>
                     <div className="mt-3 flex flex-wrap gap-2">
-                      <span className="rounded-full border border-[var(--border)] bg-[var(--background)] px-3 py-1 text-[12px] font-medium text-[var(--muted-foreground)]">
-                        {deck.sourceSummary}
-                      </span>
-                      {deck.sourceKbNames.map((kbName) => (
+                      {deckSourceBadges.map((badge) => (
                         <span
-                          key={kbName}
-                          className="rounded-full border border-[var(--border)] bg-[var(--background)] px-3 py-1 text-[12px] font-medium text-[var(--muted-foreground)]"
+                          key={badge}
+                          className={`rounded-full border px-3 py-1 text-[12px] font-medium ${sourceBadgeClass(deck.sourceType)}`}
                         >
-                          {kbName}
+                          {badge}
                         </span>
                       ))}
                       <span className="rounded-full border border-[var(--border)] bg-[var(--background)] px-3 py-1 text-[12px] font-medium text-[var(--muted-foreground)]">
@@ -714,8 +734,8 @@ export default function FlashcardsWorkspace() {
                     <div className="mt-1 text-[24px] font-semibold text-[var(--foreground)]">{deck.title}</div>
                     <div className="mt-2 text-[13px] text-[var(--muted-foreground)]">{deck.sourceSummary}</div>
                     {studyMode === "missed_only" ? (
-                      <div className="mt-2 text-[12px] text-rose-600 dark:text-rose-300">
-                        {studyCards.length} {t("cards in this review pass")}
+                      <div className="mt-2 inline-flex rounded-full border border-rose-500/25 bg-rose-500/10 px-3 py-1 text-[12px] font-semibold text-rose-700 dark:text-rose-300">
+                        {t("Deliberate missed-only mode")} {" • "} {studyCards.length} {t("cards")}
                       </div>
                     ) : null}
                   </div>
@@ -742,10 +762,26 @@ export default function FlashcardsWorkspace() {
                     <span className="rounded-full border border-[var(--border)] bg-[var(--background)] px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.18em] text-[var(--muted-foreground)]">
                       {t(activeCard.tag)}
                     </span>
-                    <span className="rounded-full border border-[var(--border)] bg-[var(--background)] px-3 py-1 text-[11px] font-medium text-[var(--muted-foreground)]">
-                      {deck.sourceSummary}
+                    <span className={`rounded-full border px-3 py-1 text-[11px] font-medium ${sourceBadgeClass(deck.sourceType)}`}>
+                      {getSourceTrustBadge(deck.sourceType).label}: {deck.sourceSummary}
                     </span>
+                    {activeCard.sourceRef ? (
+                      <span className="rounded-full border border-[var(--border)] bg-[var(--background)] px-3 py-1 text-[11px] font-medium text-[var(--muted-foreground)]">
+                        {t("Card source")}: {activeCard.sourceRef}
+                      </span>
+                    ) : null}
+                    {studyMode === "missed_only" ? (
+                      <span className="rounded-full border border-rose-500/25 bg-rose-500/10 px-3 py-1 text-[11px] font-semibold text-rose-700 dark:text-rose-300">
+                        {t("Missed-only pass")}
+                      </span>
+                    ) : null}
                   </div>
+
+                  {studyMode === "missed_only" ? (
+                    <div className="mt-4 rounded-2xl border border-rose-500/20 bg-rose-500/8 px-4 py-3 text-[13px] leading-6 text-rose-700 dark:text-rose-300">
+                      {t("You are only seeing cards previously marked missed. Finish this pass to save a separate coach review for the remediation loop.")}
+                    </div>
+                  ) : null}
 
                   <div className="mt-6 rounded-[28px] border border-[var(--border)] bg-[var(--background)] px-6 py-8">
                     <div className="text-[13px] uppercase tracking-[0.18em] text-[var(--muted-foreground)]">
@@ -926,16 +962,24 @@ export default function FlashcardsWorkspace() {
             <div className="space-y-4">
               <div className="rounded-[28px] border border-[var(--border)] bg-[var(--card)] p-6 shadow-[0_16px_50px_rgba(15,23,42,0.06)]">
                 <div className="text-[12px] font-semibold uppercase tracking-[0.18em] text-[var(--muted-foreground)]">
-                  {t("Deck complete")}
+                  {t(completionTitle)}
                 </div>
                 <div className="mt-2 text-[30px] font-semibold text-[var(--foreground)]">{deck.title}</div>
                 <div className="mt-3 flex flex-wrap gap-2">
-                  <span className="rounded-full border border-[var(--border)] bg-[var(--background)] px-3 py-1 text-[12px] font-medium text-[var(--muted-foreground)]">
-                    {deck.sourceSummary}
-                  </span>
+                  {deckSourceBadges.map((badge) => (
+                    <span
+                      key={badge}
+                      className={`rounded-full border px-3 py-1 text-[12px] font-medium ${sourceBadgeClass(deck.sourceType)}`}
+                    >
+                      {badge}
+                    </span>
+                  ))}
                   <span className="rounded-full border border-[var(--border)] bg-[var(--background)] px-3 py-1 text-[12px] font-medium text-[var(--muted-foreground)]">
                     {studyMode === "missed_only" ? t("Missed cards review") : t("Full deck")}
                   </span>
+                </div>
+                <div className="mt-4 rounded-2xl border border-[var(--border)] bg-[var(--background)] px-4 py-3 text-[13px] leading-6 text-[var(--muted-foreground)]">
+                  {t(completionNudge)}
                 </div>
                 <div className="mt-5 grid gap-3 sm:grid-cols-3">
                   <div className="rounded-2xl border border-[var(--border)] bg-[var(--background)] px-4 py-4">

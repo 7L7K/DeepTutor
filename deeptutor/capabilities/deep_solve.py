@@ -320,7 +320,7 @@ class DeepSolveCapability(BaseCapability):
 
         if is_zh:
             system_prompt = (
-                "你是 DeepTutor 的写作组件。用户已经在等待，"
+                "你是 TEEECHR 的写作组件。用户已经在等待，"
                 "你必须基于当前已经收集到的推理与工具调用轨迹直接输出最终答复。"
                 "不要再做新的规划或调用工具，不要提到内部阶段。"
                 "如果信息仍有缺口，请诚实说明不确定之处，但仍尽可能给出当前最有用的回答。"
@@ -334,7 +334,7 @@ class DeepSolveCapability(BaseCapability):
             notice_label = "Writing"
         else:
             system_prompt = (
-                "You are the writer component of DeepTutor. The user is "
+                "You are the writer component of TEEECHR. The user is "
                 "already waiting, so produce the final user-facing answer "
                 "right now using only the partial reasoning trace that has "
                 "streamed so far. Do not plan further or call tools, and do "

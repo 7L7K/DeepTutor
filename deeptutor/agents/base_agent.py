@@ -17,12 +17,14 @@ import inspect
 from typing import Any, AsyncGenerator, Awaitable, Callable
 
 from deeptutor.config.settings import settings
-from deeptutor.logging import LLMStats, get_logger
+from deeptutor.logging.logger import get_logger
+from deeptutor.logging.stats import LLMStats
 from deeptutor.services.config import get_agent_params
-from deeptutor.services.llm import complete as llm_complete
-from deeptutor.services.llm import get_llm_config, get_token_limit_kwargs, supports_response_format
-from deeptutor.services.llm import prepare_multimodal_messages, supports_vision
-from deeptutor.services.llm import stream as llm_stream
+from deeptutor.services.llm.capabilities import supports_response_format, supports_vision
+from deeptutor.services.llm.config import get_llm_config, get_token_limit_kwargs
+from deeptutor.services.llm.factory import complete as llm_complete
+from deeptutor.services.llm.factory import stream as llm_stream
+from deeptutor.services.llm.multimodal import prepare_multimodal_messages
 from deeptutor.services.prompt import get_prompt_manager
 
 
@@ -206,6 +208,22 @@ class BaseAgent(ABC):
             Retry count
         """
         return self.agent_config.get("max_retries", settings.retry.max_retries)
+
+    def get_reasoning_effort(self) -> str | None:
+        """
+        Resolve an optional reasoning-effort override for latency-sensitive agents.
+        """
+        keys: list[str] = []
+        if self.module_name == "question":
+            keys.extend(["PRACTICE_QUIZ_REASONING_EFFORT", "QUESTION_GENERATION_REASONING_EFFORT"])
+        keys.append("LLM_REASONING_EFFORT")
+        for key in keys:
+            value = os.getenv(key, "").strip()
+            if value:
+                return value
+        if self.module_name == "question" and str(self.get_model()).lower().startswith("gpt-5"):
+            return "low"
+        return None
 
     def refresh_config(self) -> None:
         """
@@ -395,6 +413,9 @@ class BaseAgent(ABC):
         kwargs = {
             "temperature": temperature,
         }
+        reasoning_effort = self.get_reasoning_effort()
+        if reasoning_effort:
+            kwargs["reasoning_effort"] = reasoning_effort
 
         # Handle token limit for newer OpenAI models
         if max_tokens:
@@ -546,6 +567,9 @@ class BaseAgent(ABC):
         kwargs = {
             "temperature": temperature,
         }
+        reasoning_effort = self.get_reasoning_effort()
+        if reasoning_effort:
+            kwargs["reasoning_effort"] = reasoning_effort
 
         # Handle token limit for newer OpenAI models
         if max_tokens:

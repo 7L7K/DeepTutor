@@ -280,12 +280,12 @@ class NotebookAnalysisAgent:
     def _thinking_system_prompt(self) -> str:
         if self.language == "zh":
             return (
-                "你是 DeepTutor 的 notebook thinking 阶段。"
+                "你是 TEEECHR 的 notebook thinking 阶段。"
                 "你会先阅读用户问题与 notebook 摘要列表，判断要从哪些历史记录中提取细节。"
                 "输出内部思考，不要直接回答用户。"
             )
         return (
-            "You are DeepTutor's notebook thinking stage. "
+            "You are TEEECHR's notebook thinking stage. "
             "Review the user question and notebook summaries, then reason about which saved records matter most. "
             "Output internal reasoning only, not the final answer."
         )
@@ -293,12 +293,12 @@ class NotebookAnalysisAgent:
     def _acting_system_prompt(self) -> str:
         if self.language == "zh":
             return (
-                "你是 DeepTutor 的 notebook acting 阶段。"
+                "你是 TEEECHR 的 notebook acting 阶段。"
                 "你必须只输出 JSON：{\"selected_record_ids\": [最多5个id]}。"
                 "优先选择最能支撑当前问题的记录，避免冗余。"
             )
         return (
-            "You are DeepTutor's notebook acting stage. "
+            "You are TEEECHR's notebook acting stage. "
             'Output JSON only: {"selected_record_ids": [up to 5 ids]}. '
             "Choose the records most useful for the current question."
         )
@@ -306,13 +306,13 @@ class NotebookAnalysisAgent:
     def _observing_system_prompt(self) -> str:
         if self.language == "zh":
             return (
-                "你是 DeepTutor 的 notebook observing 阶段。"
+                "你是 TEEECHR 的 notebook observing 阶段。"
                 "请基于用户问题、thinking、以及选中历史记录的细节，产出一份供后续主能力使用的上下文总结。"
                 "总结必须结构化、紧凑，并区分已知事实、可复用内容、仍需谨慎的点。"
                 "不要用第一人称描述内部流程。"
             )
         return (
-            "You are DeepTutor's notebook observing stage. "
+            "You are TEEECHR's notebook observing stage. "
             "Synthesize the user question, the prior reasoning, and the selected record details into a compact context note "
             "for the main capability. Distinguish confirmed facts, reusable material, and uncertainties."
         )

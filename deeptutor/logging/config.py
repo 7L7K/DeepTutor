@@ -2,7 +2,7 @@
 Logging Configuration
 =====================
 
-Unified logging configuration for the entire DeepTutor system.
+Unified logging configuration for the entire TEEECHR system.
 A single `level` parameter controls all logging (including RAG modules).
 """
 

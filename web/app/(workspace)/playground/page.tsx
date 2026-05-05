@@ -1597,7 +1597,7 @@ export default function PlaygroundPage() {
         <div className="mb-6">
           <h1 className="text-2xl font-bold tracking-tight text-[var(--foreground)]">{t("Playground")}</h1>
           <p className="mt-1 text-[13px] text-[var(--muted-foreground)]">
-            {t("Explore the building blocks of DeepTutor: reusable tools and higher-level capabilities.")}
+            {t("Explore the building blocks of TEEECHR: reusable tools and higher-level capabilities.")}
           </p>
         </div>
 

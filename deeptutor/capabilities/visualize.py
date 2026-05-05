@@ -175,7 +175,7 @@ class VisualizeCapability(BaseCapability):
 
         if is_zh:
             system_prompt = (
-                "你是 DeepTutor 的可视化代码生成器。用户已经在等待，"
+                "你是 TEEECHR 的可视化代码生成器。用户已经在等待，"
                 "请直接输出最终可渲染的代码。"
                 "严格输出 JSON：{\"render_type\": \"svg|chartjs|mermaid\", "
                 "\"code\": \"...\"}。"
@@ -190,7 +190,7 @@ class VisualizeCapability(BaseCapability):
             )
         else:
             system_prompt = (
-                "You are DeepTutor's visualization code generator. The user "
+                "You are TEEECHR's visualization code generator. The user "
                 "is waiting, so emit the final renderable code in one shot. "
                 "Output strictly the JSON {\"render_type\": "
                 "\"svg|chartjs|mermaid\", \"code\": \"...\"}, where ``code`` "

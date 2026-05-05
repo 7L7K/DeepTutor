@@ -270,7 +270,7 @@ class DeepQuestionCapability(BaseCapability):
 
         if is_zh:
             system_prompt = (
-                "你是 DeepTutor 的题目生成器。用户已经在等待，请基于现有信息直接输出一组题目。"
+                "你是 TEEECHR 的题目生成器。用户已经在等待，请基于现有信息直接输出一组题目。"
                 "严格输出 JSON：{\"questions\": [{\"question_id\": \"q_1\", "
                 "\"question\": \"...\", \"question_type\": \"choice|written|coding\", "
                 "\"options\": {\"A\": \"...\"}, \"correct_answer\": \"...\", "
@@ -289,7 +289,7 @@ class DeepQuestionCapability(BaseCapability):
             )
         else:
             system_prompt = (
-                "You are DeepTutor's question generator. The user is waiting, "
+                "You are TEEECHR's question generator. The user is waiting, "
                 "so produce a complete question set in one shot using the "
                 "context already gathered. Output strictly the JSON schema "
                 "{\"questions\": [{\"question_id\": \"q_1\", \"question\": "

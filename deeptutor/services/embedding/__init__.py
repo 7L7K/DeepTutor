@@ -2,7 +2,7 @@
 Embedding Service
 =================
 
-Unified embedding client for all DeepTutor modules.
+Unified embedding client for all TEEECHR modules.
 Supports normalized providers: custom/openai/azure_openai/cohere/jina/ollama/vllm.
 
 Usage:

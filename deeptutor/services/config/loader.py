@@ -3,7 +3,7 @@
 Configuration Loader
 ====================
 
-Unified configuration loading for all DeepTutor modules.
+Unified configuration loading for all TEEECHR modules.
 Provides YAML configuration loading, path resolution, and language parsing.
 """
 
@@ -15,12 +15,12 @@ import yaml
 
 from deeptutor.services.path_service import get_path_service
 
-# PROJECT_ROOT points to the actual project root directory (DeepTutor/)
+# PROJECT_ROOT points to the actual project root directory (TEEECHR/)
 # Path(__file__) = deeptutor/services/config/loader.py
 # .parent = deeptutor/services/config/
 # .parent.parent = deeptutor/services/
 # .parent.parent.parent = deeptutor/
-# .parent.parent.parent.parent = DeepTutor/ (project root)
+# .parent.parent.parent.parent = TEEECHR/ (project root)
 PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent.parent
 
 

@@ -203,7 +203,7 @@ class ConfigTestRunner:
         run.emit("info", f"Resolved embedding model `{config.model}` with binding `{config.binding}`.")
         run.emit("info", f"Request target: {config.base_url}")
         client = EmbeddingClient(config)
-        vectors = await client.embed(["DeepTutor embedding smoke test"])
+        vectors = await client.embed(["TEEECHR embedding smoke test"])
         if not vectors or not vectors[0]:
             raise ValueError("Embedding service returned an empty vector.")
         actual_dimension = len(vectors[0])
@@ -241,8 +241,8 @@ class ConfigTestRunner:
         run.emit("info", f"Resolved search provider `{provider}`.")
         if resolved.fallback_reason:
             run.emit("warning", resolved.fallback_reason)
-        run.emit("info", "Running search query: DeepTutor configuration health check")
-        result = web_search("DeepTutor configuration health check", provider=provider)
+        run.emit("info", "Running search query: TEEECHR configuration health check")
+        result = web_search("TEEECHR configuration health check", provider=provider)
         run.emit(
             "response",
             "Search result received.",

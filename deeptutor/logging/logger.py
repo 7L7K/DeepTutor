@@ -130,7 +130,7 @@ class FileFormatter(logging.Formatter):
 
 class Logger:
     """
-    Unified logger for DeepTutor.
+    Unified logger for TEEECHR.
 
     Features:
     - Consistent format across all modules

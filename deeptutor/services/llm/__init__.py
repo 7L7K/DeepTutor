@@ -1,120 +1,22 @@
-"""
-LLM Service
-===========
+"""LLM service exports.
 
-Unified LLM service for all DeepTutor modules.
-
-Architecture:
-    Agents (ChatAgent, GuideAgent, etc.)
-              ↓
-         BaseAgent.call_llm() / stream_llm()
-              ↓
-         LLM Factory (complete / stream)
-              ↓
-    ┌─────────┴─────────┐
-    ↓                   ↓
-CloudProvider      LocalProvider
-(cloud_provider)   (local_provider)
-
-Features:
-- Unified interface for all LLM providers (cloud + local)
-- Automatic retry with exponential backoff
-- Smart routing based on URL detection
-- Provider capability detection
-
-Usage:
-    # Simple completion (with automatic retry)
-    from deeptutor.services.llm import complete, stream
-    response = await complete("Hello!", system_prompt="You are helpful.")
-
-    # Streaming (with automatic retry on connection)
-    async for chunk in stream("Hello!", system_prompt="You are helpful."):
-        print(chunk, end="")
-
-    # Custom retry configuration
-    response = await complete(
-        "Hello!",
-        max_retries=5,
-        retry_delay=2.0,
-        exponential_backoff=True,
-    )
-
-    # Configuration
-    from deeptutor.services.llm import get_llm_config, LLMConfig
-    config = get_llm_config()
-
-    # URL utilities for local LLM servers
-    from deeptutor.services.llm import sanitize_url, is_local_llm_server
+The public names stay available from ``deeptutor.services.llm``, but the
+underlying modules are imported only when a name is used.
 """
 
-# Note: cloud_provider and local_provider are lazy-loaded via __getattr__
-# to avoid importing optional heavy dependencies at module load time
-from .capabilities import (
-    DEFAULT_CAPABILITIES,
-    MODEL_OVERRIDES,
-    PROVIDER_CAPABILITIES,
-    get_capability,
-    has_thinking_tags,
-    requires_api_version,
-    supports_response_format,
-    supports_streaming,
-    supports_tools,
-    supports_vision,
-    system_in_messages,
-)
-from .multimodal import MultimodalResult, prepare_multimodal_messages
-from .client import LLMClient, get_llm_client, reset_llm_client
-from .config import (
-    LLMConfig,
-    clear_llm_config_cache,
-    get_llm_config,
-    get_token_limit_kwargs,
-    reload_config,
-    uses_max_completion_tokens,
-)
-from .exceptions import (
-    LLMAPIError,
-    LLMAuthenticationError,
-    LLMConfigError,
-    LLMError,
-    LLMModelNotFoundError,
-    LLMProviderError,
-    LLMRateLimitError,
-    LLMTimeoutError,
-)
-from .factory import (
-    API_PROVIDER_PRESETS,
-    DEFAULT_EXPONENTIAL_BACKOFF,
-    DEFAULT_MAX_RETRIES,
-    DEFAULT_RETRY_DELAY,
-    LOCAL_PROVIDER_PRESETS,
-    complete,
-    fetch_models,
-    get_provider_presets,
-    stream,
-)
-from .utils import (
-    build_auth_headers,
-    build_chat_url,
-    clean_thinking_tags,
-    extract_response_content,
-    is_local_llm_server,
-    sanitize_url,
-)
+from importlib import import_module
+from typing import Any
 
 __all__ = [
-    # Client (legacy, prefer factory functions)
     "LLMClient",
     "get_llm_client",
     "reset_llm_client",
-    # Config
     "LLMConfig",
     "get_llm_config",
     "clear_llm_config_cache",
     "reload_config",
     "uses_max_completion_tokens",
     "get_token_limit_kwargs",
-    # Capabilities
     "PROVIDER_CAPABILITIES",
     "MODEL_OVERRIDES",
     "DEFAULT_CAPABILITIES",
@@ -126,10 +28,8 @@ __all__ = [
     "supports_tools",
     "supports_vision",
     "requires_api_version",
-    # Multimodal
     "MultimodalResult",
     "prepare_multimodal_messages",
-    # Exceptions
     "LLMError",
     "LLMConfigError",
     "LLMProviderError",
@@ -138,21 +38,17 @@ __all__ = [
     "LLMRateLimitError",
     "LLMAuthenticationError",
     "LLMModelNotFoundError",
-    # Factory (main API)
     "complete",
     "stream",
     "fetch_models",
     "get_provider_presets",
     "API_PROVIDER_PRESETS",
     "LOCAL_PROVIDER_PRESETS",
-    # Retry configuration
     "DEFAULT_MAX_RETRIES",
     "DEFAULT_RETRY_DELAY",
     "DEFAULT_EXPONENTIAL_BACKOFF",
-    # Providers (lazy loaded)
     "cloud_provider",
     "local_provider",
-    # Utils
     "sanitize_url",
     "is_local_llm_server",
     "build_chat_url",
@@ -161,13 +57,62 @@ __all__ = [
     "extract_response_content",
 ]
 
+_EXPORT_MODULES = {
+    "LLMClient": "deeptutor.services.llm.client",
+    "get_llm_client": "deeptutor.services.llm.client",
+    "reset_llm_client": "deeptutor.services.llm.client",
+    "LLMConfig": "deeptutor.services.llm.config",
+    "get_llm_config": "deeptutor.services.llm.config",
+    "clear_llm_config_cache": "deeptutor.services.llm.config",
+    "reload_config": "deeptutor.services.llm.config",
+    "uses_max_completion_tokens": "deeptutor.services.llm.config",
+    "get_token_limit_kwargs": "deeptutor.services.llm.config",
+    "PROVIDER_CAPABILITIES": "deeptutor.services.llm.capabilities",
+    "MODEL_OVERRIDES": "deeptutor.services.llm.capabilities",
+    "DEFAULT_CAPABILITIES": "deeptutor.services.llm.capabilities",
+    "get_capability": "deeptutor.services.llm.capabilities",
+    "supports_response_format": "deeptutor.services.llm.capabilities",
+    "supports_streaming": "deeptutor.services.llm.capabilities",
+    "system_in_messages": "deeptutor.services.llm.capabilities",
+    "has_thinking_tags": "deeptutor.services.llm.capabilities",
+    "supports_tools": "deeptutor.services.llm.capabilities",
+    "supports_vision": "deeptutor.services.llm.capabilities",
+    "requires_api_version": "deeptutor.services.llm.capabilities",
+    "MultimodalResult": "deeptutor.services.llm.multimodal",
+    "prepare_multimodal_messages": "deeptutor.services.llm.multimodal",
+    "LLMError": "deeptutor.services.llm.exceptions",
+    "LLMConfigError": "deeptutor.services.llm.exceptions",
+    "LLMProviderError": "deeptutor.services.llm.exceptions",
+    "LLMAPIError": "deeptutor.services.llm.exceptions",
+    "LLMTimeoutError": "deeptutor.services.llm.exceptions",
+    "LLMRateLimitError": "deeptutor.services.llm.exceptions",
+    "LLMAuthenticationError": "deeptutor.services.llm.exceptions",
+    "LLMModelNotFoundError": "deeptutor.services.llm.exceptions",
+    "complete": "deeptutor.services.llm.factory",
+    "stream": "deeptutor.services.llm.factory",
+    "fetch_models": "deeptutor.services.llm.factory",
+    "get_provider_presets": "deeptutor.services.llm.factory",
+    "API_PROVIDER_PRESETS": "deeptutor.services.llm.factory",
+    "LOCAL_PROVIDER_PRESETS": "deeptutor.services.llm.factory",
+    "DEFAULT_MAX_RETRIES": "deeptutor.services.llm.factory",
+    "DEFAULT_RETRY_DELAY": "deeptutor.services.llm.factory",
+    "DEFAULT_EXPONENTIAL_BACKOFF": "deeptutor.services.llm.factory",
+    "sanitize_url": "deeptutor.services.llm.utils",
+    "is_local_llm_server": "deeptutor.services.llm.utils",
+    "build_chat_url": "deeptutor.services.llm.utils",
+    "build_auth_headers": "deeptutor.services.llm.utils",
+    "clean_thinking_tags": "deeptutor.services.llm.utils",
+    "extract_response_content": "deeptutor.services.llm.utils",
+}
 
-def __getattr__(name: str):
-    """Lazy import for provider modules that depend on heavy libraries."""
-    from importlib import import_module
 
+def __getattr__(name: str) -> Any:
     if name == "cloud_provider":
         return import_module("deeptutor.services.llm.cloud_provider")
     if name == "local_provider":
         return import_module("deeptutor.services.llm.local_provider")
-    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+    module_name = _EXPORT_MODULES.get(name)
+    if module_name is None:
+        raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+    module = import_module(module_name)
+    return getattr(module, name)

@@ -1,4 +1,4 @@
-# DeepTutor Private Tester Runbook
+# TEEECHR Private Tester Runbook
 
 ## Live target
 

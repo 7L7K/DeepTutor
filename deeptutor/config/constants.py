@@ -1,6 +1,6 @@
 #!/usr/bin/env python
 """
-Constants for DeepTutor
+Constants for TEEECHR
 """
 
 from pathlib import Path

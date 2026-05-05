@@ -1,4 +1,4 @@
-"""Path helpers for TutorBot — delegates to DeepTutor's PathService."""
+"""Path helpers for TutorBot — delegates to TEEECHR's PathService."""
 
 from __future__ import annotations
 
@@ -44,7 +44,7 @@ def get_legacy_sessions_dir() -> Path:
 
 
 def get_shared_memory_dir() -> Path:
-    """Public memory shared by DeepTutor and all bots: data/memory/."""
+    """Public memory shared by TEEECHR and all bots: data/memory/."""
     from deeptutor.services.path_service import get_path_service
     return ensure_dir(get_path_service().project_root / "data" / "memory")
 

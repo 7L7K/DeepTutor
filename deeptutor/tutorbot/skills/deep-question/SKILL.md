@@ -7,7 +7,7 @@ always: false
 
 # Deep Question (Quiz Generation)
 
-Use the `exec` tool to invoke DeepTutor's quiz generation pipeline (ideation → evaluation → generation → validation).
+Use the `exec` tool to invoke TEEECHR's quiz generation pipeline (ideation → evaluation → generation → validation).
 
 ## When to Use
 

@@ -54,7 +54,7 @@ export function AccessGate({ children }: { children: ReactNode }) {
             Private tester access
           </p>
           <h1 className="mb-3 text-3xl font-semibold tracking-[-0.04em]">
-            Enter your code to open DeepTutor.
+            Enter your code to open TEEECHR.
           </h1>
           <p className="mb-6 text-sm leading-6 text-[var(--muted-foreground)]">
             Each code keeps chat, practice, flashcards, and knowledge work separated for that tester.

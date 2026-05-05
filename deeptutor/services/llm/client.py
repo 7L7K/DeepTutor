@@ -2,7 +2,7 @@
 LLM Client
 ==========
 
-Unified LLM client for all DeepTutor services.
+Unified LLM client for all TEEECHR services.
 
 Note: This is a legacy interface. Prefer using the factory functions directly:
     from deeptutor.services.llm import complete, stream
@@ -82,6 +82,10 @@ class LLMClient:
 
         factory_complete = cast(Callable[..., Awaitable[str]], factory.complete)
         messages = history or None
+        reasoning_effort = kwargs.pop(
+            "reasoning_effort",
+            getattr(self.config, "reasoning_effort", None),
+        )
         return await factory_complete(
             prompt=prompt,
             system_prompt=system_prompt or "You are a helpful assistant.",
@@ -90,7 +94,7 @@ class LLMClient:
             base_url=self.config.base_url,
             api_version=getattr(self.config, "api_version", None),
             binding=getattr(self.config, "binding", "openai"),
-            reasoning_effort=getattr(self.config, "reasoning_effort", None),
+            reasoning_effort=reasoning_effort,
             extra_headers=getattr(self.config, "extra_headers", None),
             messages=messages,
             **kwargs,

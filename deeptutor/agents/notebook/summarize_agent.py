@@ -88,13 +88,13 @@ class NotebookSummarizeAgent:
     def _system_prompt(self) -> str:
         if self.language == "zh":
             return (
-                "你是 DeepTutor 的 notebook summary agent。"
+                "你是 TEEECHR 的 notebook summary agent。"
                 "请把一条待保存内容提炼成简洁、可检索、面向未来复用的摘要。"
                 "摘要必须突出主题、关键结论、适用场景和保存价值。"
                 "只输出摘要正文，不要加标题、前缀或项目符号。"
             )
         return (
-            "You are DeepTutor's notebook summary agent. "
+            "You are TEEECHR's notebook summary agent. "
             "Compress a saved record into a concise, retrieval-friendly summary for future reuse. "
             "Focus on topic, key conclusions, use cases, and why this record matters. "
             "Output only the summary text with no heading or bullets."

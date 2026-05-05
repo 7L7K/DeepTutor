@@ -1,7 +1,7 @@
-"""LLM provider adapter that reuses DeepTutor's LLM configuration.
+"""LLM provider adapter that reuses TEEECHR's LLM configuration.
 
-When TutorBot runs in-process inside the DeepTutor server, this provider
-reads api_key / model / base_url from DeepTutor's unified config and
+When TutorBot runs in-process inside the TEEECHR server, this provider
+reads api_key / model / base_url from TEEECHR's unified config and
 delegates to the appropriate provider (OpenAICompat or Anthropic).
 """
 
@@ -11,7 +11,7 @@ from deeptutor.tutorbot.providers.base import LLMProvider
 
 
 def create_deeptutor_provider() -> LLMProvider:
-    """Build a provider pre-configured from DeepTutor's LLMConfig."""
+    """Build a provider pre-configured from TEEECHR's LLMConfig."""
     from deeptutor.services.llm.config import get_llm_config
     from deeptutor.services.provider_registry import find_by_model, find_by_name
 

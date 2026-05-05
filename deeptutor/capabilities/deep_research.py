@@ -409,7 +409,7 @@ class DeepResearchCapability(BaseCapability):
 
         if is_zh:
             system_prompt = (
-                "你是 DeepTutor 的研究报告写作组件。用户已经在等待，"
+                "你是 TEEECHR 的研究报告写作组件。用户已经在等待，"
                 "请根据当前已经收集到的研究 trace（包括 rephrase、decompose、检索结果、"
                 "笔记/纲要等）直接输出一篇结构清晰的研究报告。"
                 "不要再继续检索或调用工具。如果证据稀薄，请在报告中标注信息覆盖度。"
@@ -423,7 +423,7 @@ class DeepResearchCapability(BaseCapability):
             )
         else:
             system_prompt = (
-                "You are DeepTutor's research-report writer. The user is "
+                "You are TEEECHR's research-report writer. The user is "
                 "waiting, so produce a structured research report right now "
                 "from whatever evidence has streamed so far (rephrase, "
                 "decompose, search hits, notes/outline, ...). Do not retrieve "

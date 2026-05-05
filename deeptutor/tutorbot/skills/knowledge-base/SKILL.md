@@ -1,13 +1,13 @@
 ---
 name: knowledge-base
-description: "Manage DeepTutor knowledge bases — list, create, search, add documents, delete."
+description: "Manage TEEECHR knowledge bases — list, create, search, add documents, delete."
 metadata: {"nanobot":{"emoji":"📚","requires":{"bins":["deeptutor"]}}}
 always: false
 ---
 
 # Knowledge Base Management
 
-Use the `exec` tool to manage DeepTutor knowledge bases via CLI.
+Use the `exec` tool to manage TEEECHR knowledge bases via CLI.
 
 ## When to Use
 

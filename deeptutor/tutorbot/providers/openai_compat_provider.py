@@ -30,7 +30,7 @@ _ALNUM = string.ascii_letters + string.digits
 
 _DEFAULT_OPENROUTER_HEADERS = {
     "HTTP-Referer": "https://github.com/HKUDS/DeepTutor",
-    "X-OpenRouter-Title": "DeepTutor",
+    "X-OpenRouter-Title": "TEEECHR",
 }
 
 
