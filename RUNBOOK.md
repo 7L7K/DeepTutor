@@ -25,7 +25,13 @@
 teeechr.gesahni.com {
   encode gzip
 
-  @backend path /api/* /docs* /openapi.json /outputs/* /static/outputs/*
+  @webVersion path /api/version
+  reverse_proxy @webVersion teeech-web:3001
+
+  @backend {
+    path /api/* /docs* /openapi.json /outputs/* /static/outputs/*
+    not path /api/version
+  }
   reverse_proxy @backend teeech-backend:8001
 
   reverse_proxy teeech-web:3001

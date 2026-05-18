@@ -3,6 +3,7 @@
 ### Fixed
 - practice quiz: allow runtime-only `quiz_submission_context` through deep-question validation and route interactive quiz submissions to the quiz grading agent instead of rejecting them as invalid generation config.
 - deploy: preserve remote `data/` and `outputs/` during rsync deploys so tester sessions, knowledge bases, and generated artifacts are not overwritten by the local checkout.
+- deploy: keep the web-owned `/api/version` route on the Next container in the VPS Caddy config so the live sidebar version check no longer 404s behind the backend `/api/*` proxy.
 - knowledge ui: explain why the Create action is blocked when a tester has not provided both a KB name and at least one file, avoiding the appearance that adding a KB did nothing.
 - chat: route short no-tool learner prompts like `say hi in one sentence` and `I want to start an exam` through the direct quick-reply path so basic chat skips the heavy thinking / observing pipeline.
 - unified ws: validate tester ownership for turn subscriptions with a direct `turns` to `sessions` lookup so signed-in private testers receive their own streamed chat events.

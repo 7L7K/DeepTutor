@@ -81,19 +81,44 @@ from pathlib import Path
 domain = "${DOMAIN}"
 caddyfile = Path("${CADDYFILE}")
 text = caddyfile.read_text() if caddyfile.exists() else ""
-block = f"""
-
-{domain} {{
+block = f"""{domain} {{
   encode gzip
 
-  @backend path /api/* /docs* /openapi.json /outputs/* /static/outputs/*
+  @webVersion path /api/version
+  reverse_proxy @webVersion teeech-web:3001
+
+  @backend {{
+    path /api/* /docs* /openapi.json /outputs/* /static/outputs/*
+    not path /api/version
+  }}
   reverse_proxy @backend teeech-backend:8001
 
   reverse_proxy teeech-web:3001
 }}
 """
-if domain not in text:
-    caddyfile.write_text(text.rstrip() + block)
+
+
+def replace_site_block(current: str) -> str:
+    lines = current.splitlines()
+    start = next((i for i, line in enumerate(lines) if line.strip() == f"{domain} {{"), None)
+    if start is None:
+        return current.rstrip() + "\n\n" + block + "\n"
+
+    depth = 0
+    end = None
+    for index in range(start, len(lines)):
+        depth += lines[index].count("{") - lines[index].count("}")
+        if index > start and depth <= 0:
+            end = index
+            break
+    if end is None:
+        raise SystemExit(f"Could not find end of existing Caddy block for {domain}")
+
+    updated = lines[:start] + block.splitlines() + lines[end + 1 :]
+    return "\n".join(updated).rstrip() + "\n"
+
+
+caddyfile.write_text(replace_site_block(text))
 PY
 
 docker exec "${CADDY_CONTAINER}" caddy validate --config /etc/caddy/Caddyfile --adapter caddyfile
