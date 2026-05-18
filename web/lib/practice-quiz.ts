@@ -1,5 +1,15 @@
-import type { DeepQuestionFormConfig } from "@/lib/quiz-types";
-import type { PracticeDomainBreakdown, PracticeStructuredResult } from "@/lib/practice-api";
+import type { DeepQuestionFormConfig } from "./quiz-types";
+
+export interface PracticeDomainBreakdown {
+  domain: string;
+  correct: number;
+  total: number;
+  percent: number;
+}
+
+export interface PracticeStructuredResult {
+  domain_breakdown: PracticeDomainBreakdown[];
+}
 
 export type PracticeQuizIntentId =
   | "quick_check"

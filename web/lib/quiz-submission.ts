@@ -1,5 +1,13 @@
-import type { MessageRequestSnapshot } from "@/context/UnifiedChatContext";
-import type { QuizQuestion } from "@/lib/quiz-types";
+import type { QuizQuestion } from "./quiz-types";
+
+interface MessageRequestSnapshot {
+  content: string;
+  capability?: string | null;
+  enabledTools: string[];
+  knowledgeBases: string[];
+  language: string;
+  config?: Record<string, unknown>;
+}
 
 export interface InteractiveQuizSubmissionPayload {
   content: string;
