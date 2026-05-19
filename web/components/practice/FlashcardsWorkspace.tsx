@@ -149,6 +149,9 @@ export default function FlashcardsWorkspace() {
         if (loadedDeck.generationStatus === "complete" || loadedDeck.readyCardCount >= loadedDeck.requestedCardCount) {
           setStatusText("Deck complete. More cards were added while you were here.");
           await refreshRecentDecks();
+        } else if (loadedDeck.generationStatus === "failed") {
+          setStatusText("Starter deck ready. The rest could not finish automatically.");
+          await refreshRecentDecks();
         }
       } catch (error) {
         console.error("Failed to refresh progressive flashcard deck", error);

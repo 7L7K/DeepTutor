@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import json
 import logging
@@ -46,7 +47,16 @@ class FlashcardService:
         else:
             self._llm = get_llm_client()
         self._reasoning_effort = self._resolve_reasoning_effort(self._llm.config)
+        self._starter_reasoning_effort = self._resolve_starter_reasoning_effort(
+            self._llm.config,
+            self._reasoning_effort,
+        )
+        self._starter_max_output_tokens = self._resolve_starter_max_output_tokens()
         self._use_responses = self._resolve_use_responses(self._llm.config)
+        self._progressive_enabled = self._resolve_progressive_enabled()
+        self._progressive_starter_count = self._resolve_progressive_starter_count()
+        self._background_tasks: set[asyncio.Task[Any]] = set()
+        self._background_deck_ids: set[str] = set()
         self._rag: Any | None = None
 
     @staticmethod
@@ -96,6 +106,7 @@ class FlashcardService:
         if reuse_existing:
             existing = await self._store.find_flashcard_deck_by_fingerprint(fingerprint)
             if existing is not None:
+                self._maybe_schedule_progressive_completion(existing)
                 return existing, True
 
         source_context = await self._build_source_context(
@@ -103,49 +114,20 @@ class FlashcardService:
             topic=normalized_topic,
             knowledge_base_names=normalized_kbs,
         )
-        payload = await self._generate_cards_with_llm(
+        starter_count = min(card_count, self._progressive_starter_count)
+        progressive = self._progressive_enabled and card_count > starter_count
+        requested_now = starter_count if progressive else card_count
+        payload, cleaned_cards = await self._generate_cleaned_cards(
             source_type=source_type,
             topic=normalized_topic,
             knowledge_base_names=normalized_kbs,
-            card_count=card_count,
+            requested_count=requested_now,
             style=style,
             source_context=source_context,
-        )
-        cards = payload.get("cards")
-        if not isinstance(cards, list) or not cards:
-            raise ValueError("Flashcard generation returned no cards")
-
-        cleaned_cards: list[dict[str, Any]] = []
-        seen_fronts: set[str] = set()
-        for index, card in enumerate(cards[:card_count], start=1):
-            if not isinstance(card, dict):
-                continue
-            front = self._normalize_card_front(card.get("front"))
-            back = self._normalize_card_back(card.get("back"))
-            if not front or not back:
-                continue
-            dedupe_key = self._normalize_card_key(front)
-            if dedupe_key in seen_fronts:
-                continue
-            seen_fronts.add(dedupe_key)
-            cleaned_cards.append(
-                {
-                    "id": f"{fingerprint}_card_{index}",
-                    "front": front,
-                    "back": back,
-                    "hint": self._normalize_hint(card.get("hint")),
-                    "tag": self._normalize_tag(card.get("tag")),
-                    "source_ref": str(card.get("source_ref") or "").strip(),
-                }
-            )
-            if len(cleaned_cards) >= card_count:
-                break
-        self._log_cleaning_matrix(
-            source_type=source_type,
-            requested_count=card_count,
-            raw_cards=cards,
-            cleaned_cards=cleaned_cards,
-            phase="generate_deck",
+            fingerprint=fingerprint,
+            phase="generate_deck_starter" if progressive else "generate_deck",
+            reasoning_effort=self._starter_reasoning_effort if progressive else None,
+            max_output_tokens=self._starter_max_output_tokens if progressive else None,
         )
         if not cleaned_cards:
             raise ValueError("Flashcard generation returned unusable cards")
@@ -169,18 +151,30 @@ class FlashcardService:
                     "card_count": card_count,
                     "style": style,
                     "reuse_existing": reuse_existing,
+                    "status": "partial" if progressive else "complete",
+                    "requested_count": card_count,
+                    "ready_count": len(cleaned_cards),
+                    "progressive": progressive,
+                    "starter_count": len(cleaned_cards) if progressive else card_count,
+                    "starter_diagnostics": payload.get("_diagnostics") if isinstance(payload, dict) else {},
+                    **({"completed_at": time.time()} if not progressive else {}),
                 },
                 "source_context": source_context,
                 "cards": cleaned_cards,
             }
         )
+        if progressive:
+            self._schedule_progressive_completion(deck["id"])
         return deck, False
 
     async def list_decks(self, *, limit: int = 12, offset: int = 0) -> list[dict[str, Any]]:
         return await self._store.list_flashcard_decks(limit=limit, offset=offset)
 
     async def get_deck(self, deck_id: str) -> dict[str, Any] | None:
-        return await self._store.get_flashcard_deck(deck_id)
+        deck = await self._store.get_flashcard_deck(deck_id)
+        if deck is not None:
+            self._maybe_schedule_progressive_completion(deck)
+        return deck
 
     async def record_review(self, *, deck_id: str, card_id: str, rating: str) -> dict[str, Any]:
         if rating not in {"got_it", "missed", "skipped"}:
@@ -298,6 +292,206 @@ class FlashcardService:
         )
         return suggestions[:6]
 
+    async def complete_progressive_deck(self, deck_id: str) -> dict[str, Any] | None:
+        deck = await self._store.get_flashcard_deck(deck_id)
+        if deck is None:
+            return None
+        settings = deck.get("generation_settings") or {}
+        requested_count = int(settings.get("requested_count") or deck.get("card_count") or 0)
+        current_cards = deck.get("cards") or []
+        if requested_count <= 0 or len(current_cards) >= requested_count:
+            return await self._store.update_flashcard_generation_settings(
+                deck_id,
+                {
+                    "status": "complete",
+                    "requested_count": max(requested_count, len(current_cards)),
+                    "ready_count": len(current_cards),
+                    "completed_at": time.time(),
+                },
+            )
+
+        try:
+            refreshed = deck
+            for attempt in range(2):
+                current_cards = refreshed.get("cards") or []
+                remaining_count = requested_count - len(current_cards)
+                if remaining_count <= 0:
+                    break
+                avoid_fronts = [str(card.get("front") or "") for card in current_cards if isinstance(card, dict)]
+                payload, cleaned_cards = await self._generate_cleaned_cards(
+                    source_type=str(refreshed.get("source_type") or "topic"),
+                    topic=str(refreshed.get("topic") or ""),
+                    knowledge_base_names=[
+                        str(item)
+                        for item in (refreshed.get("source_kb_names") or [])
+                        if str(item).strip()
+                    ],
+                    requested_count=remaining_count,
+                    style=str(refreshed.get("style") or "mixed"),
+                    source_context=refreshed.get("source_context") or [],
+                    fingerprint=str(refreshed.get("generation_fingerprint") or ""),
+                    phase=f"progressive_completion_{attempt + 1}",
+                    start_index=len(current_cards) + 1,
+                    existing_fronts=avoid_fronts,
+                    extra_candidates=min(6, max(3, len(current_cards))),
+                )
+                if not cleaned_cards:
+                    break
+                next_ready_count = len(current_cards) + len(cleaned_cards)
+                status = "complete" if next_ready_count >= requested_count else "partial"
+                refreshed = await self._store.append_flashcard_cards(
+                    deck_id,
+                    cleaned_cards,
+                    {
+                        "status": status,
+                        "requested_count": requested_count,
+                        "ready_count": next_ready_count,
+                        "progressive": True,
+                        "completion_attempts": attempt + 1,
+                        "completion_diagnostics": payload.get("_diagnostics") if isinstance(payload, dict) else {},
+                        **({"completed_at": time.time()} if status == "complete" else {}),
+                    },
+                )
+                if status == "complete":
+                    return refreshed
+
+            refreshed = await self._store.get_flashcard_deck(deck_id)
+            ready_count = len((refreshed or {}).get("cards") or [])
+            return await self._store.update_flashcard_generation_settings(
+                deck_id,
+                {
+                    "status": "complete" if ready_count >= requested_count else "partial",
+                    "requested_count": requested_count,
+                    "ready_count": ready_count,
+                    **({"completed_at": time.time()} if ready_count >= requested_count else {}),
+                },
+            )
+        except Exception as exc:
+            logger.exception("Progressive flashcard completion failed for %s: %s", deck_id, exc)
+            return await self._store.update_flashcard_generation_settings(
+                deck_id,
+                {
+                    "status": "failed",
+                    "requested_count": requested_count,
+                    "ready_count": len(current_cards),
+                    "error": str(exc)[:300],
+                    "failed_at": time.time(),
+                },
+            )
+
+    async def _generate_cleaned_cards(
+        self,
+        *,
+        source_type: str,
+        topic: str,
+        knowledge_base_names: list[str],
+        requested_count: int,
+        style: str,
+        source_context: list[dict[str, Any]],
+        fingerprint: str,
+        phase: str,
+        start_index: int = 1,
+        existing_fronts: list[str] | None = None,
+        extra_candidates: int | None = None,
+        reasoning_effort: str | None = None,
+        max_output_tokens: int | None = None,
+    ) -> tuple[dict[str, Any], list[dict[str, Any]]]:
+        payload = await self._generate_cards_with_llm(
+            source_type=source_type,
+            topic=topic,
+            knowledge_base_names=knowledge_base_names,
+            card_count=requested_count,
+            style=style,
+            source_context=source_context,
+            avoid_fronts=existing_fronts,
+            extra_candidates=extra_candidates,
+            reasoning_effort=reasoning_effort,
+            max_output_tokens=max_output_tokens,
+        )
+        cards = payload.get("cards")
+        if not isinstance(cards, list) or not cards:
+            raise ValueError("Flashcard generation returned no cards")
+        cleaned_cards = self._clean_generated_cards(
+            cards,
+            requested_count=requested_count,
+            fingerprint=fingerprint,
+            start_index=start_index,
+            existing_fronts=existing_fronts,
+        )
+        self._log_cleaning_matrix(
+            source_type=source_type,
+            requested_count=requested_count,
+            raw_cards=cards,
+            cleaned_cards=cleaned_cards,
+            phase=phase,
+        )
+        return payload, cleaned_cards
+
+    def _clean_generated_cards(
+        self,
+        cards: list[Any],
+        *,
+        requested_count: int,
+        fingerprint: str,
+        start_index: int = 1,
+        existing_fronts: list[str] | None = None,
+    ) -> list[dict[str, Any]]:
+        cleaned_cards: list[dict[str, Any]] = []
+        seen_fronts = {
+            self._normalize_card_key(front)
+            for front in (existing_fronts or [])
+            if self._normalize_card_key(front)
+        }
+        for card in cards:
+            if not isinstance(card, dict):
+                continue
+            front = self._normalize_card_front(card.get("front"))
+            back = self._normalize_card_back(card.get("back"))
+            if not front or not back:
+                continue
+            dedupe_key = self._normalize_card_key(front)
+            if dedupe_key in seen_fronts:
+                continue
+            seen_fronts.add(dedupe_key)
+            card_number = start_index + len(cleaned_cards)
+            cleaned_cards.append(
+                {
+                    "id": f"{fingerprint}_card_{card_number}",
+                    "front": front,
+                    "back": back,
+                    "hint": self._normalize_hint(card.get("hint")),
+                    "tag": self._normalize_tag(card.get("tag")),
+                    "source_ref": str(card.get("source_ref") or "").strip(),
+                }
+            )
+            if len(cleaned_cards) >= requested_count:
+                break
+        return cleaned_cards
+
+    def _schedule_progressive_completion(self, deck_id: str) -> None:
+        if deck_id in self._background_deck_ids:
+            return
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            return
+        self._background_deck_ids.add(deck_id)
+        task = loop.create_task(self.complete_progressive_deck(deck_id))
+        self._background_tasks.add(task)
+        task.add_done_callback(self._background_tasks.discard)
+        task.add_done_callback(lambda _task: self._background_deck_ids.discard(deck_id))
+
+    def _maybe_schedule_progressive_completion(self, deck: dict[str, Any]) -> None:
+        settings = deck.get("generation_settings") or {}
+        if settings.get("status") != "partial":
+            return
+        requested_count = int(settings.get("requested_count") or deck.get("card_count") or 0)
+        ready_count = int(settings.get("ready_count") or len(deck.get("cards") or []))
+        if requested_count > ready_count:
+            deck_id = str(deck.get("id") or deck.get("deck_id") or "")
+            if deck_id:
+                self._schedule_progressive_completion(deck_id)
+
     async def _build_source_context(
         self,
         *,
@@ -386,6 +580,10 @@ class FlashcardService:
         card_count: int,
         style: str,
         source_context: list[dict[str, Any]],
+        avoid_fronts: list[str] | None = None,
+        extra_candidates: int | None = None,
+        reasoning_effort: str | None = None,
+        max_output_tokens: int | None = None,
     ) -> dict[str, Any]:
         llm_config = self._llm.config
         system_prompt, user_prompt, candidate_count = self._build_generation_prompts(
@@ -395,6 +593,16 @@ class FlashcardService:
             card_count=card_count,
             style=style,
             source_context=source_context,
+            avoid_fronts=avoid_fronts,
+            extra_candidates=extra_candidates,
+        )
+        effective_reasoning_effort = (
+            self._reasoning_effort if reasoning_effort is None else reasoning_effort
+        )
+        token_limit = (
+            max_output_tokens
+            if max_output_tokens is not None
+            else self._generation_token_limit(candidate_count)
         )
         if self._should_use_responses_api(llm_config):
             try:
@@ -406,6 +614,8 @@ class FlashcardService:
                     card_count=card_count,
                     candidate_count=candidate_count,
                     source_context=source_context,
+                    reasoning_effort=effective_reasoning_effort,
+                    max_output_tokens=token_limit,
                 )
             except Exception as exc:
                 logger.warning(
@@ -419,11 +629,11 @@ class FlashcardService:
         kwargs.update(
             get_token_limit_kwargs(
                 llm_config.model,
-                max_tokens=self._generation_token_limit(candidate_count),
+                max_tokens=token_limit,
             )
         )
-        if self._reasoning_effort:
-            kwargs["reasoning_effort"] = self._reasoning_effort
+        if effective_reasoning_effort:
+            kwargs["reasoning_effort"] = effective_reasoning_effort
 
         llm_started_at = time.perf_counter()
         raw = await self._llm.complete(
@@ -439,7 +649,7 @@ class FlashcardService:
         payload["_diagnostics"] = {
             "api": "chat_completions",
             "model": llm_config.model,
-            "reasoning_effort": self._reasoning_effort or None,
+            "reasoning_effort": effective_reasoning_effort or None,
             "elapsed_seconds": round(elapsed, 3),
             "requested_count": card_count,
             "candidate_count": candidate_count,
@@ -450,6 +660,7 @@ class FlashcardService:
         self._log_generation_matrix(
             api="chat_completions",
             model=llm_config.model,
+            reasoning_effort=effective_reasoning_effort,
             source_type=source_type,
             requested_count=card_count,
             candidate_count=candidate_count,
@@ -469,6 +680,7 @@ class FlashcardService:
         style: str,
         source_context: list[dict[str, Any]],
         avoid_fronts: list[str] | None = None,
+        extra_candidates: int | None = None,
     ) -> tuple[str, str, int]:
         system_prompt = (
             "You create study-ready flashcard decks for learners. "
@@ -487,7 +699,7 @@ class FlashcardService:
                 )
             context_block = "\n\nGrounding context:\n" + "\n\n---\n\n".join(rendered)
 
-        candidate_count = self._candidate_flashcard_count(card_count)
+        candidate_count = self._candidate_flashcard_count(card_count, extra_candidates=extra_candidates)
         user_prompt = (
             f"Generate {candidate_count} flashcards.\n"
             f"Source type: {source_type}\n"
@@ -531,6 +743,26 @@ class FlashcardService:
         return "low" if model.startswith("gpt-5") else ""
 
     @staticmethod
+    def _resolve_starter_reasoning_effort(llm_config: Any, fallback: str) -> str:
+        configured = os.getenv("FLASHCARD_STARTER_REASONING_EFFORT", "").strip()
+        if configured.lower() in {"0", "false", "no", "off", "none"}:
+            return ""
+        if configured:
+            return configured
+        model = str(getattr(llm_config, "model", "") or "").strip().lower()
+        return "minimal" if model.startswith("gpt-5") else fallback
+
+    @staticmethod
+    def _resolve_starter_max_output_tokens() -> int:
+        configured = os.getenv("FLASHCARD_STARTER_MAX_OUTPUT_TOKENS", "").strip()
+        if configured:
+            try:
+                return min(1600, max(500, int(configured)))
+            except ValueError:
+                return 900
+        return 900
+
+    @staticmethod
     def _resolve_use_responses(llm_config: Any) -> bool:
         configured = os.getenv("FLASHCARD_USE_RESPONSES", "").strip().lower()
         if configured in {"0", "false", "no", "off"}:
@@ -541,22 +773,43 @@ class FlashcardService:
         return binding == "openai" and bool(getattr(llm_config, "api_key", ""))
 
     @staticmethod
-    def _candidate_flashcard_count(card_count: int) -> int:
-        safe_count = max(1, int(card_count))
-        configured = os.getenv("FLASHCARD_EXTRA_CANDIDATES", "").strip()
+    def _resolve_progressive_enabled() -> bool:
+        configured = os.getenv("FLASHCARD_PROGRESSIVE", "").strip().lower()
+        if configured in {"0", "false", "no", "off"}:
+            return False
+        return True
+
+    @staticmethod
+    def _resolve_progressive_starter_count() -> int:
+        configured = os.getenv("FLASHCARD_STARTER_COUNT", "").strip()
         if configured:
             try:
-                extra_candidates = int(configured)
+                return min(5, max(3, int(configured)))
             except ValueError:
-                extra_candidates = 0
-            extra_candidates = max(0, min(extra_candidates, 12))
-        elif safe_count <= 12:
-            extra_candidates = 0
-        elif safe_count <= 20:
-            extra_candidates = 2
+                return 4
+        return 4
+
+    @staticmethod
+    def _candidate_flashcard_count(card_count: int, *, extra_candidates: int | None = None) -> int:
+        safe_count = max(1, int(card_count))
+        if extra_candidates is not None:
+            resolved_extra_candidates = max(0, min(int(extra_candidates), 12))
         else:
-            extra_candidates = 4
-        return min(max(safe_count + extra_candidates, safe_count), 48)
+            configured = os.getenv("FLASHCARD_EXTRA_CANDIDATES", "").strip()
+            resolved_extra_candidates: int
+            if configured:
+                try:
+                    resolved_extra_candidates = int(configured)
+                except ValueError:
+                    resolved_extra_candidates = 0
+                resolved_extra_candidates = max(0, min(resolved_extra_candidates, 12))
+            elif safe_count <= 12:
+                resolved_extra_candidates = 0
+            elif safe_count <= 20:
+                resolved_extra_candidates = 2
+            else:
+                resolved_extra_candidates = 4
+        return min(max(safe_count + resolved_extra_candidates, safe_count), 48)
 
     @staticmethod
     def _generation_token_limit(candidate_count: int) -> int:
@@ -572,6 +825,8 @@ class FlashcardService:
         card_count: int,
         candidate_count: int,
         source_context: list[dict[str, Any]],
+        reasoning_effort: str,
+        max_output_tokens: int,
     ) -> dict[str, Any]:
         from deeptutor.services.llm.structured_responses import generate_structured_response
 
@@ -583,10 +838,10 @@ class FlashcardService:
             base_url=llm_config.base_url,
             default_headers=llm_config.extra_headers,
             pydantic_model=_GeneratedFlashcardDeck,
-            max_output_tokens=self._generation_token_limit(candidate_count),
+            max_output_tokens=max_output_tokens,
             prompt_cache_key=self._prompt_cache_key(source_type=source_type),
             store=False,
-            reasoning_effort=self._reasoning_effort or None,
+            reasoning_effort=reasoning_effort or None,
         )
         elapsed = result.latency_ms / 1000.0
         payload = dict(result.parsed)
@@ -596,7 +851,7 @@ class FlashcardService:
         payload["_diagnostics"] = {
             "api": "responses",
             "model": result.model,
-            "reasoning_effort": self._reasoning_effort or None,
+            "reasoning_effort": reasoning_effort or None,
             "elapsed_seconds": round(elapsed, 3),
             "requested_count": card_count,
             "candidate_count": candidate_count,
@@ -612,6 +867,7 @@ class FlashcardService:
         self._log_generation_matrix(
             api="responses",
             model=llm_config.model,
+            reasoning_effort=reasoning_effort,
             source_type=source_type,
             requested_count=card_count,
             candidate_count=candidate_count,
@@ -632,6 +888,7 @@ class FlashcardService:
         *,
         api: str,
         model: str,
+        reasoning_effort: str,
         source_type: str,
         requested_count: int,
         candidate_count: int,
@@ -652,7 +909,7 @@ class FlashcardService:
                 {
                     "api": api,
                     "model": model,
-                    "reasoning_effort": self._reasoning_effort or None,
+                    "reasoning_effort": reasoning_effort or None,
                     "source_type": source_type,
                     "requested_count": requested_count,
                     "candidate_count": candidate_count,

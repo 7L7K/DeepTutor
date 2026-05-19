@@ -30,6 +30,10 @@ def _json_loads(value: str | None, default: Any) -> Any:
         return default
 
 
+def _flashcard_front_key(value: Any) -> str:
+    return " ".join(str(value or "").strip().lower().split())
+
+
 @dataclass
 class TurnRecord:
     id: str
@@ -1307,6 +1311,170 @@ class SQLiteSessionStore:
 
     async def save_flashcard_deck(self, payload: dict[str, Any]) -> dict[str, Any]:
         return await self._run(self._save_flashcard_deck_sync, payload)
+
+    def _append_flashcard_cards_sync(
+        self,
+        deck_id: str,
+        cards: list[dict[str, Any]],
+        generation_settings: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        now = time.time()
+        if not isinstance(cards, list):
+            cards = []
+        if not isinstance(generation_settings, dict):
+            generation_settings = {}
+
+        with self._connect() as conn:
+            row = conn.execute("SELECT * FROM flashcard_decks WHERE id = ?", (deck_id,)).fetchone()
+            if row is None:
+                raise ValueError(f"Flashcard deck not found: {deck_id}")
+
+            existing_rows = conn.execute(
+                "SELECT * FROM flashcard_cards WHERE deck_id = ? ORDER BY display_order ASC, id ASC",
+                (deck_id,),
+            ).fetchall()
+            existing_ids = {str(card_row["id"] or "") for card_row in existing_rows}
+            existing_fronts = {
+                _flashcard_front_key(card_row["front"])
+                for card_row in existing_rows
+                if _flashcard_front_key(card_row["front"])
+            }
+            next_order = max([int(card_row["display_order"] or 0) for card_row in existing_rows] or [0]) + 1
+
+            for card in cards:
+                if not isinstance(card, dict):
+                    continue
+                front = str(card.get("front") or "").strip()
+                back = str(card.get("back") or "").strip()
+                if not front or not back:
+                    continue
+                card_id = str(card.get("id") or f"{deck_id}_card_{next_order}")
+                front_key = _flashcard_front_key(front)
+                if not card_id or card_id in existing_ids or not front_key or front_key in existing_fronts:
+                    continue
+                conn.execute(
+                    """
+                    INSERT INTO flashcard_cards (
+                        id, deck_id, display_order, front, back, hint, tag, source_ref
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        card_id,
+                        deck_id,
+                        next_order,
+                        front,
+                        back,
+                        str(card.get("hint") or ""),
+                        str(card.get("tag") or ""),
+                        str(card.get("source_ref") or ""),
+                    ),
+                )
+                existing_ids.add(card_id)
+                existing_fronts.add(front_key)
+                next_order += 1
+
+            card_rows = conn.execute(
+                "SELECT * FROM flashcard_cards WHERE deck_id = ? ORDER BY display_order ASC, id ASC",
+                (deck_id,),
+            ).fetchall()
+            merged_settings = _json_loads(row["generation_settings_json"], {})
+            merged_settings.update(generation_settings)
+            requested_count = int(merged_settings.get("requested_count") or len(card_rows))
+            merged_settings["requested_count"] = requested_count
+            merged_settings["ready_count"] = len(card_rows)
+            if "status" not in generation_settings:
+                merged_settings["status"] = "complete" if len(card_rows) >= requested_count else "partial"
+
+            conn.execute(
+                """
+                UPDATE flashcard_decks
+                SET card_count = ?, generation_settings_json = ?, updated_at = ?
+                WHERE id = ?
+                """,
+                (len(card_rows), _json_dumps(merged_settings), now, deck_id),
+            )
+            conn.commit()
+            row = conn.execute("SELECT * FROM flashcard_decks WHERE id = ?", (deck_id,)).fetchone()
+            cards_payload = [self._serialize_flashcard_card(card_row) for card_row in card_rows]
+            summary = self._build_flashcard_summary_sync(
+                conn, deck_id, [item["id"] for item in cards_payload]
+            )
+            latest_session_review = self._get_latest_flashcard_session_review_sync(conn, deck_id)
+        if row is None:
+            raise ValueError(f"Flashcard deck not found: {deck_id}")
+        return self._serialize_flashcard_deck(
+            row,
+            cards=cards_payload,
+            summary=summary,
+            latest_session_review=latest_session_review,
+        )
+
+    async def append_flashcard_cards(
+        self,
+        deck_id: str,
+        cards: list[dict[str, Any]],
+        generation_settings: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        return await self._run(
+            self._append_flashcard_cards_sync,
+            deck_id,
+            cards,
+            generation_settings,
+        )
+
+    def _update_flashcard_generation_settings_sync(
+        self,
+        deck_id: str,
+        generation_settings: dict[str, Any],
+    ) -> dict[str, Any]:
+        now = time.time()
+        if not isinstance(generation_settings, dict):
+            generation_settings = {}
+        with self._connect() as conn:
+            row = conn.execute("SELECT * FROM flashcard_decks WHERE id = ?", (deck_id,)).fetchone()
+            if row is None:
+                raise ValueError(f"Flashcard deck not found: {deck_id}")
+            card_rows = conn.execute(
+                "SELECT * FROM flashcard_cards WHERE deck_id = ? ORDER BY display_order ASC, id ASC",
+                (deck_id,),
+            ).fetchall()
+            merged_settings = _json_loads(row["generation_settings_json"], {})
+            merged_settings.update(generation_settings)
+            merged_settings["ready_count"] = len(card_rows)
+            conn.execute(
+                """
+                UPDATE flashcard_decks
+                SET generation_settings_json = ?, updated_at = ?
+                WHERE id = ?
+                """,
+                (_json_dumps(merged_settings), now, deck_id),
+            )
+            conn.commit()
+            row = conn.execute("SELECT * FROM flashcard_decks WHERE id = ?", (deck_id,)).fetchone()
+            cards_payload = [self._serialize_flashcard_card(card_row) for card_row in card_rows]
+            summary = self._build_flashcard_summary_sync(
+                conn, deck_id, [item["id"] for item in cards_payload]
+            )
+            latest_session_review = self._get_latest_flashcard_session_review_sync(conn, deck_id)
+        if row is None:
+            raise ValueError(f"Flashcard deck not found: {deck_id}")
+        return self._serialize_flashcard_deck(
+            row,
+            cards=cards_payload,
+            summary=summary,
+            latest_session_review=latest_session_review,
+        )
+
+    async def update_flashcard_generation_settings(
+        self,
+        deck_id: str,
+        generation_settings: dict[str, Any],
+    ) -> dict[str, Any]:
+        return await self._run(
+            self._update_flashcard_generation_settings_sync,
+            deck_id,
+            generation_settings,
+        )
 
     def _find_flashcard_deck_by_fingerprint_sync(self, generation_fingerprint: str) -> dict[str, Any] | None:
         if not generation_fingerprint:

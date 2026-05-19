@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import importlib
+import json
 
 import pytest
 
@@ -67,6 +68,53 @@ class _FakeLLM:
         """
 
 
+class _ProgressiveFakeLLM:
+    class _Config:
+        binding = "openai"
+        model = "gpt-5-mini"
+        api_key = "test-key"
+        base_url = "https://api.openai.com/v1"
+        extra_headers = None
+
+    config = _Config()
+
+    def __init__(self) -> None:
+        self.generation_calls = 0
+        self.calls: list[dict[str, object]] = []
+
+    async def complete(self, *args, **kwargs):
+        prompt = str(kwargs.get("prompt") or (args[0] if args else ""))
+        if "completed flashcard study pass" in prompt:
+            return """
+            {
+              "summary": "You reviewed the starter cards and the deck stayed consistent after completion.",
+              "strengths": ["starter recall"],
+              "weak_spots": ["ethics scenarios"],
+              "recommended_next_step": "Review the missed card again after the full deck is ready.",
+              "focus_topics": ["ethics boundaries"]
+            }
+            """
+
+        self.generation_calls += 1
+        self.calls.append(kwargs)
+        if self.generation_calls == 1:
+            card_numbers = [1, 2, 3, 4]
+        else:
+            card_numbers = [2, 5, 6, 7, 8, 9, 10]
+
+        cards = [
+            {
+                "front": f"Progressive ethics card {index}",
+                "back": f"Answer for progressive ethics card {index}.",
+                "hint": "",
+                "tag": "Recall",
+                "source_ref": "",
+            }
+            for index in card_numbers
+        ]
+        return json.dumps({"title": "Progressive Ethics Deck", "cards": cards})
+
+
 class _FakeRAG:
     async def search(self, query: str, kb_name: str, **kwargs):
         return {
@@ -89,6 +137,7 @@ def _build_app() -> FastAPI:
 
 @pytest.fixture
 def service(tmp_path, monkeypatch) -> FlashcardService:
+    monkeypatch.setenv("FLASHCARD_PROGRESSIVE", "false")
     store = SQLiteSessionStore(db_path=tmp_path / "flashcards.db")
     instance = FlashcardService()
     instance._store = store
@@ -100,6 +149,33 @@ def service(tmp_path, monkeypatch) -> FlashcardService:
         lambda: instance,
     )
     return instance
+
+
+def _build_progressive_service(tmp_path, monkeypatch) -> tuple[FlashcardService, list[str]]:
+    monkeypatch.setenv("FLASHCARD_PROGRESSIVE", "true")
+    monkeypatch.setenv("FLASHCARD_STARTER_COUNT", "4")
+    monkeypatch.setenv("FLASHCARD_GENERATION_REASONING_EFFORT", "low")
+    monkeypatch.delenv("FLASHCARD_STARTER_REASONING_EFFORT", raising=False)
+    monkeypatch.delenv("FLASHCARD_STARTER_MAX_OUTPUT_TOKENS", raising=False)
+    store = SQLiteSessionStore(db_path=tmp_path / "flashcards.db")
+    instance = FlashcardService()
+    instance._store = store
+    instance._llm = _ProgressiveFakeLLM()
+    instance._reasoning_effort = FlashcardService._resolve_reasoning_effort(instance._llm.config)
+    instance._starter_reasoning_effort = FlashcardService._resolve_starter_reasoning_effort(
+        instance._llm.config,
+        instance._reasoning_effort,
+    )
+    instance._starter_max_output_tokens = FlashcardService._resolve_starter_max_output_tokens()
+    instance._use_responses = False
+    instance._rag = _FakeRAG()
+    scheduled: list[str] = []
+    instance._schedule_progressive_completion = scheduled.append  # type: ignore[method-assign]
+    monkeypatch.setattr(
+        "deeptutor.api.routers.flashcards.get_flashcard_service",
+        lambda: instance,
+    )
+    return instance, scheduled
 
 
 def test_generate_list_review_and_restart_flashcards(service: FlashcardService) -> None:
@@ -156,6 +232,77 @@ def test_reuses_existing_deck_for_same_fingerprint(service: FlashcardService) ->
         assert second.status_code == 200
         assert second.json()["reused_existing"] is True
         assert second.json()["deck"]["id"] == first.json()["deck"]["id"]
+
+
+def test_generate_endpoint_returns_progressive_starter_deck(tmp_path, monkeypatch) -> None:
+    _service, scheduled = _build_progressive_service(tmp_path, monkeypatch)
+
+    with TestClient(_build_app()) as client:
+        response = client.post(
+            "/api/v1/practice/flashcards/generate",
+            json={
+                "source_type": "topic",
+                "topic": "NCE ethics boundaries",
+                "knowledge_base_names": [],
+                "card_count": 10,
+                "style": "mixed",
+            },
+        )
+
+    assert response.status_code == 200
+    deck = response.json()["deck"]
+    assert response.json()["reused_existing"] is False
+    assert len(deck["cards"]) == 4
+    assert deck["generation_settings"]["status"] == "partial"
+    assert deck["generation_settings"]["requested_count"] == 10
+    assert deck["generation_settings"]["ready_count"] == 4
+    assert scheduled == [deck["id"]]
+    assert isinstance(_service._llm, _ProgressiveFakeLLM)
+    assert _service._llm.calls[0]["reasoning_effort"] == "minimal"
+    assert _service._llm.calls[0]["max_completion_tokens"] == 900
+
+    scheduled.clear()
+    refreshed = asyncio.run(_service.get_deck(deck["id"]))
+    assert refreshed is not None
+    assert refreshed["generation_settings"]["status"] == "partial"
+    assert scheduled == [deck["id"]]
+
+
+def test_progressive_completion_appends_without_duplicates_and_preserves_reviews(tmp_path, monkeypatch) -> None:
+    service, _scheduled = _build_progressive_service(tmp_path, monkeypatch)
+
+    deck, reused_existing = asyncio.run(
+        service.generate_deck(
+            source_type="topic",
+            topic="NCE ethics boundaries",
+            knowledge_base_names=[],
+            card_count=10,
+            style="mixed",
+        )
+    )
+    assert reused_existing is False
+    assert len(deck["cards"]) == 4
+    assert deck["generation_settings"]["status"] == "partial"
+
+    reviewed = asyncio.run(
+        service.record_review(deck_id=deck["id"], card_id=deck["cards"][0]["id"], rating="missed")
+    )
+    assert reviewed["summary"]["counts"]["missed"] == 1
+
+    completed = asyncio.run(service.complete_progressive_deck(deck["id"]))
+    assert completed is not None
+    assert completed["generation_settings"]["status"] == "complete"
+    assert completed["generation_settings"]["requested_count"] == 10
+    assert completed["generation_settings"]["ready_count"] == 10
+    assert len(completed["cards"]) == 10
+    fronts = [card["front"] for card in completed["cards"]]
+    assert len(fronts) == len(set(fronts))
+    assert "Progressive ethics card 2" in fronts
+    assert completed["summary"]["counts"]["missed"] == 1
+    assert completed["summary"]["counts"]["new"] == 9
+    assert isinstance(service._llm, _ProgressiveFakeLLM)
+    assert service._llm.calls[0]["reasoning_effort"] == "minimal"
+    assert service._llm.calls[1]["reasoning_effort"] == "low"
 
 
 def test_complete_pass_and_topic_suggestions(service: FlashcardService) -> None:
