@@ -79,6 +79,16 @@ class Generator(BaseAgent):
 
     MAX_PREVIOUS_QUESTIONS = 20
 
+    def get_reasoning_effort(self) -> str | None:
+        """Resolve the reasoning effort for structured quiz-generation calls."""
+        raw = (
+            os.getenv("PRACTICE_QUIZ_REASONING_EFFORT")
+            or str(self.llm_config.get("reasoning_effort") or "").strip()
+            or os.getenv("LLM_REASONING_EFFORT")
+            or ""
+        )
+        return raw.strip() or None
+
     async def process(
         self,
         template: QuestionTemplate,

@@ -462,6 +462,15 @@ def test_quiz_set_responses_minimal_defers_explanations_without_repair() -> None
     assert quiz_set[0].validation["repaired"] is False
 
 
+def test_generator_reasoning_effort_uses_practice_quiz_env(monkeypatch) -> None:
+    monkeypatch.setenv("PRACTICE_QUIZ_REASONING_EFFORT", "low")
+    monkeypatch.setenv("LLM_REASONING_EFFORT", "high")
+    generator = Generator.__new__(Generator)
+    generator.llm_config = {"reasoning_effort": "medium"}
+
+    assert generator.get_reasoning_effort() == "low"
+
+
 def test_generator_process_quiz_set_repairs_whole_set_before_item_repairs() -> None:
     generator = StubQuizSetGenerator(
         raw_payload={},
