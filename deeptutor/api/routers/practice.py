@@ -27,6 +27,12 @@ class PracticeAttemptCreateRequest(BaseModel):
     time_limit_seconds: float | None = None
     quiz_snapshot: dict[str, Any] = Field(default_factory=dict)
 
+    @field_validator("title", mode="before")
+    @classmethod
+    def _coerce_title(cls, value):
+        title = str(value or "").strip() or "Practice Quiz"
+        return title[:100]
+
     @field_validator("quiz_snapshot", mode="before")
     @classmethod
     def _coerce_snapshot(cls, value):

@@ -65,6 +65,34 @@ def test_create_and_fetch_attempt(store: SQLiteSessionStore) -> None:
         assert fetched["items"] == []
 
 
+def test_create_attempt_truncates_long_title_before_validation(store: SQLiteSessionStore) -> None:
+    session = asyncio.run(store.create_session(title="Source Chat"))
+    long_title = "NBCC NCE professional orientation ethics confidentiality duty to warn " * 3
+
+    with TestClient(_build_app(store)) as client:
+        create_resp = client.post(
+            "/api/v1/practice/attempts",
+            json={
+                "session_id": session["id"],
+                "title": long_title,
+                "topic": "Ethics",
+                "quiz_snapshot": {
+                    "questions": [
+                        {
+                            "question_id": "q1",
+                            "question": "What is the best ethical response?",
+                            "question_type": "choice",
+                            "options": {"A": "Ignore", "B": "Consult"},
+                        }
+                    ]
+                },
+            },
+        )
+
+    assert create_resp.status_code == 200
+    assert len(create_resp.json()["attempt"]["title"]) == 100
+
+
 def test_save_results_and_get_progress(store: SQLiteSessionStore) -> None:
     session = asyncio.run(store.create_session(title="Source Chat"))
     attempt = asyncio.run(
