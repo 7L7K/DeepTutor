@@ -1,7 +1,7 @@
 ## [Unreleased]
 
 ### Fixed
-- practice quiz: reject incomplete or malformed generated quiz payloads before saving attempts, and backfill missing or invalid starter-page questions with single-question fallback generation.
+- practice quiz: reject incomplete or malformed generated quiz payloads before saving attempts, backfill missing or invalid starter-page questions, and synthesize a valid choice fallback if model repair still returns malformed options.
 - practice quiz: allow runtime-only `quiz_submission_context` through deep-question validation and route interactive quiz submissions to the quiz grading agent instead of rejecting them as invalid generation config.
 - deploy: preserve remote `data/` and `outputs/` during rsync deploys so tester sessions, knowledge bases, and generated artifacts are not overwritten by the local checkout.
 - deploy: keep the web-owned `/api/version` route on the Next container in the VPS Caddy config so the live sidebar version check no longer 404s behind the backend `/api/*` proxy.

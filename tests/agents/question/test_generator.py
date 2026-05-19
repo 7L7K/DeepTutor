@@ -279,9 +279,44 @@ def test_generator_process_quiz_set_repairs_duplicate_and_missing_items() -> Non
     assert quiz_set[1].validation["repaired"] is True
     assert quiz_set[1].validation["schema_ok"] is True
 
-    assert quiz_set[2].validation["repaired"] is False
-    assert "missing_question" in quiz_set[2].validation["issues"]
+    assert quiz_set[2].validation["schema_ok"] is True
+    assert quiz_set[2].validation["fallback_generated"] is True
+    assert "missing_question" in quiz_set[2].validation["fallback_from_issues"]
     assert quiz_set[2].metadata["generation_mode"] == "quiz_set"
+
+
+def test_generator_uses_valid_choice_fallback_when_repair_still_malformed() -> None:
+    generator = StubGenerator(repaired_payload={})
+    template = QuestionTemplate(
+        question_id="q_1",
+        concentration="professional orientation and confidentiality",
+        question_type="choice",
+        difficulty="medium",
+    )
+
+    normalized, validation = asyncio.run(
+        generator._validate_and_repair_payload(
+            template=template,
+            payload={
+                "question_type": "choice",
+                "question": "Based on the topic, answer this choice question.",
+                "options": None,
+                "correct_answer": "N/A",
+                "explanation": "N/A",
+            },
+            user_topic="NCE ethics",
+            preference="",
+            history_context="",
+            knowledge_context="",
+            available_tools="(no tools available)",
+        )
+    )
+
+    assert validation["schema_ok"] is True
+    assert validation["fallback_generated"] is True
+    assert normalized["question_type"] == "choice"
+    assert set(normalized["options"]) == {"A", "B", "C", "D"}
+    assert normalized["correct_answer"] in {"A", "B", "C", "D"}
 
 
 def test_quiz_set_generation_uses_chat_path_by_default(monkeypatch) -> None:

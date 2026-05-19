@@ -603,6 +603,13 @@ class Generator(BaseAgent):
                     issues = candidate_issues
                     repaired = True
 
+        fallback_generated = False
+        original_issues = list(issues)
+        if issues and expected_type == "choice":
+            normalized = self._build_choice_fallback_payload(template)
+            issues = []
+            fallback_generated = True
+
         validation = {
             "requested_question_type": expected_type,
             "schema_ok": not issues,
@@ -610,7 +617,51 @@ class Generator(BaseAgent):
             "issues": issues,
             "explanation_deferred": allow_deferred_explanation,
         }
+        if fallback_generated:
+            validation["fallback_generated"] = True
+            validation["fallback_reason"] = "invalid_choice_payload_after_repair"
+            validation["fallback_from_issues"] = original_issues
         return normalized, validation
+
+    @staticmethod
+    def _build_choice_fallback_payload(template: QuestionTemplate) -> dict[str, Any]:
+        concentration = str(template.concentration or "the counseling scenario").strip()
+        difficulty = str(template.difficulty or "practice").strip()
+        answer_key = ("A", "B", "C", "D")[
+            sum(ord(char) for char in (template.question_id or concentration)) % 4
+        ]
+        correct_text = (
+            "Clarify the client's concern, apply the relevant ethical and clinical "
+            "standard, document the rationale, and seek consultation when needed."
+        )
+        distractors = [
+            "Give directive advice before assessing context or client goals.",
+            "Ignore documentation and rely only on memory after the session.",
+            "Prioritize speed over informed consent, client welfare, and consultation.",
+        ]
+        options: dict[str, str] = {}
+        distractor_index = 0
+        for key in ("A", "B", "C", "D"):
+            if key == answer_key:
+                options[key] = correct_text
+            else:
+                options[key] = distractors[distractor_index]
+                distractor_index += 1
+
+        return {
+            "question_type": "choice",
+            "question": (
+                f"A counselor is addressing {concentration}. Which {difficulty} "
+                "response best reflects sound counseling practice?"
+            ),
+            "options": options,
+            "correct_answer": answer_key,
+            "explanation": (
+                f"Option {answer_key} is best because it protects client welfare, "
+                "uses the relevant standard, preserves documentation, and brings in "
+                "consultation when the situation is complex."
+            ),
+        }
 
     async def _repair_payload(
         self,
