@@ -183,6 +183,92 @@ async def test_turn_runtime_replays_events_and_materializes_messages(
 
 
 @pytest.mark.asyncio
+async def test_turn_runtime_preserves_quiz_submission_context(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path,
+) -> None:
+    store = SQLiteSessionStore(tmp_path / "chat_history.db")
+    runtime = TurnRuntimeManager(store)
+    captured: dict[str, object] = {}
+
+    class FakeContextBuilder:
+        def __init__(self, *_args, **_kwargs) -> None:
+            pass
+
+        async def build(self, **_kwargs):
+            return SimpleNamespace(
+                conversation_history=[],
+                conversation_summary="",
+                context_text="",
+                token_count=0,
+                budget=0,
+            )
+
+    class FakeOrchestrator:
+        async def handle(self, context):
+            captured["config_overrides"] = context.config_overrides
+            yield StreamEvent(
+                type=StreamEventType.CONTENT,
+                source="question",
+                stage="generation",
+                content="graded",
+                metadata={"call_kind": "llm_final_response"},
+            )
+            yield StreamEvent(type=StreamEventType.DONE, source="question")
+
+    quiz_context = {
+        "title": "Practice quiz",
+        "allow_incomplete": True,
+        "answers": "1B",
+        "questions": [
+            {
+                "question_id": "q1",
+                "question": "Best ethical response?",
+                "question_type": "choice",
+                "options": {"A": "Ignore", "B": "Consult"},
+            }
+        ],
+    }
+
+    monkeypatch.setattr("deeptutor.services.llm.config.get_llm_config", lambda: SimpleNamespace())
+    monkeypatch.setattr(
+        "deeptutor.services.session.context_builder.ContextBuilder", FakeContextBuilder
+    )
+    monkeypatch.setattr("deeptutor.runtime.orchestrator.ChatOrchestrator", FakeOrchestrator)
+    monkeypatch.setattr(
+        "deeptutor.book.context.build_book_context",
+        lambda *_args, **_kwargs: SimpleNamespace(text="", references=[], warnings=[]),
+    )
+    monkeypatch.setattr(
+        "deeptutor.services.memory.get_memory_service",
+        lambda: SimpleNamespace(
+            build_memory_context=lambda *_args, **_kwargs: "",
+            refresh_from_turn=_noop_refresh,
+        ),
+    )
+    monkeypatch.setattr("deeptutor.services.skill.get_skill_service", _fake_skill_service)
+
+    _session, turn = await runtime.start_turn(
+        {
+            "type": "start_turn",
+            "content": "Practice quiz submission",
+            "capability": "deep_question",
+            "tools": [],
+            "knowledge_bases": [],
+            "attachments": [],
+            "language": "en",
+            "config": {"quiz_submission_context": quiz_context},
+        }
+    )
+
+    async for event in runtime.subscribe_turn(turn["id"], after_seq=0):
+        if event["type"] == "done":
+            break
+
+    assert captured["config_overrides"]["quiz_submission_context"] == quiz_context
+
+
+@pytest.mark.asyncio
 async def test_turn_runtime_persists_llm_selection_in_turn_snapshot(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path,

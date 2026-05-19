@@ -369,6 +369,7 @@ class TurnRuntimeManager:
             "_regenerated_from_message_id",
             "_superseded_turn_id",
             "followup_question_context",
+            "quiz_submission_context",
             "answer_now_context",
         )
         runtime_only_config = {
