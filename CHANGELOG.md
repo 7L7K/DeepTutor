@@ -1,6 +1,7 @@
 ## [Unreleased]
 
 ### Fixed
+- practice generation: split the default fast KB quiz path into a visible first-question structured call plus a parallel remaining batch so the first usable question can stream before the full 10-question set finishes.
 - practice generation: resolve `PRACTICE_QUIZ_REASONING_EFFORT` for structured Responses quiz calls so the minimal KB batch path does not fall back to chat completions.
 - practice quiz: keep the visible generation status on meaningful progress labels instead of replacing it with raw streamed JSON chunks while quiz-set generation is running.
 - practice quiz: show human-readable source-context, first-page, and batch-generation status text instead of the raw `progress` event label during long quiz creation.

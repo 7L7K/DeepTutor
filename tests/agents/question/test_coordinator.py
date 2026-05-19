@@ -234,13 +234,15 @@ def test_kb_backed_quiz_uses_fast_direct_quiz_set_by_default(
     assert FakeIdeaAgent.retrieval_calls == 1
     assert FakeIdeaAgent.calls == 0
     assert FakeGenerator.single_calls == 0
-    assert FakeGenerator.set_calls == 1
-    assert FakeGenerator.set_generation_apis == ["responses_minimal"]
+    assert FakeGenerator.set_calls == 2
+    assert FakeGenerator.set_generation_apis == ["responses_minimal", "responses_minimal"]
     assert summary["trace"]["batches"][0]["batch"] == "fast_kb_quiz_set"
     assert all(
         item["template"]["metadata"]["fast_kb_quiz_set"] is True
         for item in summary["results"]
     )
+    assert summary["results"][0]["qa_pair"]["metadata"]["generation_mode"] == "fast_kb_first"
+    assert summary["results"][1]["qa_pair"]["metadata"]["generation_mode"] == "quiz_set"
     assert [item["qa_pair"]["question_id"] for item in summary["results"]] == [
         "q_1",
         "q_2",
@@ -249,6 +251,42 @@ def test_kb_backed_quiz_uses_fast_direct_quiz_set_by_default(
         "q_5",
         "q_6",
     ]
+
+
+def test_kb_fast_visible_first_can_be_disabled(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    FakeIdeaAgent.calls = 0
+    FakeIdeaAgent.retrieval_calls = 0
+    FakeGenerator.single_calls = 0
+    FakeGenerator.set_calls = 0
+    FakeGenerator.set_generation_apis = []
+    monkeypatch.delenv("PRACTICE_QUIZ_FAST_KB_BATCH", raising=False)
+    monkeypatch.setenv("PRACTICE_QUIZ_FAST_KB_STREAM_FIRST", "false")
+    coordinator = StubCoordinator(
+        tmp_path,
+        kb_name="tester-1__nce-2026",
+        enable_idea_rag=True,
+    )
+
+    summary = asyncio.run(
+        coordinator.generate_from_topic(
+            user_topic="NCE review",
+            preference="use the KB",
+            num_questions=4,
+            difficulty="medium",
+            question_type="choice",
+        )
+    )
+
+    assert summary["success"] is True
+    assert len(summary["results"]) == 4
+    assert FakeIdeaAgent.retrieval_calls == 1
+    assert FakeIdeaAgent.calls == 0
+    assert FakeGenerator.single_calls == 0
+    assert FakeGenerator.set_calls == 1
+    assert FakeGenerator.set_generation_apis == ["responses_minimal"]
 
 
 def test_kb_backed_quiz_generation_streams_first_question_before_set(

@@ -683,6 +683,159 @@ class AgentCoordinator:
             )
             return results
 
+        if self._should_stream_fast_kb_first_question(templates, progressive_count):
+            first_template = templates[0]
+            remaining_templates = templates[1:]
+            first_generator = self._create_generator()
+            remaining_generator = self._create_generator()
+
+            await self._send_ws_update(
+                "progress",
+                {
+                    "stage": "generation",
+                    "status": "building_first_questions",
+                    "current": 0,
+                    "total": total,
+                },
+            )
+
+            async def build_first_question() -> list[QAPair]:
+                try:
+                    return await first_generator.process_quiz_set(
+                        templates=[first_template],
+                        user_topic=user_topic,
+                        preference=preference,
+                        history_context=history_context,
+                        generation_api=self._fast_kb_batch_generation_api(),
+                    )
+                except Exception as exc:
+                    self.logger.warning(f"Fast first-question generation failed: {exc}")
+                    return [
+                        QAPair(
+                            question_id=first_template.question_id,
+                            question=f"[Generation failed] {first_template.concentration}",
+                            correct_answer="N/A",
+                            explanation=str(exc),
+                            question_type=first_template.question_type,
+                            concentration=first_template.concentration,
+                            difficulty=first_template.difficulty,
+                            metadata={"error": str(exc), "generation_mode": "fast_kb_first"},
+                        )
+                    ]
+
+            async def build_remaining_questions() -> list[QAPair]:
+                if not remaining_templates:
+                    return []
+                await self._send_ws_update(
+                    "progress",
+                    {
+                        "stage": "generation",
+                        "status": "building_remaining_set",
+                        "current": 0,
+                        "total": total,
+                        "batch_size": len(remaining_templates),
+                        "batch": 1,
+                        "batches": 1,
+                        "concurrency": 2,
+                    },
+                )
+                try:
+                    return await remaining_generator.process_quiz_set(
+                        templates=remaining_templates,
+                        user_topic=user_topic,
+                        preference=preference,
+                        history_context=history_context,
+                        generation_api=self._fast_kb_batch_generation_api(),
+                    )
+                except Exception as exc:
+                    self.logger.warning(f"Fast remaining quiz-set generation failed: {exc}")
+                    return [
+                        QAPair(
+                            question_id=template.question_id,
+                            question=f"[Generation failed] {template.concentration}",
+                            correct_answer="N/A",
+                            explanation=str(exc),
+                            question_type=template.question_type,
+                            concentration=template.concentration,
+                            difficulty=template.difficulty,
+                            metadata={"error": str(exc), "generation_mode": "fast_kb_remaining"},
+                        )
+                        for template in remaining_templates
+                    ]
+
+            first_task = asyncio.create_task(build_first_question())
+            remaining_task = asyncio.create_task(build_remaining_questions())
+
+            first_pairs = await first_task
+            first_pair = first_pairs[0] if first_pairs else None
+            first_pair = await ensure_valid_pair(
+                1,
+                first_template,
+                first_pair,
+                "missing_or_invalid_fast_first_item",
+            )
+            first_pair.metadata = {
+                **(first_pair.metadata or {}),
+                "generation_mode": "fast_kb_first",
+            }
+            first_result = await emit_result(1, first_template, first_pair)
+            if first_ready_at is None:
+                first_ready_at = time.perf_counter() - started_at
+                self.logger.info(
+                    f"First fast KB quiz question ready in {first_ready_at:.2f}s"
+                )
+            question_text = str(first_pair.question or "").strip()
+            if question_text and first_result["success"]:
+                accepted_questions.append(question_text)
+
+            remaining_pairs = await remaining_task
+            if remaining_templates:
+                await self._send_ws_update(
+                    "progress",
+                    {
+                        "stage": "generation",
+                        "status": "validating_set",
+                        "current": len(results),
+                        "total": total,
+                        "batch_size": len(remaining_templates),
+                        "batch": 1,
+                        "batches": 1,
+                        "concurrency": 2,
+                    },
+                )
+
+            remaining_pairs_by_id = {
+                pair.question_id: pair for pair in remaining_pairs if pair.question_id
+            }
+            for index, template in enumerate(remaining_templates):
+                offset = index + 2
+                qa_pair = remaining_pairs_by_id.get(template.question_id)
+                if qa_pair is None and index < len(remaining_pairs):
+                    candidate = remaining_pairs[index]
+                    if not candidate.question_id or candidate.question_id == template.question_id:
+                        qa_pair = candidate
+                qa_pair = await ensure_valid_pair(
+                    offset,
+                    template,
+                    qa_pair,
+                    "missing_or_invalid_fast_remaining_item",
+                )
+                result = await emit_result(offset, template, qa_pair)
+                question_text = str(qa_pair.question or "").strip()
+                if question_text and result["success"]:
+                    accepted_questions.append(question_text)
+
+            await self._send_ws_update(
+                "progress",
+                {"stage": "complete", "completed": len(results), "total": total},
+            )
+            self.logger.info(
+                f"Fast KB visible-first generation completed: "
+                f"first_ready={first_ready_at or 0.0:.2f}s "
+                f"total={time.perf_counter() - started_at:.2f}s questions={len(results)}"
+            )
+            return results
+
         for idx, template in enumerate(templates[:progressive_count], 1):
             await self._send_ws_update(
                 "progress",
@@ -1074,6 +1227,20 @@ class AgentCoordinator:
         if raw in {"1", "true", "yes", "on", "fast", "batch"}:
             return True
         return self._should_skip_kb_ideation()
+
+    def _should_stream_fast_kb_first_question(
+        self,
+        templates: list[QuestionTemplate],
+        progressive_count: int,
+    ) -> bool:
+        if progressive_count != 0 or len(templates) <= 1:
+            return False
+        if not self._fast_kb_quiz_set_enabled() or not self._is_fast_kb_quiz_set_chunk(templates):
+            return False
+        raw = os.getenv("PRACTICE_QUIZ_FAST_KB_STREAM_FIRST", "").strip().lower()
+        if raw in {"0", "false", "no", "off", "none"}:
+            return False
+        return True
 
     @staticmethod
     def _is_fast_kb_quiz_set_chunk(templates: list[QuestionTemplate]) -> bool:
