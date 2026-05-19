@@ -146,6 +146,54 @@ function buildPracticeSnapshot(
   };
 }
 
+function quizFromPracticeAttempt(attempt: PracticeAttempt): PracticeQuizDefinition | null {
+  const snapshot = attempt.quiz_snapshot;
+  const questions = Array.isArray(snapshot?.questions)
+    ? snapshot.questions.map((question, index) => ({
+        question_id: question.question_id || `practice_q_${index + 1}`,
+        question: question.question,
+        question_type: (question.question_type as QuizQuestion["question_type"]) ?? "written",
+        options: question.options,
+        correct_answer: question.correct_answer ?? "",
+        explanation: question.explanation ?? "",
+        difficulty: question.difficulty,
+        concentration: question.concentration,
+      }))
+    : [];
+  const settings = snapshot?.settings ?? {};
+  const rawExpectedCount =
+    typeof settings.num_questions === "number" ? settings.num_questions : Number(settings.num_questions);
+  const expectedCount = Number.isFinite(rawExpectedCount) && rawExpectedCount > 0
+    ? rawExpectedCount
+    : questions.length;
+  if (getQuizQuestionIntegrityError(questions, expectedCount)) {
+    return null;
+  }
+  return {
+    title: snapshot?.title || attempt.title || "Practice quiz",
+    intro: snapshot?.intro || "Restored from your saved practice attempt.",
+    questions,
+  };
+}
+
+function restoreConfigFromAttempt(
+  current: DeepQuestionFormConfig,
+  attempt: PracticeAttempt,
+): DeepQuestionFormConfig {
+  const settings = attempt.quiz_snapshot?.settings ?? {};
+  return {
+    ...current,
+    mode: settings.mode === "mimic" ? "mimic" : "custom",
+    topic: String(settings.topic ?? attempt.topic ?? current.topic),
+    num_questions: Number(settings.num_questions) || attempt.quiz_snapshot?.questions?.length || current.num_questions,
+    difficulty: String(settings.difficulty ?? current.difficulty),
+    question_type: String(settings.question_type ?? current.question_type),
+    preference: String(settings.preference ?? current.preference ?? ""),
+    paper_path: String(settings.paper_path ?? current.paper_path ?? ""),
+    max_questions: Number(settings.max_questions) || current.max_questions,
+  };
+}
+
 function formatAnswerSummary(index: number, answer: string, question: QuizQuestion): string {
   const cleaned = answer.trim();
   if (!cleaned) return "";
@@ -315,6 +363,7 @@ export default function PracticeWorkspace() {
   const [startedAtMs, setStartedAtMs] = useState<number | null>(null);
   const [currentTimeMs, setCurrentTimeMs] = useState(Date.now());
   const autoSubmittedRef = useRef(false);
+  const restoredAttemptRef = useRef(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -331,9 +380,31 @@ export default function PracticeWorkspace() {
         setProgressRows(progress);
         setRecentAttempts(attempts);
         const defaults = kbs.filter((item) => item.is_default).map((item) => item.name);
+        const restorableAttempt = attempts.find((attempt) => attempt.status === "in_progress");
+        const restoredQuiz = restorableAttempt ? quizFromPracticeAttempt(restorableAttempt) : null;
         setSelectedKnowledgeBases((current) =>
-          current.length > 0 ? current : defaults.length > 0 ? defaults : kbs.slice(0, 1).map((item) => item.name),
+          current.length > 0
+            ? current
+            : restorableAttempt?.knowledge_base
+              ? [restorableAttempt.knowledge_base]
+              : defaults.length > 0 ? defaults : kbs.slice(0, 1).map((item) => item.name),
         );
+        if (restorableAttempt && restoredQuiz && !restoredAttemptRef.current) {
+          restoredAttemptRef.current = true;
+          setQuizConfig((current) => restoreConfigFromAttempt(current, restorableAttempt));
+          setExamMode(restorableAttempt.mode === "exam");
+          const restoredTimerMinutes = restorableAttempt.time_limit_seconds
+            ? Math.max(5, Math.round(restorableAttempt.time_limit_seconds / 60))
+            : Number(restorableAttempt.quiz_snapshot?.settings?.timer_minutes) || 20;
+          setTimerMinutes(restoredTimerMinutes);
+          setActiveQuiz(restoredQuiz);
+          setActiveAttempt(restorableAttempt);
+          setCurrentQuestionIndex(0);
+          setAnswers({});
+          setStartedAtMs(null);
+          setCurrentTimeMs(Date.now());
+          setPhase("taking");
+        }
       } catch (error) {
         if (!cancelled) {
           console.error("Failed to load practice sidebar data", error);

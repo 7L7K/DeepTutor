@@ -1,6 +1,7 @@
 ## [Unreleased]
 
 ### Fixed
+- practice mode: restore the latest valid in-progress quiz after refresh and hide malformed saved attempts from tester-facing recent-attempt lists.
 - practice quiz: reject incomplete or malformed generated quiz payloads before saving attempts, backfill missing or invalid starter-page questions, and synthesize a valid choice fallback if model repair still returns malformed options.
 - practice quiz: allow runtime-only `quiz_submission_context` through deep-question validation and route interactive quiz submissions to the quiz grading agent instead of rejecting them as invalid generation config.
 - deploy: preserve remote `data/` and `outputs/` during rsync deploys so tester sessions, knowledge bases, and generated artifacts are not overwritten by the local checkout.

@@ -5,6 +5,8 @@ export interface PracticeQuizSnapshotQuestion {
   question: string;
   question_type?: string;
   options?: Record<string, string>;
+  correct_answer?: string;
+  explanation?: string;
   difficulty?: string;
   concentration?: string;
 }
@@ -81,10 +83,13 @@ export interface PracticeAttempt {
   session_id: string;
   title?: string;
   topic?: string;
+  knowledge_base?: string;
+  mode?: string;
   source_type?: string;
   source_capability?: string;
   source_session_id?: string | null;
   status: "in_progress" | "submitted" | "timed_out";
+  time_limit_seconds?: number | null;
   started_at: number;
   submitted_at?: number | null;
   duration_seconds?: number | null;

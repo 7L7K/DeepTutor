@@ -14,6 +14,42 @@ from deeptutor.services.session import get_sqlite_session_store
 router = APIRouter()
 
 
+def _is_usable_quiz_snapshot(snapshot: dict[str, Any]) -> bool:
+    questions = snapshot.get("questions")
+    if not isinstance(questions, list) or not questions:
+        return False
+
+    settings = snapshot.get("settings")
+    expected_count = None
+    if isinstance(settings, dict):
+        try:
+            expected_count = int(settings.get("num_questions") or 0)
+        except (TypeError, ValueError):
+            expected_count = None
+    if expected_count and len(questions) != expected_count:
+        return False
+
+    for question in questions:
+        if not isinstance(question, dict):
+            return False
+        if not str(question.get("question") or "").strip():
+            return False
+        question_type = str(question.get("question_type") or "written").strip().lower()
+        correct_answer = str(question.get("correct_answer") or "").strip()
+        if question_type == "choice":
+            options = question.get("options")
+            if not isinstance(options, dict):
+                return False
+            if any(not str(options.get(key) or "").strip() for key in ("A", "B", "C", "D")):
+                return False
+            if correct_answer.upper() not in {"A", "B", "C", "D"}:
+                return False
+        elif not correct_answer:
+            return False
+
+    return True
+
+
 class PracticeAttemptCreateRequest(BaseModel):
     session_id: str | None = None
     source_type: str = "practice"
@@ -97,6 +133,11 @@ async def list_attempts(
         session_id=session_id,
         source_session_id=source_session_id,
     )
+    attempts = [
+        attempt
+        for attempt in attempts
+        if _is_usable_quiz_snapshot(attempt.get("quiz_snapshot") or {})
+    ]
     return {"attempts": attempts}
 
 

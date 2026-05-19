@@ -93,6 +93,62 @@ def test_create_attempt_truncates_long_title_before_validation(store: SQLiteSess
     assert len(create_resp.json()["attempt"]["title"]) == 100
 
 
+def test_list_attempts_hides_malformed_quiz_snapshots(store: SQLiteSessionStore) -> None:
+    session = asyncio.run(store.create_session(title="Source Chat"))
+    valid_attempt = asyncio.run(
+        store.create_quiz_attempt(
+            {
+                "session_id": session["id"],
+                "title": "Valid Practice Quiz",
+                "quiz_snapshot": {
+                    "settings": {"num_questions": 1},
+                    "questions": [
+                        {
+                            "question_id": "q1",
+                            "question": "What is the best ethical response?",
+                            "question_type": "choice",
+                            "options": {
+                                "A": "Ignore it",
+                                "B": "Consult and document",
+                                "C": "Promise secrecy",
+                                "D": "Avoid the topic",
+                            },
+                            "correct_answer": "B",
+                        }
+                    ],
+                },
+            }
+        )
+    )
+    asyncio.run(
+        store.create_quiz_attempt(
+            {
+                "session_id": session["id"],
+                "title": "Malformed Practice Quiz",
+                "quiz_snapshot": {
+                    "settings": {"num_questions": 6},
+                    "questions": [
+                        {
+                            "question_id": "q1",
+                            "question": "Malformed choice item",
+                            "question_type": "choice",
+                            "options": None,
+                            "correct_answer": "N/A",
+                        }
+                    ],
+                },
+            }
+        )
+    )
+
+    with TestClient(_build_app(store)) as client:
+        response = client.get("/api/v1/practice/attempts?limit=10&offset=0")
+
+    assert response.status_code == 200
+    attempts = response.json()["attempts"]
+    assert [attempt["attempt_id"] for attempt in attempts] == [valid_attempt["attempt_id"]]
+
+
 def test_save_results_and_get_progress(store: SQLiteSessionStore) -> None:
     session = asyncio.run(store.create_session(title="Source Chat"))
     attempt = asyncio.run(
