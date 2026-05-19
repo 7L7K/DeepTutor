@@ -284,14 +284,48 @@ def test_flashcard_generation_can_use_responses_path(service: FlashcardService, 
     assert len(deck["cards"]) == 3
     assert calls
     assert calls[0]["source_type"] == "topic"
+    assert calls[0]["candidate_count"] == 10
 
 
-def test_flashcard_generation_defaults_chat_and_low_reasoning_for_openai_gpt5(monkeypatch) -> None:
+def test_flashcard_generation_defaults_responses_and_low_reasoning_for_openai_gpt5(monkeypatch) -> None:
     class Config:
         binding = "openai"
         model = "gpt-5-mini"
+        api_key = "test-key"
 
     monkeypatch.delenv("FLASHCARD_USE_RESPONSES", raising=False)
 
-    assert FlashcardService._resolve_use_responses(Config()) is False
+    assert FlashcardService._resolve_use_responses(Config()) is True
     assert FlashcardService._resolve_reasoning_effort(Config()) == "low"
+
+
+def test_flashcard_generation_does_not_overgenerate_small_decks_by_default(service: FlashcardService, monkeypatch) -> None:
+    monkeypatch.delenv("FLASHCARD_EXTRA_CANDIDATES", raising=False)
+
+    _system_prompt, user_prompt, candidate_count = service._build_generation_prompts(
+        source_type="topic",
+        topic="NCE ethics boundaries",
+        knowledge_base_names=[],
+        card_count=10,
+        style="mixed",
+        source_context=[],
+    )
+
+    assert candidate_count == 10
+    assert "Generate 10 flashcards." in user_prompt
+
+
+def test_flashcard_generation_candidate_overage_can_be_configured(service: FlashcardService, monkeypatch) -> None:
+    monkeypatch.setenv("FLASHCARD_EXTRA_CANDIDATES", "3")
+
+    _system_prompt, user_prompt, candidate_count = service._build_generation_prompts(
+        source_type="topic",
+        topic="NCE ethics boundaries",
+        knowledge_base_names=[],
+        card_count=10,
+        style="mixed",
+        source_context=[],
+    )
+
+    assert candidate_count == 13
+    assert "Generate 13 flashcards." in user_prompt

@@ -416,7 +416,12 @@ class FlashcardService:
         kwargs: dict[str, Any] = {}
         if supports_response_format(llm_config.binding, llm_config.model):
             kwargs["response_format"] = {"type": "json_object"}
-        kwargs.update(get_token_limit_kwargs(llm_config.model, max_tokens=2200))
+        kwargs.update(
+            get_token_limit_kwargs(
+                llm_config.model,
+                max_tokens=self._generation_token_limit(candidate_count),
+            )
+        )
         if self._reasoning_effort:
             kwargs["reasoning_effort"] = self._reasoning_effort
 
@@ -482,7 +487,7 @@ class FlashcardService:
                 )
             context_block = "\n\nGrounding context:\n" + "\n\n---\n\n".join(rendered)
 
-        candidate_count = min(max(card_count + 4, card_count), 48)
+        candidate_count = self._candidate_flashcard_count(card_count)
         user_prompt = (
             f"Generate {candidate_count} flashcards.\n"
             f"Source type: {source_type}\n"
@@ -532,7 +537,30 @@ class FlashcardService:
             return False
         if configured in {"1", "true", "yes", "on"}:
             return True
-        return False
+        binding = str(getattr(llm_config, "binding", "") or "").strip().lower()
+        return binding == "openai" and bool(getattr(llm_config, "api_key", ""))
+
+    @staticmethod
+    def _candidate_flashcard_count(card_count: int) -> int:
+        safe_count = max(1, int(card_count))
+        configured = os.getenv("FLASHCARD_EXTRA_CANDIDATES", "").strip()
+        if configured:
+            try:
+                extra_candidates = int(configured)
+            except ValueError:
+                extra_candidates = 0
+            extra_candidates = max(0, min(extra_candidates, 12))
+        elif safe_count <= 12:
+            extra_candidates = 0
+        elif safe_count <= 20:
+            extra_candidates = 2
+        else:
+            extra_candidates = 4
+        return min(max(safe_count + extra_candidates, safe_count), 48)
+
+    @staticmethod
+    def _generation_token_limit(candidate_count: int) -> int:
+        return min(2200, max(1200, int(candidate_count) * 180))
 
     async def _generate_cards_with_responses(
         self,
@@ -555,7 +583,7 @@ class FlashcardService:
             base_url=llm_config.base_url,
             default_headers=llm_config.extra_headers,
             pydantic_model=_GeneratedFlashcardDeck,
-            max_output_tokens=2200,
+            max_output_tokens=self._generation_token_limit(candidate_count),
             prompt_cache_key=self._prompt_cache_key(source_type=source_type),
             store=False,
             reasoning_effort=self._reasoning_effort or None,

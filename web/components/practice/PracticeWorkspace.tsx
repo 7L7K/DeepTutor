@@ -61,6 +61,195 @@ import {
 const PRACTICE_TOOLS = ["rag", "web_search", "code_execution"];
 
 type PracticePhase = "setup" | "generating" | "taking" | "submitting" | "results";
+type PracticeGenerationStage =
+  | "starting"
+  | "context"
+  | "planning"
+  | "first"
+  | "starter"
+  | "remaining"
+  | "validating"
+  | "saving"
+  | "scoring";
+
+const PRACTICE_GENERATION_STEPS: Array<{ id: PracticeGenerationStage; label: string }> = [
+  { id: "context", label: "Sources" },
+  { id: "planning", label: "Question plan" },
+  { id: "first", label: "First question" },
+  { id: "remaining", label: "Full set" },
+  { id: "saving", label: "Saved attempt" },
+];
+
+const PRACTICE_SCORING_STEPS: Array<{ id: PracticeGenerationStage; label: string }> = [
+  { id: "scoring", label: "Score answers" },
+  { id: "saving", label: "Save results" },
+];
+
+function practiceGenerationStageFromEvent(event: StreamEvent): PracticeGenerationStage | null {
+  const metadata = event.metadata && typeof event.metadata === "object" ? event.metadata : {};
+  const updateType = String(metadata.update_type ?? "");
+  const status = String(metadata.status ?? "");
+  const stage = String(metadata.stage ?? event.stage ?? "");
+
+  if (updateType === "templates_ready") return "planning";
+  if (stage === "ideation" && status === "retrieving_context") return "context";
+  if (stage === "generation" && status === "building_first_questions") return "first";
+  if (stage === "generation" && status === "building_starter_page") return "starter";
+  if (stage === "generation" && status === "building_remaining_set") return "remaining";
+  if (stage === "generation" && status === "validating_set") return "validating";
+  return null;
+}
+
+function practiceGenerationStepIndex(stage: PracticeGenerationStage): number {
+  if (stage === "starting" || stage === "context") return 0;
+  if (stage === "planning") return 1;
+  if (stage === "first" || stage === "starter") return 2;
+  if (stage === "remaining" || stage === "validating") return 3;
+  if (stage === "saving") return 4;
+  return 0;
+}
+
+function practiceGenerationProgressPercent(
+  phase: PracticePhase,
+  stage: PracticeGenerationStage,
+  readyQuestions: number,
+  requestedQuestions: number,
+): number {
+  if (phase === "submitting") {
+    return stage === "saving" ? 76 : 40;
+  }
+  const safeRequested = Math.max(1, requestedQuestions);
+  const readyRatio = Math.min(1, Math.max(0, readyQuestions / safeRequested));
+  if (stage === "starting") return 8;
+  if (stage === "context") return 22;
+  if (stage === "planning") return 36;
+  if (stage === "first") return readyQuestions > 0 ? 54 : 48;
+  if (stage === "starter") return Math.max(58, 50 + readyRatio * 20);
+  if (stage === "remaining") return Math.max(64, Math.min(86, 58 + readyRatio * 28));
+  if (stage === "validating") return 90;
+  if (stage === "saving") return 96;
+  return 12;
+}
+
+function PracticeGenerationStatusPanel({
+  phase,
+  stage,
+  statusText,
+  elapsedSeconds,
+  requestedQuestions,
+  readyQuestions,
+  knowledgeBaseCount,
+  compact = false,
+  t,
+}: {
+  phase: PracticePhase;
+  stage: PracticeGenerationStage;
+  statusText: string;
+  elapsedSeconds: number;
+  requestedQuestions: number;
+  readyQuestions: number;
+  knowledgeBaseCount: number;
+  compact?: boolean;
+  t: (value: string) => string;
+}) {
+  const isSubmitting = phase === "submitting";
+  const steps = isSubmitting ? PRACTICE_SCORING_STEPS : PRACTICE_GENERATION_STEPS;
+  const activeStepIndex = isSubmitting
+    ? stage === "saving" ? 1 : 0
+    : practiceGenerationStepIndex(stage);
+  const progressPercent = practiceGenerationProgressPercent(
+    phase,
+    stage,
+    readyQuestions,
+    requestedQuestions,
+  );
+  const safeRequested = Math.max(1, requestedQuestions);
+  const displayedReadyQuestions = Math.min(Math.max(0, readyQuestions), safeRequested);
+  const fallbackStatus = isSubmitting ? "Scoring your quiz..." : "Generating practice quiz...";
+
+  return (
+    <div className={`rounded-[28px] border border-[var(--border)] bg-[var(--card)] shadow-[0_16px_50px_rgba(15,23,42,0.06)] ${compact ? "p-5" : "p-8"}`}>
+      <div className="flex flex-wrap items-start justify-between gap-5">
+        <div className="min-w-[260px] flex-1">
+          <div className="inline-flex items-center gap-2 rounded-full border border-[var(--border)] bg-[var(--background)] px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.18em] text-[var(--muted-foreground)]">
+            <Loader2 className="animate-spin" size={13} />
+            {t(isSubmitting ? "Scoring" : compact ? "Finishing quiz" : "Building quiz")}
+          </div>
+          <div className={`mt-3 font-semibold tracking-tight text-[var(--foreground)] ${compact ? "text-[20px]" : "text-[24px]"}`}>
+            {t(isSubmitting ? "Scoring your practice set" : compact ? "First question is ready" : "Preparing your practice set")}
+          </div>
+          <div className="mt-2 max-w-[760px] text-[14px] leading-6 text-[var(--muted-foreground)]">
+            {statusText || t(fallbackStatus)}
+          </div>
+        </div>
+
+        <div className="grid min-w-[260px] grid-cols-3 gap-2">
+          <div className="rounded-2xl border border-[var(--border)] bg-[var(--background)] px-3 py-3">
+            <div className="text-[10px] font-semibold uppercase tracking-[0.16em] text-[var(--muted-foreground)]">
+              {t("Elapsed")}
+            </div>
+            <div className="mt-1 text-[18px] font-semibold text-[var(--foreground)]">
+              {formatTimer(elapsedSeconds)}
+            </div>
+          </div>
+          <div className="rounded-2xl border border-[var(--border)] bg-[var(--background)] px-3 py-3">
+            <div className="text-[10px] font-semibold uppercase tracking-[0.16em] text-[var(--muted-foreground)]">
+              {t(isSubmitting ? "Questions" : "Ready")}
+            </div>
+            <div className="mt-1 text-[18px] font-semibold text-[var(--foreground)]">
+              {isSubmitting ? requestedQuestions : `${displayedReadyQuestions}/${safeRequested}`}
+            </div>
+          </div>
+          <div className="rounded-2xl border border-[var(--border)] bg-[var(--background)] px-3 py-3">
+            <div className="text-[10px] font-semibold uppercase tracking-[0.16em] text-[var(--muted-foreground)]">
+              {t("Sources")}
+            </div>
+            <div className="mt-1 text-[18px] font-semibold text-[var(--foreground)]">
+              {knowledgeBaseCount}
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div className="mt-5 h-2 overflow-hidden rounded-full bg-[var(--muted)]">
+        <div
+          className="h-full rounded-full bg-[var(--primary)] transition-[width] duration-500"
+          style={{ width: `${progressPercent}%` }}
+        />
+      </div>
+
+      <div className={`mt-4 grid gap-2 ${isSubmitting ? "md:grid-cols-2" : "md:grid-cols-5"}`}>
+        {steps.map((step, index) => {
+          const done = index < activeStepIndex;
+          const active = index === activeStepIndex;
+          return (
+            <div
+              key={step.id}
+              className={`flex min-h-11 items-center gap-2 rounded-2xl border px-3 py-2 text-[12px] font-medium ${
+                done
+                  ? "border-emerald-500/30 bg-emerald-500/10 text-emerald-700 dark:text-emerald-200"
+                  : active
+                    ? "border-[var(--primary)]/35 bg-[var(--primary)]/10 text-[var(--foreground)]"
+                    : "border-[var(--border)] bg-[var(--background)] text-[var(--muted-foreground)]"
+              }`}
+            >
+              <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full border border-current text-[10px]">
+                {done ? (
+                  <CheckCircle2 size={13} />
+                ) : active ? (
+                  <Loader2 className="animate-spin" size={12} />
+                ) : (
+                  index + 1
+                )}
+              </span>
+              <span>{t(step.label)}</span>
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
 
 interface PracticeQuizDefinition {
   title: string;
@@ -403,6 +592,9 @@ export default function PracticeWorkspace() {
   const [statusText, setStatusText] = useState("");
   const [errorText, setErrorText] = useState("");
   const [startedAtMs, setStartedAtMs] = useState<number | null>(null);
+  const [generationStartedAtMs, setGenerationStartedAtMs] = useState<number | null>(null);
+  const [generationStage, setGenerationStage] = useState<PracticeGenerationStage>("starting");
+  const [generationReadyQuestionCount, setGenerationReadyQuestionCount] = useState(0);
   const [currentTimeMs, setCurrentTimeMs] = useState(Date.now());
   const autoSubmittedRef = useRef(false);
   const restoredAttemptRef = useRef(false);
@@ -468,6 +660,18 @@ export default function PracticeWorkspace() {
     return () => window.clearInterval(timer);
   }, [examMode, phase, startedAtMs]);
 
+  useEffect(() => {
+    const generationIsActive =
+      Boolean(generationStartedAtMs) &&
+      (phase === "generating" || phase === "submitting" || (phase === "taking" && !activeAttempt));
+    if (!generationIsActive) return;
+    setCurrentTimeMs(Date.now());
+    const timer = window.setInterval(() => {
+      setCurrentTimeMs(Date.now());
+    }, 1000);
+    return () => window.clearInterval(timer);
+  }, [activeAttempt, generationStartedAtMs, phase]);
+
   const questionList = useMemo(() => activeQuiz?.questions ?? [], [activeQuiz]);
   const currentQuestion = questionList[currentQuestionIndex] ?? null;
   const answeredCount = useMemo(
@@ -476,6 +680,9 @@ export default function PracticeWorkspace() {
   );
   const timeLimitSeconds = examMode ? timerMinutes * 60 : null;
   const elapsedSeconds = startedAtMs ? Math.max(0, Math.round((currentTimeMs - startedAtMs) / 1000)) : 0;
+  const generationElapsedSeconds = generationStartedAtMs
+    ? Math.max(0, Math.round((currentTimeMs - generationStartedAtMs) / 1000))
+    : 0;
   const remainingSeconds = timeLimitSeconds !== null ? Math.max(0, timeLimitSeconds - elapsedSeconds) : null;
 
   const filteredResultItems = useMemo(() => {
@@ -531,6 +738,9 @@ export default function PracticeWorkspace() {
     setErrorText("");
     setStatusText("Generating practice quiz...");
     setPhase("generating");
+    setGenerationStartedAtMs(Date.now());
+    setGenerationStage("starting");
+    setGenerationReadyQuestionCount(0);
     autoSubmittedRef.current = false;
     setActiveQuiz(null);
     setActiveAttempt(null);
@@ -576,6 +786,8 @@ export default function PracticeWorkspace() {
             if (!streamingQuestionIds.has(streamedQuestion.question_id)) {
               streamingQuestionIds.add(streamedQuestion.question_id);
               streamingQuestions.push(streamedQuestion);
+              setGenerationReadyQuestionCount(streamingQuestions.length);
+              setGenerationStage(streamingQuestions.length === 1 ? "first" : "remaining");
               setActiveQuiz({
                 title: buildPracticeTitle(quizConfig),
                 intro: `${buildPracticeIntro(quizConfig, examMode, timerMinutes)} ${streamingQuestions.length}/${quizConfig.num_questions} ready. You can start now; submit unlocks when the full quiz is saved.`,
@@ -591,6 +803,10 @@ export default function PracticeWorkspace() {
             return;
           }
           if (event.type === "thinking" || event.type === "progress" || event.type === "observation") {
+            const nextStage = practiceGenerationStageFromEvent(event);
+            if (nextStage) {
+              setGenerationStage(nextStage);
+            }
             const nextStatusText = practiceProgressStatusText(event, quizConfig.num_questions);
             if (nextStatusText) {
               setStatusText(nextStatusText);
@@ -630,6 +846,9 @@ export default function PracticeWorkspace() {
       if (!attemptSessionId) {
         throw new Error("Practice quiz generated, but no session id was available for saving the attempt.");
       }
+      setGenerationStage("saving");
+      setGenerationReadyQuestionCount(normalizedQuestions.length);
+      setStatusText("Saving your practice set...");
       const attempt = await createPracticeAttempt({
         session_id: attemptSessionId,
         source_type: "practice",
@@ -649,11 +868,17 @@ export default function PracticeWorkspace() {
       setResultsFilter("wrong");
       setPhase("taking");
       setStatusText("");
+      setGenerationStartedAtMs(null);
+      setGenerationStage("starting");
+      setGenerationReadyQuestionCount(0);
       void refreshProgressPanels();
     } catch (error) {
       console.error("Failed to generate practice quiz", error);
       setErrorText(error instanceof Error ? error.message : "Failed to generate practice quiz.");
       setPhase("setup");
+      setGenerationStartedAtMs(null);
+      setGenerationStage("starting");
+      setGenerationReadyQuestionCount(0);
     }
   }
 
@@ -663,6 +888,9 @@ export default function PracticeWorkspace() {
     setErrorText("");
     setStatusText(timedOut ? "Time is up. Grading your practice set..." : "Grading your practice set...");
     setPhase("submitting");
+    setGenerationStartedAtMs(Date.now());
+    setGenerationStage("scoring");
+    setGenerationReadyQuestionCount(activeQuiz.questions.length);
 
     try {
       const resultEvent = await runPracticeTurn(
@@ -684,6 +912,8 @@ export default function PracticeWorkspace() {
         throw new Error("The grader finished without structured quiz results.");
       }
 
+      setGenerationStage("saving");
+      setStatusText("Saving your results...");
       const savedAttempt = await savePracticeAttemptResults(activeAttempt.id, {
         submitted_at: Date.now() / 1000,
         duration_seconds: startedAtMs ? (Date.now() - startedAtMs) / 1000 : 0,
@@ -695,11 +925,17 @@ export default function PracticeWorkspace() {
       setResultsFilter("wrong");
       setPhase("results");
       setStatusText("");
+      setGenerationStartedAtMs(null);
+      setGenerationStage("starting");
+      setGenerationReadyQuestionCount(0);
       void refreshProgressPanels();
     } catch (error) {
       console.error("Failed to submit practice quiz", error);
       setErrorText(error instanceof Error ? error.message : "Failed to submit practice quiz.");
       setPhase("taking");
+      setGenerationStartedAtMs(null);
+      setGenerationStage("starting");
+      setGenerationReadyQuestionCount(0);
     }
   }, [activeAttempt, activeQuiz, answers, chatState.language, selectedKnowledgeBases, startedAtMs]);
 
@@ -724,6 +960,9 @@ export default function PracticeWorkspace() {
     setAnswers({});
     setCurrentQuestionIndex(0);
     setStartedAtMs(null);
+    setGenerationStartedAtMs(null);
+    setGenerationStage("starting");
+    setGenerationReadyQuestionCount(0);
     setCurrentTimeMs(Date.now());
     setStatusText("");
     setErrorText("");
@@ -767,6 +1006,11 @@ export default function PracticeWorkspace() {
       ),
     [activeIntent, examMode, quizConfig, selectedKnowledgeBases.length, timerMinutes],
   );
+  const requestedQuestionCount = quizConfig.mode === "mimic" ? quizConfig.max_questions : quizConfig.num_questions;
+  const showPracticeGenerationPanel =
+    phase === "generating" ||
+    phase === "submitting" ||
+    (phase === "taking" && Boolean(activeQuiz) && !activeAttempt && Boolean(statusText));
 
   return (
     <div className="h-full overflow-y-auto bg-[radial-gradient(circle_at_top_left,rgba(67,56,202,0.08),transparent_28%),radial-gradient(circle_at_top_right,rgba(14,165,233,0.08),transparent_22%),var(--background)]">
@@ -829,13 +1073,18 @@ export default function PracticeWorkspace() {
             </div>
           ) : null}
 
-          {(phase === "generating" || phase === "submitting") ? (
-            <div className="rounded-[28px] border border-[var(--border)] bg-[var(--card)] p-8">
-              <div className="flex items-center gap-3 text-[14px] text-[var(--muted-foreground)]">
-                <Loader2 className="animate-spin" size={18} />
-                <span>{statusText || (phase === "generating" ? t("Generating practice quiz...") : t("Scoring your quiz..."))}</span>
-              </div>
-            </div>
+          {showPracticeGenerationPanel ? (
+            <PracticeGenerationStatusPanel
+              phase={phase}
+              stage={generationStage}
+              statusText={statusText}
+              elapsedSeconds={generationElapsedSeconds}
+              requestedQuestions={requestedQuestionCount}
+              readyQuestions={generationReadyQuestionCount}
+              knowledgeBaseCount={selectedKnowledgeBases.length}
+              compact={phase === "taking"}
+              t={t}
+            />
           ) : null}
 
           {phase === "setup" ? (

@@ -9,6 +9,7 @@ import {
   BookOpen,
   BrainCircuit,
   CheckCircle2,
+  Loader2,
   RotateCcw,
   Shuffle,
   XCircle,
@@ -583,8 +584,8 @@ export default function FlashcardsWorkspace() {
                     disabled={isWorking || !topic.trim() || (sourceType === "knowledge" && selectedKnowledgeBases.length === 0)}
                     className="inline-flex w-full items-center justify-center gap-2 rounded-2xl bg-[var(--primary)] px-4 py-3 text-[14px] font-semibold text-white transition-opacity disabled:opacity-40"
                   >
-                    <BrainCircuit size={16} />
-                    {t("Build starter deck")}
+                    {isWorking ? <Loader2 className="animate-spin" size={16} /> : <BrainCircuit size={16} />}
+                    {t(isWorking ? "Building deck..." : "Build starter deck")}
                   </button>
                 </div>
               </div>

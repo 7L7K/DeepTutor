@@ -49,6 +49,7 @@
 - web chat: add tutor action chips under coaching replies so learners can tap `Quiz me`, `Explain simpler`, `Make flashcards`, or `Review weak spots` without retyping follow-up prompts.
 
 ### Changed
+- practice mode: replace the quiz-generation spinner with a stage-aware waiting panel that shows elapsed time, ready question count, sources, and save progress while the full attempt is still finalizing.
 - practice generation: run the fast KB-backed quiz batch through the minimal Responses starter profile by default so 6-10 question quizzes do not wait on full explanations before becoming usable.
 - practice generation: default KB-backed Practice quizzes to a fast grounded quiz-set batch so 6-10 question quizzes avoid the serial first-question plus starter-page warmup path; set `PRACTICE_QUIZ_FAST_KB_BATCH=false` to test the old warmup flow.
 - practice generation: switch the benchmark-winning starter-page flag to a minimal Responses structured-output profile that defers explanations, keeping chat as the fallback and background/full exam generation on the existing path.
