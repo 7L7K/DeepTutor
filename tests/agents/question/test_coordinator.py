@@ -60,10 +60,35 @@ class FakeGenerator:
     max_active_set_calls = 0
     set_delay_seconds = 0.0
     set_generation_apis: list[str | None] = []
+    invalid_set_question_ids: set[str] = set()
+    omit_set_question_ids: set[str] = set()
+    invalid_single_once_question_ids: set[str] = set()
+    invalid_single_counts: dict[str, int] = {}
 
     async def process(self, **kwargs):
         type(self).single_calls += 1
         template = kwargs["template"]
+        if (
+            template.question_id in type(self).invalid_single_once_question_ids
+            and type(self).invalid_single_counts.get(template.question_id, 0) == 0
+        ):
+            type(self).invalid_single_counts[template.question_id] = 1
+            return QAPair(
+                question_id=template.question_id,
+                question=f"Invalid single question for {template.concentration}",
+                correct_answer="N/A",
+                explanation="",
+                question_type=template.question_type,
+                options=None,
+                concentration=template.concentration,
+                difficulty=template.difficulty,
+                validation={
+                    "schema_ok": False,
+                    "repaired": False,
+                    "issues": ["choice_missing_options"],
+                },
+                metadata={"generation_mode": "progressive_single"},
+            )
         return QAPair(
             question_id=template.question_id,
             question=f"Single question for {template.concentration}",
@@ -88,21 +113,41 @@ class FakeGenerator:
         try:
             if type(self).set_delay_seconds:
                 await asyncio.sleep(type(self).set_delay_seconds)
-            return [
-                QAPair(
-                    question_id=template.question_id,
-                    question=f"Set question for {template.concentration}",
-                    correct_answer="A",
-                    explanation="set",
-                    question_type=template.question_type,
-                    options={"A": "Correct", "B": "Wrong", "C": "Wrong", "D": "Wrong"},
-                    concentration=template.concentration,
-                    difficulty=template.difficulty,
-                    validation={"schema_ok": True, "repaired": False, "issues": []},
-                    metadata={"generation_mode": "quiz_set"},
+            pairs: list[QAPair] = []
+            for template in kwargs["templates"]:
+                if template.question_id in type(self).omit_set_question_ids:
+                    continue
+                if template.question_id in type(self).invalid_set_question_ids:
+                    pairs.append(
+                        QAPair(
+                            question_id=template.question_id,
+                            question=f"Invalid question for {template.concentration}",
+                            correct_answer="N/A",
+                            explanation="",
+                            question_type=template.question_type,
+                            options=None,
+                            concentration=template.concentration,
+                            difficulty=template.difficulty,
+                            validation={},
+                            metadata={"generation_mode": "quiz_set"},
+                        )
+                    )
+                    continue
+                pairs.append(
+                    QAPair(
+                        question_id=template.question_id,
+                        question=f"Set question for {template.concentration}",
+                        correct_answer="A",
+                        explanation="set",
+                        question_type=template.question_type,
+                        options={"A": "Correct", "B": "Wrong", "C": "Wrong", "D": "Wrong"},
+                        concentration=template.concentration,
+                        difficulty=template.difficulty,
+                        validation={"schema_ok": True, "repaired": False, "issues": []},
+                        metadata={"generation_mode": "quiz_set"},
+                    )
                 )
-                for template in kwargs["templates"]
-            ]
+            return pairs
         finally:
             type(self).active_set_calls -= 1
 
@@ -217,6 +262,41 @@ def test_kb_backed_quiz_streams_direct_grounded_first_question_before_ideation(t
     assert summary["results"][1]["qa_pair"]["metadata"]["generation_mode"] == "starter_page"
 
 
+def test_kb_backed_quiz_retries_invalid_direct_first_question(tmp_path: Path) -> None:
+    FakeIdeaAgent.calls = 0
+    FakeIdeaAgent.retrieval_calls = 0
+    FakeGenerator.single_calls = 0
+    FakeGenerator.set_calls = 0
+    FakeGenerator.invalid_single_once_question_ids = {"q_1"}
+    FakeGenerator.invalid_single_counts = {}
+    coordinator = StubCoordinator(
+        tmp_path,
+        kb_name="tester-1__nce-2026",
+        enable_idea_rag=True,
+    )
+
+    try:
+        summary = asyncio.run(
+            coordinator.generate_from_topic(
+                user_topic="NCE review",
+                preference="use the KB",
+                num_questions=2,
+                difficulty="medium",
+                question_type="choice",
+            )
+        )
+    finally:
+        FakeGenerator.invalid_single_once_question_ids = set()
+        FakeGenerator.invalid_single_counts = {}
+
+    assert summary["success"] is True
+    assert summary["completed"] == 2
+    assert summary["failed"] == 0
+    assert FakeGenerator.single_calls == 2
+    assert summary["results"][0]["qa_pair"]["metadata"]["generation_mode"] == "direct_kb_first_retry"
+    assert summary["results"][0]["qa_pair"]["validation"]["schema_ok"] is True
+
+
 def test_kb_backed_quiz_streams_first_five_questions_as_starter_page(
     tmp_path: Path,
     monkeypatch,
@@ -308,6 +388,89 @@ def test_kb_starter_page_can_use_responses_while_background_stays_chat(
         "q_5",
         "q_6",
     ]
+
+
+def test_kb_starter_page_missing_item_falls_back_to_single_generation(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    FakeIdeaAgent.calls = 0
+    FakeIdeaAgent.retrieval_calls = 0
+    FakeGenerator.single_calls = 0
+    FakeGenerator.set_calls = 0
+    FakeGenerator.omit_set_question_ids = {"q_3"}
+    FakeGenerator.invalid_set_question_ids = set()
+    monkeypatch.setenv("PRACTICE_STARTER_PAGE_API", "chat")
+    coordinator = StubCoordinator(
+        tmp_path,
+        kb_name="tester-1__nce-2026",
+        enable_idea_rag=True,
+    )
+
+    try:
+        summary = asyncio.run(
+            coordinator.generate_from_topic(
+                user_topic="NCE review",
+                preference="use the KB",
+                num_questions=6,
+                difficulty="medium",
+                question_type="choice",
+            )
+        )
+    finally:
+        FakeGenerator.omit_set_question_ids = set()
+
+    assert summary["success"] is True
+    assert summary["completed"] == 6
+    assert summary["failed"] == 0
+    assert FakeGenerator.single_calls == 2
+    assert [item["qa_pair"]["question_id"] for item in summary["results"]] == [
+        "q_1",
+        "q_2",
+        "q_3",
+        "q_4",
+        "q_5",
+        "q_6",
+    ]
+    assert summary["results"][2]["qa_pair"]["metadata"]["generation_mode"] == "single_fallback"
+
+
+def test_kb_starter_page_invalid_item_falls_back_to_single_generation(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    FakeIdeaAgent.calls = 0
+    FakeIdeaAgent.retrieval_calls = 0
+    FakeGenerator.single_calls = 0
+    FakeGenerator.set_calls = 0
+    FakeGenerator.omit_set_question_ids = set()
+    FakeGenerator.invalid_set_question_ids = {"q_4"}
+    monkeypatch.setenv("PRACTICE_STARTER_PAGE_API", "chat")
+    coordinator = StubCoordinator(
+        tmp_path,
+        kb_name="tester-1__nce-2026",
+        enable_idea_rag=True,
+    )
+
+    try:
+        summary = asyncio.run(
+            coordinator.generate_from_topic(
+                user_topic="NCE review",
+                preference="use the KB",
+                num_questions=6,
+                difficulty="medium",
+                question_type="choice",
+            )
+        )
+    finally:
+        FakeGenerator.invalid_set_question_ids = set()
+
+    assert summary["success"] is True
+    assert summary["completed"] == 6
+    assert summary["failed"] == 0
+    assert FakeGenerator.single_calls == 2
+    assert summary["results"][3]["qa_pair"]["question_id"] == "q_4"
+    assert summary["results"][3]["qa_pair"]["metadata"]["generation_mode"] == "single_fallback"
 
 def test_remaining_quiz_generation_runs_in_configured_chunks(tmp_path: Path, monkeypatch) -> None:
     FakeIdeaAgent.calls = 0

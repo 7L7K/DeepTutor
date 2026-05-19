@@ -6,7 +6,7 @@ import {
   normalizeQuizQuestionType,
   resolveChoiceAnswerKey,
 } from "../lib/quiz-question-type";
-import { extractQuizQuestions } from "../lib/quiz-types";
+import { extractQuizQuestions, getQuizQuestionIntegrityError } from "../lib/quiz-types";
 
 test("normalizeQuizQuestionType maps legacy choice aliases to choice", () => {
   assert.equal(normalizeQuizQuestionType("choice"), "choice");
@@ -55,4 +55,53 @@ test("extractQuizQuestions normalizes legacy question types from payloads", () =
 
   assert.ok(questions);
   assert.equal(questions?.[0]?.question_type, "choice");
+});
+
+test("getQuizQuestionIntegrityError rejects incomplete practice quiz results", () => {
+  const questions = extractQuizQuestions({
+    summary: {
+      results: [
+        {
+          success: false,
+          qa_pair: {
+            question_id: "q_1",
+            question: "Pick the best answer.",
+            question_type: "choice",
+            options: null,
+            correct_answer: "N/A",
+            explanation: "N/A",
+          },
+        },
+      ],
+    },
+  });
+
+  assert.ok(questions);
+  assert.equal(
+    getQuizQuestionIntegrityError(questions, 6),
+    "Expected 6 questions, but received 1.",
+  );
+  assert.equal(
+    getQuizQuestionIntegrityError(questions),
+    "Question 1 is missing choice option A.",
+  );
+});
+
+test("getQuizQuestionIntegrityError accepts valid choice questions", () => {
+  assert.equal(
+    getQuizQuestionIntegrityError(
+      [
+        {
+          question_id: "q_1",
+          question: "Pick the best answer.",
+          question_type: "choice",
+          options: { A: "One", B: "Two", C: "Three", D: "Four" },
+          correct_answer: "B",
+          explanation: "",
+        },
+      ],
+      1,
+    ),
+    null,
+  );
 });

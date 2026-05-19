@@ -239,6 +239,21 @@ class AgentCoordinator:
                 previous_questions=[],
                 generation_mode="direct_kb_first",
             )
+            if not first_result["success"]:
+                self.logger.warning(
+                    "Direct KB first question was invalid; retrying once before "
+                    "continuing practice quiz generation"
+                )
+                first_result = await self._generate_one_question_result(
+                    generator=generator,
+                    idx=1,
+                    template=first_template,
+                    user_topic=user_topic,
+                    preference=preference,
+                    history_context=history_context,
+                    previous_questions=[],
+                    generation_mode="direct_kb_first_retry",
+                )
             early_results.append(first_result)
             templates.append(first_template)
             existing_concentrations.append(first_template.concentration)
@@ -464,10 +479,66 @@ class AgentCoordinator:
             idx: int,
             template: QuestionTemplate,
             qa_pair: QAPair,
-        ) -> None:
+        ) -> dict[str, Any]:
             result = self._build_question_result(template, qa_pair)
             results.append(result)
             await self._emit_question_result(idx, template, qa_pair, result["success"])
+            return result
+
+        async def generate_single_fallback(
+            idx: int,
+            template: QuestionTemplate,
+            reason: str,
+        ) -> QAPair:
+            try:
+                qa_pair = await generator.process(
+                    template=template,
+                    user_topic=user_topic,
+                    preference=preference,
+                    history_context=history_context,
+                    previous_questions=accepted_questions,
+                )
+                qa_pair.metadata = {
+                    **(qa_pair.metadata or {}),
+                    "generation_mode": "single_fallback",
+                    "fallback_reason": reason,
+                }
+                return qa_pair
+            except Exception as exc:
+                self.logger.warning(
+                    f"Single-question fallback failed for {template.question_id}: {exc}"
+                )
+                return QAPair(
+                    question_id=template.question_id,
+                    question=f"[Generation failed] {template.concentration}",
+                    correct_answer="N/A",
+                    explanation=str(exc),
+                    question_type=template.question_type,
+                    concentration=template.concentration,
+                    difficulty=template.difficulty,
+                    metadata={"error": str(exc), "generation_mode": "single_fallback"},
+                )
+
+        async def ensure_valid_pair(
+            idx: int,
+            template: QuestionTemplate,
+            qa_pair: QAPair | None,
+            reason: str,
+        ) -> QAPair:
+            if qa_pair is not None and self._is_valid_qa_pair(qa_pair):
+                return qa_pair
+            if qa_pair is None:
+                self.logger.warning(
+                    f"Quiz set generation omitted {template.question_id}; "
+                    "falling back to single-question generation"
+                )
+            else:
+                self.logger.warning(
+                    f"Quiz set generation returned invalid {template.question_id}; "
+                    f"issues={(qa_pair.validation or {}).get('issues', [])}; "
+                    "falling back to single-question generation"
+                )
+            return await generate_single_fallback(idx, template, reason)
 
         accepted_questions: list[str] = []
         started_at = time.perf_counter()
@@ -572,7 +643,7 @@ class AgentCoordinator:
                 )
 
             question_text = str(qa_pair.question or "").strip()
-            if question_text and not (qa_pair.metadata or {}).get("error"):
+            if question_text and self._is_valid_qa_pair(qa_pair):
                 accepted_questions.append(question_text)
             if first_ready_at is None:
                 first_ready_at = time.perf_counter() - started_at
@@ -634,17 +705,30 @@ class AgentCoordinator:
                     for template in starter_templates
                 ]
 
-            for offset, (template, qa_pair) in enumerate(
-                zip(starter_templates, starter_pairs, strict=False),
-                progressive_count + 1,
-            ):
-                qa_pair.metadata = {
-                    **(qa_pair.metadata or {}),
-                    "generation_mode": "starter_page",
-                }
-                await emit_result(offset, template, qa_pair)
+            starter_pairs_by_id = {
+                pair.question_id: pair for pair in starter_pairs if pair.question_id
+            }
+            for index, template in enumerate(starter_templates):
+                offset = progressive_count + index + 1
+                qa_pair = starter_pairs_by_id.get(template.question_id)
+                if qa_pair is None and index < len(starter_pairs):
+                    candidate = starter_pairs[index]
+                    if not candidate.question_id or candidate.question_id == template.question_id:
+                        qa_pair = candidate
+                if qa_pair is not None:
+                    qa_pair.metadata = {
+                        **(qa_pair.metadata or {}),
+                        "generation_mode": "starter_page",
+                    }
+                qa_pair = await ensure_valid_pair(
+                    offset,
+                    template,
+                    qa_pair,
+                    "missing_or_invalid_starter_page_item",
+                )
+                result = await emit_result(offset, template, qa_pair)
                 question_text = str(qa_pair.question or "").strip()
-                if question_text and not (qa_pair.metadata or {}).get("error"):
+                if question_text and result["success"]:
                     accepted_questions.append(question_text)
 
             warmup_count = starter_page_count
@@ -752,13 +836,25 @@ class AgentCoordinator:
                             "concurrency": concurrency,
                         },
                     )
-                    for offset, (template, qa_pair) in enumerate(
-                        zip(chunk, qa_pairs, strict=False),
-                        remaining_start_index + chunk_start + 1,
-                    ):
-                        await emit_result(offset, template, qa_pair)
+                    qa_pairs_by_id = {
+                        pair.question_id: pair for pair in qa_pairs if pair.question_id
+                    }
+                    for index, template in enumerate(chunk):
+                        offset = remaining_start_index + chunk_start + index + 1
+                        qa_pair = qa_pairs_by_id.get(template.question_id)
+                        if qa_pair is None and index < len(qa_pairs):
+                            candidate = qa_pairs[index]
+                            if not candidate.question_id or candidate.question_id == template.question_id:
+                                qa_pair = candidate
+                        qa_pair = await ensure_valid_pair(
+                            offset,
+                            template,
+                            qa_pair,
+                            "missing_or_invalid_remaining_batch_item",
+                        )
+                        result = await emit_result(offset, template, qa_pair)
                         question_text = str(qa_pair.question or "").strip()
-                        if question_text and not (qa_pair.metadata or {}).get("error"):
+                        if question_text and result["success"]:
                             accepted_questions.append(question_text)
 
                     next_chunk_to_emit += 1
@@ -814,13 +910,33 @@ class AgentCoordinator:
         return result
 
     @staticmethod
+    def _is_valid_qa_pair(qa_pair: QAPair) -> bool:
+        if (qa_pair.metadata or {}).get("error"):
+            return False
+        if (qa_pair.validation or {}).get("schema_ok") is False:
+            return False
+        if not str(qa_pair.question or "").strip():
+            return False
+
+        answer = str(qa_pair.correct_answer or "").strip()
+        if not answer:
+            return False
+
+        if str(qa_pair.question_type or "").strip().lower() == "choice":
+            options = qa_pair.options if isinstance(qa_pair.options, dict) else {}
+            if any(not str(options.get(key) or "").strip() for key in ("A", "B", "C", "D")):
+                return False
+            if answer.upper() not in {"A", "B", "C", "D"}:
+                return False
+
+        return True
+
+    @staticmethod
     def _build_question_result(
         template: QuestionTemplate,
         qa_pair: QAPair,
     ) -> dict[str, Any]:
-        success = not bool((qa_pair.metadata or {}).get("error")) and bool(
-            (qa_pair.validation or {}).get("schema_ok", True)
-        )
+        success = AgentCoordinator._is_valid_qa_pair(qa_pair)
         return {
             "template": template.__dict__,
             "qa_pair": qa_pair.__dict__,
@@ -1132,14 +1248,17 @@ class AgentCoordinator:
         trace: dict[str, Any],
     ) -> dict[str, Any]:
         completed = sum(1 for item in qa_pairs if item.get("success"))
-        failed = len(qa_pairs) - completed
+        invalid = len(qa_pairs) - completed
+        missing = max(0, requested - len(qa_pairs))
+        failed = invalid + missing
         summary = {
-            "success": completed > 0 and failed == 0,
+            "success": completed == requested and failed == 0,
             "source": source,
             "requested": requested,
             "template_count": len(templates),
             "completed": completed,
             "failed": failed,
+            "missing": missing,
             "templates": [t.__dict__ for t in templates],
             "results": qa_pairs,
             "trace": trace,

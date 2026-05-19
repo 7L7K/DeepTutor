@@ -60,6 +60,43 @@ export interface ParsedChatQuiz {
   questions: QuizQuestion[];
 }
 
+const CHOICE_OPTION_KEYS = ["A", "B", "C", "D"] as const;
+
+export function getQuizQuestionIntegrityError(
+  questions: QuizQuestion[],
+  expectedCount?: number,
+): string | null {
+  if (expectedCount !== undefined && questions.length !== expectedCount) {
+    return `Expected ${expectedCount} questions, but received ${questions.length}.`;
+  }
+
+  for (const [index, question] of questions.entries()) {
+    const label = `Question ${index + 1}`;
+    if (!question.question.trim()) {
+      return `${label} is missing a question stem.`;
+    }
+    if (question.question_type === "choice") {
+      const options = question.options ?? {};
+      const missingOption = CHOICE_OPTION_KEYS.find((key) => !options[key]?.trim());
+      if (missingOption) {
+        return `${label} is missing choice option ${missingOption}.`;
+      }
+      const answerKey = question.correct_answer.trim().toUpperCase();
+      if (!CHOICE_OPTION_KEYS.includes(answerKey as (typeof CHOICE_OPTION_KEYS)[number])) {
+        return `${label} is missing a valid correct answer key.`;
+      }
+    } else if (!question.correct_answer.trim()) {
+      return `${label} is missing a reference answer.`;
+    }
+  }
+
+  return null;
+}
+
+export function isQuizQuestionUsable(question: QuizQuestion): boolean {
+  return getQuizQuestionIntegrityError([question]) === null;
+}
+
 /**
  * Extract QuizQuestion[] from the raw `result` event metadata returned by
  * the deep_question capability.

@@ -36,6 +36,8 @@ import {
   DEFAULT_QUIZ_CONFIG,
   buildQuizWSConfig,
   extractQuizQuestions,
+  getQuizQuestionIntegrityError,
+  isQuizQuestionUsable,
   type DeepQuestionFormConfig,
   type QuizQuestion,
 } from "@/lib/quiz-types";
@@ -99,7 +101,7 @@ function quizQuestionFromStreamEvent(event: StreamEvent): QuizQuestion | null {
       : undefined;
   const payload = directPayload ?? metadataPayload;
   if (!payload || typeof payload !== "object" || !payload.question) return null;
-  return {
+  const question: QuizQuestion = {
     question_id: String(payload.question_id ?? `practice_q_${Date.now()}`),
     question: String(payload.question ?? ""),
     question_type: (payload.question_type as QuizQuestion["question_type"]) ?? "written",
@@ -116,6 +118,7 @@ function quizQuestionFromStreamEvent(event: StreamEvent): QuizQuestion | null {
         ? String(payload.metadata.knowledge_context)
         : undefined,
   };
+  return isQuizQuestionUsable(question) ? question : null;
 }
 
 function buildPracticeSnapshot(
@@ -483,6 +486,15 @@ export default function PracticeWorkspace() {
       const parsedQuestions = extractQuizQuestions(resultEvent.metadata);
       if (!parsedQuestions || parsedQuestions.length === 0) {
         throw new Error("The quiz generator finished without usable questions.");
+      }
+      const expectedQuestionCount =
+        quizConfig.mode === "mimic" ? quizConfig.max_questions : quizConfig.num_questions;
+      const integrityError = getQuizQuestionIntegrityError(
+        parsedQuestions,
+        expectedQuestionCount,
+      );
+      if (integrityError) {
+        throw new Error(`The quiz generator returned an incomplete quiz. ${integrityError}`);
       }
       const normalizedQuestions = parsedQuestions.map((question, index) => ({
         ...question,
