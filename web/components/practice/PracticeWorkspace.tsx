@@ -152,6 +152,9 @@ function practiceProgressStatusText(event: StreamEvent, requestedQuestions: numb
   if (stage === "generation" && status === "validating_set") {
     return "Checking quiz quality...";
   }
+  if (event.type === "thinking" && stage === "generation") {
+    return null;
+  }
 
   const content = String(event.content ?? "").trim();
   if (content && content !== "progress") {
@@ -588,9 +591,10 @@ export default function PracticeWorkspace() {
             return;
           }
           if (event.type === "thinking" || event.type === "progress" || event.type === "observation") {
-            setStatusText(
-              practiceProgressStatusText(event, quizConfig.num_questions) || "Generating practice quiz...",
-            );
+            const nextStatusText = practiceProgressStatusText(event, quizConfig.num_questions);
+            if (nextStatusText) {
+              setStatusText(nextStatusText);
+            }
           }
         },
       );

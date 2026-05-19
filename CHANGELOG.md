@@ -1,6 +1,7 @@
 ## [Unreleased]
 
 ### Fixed
+- practice quiz: keep the visible generation status on meaningful progress labels instead of replacing it with raw streamed JSON chunks while quiz-set generation is running.
 - practice quiz: show human-readable source-context, first-page, and batch-generation status text instead of the raw `progress` event label during long quiz creation.
 - quiz grading: preserve the runtime-only `quiz_submission_context` through turn validation so Practice submissions route to the grading agent instead of starting a new quiz.
 - llm: translate Chat Completions `response_format` into Responses API `text.format` so GPT-5 quiz generation and grading no longer fail before reaching the model.
@@ -46,6 +47,7 @@
 - web chat: add tutor action chips under coaching replies so learners can tap `Quiz me`, `Explain simpler`, `Make flashcards`, or `Review weak spots` without retyping follow-up prompts.
 
 ### Changed
+- practice generation: run the fast KB-backed quiz batch through the minimal Responses starter profile by default so 6-10 question quizzes do not wait on full explanations before becoming usable.
 - practice generation: default KB-backed Practice quizzes to a fast grounded quiz-set batch so 6-10 question quizzes avoid the serial first-question plus starter-page warmup path; set `PRACTICE_QUIZ_FAST_KB_BATCH=false` to test the old warmup flow.
 - practice generation: switch the benchmark-winning starter-page flag to a minimal Responses structured-output profile that defers explanations, keeping chat as the fallback and background/full exam generation on the existing path.
 - practice generation: add a shared Responses structured-output adapter and a benchmark CLI for comparing chat vs Responses on starter quizzes, background batches, full exams, and flashcard decks while keeping chat as the default quiz starter fallback path.

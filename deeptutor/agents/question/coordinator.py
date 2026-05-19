@@ -26,6 +26,7 @@ from deeptutor.services.path_service import get_path_service
 
 DEFAULT_KB_PROGRESSIVE_QUIZ_FIRST_BATCH = 1
 DEFAULT_KB_STARTER_PAGE_SIZE = 5
+DEFAULT_FAST_KB_BATCH_API = "responses_minimal"
 IDEA_BATCH_SIZE = 10
 DEFAULT_REMAINING_QUIZ_BATCH_SIZE = 10
 DEFAULT_REMAINING_QUIZ_CONCURRENCY = 2
@@ -848,12 +849,15 @@ class AgentCoordinator:
                         },
                     )
                     try:
+                        generation_api = self._remaining_page_generation_api()
+                        if self._is_fast_kb_quiz_set_chunk(chunk):
+                            generation_api = self._fast_kb_batch_generation_api()
                         qa_pairs = await generator.process_quiz_set(
                             templates=chunk,
                             user_topic=user_topic,
                             preference=preference,
                             history_context=remaining_history_context,
-                            generation_api=self._remaining_page_generation_api(),
+                            generation_api=generation_api,
                         )
                     except Exception as exc:
                         self.logger.warning(f"Remaining quiz-set generation failed: {exc}")
@@ -1071,6 +1075,13 @@ class AgentCoordinator:
             return True
         return self._should_skip_kb_ideation()
 
+    @staticmethod
+    def _is_fast_kb_quiz_set_chunk(templates: list[QuestionTemplate]) -> bool:
+        return bool(templates) and all(
+            bool((template.metadata or {}).get("fast_kb_quiz_set"))
+            for template in templates
+        )
+
     def _starter_page_extra_count(
         self,
         total_questions: int,
@@ -1157,6 +1168,16 @@ class AgentCoordinator:
         if raw:
             return cls._normalize_generation_api(raw)
         return "chat"
+
+    @classmethod
+    def _fast_kb_batch_generation_api(cls) -> str:
+        raw = os.getenv("PRACTICE_FAST_KB_BATCH_API", "").strip()
+        if raw:
+            return cls._normalize_generation_api(raw, default=DEFAULT_FAST_KB_BATCH_API)
+        raw = os.getenv("PRACTICE_STARTER_PAGE_API", "").strip()
+        if raw:
+            return cls._normalize_generation_api(raw, default=DEFAULT_FAST_KB_BATCH_API)
+        return DEFAULT_FAST_KB_BATCH_API
 
     @staticmethod
     def _should_use_parallel_direct_generation(templates: list[QuestionTemplate]) -> bool:

@@ -208,8 +208,11 @@ def test_kb_backed_quiz_uses_fast_direct_quiz_set_by_default(
     FakeIdeaAgent.retrieval_calls = 0
     FakeGenerator.single_calls = 0
     FakeGenerator.set_calls = 0
+    FakeGenerator.set_generation_apis = []
     monkeypatch.delenv("PRACTICE_QUIZ_FAST_KB_BATCH", raising=False)
     monkeypatch.delenv("PRACTICE_QUIZ_PROGRESSIVE_FIRST_BATCH", raising=False)
+    monkeypatch.delenv("PRACTICE_FAST_KB_BATCH_API", raising=False)
+    monkeypatch.delenv("PRACTICE_STARTER_PAGE_API", raising=False)
     coordinator = StubCoordinator(
         tmp_path,
         kb_name="tester-1__nce-2026",
@@ -232,6 +235,7 @@ def test_kb_backed_quiz_uses_fast_direct_quiz_set_by_default(
     assert FakeIdeaAgent.calls == 0
     assert FakeGenerator.single_calls == 0
     assert FakeGenerator.set_calls == 1
+    assert FakeGenerator.set_generation_apis == ["responses_minimal"]
     assert summary["trace"]["batches"][0]["batch"] == "fast_kb_quiz_set"
     assert all(
         item["template"]["metadata"]["fast_kb_quiz_set"] is True
