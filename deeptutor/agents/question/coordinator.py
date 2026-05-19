@@ -262,6 +262,77 @@ class AgentCoordinator:
                 f"{time.perf_counter() - context_started_at:.2f}s"
             )
 
+        if not early_count and self._fast_kb_quiz_set_enabled():
+            context_started_at = time.perf_counter()
+            await self._send_ws_update(
+                "progress",
+                {
+                    "stage": "ideation",
+                    "status": "retrieving_context",
+                    "current": 0,
+                    "total": requested,
+                },
+            )
+            context_result = await idea_agent.retrieve_context_for_topic(
+                user_topic,
+                trace_id="fast-kb-quiz-set",
+                batch_number=0,
+            )
+            preloaded_knowledge_context = str(
+                context_result.get("knowledge_context") or ""
+            )
+            preloaded_retrieval_queries = [
+                str(query)
+                for query in context_result.get("retrieval_queries", [])
+                if str(query).strip()
+            ]
+            direct_templates = self._build_direct_topic_templates(
+                user_topic=user_topic,
+                requested=requested,
+                difficulty=difficulty,
+                question_type=question_type,
+            )
+            generated_templates: list[QuestionTemplate] = []
+            for index, template in enumerate(direct_templates[:requested], 1):
+                template.question_id = f"q_{index}"
+                template.metadata = {
+                    **(template.metadata or {}),
+                    "knowledge_context": preloaded_knowledge_context[:6000],
+                    "retrieval_queries": preloaded_retrieval_queries or [],
+                    "direct_kb_templates": True,
+                    "fast_kb_quiz_set": True,
+                }
+                templates.append(template)
+                generated_templates.append(template)
+                existing_concentrations.append(template.concentration)
+
+            elapsed = time.perf_counter() - context_started_at
+            batch_trace.append(
+                {
+                    "batch": "fast_kb_quiz_set",
+                    "requested": requested,
+                    "generated": len(generated_templates),
+                    "elapsed_seconds": round(elapsed, 3),
+                    "knowledge_context": preloaded_knowledge_context or "",
+                }
+            )
+            await self._send_ws_update(
+                "templates_ready",
+                {
+                    "stage": "ideation",
+                    "count": len(generated_templates),
+                    "generated_total": len(templates),
+                    "requested_total": requested,
+                    "templates": [t.__dict__ for t in generated_templates],
+                    "skipped": True,
+                    "source": "fast_kb_quiz_set",
+                },
+            )
+            self.logger.info(
+                f"Fast KB quiz-set templates ready: requested={requested} "
+                f"generated={len(generated_templates)} elapsed={elapsed:.2f}s"
+            )
+
         if early_count and self._should_skip_kb_ideation():
             direct_templates = self._build_direct_topic_templates(
                 user_topic=user_topic,
@@ -963,11 +1034,12 @@ class AgentCoordinator:
     def _progressive_first_batch_size(self, total_questions: int) -> int:
         """Return how many questions should stream before the remaining set call.
 
-        Topic-only quizzes stay on the single set call because they are already
-        much faster. KB-backed quizzes need a first usable question quickly so
-        the Practice page is not blank while the grounded set finishes.
+        The default KB-backed path now uses one grounded quiz-set batch. The
+        progressive warmup remains available when the fast batch flag is off.
         """
         if total_questions <= 1:
+            return 0
+        if self._fast_kb_quiz_set_enabled():
             return 0
 
         raw = os.getenv("PRACTICE_QUIZ_PROGRESSIVE_FIRST_BATCH", "").strip().lower()
@@ -985,7 +1057,19 @@ class AgentCoordinator:
     def _early_kb_first_question_count(self, total_questions: int) -> int:
         if not self.kb_name or not self.enable_idea_rag:
             return 0
+        if self._fast_kb_quiz_set_enabled():
+            return 0
         return min(1, self._progressive_first_batch_size(total_questions))
+
+    def _fast_kb_quiz_set_enabled(self) -> bool:
+        if not self.kb_name or not self.enable_idea_rag:
+            return False
+        raw = os.getenv("PRACTICE_QUIZ_FAST_KB_BATCH", "").strip().lower()
+        if raw in {"0", "false", "no", "off", "none", "warmup"}:
+            return False
+        if raw in {"1", "true", "yes", "on", "fast", "batch"}:
+            return True
+        return self._should_skip_kb_ideation()
 
     def _starter_page_extra_count(
         self,

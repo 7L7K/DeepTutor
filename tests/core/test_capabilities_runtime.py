@@ -482,6 +482,25 @@ def test_deep_question_capability_humanizes_question_progress_labels() -> None:
     assert DeepQuestionCapability._humanize_question_id("q_3") == "Question 3"
     assert (
         DeepQuestionCapability._format_bridge_message(
+            "progress",
+            {"stage": "ideation", "status": "retrieving_context"},
+        )
+        == "Finding source context for this practice quiz"
+    )
+    assert (
+        DeepQuestionCapability._format_bridge_message(
+            "progress",
+            {
+                "stage": "generation",
+                "status": "building_remaining_set",
+                "batch_size": 10,
+                "total": 10,
+            },
+        )
+        == "Building 10 quiz questions in one batch"
+    )
+    assert (
+        DeepQuestionCapability._format_bridge_message(
             "question_update",
             {"question_id": "q_3", "current": 3, "total": 3},
         )

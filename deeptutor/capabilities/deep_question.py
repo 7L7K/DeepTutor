@@ -488,12 +488,24 @@ class DeepQuestionCapability(BaseCapability):
             tot = update.get("total", "")
             qid = update.get("question_id", "")
             batch = update.get("batch", "")
+            page_size = update.get("page_size", "")
+            batch_size = update.get("batch_size", "")
+            if stage == "ideation" and status == "retrieving_context":
+                return "Finding source context for this practice quiz"
             if stage == "generation" and status == "building_set":
                 return "Building your quiz"
+            if stage == "generation" and status == "building_first_questions":
+                return "Building the first practice question"
+            if stage == "generation" and status == "building_starter_page":
+                if page_size:
+                    return f"Building the first page of {page_size} questions"
+                return "Building the first page of questions"
+            if stage == "generation" and status == "building_remaining_set":
+                if batch_size and tot:
+                    return f"Building {batch_size} quiz questions in one batch"
+                return "Building the remaining quiz questions"
             if stage == "generation" and status == "validating_set":
                 return "Checking quiz quality"
-        if update_type == "result" and str(update.get("question_id") or "").strip() == "quiz_set_repair":
-            return "Quiz set format repaired"
             parts = [f"[{stage}]" if stage else ""]
             if status:
                 parts.append(status)
@@ -504,6 +516,9 @@ class DeepQuestionCapability(BaseCapability):
             if qid:
                 parts.append(f"question={qid}")
             return " ".join(p for p in parts if p) or update_type
+
+        if update_type == "result" and str(update.get("question_id") or "").strip() == "quiz_set_repair":
+            return "Quiz set format repaired"
 
         if update_type == "templates_ready":
             count = update.get("count", 0)

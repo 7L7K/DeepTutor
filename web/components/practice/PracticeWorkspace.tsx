@@ -121,6 +121,45 @@ function quizQuestionFromStreamEvent(event: StreamEvent): QuizQuestion | null {
   return isQuizQuestionUsable(question) ? question : null;
 }
 
+function practiceProgressStatusText(event: StreamEvent, requestedQuestions: number): string | null {
+  const metadata = event.metadata && typeof event.metadata === "object" ? event.metadata : {};
+  const updateType = String(metadata.update_type ?? "");
+  const status = String(metadata.status ?? "");
+  const stage = String(metadata.stage ?? event.stage ?? "");
+  const total = Number(metadata.total ?? metadata.requested_total ?? requestedQuestions) || requestedQuestions;
+  const batchSize = Number(metadata.batch_size ?? 0);
+  const pageSize = Number(metadata.page_size ?? 0);
+
+  if (updateType === "templates_ready") {
+    return `Question plan ready. Building ${total} questions now...`;
+  }
+  if (stage === "ideation" && status === "retrieving_context") {
+    return "Finding source context for this practice quiz...";
+  }
+  if (stage === "generation" && status === "building_first_questions") {
+    return "Building the first practice question...";
+  }
+  if (stage === "generation" && status === "building_starter_page") {
+    return pageSize > 0
+      ? `Building the first page of ${pageSize} questions...`
+      : "Building the first page of questions...";
+  }
+  if (stage === "generation" && status === "building_remaining_set") {
+    return batchSize > 0
+      ? `Building ${batchSize} questions in one fast batch...`
+      : `Building ${total} questions in one fast batch...`;
+  }
+  if (stage === "generation" && status === "validating_set") {
+    return "Checking quiz quality...";
+  }
+
+  const content = String(event.content ?? "").trim();
+  if (content && content !== "progress") {
+    return content;
+  }
+  return null;
+}
+
 function buildPracticeSnapshot(
   quiz: PracticeQuizDefinition,
   config: DeepQuestionFormConfig,
@@ -549,7 +588,9 @@ export default function PracticeWorkspace() {
             return;
           }
           if (event.type === "thinking" || event.type === "progress" || event.type === "observation") {
-            setStatusText(event.content || "Generating practice quiz...");
+            setStatusText(
+              practiceProgressStatusText(event, quizConfig.num_questions) || "Generating practice quiz...",
+            );
           }
         },
       );
