@@ -9,6 +9,35 @@ from typing import Any
 _CHAT_TOKEN_LIMIT_ALIASES = ("max_completion_tokens", "max_tokens")
 
 
+def _convert_response_format(response_format: Any) -> dict[str, Any] | None:
+    """Convert Chat Completions ``response_format`` to Responses ``text.format``."""
+    if not isinstance(response_format, Mapping):
+        return None
+
+    format_type = response_format.get("type")
+    if format_type == "json_object":
+        return {"text": {"format": {"type": "json_object"}}}
+
+    if format_type == "json_schema":
+        schema_config = response_format.get("json_schema")
+        if isinstance(schema_config, Mapping):
+            converted = {key: value for key, value in schema_config.items() if value is not None}
+        else:
+            converted = {
+                key: value
+                for key, value in response_format.items()
+                if key not in {"type", "json_schema"} and value is not None
+            }
+        converted["type"] = "json_schema"
+        converted.setdefault("name", "response_schema")
+        return {"text": {"format": converted}}
+
+    if format_type == "text":
+        return {"text": {"format": {"type": "text"}}}
+
+    return None
+
+
 def convert_messages(messages: list[dict[str, Any]]) -> tuple[str, list[dict[str, Any]]]:
     """Convert Chat Completions messages to Responses API input items."""
     system_prompt = ""
@@ -130,8 +159,13 @@ def adapt_chat_kwargs_to_responses(extra_kwargs: Mapping[str, Any]) -> dict[str,
     result = {
         key: value
         for key, value in extra_kwargs.items()
-        if value is not None and key not in _CHAT_TOKEN_LIMIT_ALIASES
+        if value is not None and key not in (*_CHAT_TOKEN_LIMIT_ALIASES, "response_format")
     }
+
+    converted_response_format = _convert_response_format(extra_kwargs.get("response_format"))
+    if converted_response_format and "text" not in result:
+        result.update(converted_response_format)
+
     if "max_output_tokens" in result:
         return result
 

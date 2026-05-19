@@ -1,6 +1,7 @@
 ## [Unreleased]
 
 ### Fixed
+- llm: translate Chat Completions `response_format` into Responses API `text.format` so GPT-5 quiz generation and grading no longer fail before reaching the model.
 - practice mode: restore the latest valid in-progress quiz after refresh and hide malformed saved attempts from tester-facing recent-attempt lists.
 - practice quiz: reject incomplete or malformed generated quiz payloads before saving attempts, backfill missing or invalid starter-page questions, and synthesize a valid choice fallback if model repair still returns malformed options.
 - practice quiz: allow runtime-only `quiz_submission_context` through deep-question validation and route interactive quiz submissions to the quiz grading agent instead of rejecting them as invalid generation config.
