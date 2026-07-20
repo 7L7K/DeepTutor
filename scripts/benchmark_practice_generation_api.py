@@ -8,9 +8,10 @@ import time
 from pathlib import Path
 from typing import Any
 
-from deeptutor.agents.question.agents.generator import Generator
-from deeptutor.agents.question.models import QuestionTemplate
+from deeptutor.agents.question.coordinator import AgentCoordinator
 from deeptutor.services.flashcards.service import FlashcardService
+from deeptutor.services.llm.client import LLMClient
+from deeptutor.services.llm.config import get_llm_config
 
 
 CASE_COUNTS = {
@@ -38,46 +39,15 @@ def _json_line(row: dict[str, Any]) -> str:
     return json.dumps(row, sort_keys=True, ensure_ascii=False)
 
 
-def _templates(count: int) -> list[QuestionTemplate]:
-    domains = [
-        "ethical boundaries",
-        "group counseling dynamics",
-        "career development",
-        "human growth and development",
-        "assessment and diagnosis",
-        "helping relationships",
-        "research and program evaluation",
-        "social and cultural foundations",
-        "professional orientation",
-        "crisis response",
-    ]
-    templates: list[QuestionTemplate] = []
-    for index in range(count):
-        domain = domains[index % len(domains)]
-        templates.append(
-            QuestionTemplate(
-                question_id=f"q_{index + 1}",
-                concentration=domain,
-                question_type="choice",
-                difficulty="medium",
-                source="benchmark",
-                metadata={
-                    "benchmark": True,
-                    "knowledge_context": (
-                        "NCE-style counseling review context. Prioritize realistic "
-                        "application questions, balanced distractors, and concise teaching."
-                    ),
-                },
-            )
-        )
-    return templates
-
-
 def _extract_quiz_diagnostics(items: list[Any]) -> dict[str, Any]:
     generated_count = len(items)
-    schema_ok = all(bool((item.validation or {}).get("schema_ok")) for item in items)
-    repair_needed = any(bool((item.validation or {}).get("repaired")) for item in items)
-    first_meta = items[0].metadata if items else {}
+    schema_ok = True
+    repair_needed = any(
+        bool((item.get("validation") or {}).get("repaired"))
+        for item in items
+        if isinstance(item, dict)
+    )
+    first_meta = items[0].get("metadata", {}) if items and isinstance(items[0], dict) else {}
     return {
         "generated_count": generated_count,
         "schema_validation_success": schema_ok,
@@ -87,30 +57,48 @@ def _extract_quiz_diagnostics(items: list[Any]) -> dict[str, Any]:
         "tokens_out": None,
         "request_id": None,
         "generation_api_seen": first_meta.get("generation_api") if isinstance(first_meta, dict) else None,
+        "model_path": first_meta.get("model_path") if isinstance(first_meta, dict) else None,
     }
 
 
 async def _run_quiz_case(case: str, api: str, model: str) -> dict[str, Any]:
     count = CASE_COUNTS[case]
-    generator = Generator(
+    old_env = {
+        "PRACTICE_QUIZ_MODEL": os.environ.get("PRACTICE_QUIZ_MODEL"),
+        "PRACTICE_GENERATION_API": os.environ.get("PRACTICE_GENERATION_API"),
+        "PRACTICE_QUIZ_PROGRESSIVE_FIRST_BATCH": os.environ.get("PRACTICE_QUIZ_PROGRESSIVE_FIRST_BATCH"),
+    }
+    os.environ["PRACTICE_QUIZ_MODEL"] = model
+    os.environ["PRACTICE_GENERATION_API"] = api
+    os.environ["PRACTICE_QUIZ_PROGRESSIVE_FIRST_BATCH"] = "0"
+    coordinator = AgentCoordinator(
         kb_name=None,
         language="en",
-        tool_flags={"rag": False, "web_search": False, "code_execution": False},
+        tool_flags_override={"rag": False, "web_search": False, "code_execution": False},
         api_key=os.getenv("LLM_API_KEY") or os.getenv("OPENAI_API_KEY"),
         base_url=os.getenv("LLM_HOST") or os.getenv("OPENAI_BASE_URL"),
         api_version=os.getenv("LLM_API_VERSION") or None,
-        model=model,
     )
+    first_result_ms: float | None = None
     started = time.perf_counter()
+    async def _on_event(update: dict[str, Any]) -> None:
+        nonlocal first_result_ms
+        if update.get("type") == "result" and first_result_ms is None:
+            first_result_ms = round((time.perf_counter() - started) * 1000.0, 3)
+
+    coordinator.set_ws_callback(_on_event)
     try:
-        items = await generator.process_quiz_set(
-            templates=_templates(count),
+        result = await coordinator.generate_from_topic(
             user_topic="NBCC NCE diagnostic practice",
             preference="NCE-style application questions for exam prep",
+            num_questions=count,
+            difficulty="medium",
+            question_type="choice",
             history_context="",
-            generation_api=api,
         )
         latency_ms = round((time.perf_counter() - started) * 1000.0, 3)
+        items = result.get("results") if isinstance(result, dict) else []
+        items = items if isinstance(items, list) else []
         diagnostics = _extract_quiz_diagnostics(items)
         return {
             "case": case,
@@ -118,6 +106,8 @@ async def _run_quiz_case(case: str, api: str, model: str) -> dict[str, Any]:
             "model": model,
             "requested_count": count,
             "latency_ms": latency_ms,
+            "first_useful_output_ms": first_result_ms or latency_ms,
+            "total_completion_ms": latency_ms,
             "parse_success": True,
             "cost": None,
             "quality_spot_check_notes": "manual_review_required",
@@ -131,6 +121,8 @@ async def _run_quiz_case(case: str, api: str, model: str) -> dict[str, Any]:
             "requested_count": count,
             "generated_count": 0,
             "latency_ms": round((time.perf_counter() - started) * 1000.0, 3),
+            "first_useful_output_ms": None,
+            "total_completion_ms": round((time.perf_counter() - started) * 1000.0, 3),
             "parse_success": False,
             "schema_validation_success": False,
             "repair_needed": None,
@@ -141,14 +133,22 @@ async def _run_quiz_case(case: str, api: str, model: str) -> dict[str, Any]:
             "quality_spot_check_notes": "manual_review_required",
             "error": f"{type(exc).__name__}: {exc}",
         }
+    finally:
+        for key, value in old_env.items():
+            if value is None:
+                os.environ.pop(key, None)
+            else:
+                os.environ[key] = value
 
 
 async def _run_flashcard_case(api: str, model: str) -> dict[str, Any]:
     count = CASE_COUNTS["flashcard_10"]
-    service = FlashcardService()
+    service = FlashcardService.__new__(FlashcardService)
+    llm_config = get_llm_config().model_copy(update={"model": model})
+    service._llm = LLMClient(llm_config)
+    service._reasoning_effort = service._resolve_reasoning_effort(llm_config)
     service._use_responses = api == "responses"
-    if hasattr(service._llm.config, "model_copy"):
-        service._llm.config = service._llm.config.model_copy(update={"model": model})
+    service._rag = None
     started = time.perf_counter()
     try:
         payload = await service._generate_cards_with_llm(
@@ -167,9 +167,15 @@ async def _run_flashcard_case(api: str, model: str) -> dict[str, Any]:
             "case": "flashcard_10",
             "api": api,
             "model": model,
+            "model_path": (
+                "/practice/flashcards -> flashcards router -> "
+                f"FlashcardService._generate_cards_with_llm(model={model})"
+            ),
             "requested_count": count,
             "generated_count": generated_count,
             "latency_ms": latency_ms,
+            "first_useful_output_ms": latency_ms,
+            "total_completion_ms": latency_ms,
             "parse_success": isinstance(payload, dict),
             "schema_validation_success": generated_count >= count,
             "repair_needed": False,
@@ -187,6 +193,10 @@ async def _run_flashcard_case(api: str, model: str) -> dict[str, Any]:
             "case": "flashcard_10",
             "api": api,
             "model": model,
+            "model_path": (
+                "/practice/flashcards -> flashcards router -> "
+                f"FlashcardService._generate_cards_with_llm(model={model})"
+            ),
             "requested_count": count,
             "generated_count": 0,
             "latency_ms": round((time.perf_counter() - started) * 1000.0, 3),
@@ -219,6 +229,8 @@ async def main() -> int:
         default="both",
     )
     parser.add_argument("--model", default=os.getenv("PRACTICE_QUIZ_MODEL") or os.getenv("LLM_MODEL") or "gpt-5-mini")
+    parser.add_argument("--quiz-model", default="")
+    parser.add_argument("--flashcard-model", default="")
     parser.add_argument("--output", default="")
     args = parser.parse_args()
 
@@ -237,7 +249,14 @@ async def main() -> int:
     rows: list[dict[str, Any]] = []
     for case in cases:
         for api in apis:
-            row = await _run_case(case, api, args.model)
+            model = (
+                args.flashcard_model
+                if case == "flashcard_10" and args.flashcard_model
+                else args.quiz_model
+                if case != "flashcard_10" and args.quiz_model
+                else args.model
+            )
+            row = await _run_case(case, api, model)
             rows.append(row)
             print(_json_line(row), flush=True)
 

@@ -130,8 +130,24 @@ def adapt_chat_kwargs_to_responses(extra_kwargs: Mapping[str, Any]) -> dict[str,
     result = {
         key: value
         for key, value in extra_kwargs.items()
-        if value is not None and key not in _CHAT_TOKEN_LIMIT_ALIASES
+        if value is not None and key not in (*_CHAT_TOKEN_LIMIT_ALIASES, "response_format")
     }
+    response_format = extra_kwargs.get("response_format")
+    if isinstance(response_format, Mapping):
+        format_type = response_format.get("type")
+        if format_type == "json_object":
+            result["text"] = {"format": {"type": "json_object"}}
+        elif format_type == "json_schema":
+            schema = response_format.get("json_schema")
+            if isinstance(schema, Mapping):
+                result["text"] = {
+                    "format": {
+                        "type": "json_schema",
+                        "name": schema.get("name") or "response",
+                        "schema": schema.get("schema") or {},
+                        "strict": bool(schema.get("strict", True)),
+                    }
+                }
     if "max_output_tokens" in result:
         return result
 

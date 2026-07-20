@@ -1,28 +1,26 @@
 """
 Session Management Module
 =========================
-
-Provides unified session management for all agent modules.
-
-Usage:
-    from deeptutor.services.session import BaseSessionManager
-
-    class MySessionManager(BaseSessionManager):
-        def __init__(self):
-            super().__init__("my_module")
-
-        def _get_session_id_prefix(self) -> str:
-            return "my_"
-
-        def _get_default_title(self) -> str:
-            return "New My Session"
-
-        # ... implement other abstract methods
 """
 
 from .base_session_manager import BaseSessionManager
-from .sqlite_store import SQLiteSessionStore, get_sqlite_session_store
-from .turn_runtime import TurnRuntimeManager, get_turn_runtime_manager
+
+try:
+    from .turn_runtime import TurnRuntimeManager, get_turn_runtime_manager
+except ModuleNotFoundError:
+    TurnRuntimeManager = None  # type: ignore[assignment]
+
+    def get_turn_runtime_manager():  # type: ignore[no-untyped-def]
+        raise RuntimeError("Turn runtime dependencies are missing from this checkout")
+
+try:
+    from .sqlite_store import SQLiteSessionStore, get_sqlite_session_store
+except ModuleNotFoundError:
+    SQLiteSessionStore = None  # type: ignore[assignment]
+
+    def get_sqlite_session_store():  # type: ignore[no-untyped-def]
+        raise RuntimeError("SQLite session store module is missing from this checkout")
+
 
 __all__ = [
     "BaseSessionManager",

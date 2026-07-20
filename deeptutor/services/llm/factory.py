@@ -466,7 +466,7 @@ async def stream(
         await queue.put(chunk)
 
     async def _runner() -> None:
-        nonlocal in_think_block
+        nonlocal in_think_block, saw_output
         try:
             response = await provider.chat_stream_with_retry(
                 messages=request_messages,
@@ -480,6 +480,14 @@ async def stream(
             if in_think_block:
                 in_think_block = False
                 await queue.put("</think>")
+            if response.finish_reason == "error" and not saw_output:
+                await queue.put(
+                    map_error(
+                        RuntimeError(response.content or "LLM request failed"),
+                        provider=config.provider_name,
+                    )
+                )
+                return
             # Some providers synthesize a final response only after the stream.
             # Do not replay reasoning_content as user-visible answer text.
             if (
@@ -489,13 +497,6 @@ async def stream(
             ):
                 saw_output = True
                 await queue.put(response.content)
-            if response.finish_reason == "error" and not saw_output:
-                await queue.put(
-                    map_error(
-                        RuntimeError(response.content or "LLM request failed"),
-                        provider=config.provider_name,
-                    )
-                )
         except Exception as exc:
             await queue.put(map_error(exc, provider=config.provider_name))
         finally:
