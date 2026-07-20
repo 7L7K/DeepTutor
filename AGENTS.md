@@ -6,6 +6,23 @@ DeepTutor is an **agent-native** intelligent learning companion built around
 a two-layer plugin model (Tools + Capabilities) with three entry points:
 CLI, WebSocket API, and Python SDK.
 
+## Codex work style
+
+For substantial DeepTutor work, use subagents when the active environment permits delegation and the work can split into independent lanes.
+
+Good lanes:
+
+- backend/API runtime proof
+- frontend route and browser-flow QA
+- model-call path tracing
+- plugin/capability contract review
+- test-gap review
+- docs/spec consistency checks
+
+Default subagents to `gpt-5.5` with high reasoning when model and reasoning controls are available. Keep prompts bounded around one proof question or owned file surface.
+
+The parent agent owns the final product decision, implementation integration, and verification. Subagents should return concise evidence summaries, not broad architecture rewrites.
+
 ## Architecture
 
 ```
