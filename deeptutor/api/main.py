@@ -4,6 +4,7 @@ import sys
 
 from fastapi import Depends, FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 
 from deeptutor.logging import configure_logging
@@ -82,6 +83,17 @@ def validate_tool_consistency():
         raise
 
 
+def validate_course_backend_compatibility() -> None:
+    """Fail closed until the private Course contract has a PocketBase implementation."""
+    from deeptutor.services.pocketbase_client import is_pocketbase_enabled
+
+    if is_pocketbase_enabled():
+        raise RuntimeError(
+            "Phase 2 private courses require the local JSON/SQLite backend; "
+            "PocketBase Course ownership is not implemented"
+        )
+
+
 def _build_cors_settings() -> dict[str, object]:
     """Build CORS settings for both localhost and remote Docker deployments."""
     system_settings = load_system_settings()
@@ -124,6 +136,14 @@ async def lifespan(app: FastAPI):
 
     # Validate configuration consistency
     validate_tool_consistency()
+    validate_course_backend_compatibility()
+    from deeptutor.courses.deployment import SingleProcessCourseLock
+    from deeptutor.multi_user.paths import SYSTEM_ROOT
+
+    course_process_lock = SingleProcessCourseLock(
+        SYSTEM_ROOT / "course-single-process.lock"
+    )
+    course_process_lock.acquire()
 
     # Initialize LLM client early so OPENAI_* env vars are available before
     # any downstream provider integrations start.
@@ -215,6 +235,8 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         logger.warning(f"Failed to stop EventBus: {e}")
 
+    course_process_lock.release()
+
 
 app = FastAPI(
     title="DeepTutor API",
@@ -272,6 +294,32 @@ logger.info(
     _cors_settings["allow_origins"],
     _cors_settings["allow_origin_regex"],
 )
+
+
+@app.middleware("http")
+async def enforce_cookie_origin(request, call_next):
+    """Reject cross-origin browser mutations outside the configured allowlist.
+
+    CLI/API clients without an Origin header continue to work. CORS controls
+    response visibility; this explicit gate protects cookie-authenticated
+    mutations themselves.
+    """
+    bearer = str(request.headers.get("authorization") or "").lower().startswith("bearer ")
+    if (
+        request.method not in {"GET", "HEAD", "OPTIONS"}
+        and request.cookies.get("dt_token")
+        and not bearer
+    ):
+        origin = request.headers.get("origin")
+        from deeptutor.services.config.origins import normalize_origin
+
+        normalized = normalize_origin(origin)
+        allowed = set(_cors_settings["allow_origins"])
+        if not normalized or normalized not in allowed:
+            return JSONResponse(status_code=403, content={"detail": "Origin not allowed"})
+    return await call_next(request)
+
+
 app.add_middleware(
     CORSMiddleware,
     allow_origins=_cors_settings["allow_origins"],
@@ -312,6 +360,7 @@ from deeptutor.api.routers import (
     capabilities_settings,
     chat,
     co_writer,
+    courses,
     dashboard,
     imports,
     knowledge,
@@ -359,6 +408,12 @@ app.include_router(
 )
 
 app.include_router(chat.router, prefix="/api/v1", tags=["chat"], dependencies=_auth)
+app.include_router(
+    courses.router,
+    prefix="/api/v1/courses",
+    tags=["courses"],
+    dependencies=_auth,
+)
 app.include_router(
     question.router, prefix="/api/v1/question", tags=["question"], dependencies=_auth
 )
