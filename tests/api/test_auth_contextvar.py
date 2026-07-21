@@ -20,10 +20,26 @@ These tests pin three invariants:
 
 from __future__ import annotations
 
+from datetime import datetime, timedelta, timezone
 import inspect
 
 from fastapi import Depends, FastAPI
 from fastapi.testclient import TestClient
+
+
+def _signed_token(secret: str, *, username: str, user_id: str, role: str = "user") -> str:
+    from jose import jwt
+
+    return jwt.encode(
+        {
+            "sub": username,
+            "uid": user_id,
+            "role": role,
+            "exp": datetime.now(timezone.utc) + timedelta(hours=1),
+        },
+        secret,
+        algorithm="HS256",
+    )
 
 
 def test_require_auth_is_async_def() -> None:
@@ -196,3 +212,76 @@ def test_path_service_resolves_per_user_workspace_through_dependency(monkeypatch
         "ContextVar mutation in require_auth is not reaching the endpoint — "
         "see #481."
     )
+
+
+def test_decode_token_revalidates_current_role_and_disabled_state(monkeypatch) -> None:
+    from deeptutor.services import auth
+
+    secret = "test-secret"
+    record = {
+        "id": "u_alice",
+        "hash": "unused",
+        "role": "user",
+        "created_at": "",
+        "disabled": False,
+    }
+    monkeypatch.setattr(auth, "AUTH_SECRET", secret)
+    monkeypatch.setattr(auth, "POCKETBASE_ENABLED", False)
+    monkeypatch.setattr(auth, "_load_users", lambda: {"alice": dict(record)})
+
+    token = _signed_token(secret, username="alice", user_id="u_alice", role="admin")
+    payload = auth.decode_token(token)
+    assert payload is not None
+    assert payload.role == "user", "Current account role must override the stale token role"
+
+    record["disabled"] = True
+    monkeypatch.setattr(auth, "_load_users", lambda: {"alice": dict(record)})
+    assert auth.decode_token(token) is None
+
+
+def test_decode_token_rejects_deleted_identity(monkeypatch) -> None:
+    from deeptutor.services import auth
+
+    secret = "test-secret"
+    monkeypatch.setattr(auth, "AUTH_SECRET", secret)
+    monkeypatch.setattr(auth, "POCKETBASE_ENABLED", False)
+    monkeypatch.setattr(auth, "_load_users", lambda: {})
+    token = _signed_token(secret, username="ghost", user_id="u_ghost")
+    assert auth.decode_token(token) is None
+
+
+def test_decode_token_rejects_mismatched_or_missing_immutable_user_id(monkeypatch) -> None:
+    from jose import jwt
+
+    from deeptutor.services import auth
+
+    secret = "test-secret"
+    monkeypatch.setattr(auth, "AUTH_SECRET", secret)
+    monkeypatch.setattr(auth, "POCKETBASE_ENABLED", False)
+    monkeypatch.setattr(
+        auth,
+        "_load_users",
+        lambda: {
+            "alice": {
+                "id": "u_alice",
+                "hash": "unused",
+                "role": "user",
+                "created_at": "",
+                "disabled": False,
+            }
+        },
+    )
+
+    mismatched = _signed_token(secret, username="alice", user_id="u_other")
+    assert auth.decode_token(mismatched) is None
+
+    missing = jwt.encode(
+        {
+            "sub": "alice",
+            "role": "user",
+            "exp": datetime.now(timezone.utc) + timedelta(hours=1),
+        },
+        secret,
+        algorithm="HS256",
+    )
+    assert auth.decode_token(missing) is None

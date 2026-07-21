@@ -124,9 +124,19 @@ class _FakeStartTurnRecorder:
 
     def __init__(self) -> None:
         self.calls: list[dict[str, Any]] = []
+        self.preserved_course_contexts: list[dict[str, Any] | None] = []
+        self.replaced_message_ids: list[int | str | None] = []
 
-    async def __call__(self, payload: dict[str, Any]) -> tuple[dict, dict]:
+    async def __call__(
+        self,
+        payload: dict[str, Any],
+        *,
+        preserved_course_context: dict[str, Any] | None = None,
+        replace_assistant_message_id: int | str | None = None,
+    ) -> tuple[dict, dict]:
         self.calls.append(payload)
+        self.preserved_course_contexts.append(preserved_course_context)
+        self.replaced_message_ids.append(replace_assistant_message_id)
         return (
             {"id": payload["session_id"]},
             {"id": "fake-turn", "session_id": payload["session_id"]},
@@ -139,9 +149,10 @@ def _seed_session(
     user_content: str = "what is 2+2?",
     assistant_content: str | None = "4",
     user_metadata: dict[str, Any] | None = None,
+    course_id: str | None = None,
 ) -> tuple[str, int, int | None]:
     """Create a session with a user (and optional assistant) message."""
-    session = asyncio.run(store.create_session())
+    session = asyncio.run(store.create_session(course_id=course_id))
     sid = session["id"]
     asyncio.run(
         store.update_session_preferences(
@@ -178,7 +189,7 @@ def _seed_session(
 
 
 class TestRegenerateLastTurn:
-    def test_assistant_tail_is_deleted_and_payload_replays_user(
+    def test_assistant_tail_replacement_is_delegated_with_replayed_user(
         self, store: SQLiteSessionStore
     ) -> None:
         sid, user_id, assistant_id = _seed_session(store)
@@ -202,8 +213,35 @@ class TestRegenerateLastTurn:
         assert payload["config"]["_regenerated_from_message_id"] == user_id
 
         remaining = asyncio.run(store.get_messages(sid))
-        assert [m["id"] for m in remaining] == [user_id]
-        assert assistant_id is not None and assistant_id not in {m["id"] for m in remaining}
+        assert [m["id"] for m in remaining] == [user_id, assistant_id]
+        assert recorder.replaced_message_ids == [assistant_id]
+
+    @pytest.mark.parametrize(
+        "message",
+        [
+            "Archived courses cannot start or regenerate turns",
+            "Regeneration Course source provenance is unavailable",
+        ],
+    )
+    def test_rejected_course_regeneration_preserves_prior_answer(
+        self,
+        store: SQLiteSessionStore,
+        message: str,
+    ) -> None:
+        sid, user_id, assistant_id = _seed_session(store, course_id="crs_one")
+        runtime = TurnRuntimeManager(store=store)
+
+        async def reject(*_args, **_kwargs):
+            from deeptutor.courses.service import CourseUnavailableError
+
+            raise CourseUnavailableError(message)
+
+        with patch.object(runtime, "start_turn", new=reject):
+            with pytest.raises(Exception, match=message):
+                asyncio.run(runtime.regenerate_last_turn(sid))
+
+        remaining = asyncio.run(store.get_messages(sid))
+        assert [item["id"] for item in remaining] == [user_id, assistant_id]
 
     def test_replays_book_references_from_request_snapshot(self, store: SQLiteSessionStore) -> None:
         sid, _, _ = _seed_session(

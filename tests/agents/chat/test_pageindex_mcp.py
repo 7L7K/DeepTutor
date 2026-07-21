@@ -83,6 +83,25 @@ def test_no_pageindex_kb_keeps_fail_closed(monkeypatch) -> None:
     assert pipe._deferred_loader is None
 
 
+def test_course_mode_never_starts_or_preloads_deferred_mcp(monkeypatch) -> None:
+    pipe = AgenticChatPipeline(language="en")
+
+    class MustNotStart:
+        async def ensure_started(self) -> None:
+            raise AssertionError("Course mode must not start MCP")
+
+    monkeypatch.setattr("deeptutor.services.mcp.get_mcp_manager", lambda: MustNotStart())
+    context = UnifiedContext(
+        knowledge_bases=["personal:kb:course_crs_one_src_one"],
+        metadata={"course_context": {"course_id": "crs_one"}},
+    )
+
+    asyncio.run(pipe._prepare_deferred_tools(context))
+
+    assert pipe._deferred_pool == []
+    assert pipe._deferred_loader is None
+
+
 def test_system_note_lists_documents(monkeypatch) -> None:
     pipe = _prepare(monkeypatch, {"kb1": {"a.pdf": "pi-1", "b.docx": "pi-2"}})
     note = pipe._kb_system_note(UnifiedContext(knowledge_bases=["kb1"]))

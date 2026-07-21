@@ -46,7 +46,6 @@ const PRIMARY_NAV: NavEntry[] = [
     label: "Home",
     icon: House,
     tooltipKey: "Home tooltip",
-    requires: "llm",
   },
   {
     href: "/partners",

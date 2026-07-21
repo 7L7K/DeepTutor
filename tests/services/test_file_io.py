@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+import stat
 
 import pytest
 
@@ -20,6 +21,7 @@ def test_atomic_write_json_creates_parent_and_replaces_content(tmp_path: Path) -
 
     assert json.loads(path.read_text(encoding="utf-8")) == {"value": 2}
     assert list(path.parent.iterdir()) == [path]
+    assert stat.S_IMODE(path.stat().st_mode) == 0o600
 
 
 def test_atomic_write_json_cleans_up_temporary_file_on_failure(
@@ -59,3 +61,4 @@ def test_atomic_write_text_creates_parent_and_replaces_content(tmp_path: Path) -
 
     assert path.read_text(encoding="utf-8") == "second"
     assert list(path.parent.iterdir()) == [path]
+    assert stat.S_IMODE(path.stat().st_mode) == 0o600

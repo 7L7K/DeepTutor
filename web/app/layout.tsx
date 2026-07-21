@@ -5,6 +5,7 @@ import ThemeScript from "@/components/ThemeScript";
 import ToastViewport from "@/components/common/ToastViewport";
 import { AppShellProvider } from "@/context/AppShellContext";
 import { I18nClientBridge } from "@/i18n/I18nClientBridge";
+import { CourseProvider } from "@/context/CourseContext";
 
 // Geist matches the public site (deeptutor.info) and stays crisp at the
 // small UI sizes the composer/toolbars use, unlike the rounder Jakarta.
@@ -52,7 +53,9 @@ export default function RootLayout({
         suppressHydrationWarning
       >
         <AppShellProvider>
-          <I18nClientBridge>{children}</I18nClientBridge>
+          <CourseProvider>
+            <I18nClientBridge>{children}</I18nClientBridge>
+          </CourseProvider>
           <ToastViewport />
         </AppShellProvider>
       </body>

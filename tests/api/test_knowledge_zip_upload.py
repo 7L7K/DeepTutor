@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import io
 from pathlib import Path
+import stat
 import zipfile
 
 import pytest
@@ -56,6 +57,7 @@ def test_zip_upload_extracts_only_supported_members(tmp_path: Path) -> None:
     # The archive itself is never persisted or registered.
     assert not (raw / "bundle.zip").exists()
     assert all(not p.endswith(".zip") for p in paths)
+    assert stat.S_IMODE((raw / "notes.txt").stat().st_mode) == 0o600
 
 
 def test_zip_upload_with_zip_slip_member_stays_in_target(tmp_path: Path) -> None:
@@ -93,3 +95,22 @@ def test_zip_with_no_supported_members_is_rejected(tmp_path: Path) -> None:
     with pytest.raises(HTTPException) as exc_info:
         _save_uploaded_files([upload], raw, allowed_extensions=ALLOWED)
     assert exc_info.value.status_code == 400
+
+
+def test_zip_failure_removes_members_written_before_rejection(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from deeptutor.utils import archive_extractor
+
+    def partial_then_fail(_zip, target, **_kwargs):
+        (Path(target) / "partial.txt").write_bytes(b"partial")
+        raise archive_extractor.ArchiveTooLargeError("late size limit")
+
+    monkeypatch.setattr(archive_extractor, "safe_extract_zip", partial_then_fail)
+    upload = _zip_upload("late-failure.zip", [("ok.txt", b"ok")])
+    raw = tmp_path / "raw"
+    raw.mkdir()
+
+    with pytest.raises(HTTPException):
+        _save_uploaded_files([upload], raw, allowed_extensions=ALLOWED)
+    assert list(raw.iterdir()) == []

@@ -200,6 +200,42 @@ def test_grade_and_record_blank_wrong_is_metacognitive(tmp_path):
     assert progress.quiz_attempts[0].error_type == ErrorType.METACOGNITIVE
 
 
+def test_grade_and_record_reuses_prior_attempt_after_partial_commit(tmp_path):
+    """A retry after an attempt-only crash must not grade the same pending question twice."""
+    from deeptutor.learning.models import PendingQuestion, QuizAttempt
+
+    store = LearningStore(root=tmp_path)
+    service = LearningService(store)
+    progress = _make_progress()
+    progress.pending_question = PendingQuestion(
+        question_id="q_once",
+        knowledge_point_id="kp1",
+        module_id="m1",
+        expected_answer="paris",
+    )
+    progress.quiz_attempts.append(
+        QuizAttempt(
+            question_id="q_once",
+            knowledge_point_id="kp1",
+            module_id="m1",
+            is_correct=False,
+            user_answer="london",
+        )
+    )
+
+    result = service.grade_and_record(
+        progress,
+        question_id="q_once",
+        knowledge_point_id="kp1",
+        module_id="m1",
+        user_answer="paris",
+        expected_answer="paris",
+    )
+
+    assert result is False
+    assert len(progress.quiz_attempts) == 1
+
+
 # ── Error-record graduation across attempts ────────────────────────────────
 
 

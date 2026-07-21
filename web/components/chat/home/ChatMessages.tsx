@@ -1130,6 +1130,7 @@ export const ChatMessageList = memo(function ChatMessageList({
   onEditMessage,
   onSwitchBranch,
   onSubmitUserReply,
+  modelActionsEnabled = true,
 }: {
   messages: ChatMessageItem[];
   isStreaming: boolean;
@@ -1137,6 +1138,7 @@ export const ChatMessageList = memo(function ChatMessageList({
   language?: string;
   onCopyAssistantMessage: (content: string) => void | Promise<void>;
   onRegenerateMessage: () => void;
+  modelActionsEnabled?: boolean;
   onConfirmOutline?: (
     outline: Array<{ title: string; overview: string }>,
     topic: string,
@@ -1355,6 +1357,7 @@ export const ChatMessageList = memo(function ChatMessageList({
         const showActions = msgDone && hasVisibleMarkdownContent(msg.content);
         const isLastAssistant = i === lastRenderedAssistantIndex;
         const showRegenerate =
+          modelActionsEnabled &&
           showActions &&
           !isStreaming &&
           isLastAssistant &&

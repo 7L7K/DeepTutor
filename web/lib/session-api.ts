@@ -43,6 +43,7 @@ export interface SessionSummary {
     | "cancelled"
     | "rejected";
   active_turn_id?: string;
+  course_id?: string | null;
   preferences?: {
     capability?: string;
     tools?: string[];
@@ -85,6 +86,7 @@ export interface SessionDetail {
     | "cancelled"
     | "rejected";
   active_turn_id?: string;
+  course_id?: string | null;
   compressed_summary?: string;
   summary_up_to_msg_id?: number;
   preferences?: {

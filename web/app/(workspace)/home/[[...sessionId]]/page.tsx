@@ -36,6 +36,13 @@ import type { SelectedQuestionEntry } from "@/components/chat/QuestionBankPicker
 import ChatComposer from "@/components/chat/home/ChatComposer";
 import { ChatMessageList } from "@/components/chat/home/ChatMessages";
 import SessionLoadingView from "@/components/chat/home/SessionLoadingView";
+import { CourseBar } from "@/components/courses/CourseBar";
+import { useCapabilityAccess } from "@/components/access/CapabilityAccessContext";
+import { useCourses } from "@/context/CourseContext";
+import {
+  courseIdForChatSession,
+  resolveSessionCourseView,
+} from "@/lib/course-selection";
 // Imported eagerly so the drawer shell is always mounted off-screen —
 // clicking a chip becomes a single CSS class flip, no chunk fetch + double
 // render. The heavy renderers inside still load lazily.
@@ -150,7 +157,9 @@ const SaveToNotebookModal = dynamic(
 // don't need a form (Chat / Solve) don't ship the form JS.
 const CapabilityConfigCard = dynamic(
   () => import("@/components/chat/home/CapabilityConfigCard"),
-  { ssr: false },
+  {
+    ssr: false,
+  },
 );
 const QuizConfigPanel = dynamic(
   () => import("@/components/quiz/QuizConfigPanel"),
@@ -158,11 +167,15 @@ const QuizConfigPanel = dynamic(
 );
 const VisualizeConfigPanel = dynamic(
   () => import("@/components/visualize/VisualizeConfigPanel"),
-  { ssr: false },
+  {
+    ssr: false,
+  },
 );
 const ResearchConfigPanel = dynamic(
   () => import("@/components/research/ResearchConfigPanel"),
-  { ssr: false },
+  {
+    ssr: false,
+  },
 );
 
 /* ------------------------------------------------------------------ */
@@ -312,8 +325,15 @@ export default function ChatPage() {
   const params = useParams<{ sessionId?: string[] }>();
   const router = useRouter();
   const { t } = useTranslation();
+  const { hasLlm } = useCapabilityAccess();
   const sessionIdParam = params.sessionId?.[0] ?? null;
   const { setActiveSessionId, language: appLanguage } = useAppShell();
+  const {
+    activeCourse,
+    courses,
+    loading: coursesLoading,
+    restoreCourse,
+  } = useCourses();
 
   const {
     state,
@@ -333,6 +353,23 @@ export default function ChatPage() {
     loadSession,
     renameSessionTitle,
   } = useUnifiedChat();
+
+  const sessionCourse = useMemo(
+    () => courses.find((course) => course.id === state.courseId) || null,
+    [courses, state.courseId],
+  );
+  const sessionCourseView = resolveSessionCourseView(
+    courses,
+    state.courseId,
+    coursesLoading,
+  );
+  const effectiveCourseId = courseIdForChatSession(
+    state.sessionId,
+    state.courseId,
+    activeCourse?.id || null,
+  );
+  const courseMode = Boolean(effectiveCourseId);
+  const courseSessionReadOnly = sessionCourseView.readOnly;
 
   const [knowledgeBases, setKnowledgeBases] = useState<KnowledgeBase[]>([]);
   // A connected agent to preselect once it loads, from `?agent=<name>` on the
@@ -533,6 +570,22 @@ export default function ChatPage() {
   const spaceMenuRef = useRef<HTMLDivElement>(null);
   const spaceBtnRef = useRef<HTMLButtonElement>(null);
   const initialLoadRef = useRef(false);
+
+  useEffect(() => {
+    if (!courseMode) return;
+    setAttachments([]);
+    setSelectedBookReferences([]);
+    setSelectedNotebookRecords([]);
+    setSelectedHistorySessions([]);
+    setSelectedAgentSessions([]);
+    setSelectedQuestionEntries([]);
+    setSelectedMemoryFiles([]);
+    setKBs([]);
+    setPersonaSelection("");
+    if (state.activeCapability && state.activeCapability !== "mastery_path") {
+      setCapability(null);
+    }
+  }, [courseMode]); // eslint-disable-line react-hooks/exhaustive-deps
   // Session-loading overlay: shown while navigating from chat-history →
   // session detail. Holds an AbortController so the user can cancel.
   const [sessionLoading, setSessionLoading] = useState(false);
@@ -1431,6 +1484,7 @@ export default function ChatPage() {
 
   const handleSend = useCallback(
     async (content: string) => {
+      if (courseSessionReadOnly || !hasLlm) return;
       if (
         (!content &&
           !attachments.length &&
@@ -1498,14 +1552,14 @@ export default function ChatPage() {
       // sends with every turn.
       sendMessage(
         messageContent,
-        extraAttachments,
+        courseMode ? [] : extraAttachments,
         config,
-        notebookReferencesPayload,
-        historyReferencesPayload,
-        { bookReferences: bookReferencesPayload },
-        questionNotebookReferencesPayload,
+        courseMode ? [] : notebookReferencesPayload,
+        courseMode ? [] : historyReferencesPayload,
+        { bookReferences: courseMode ? [] : bookReferencesPayload },
+        courseMode ? [] : questionNotebookReferencesPayload,
         undefined,
-        memoryPayload,
+        courseMode ? [] : memoryPayload,
       );
       shouldAutoScrollRef.current = true;
       setAttachments([]);
@@ -1518,6 +1572,9 @@ export default function ChatPage() {
     },
     [
       attachments,
+      courseMode,
+      courseSessionReadOnly,
+      hasLlm,
       bookReferencesPayload,
       historyReferencesPayload,
       isQuizMode,
@@ -1766,6 +1823,12 @@ export default function ChatPage() {
     downloadChatMarkdown(state.messages, { title });
   }, [state.messages]);
 
+  const handleCourseChange = useCallback(() => {
+    cancelStreamingTurn();
+    newSession();
+    router.push("/home");
+  }, [cancelStreamingTurn, newSession, router]);
+
   return (
     <QuizFollowupProvider>
       <GeogebraTabProvider>
@@ -1787,6 +1850,7 @@ export default function ChatPage() {
           data-viewer-open={viewerPanelOpen ? "true" : "false"}
           className="chat-preview-shell flex h-full flex-col overflow-hidden bg-[var(--background)]"
         >
+          <CourseBar onCourseChange={handleCourseChange} />
           <div className="mx-auto flex w-full max-w-[960px] flex-wrap items-center justify-between gap-x-3 gap-y-1.5 px-6 pt-3 pb-0">
             <div className="group/title min-w-0 flex flex-1 items-center gap-2">
               {sessionTitleEditing ? (
@@ -1924,87 +1988,120 @@ export default function ChatPage() {
                     onEditMessage={editMessage}
                     onSwitchBranch={switchBranch}
                     onSubmitUserReply={submitUserReply}
+                    modelActionsEnabled={hasLlm}
                   />
                   <div ref={messagesEndRef} className="h-px w-full shrink-0" />
                 </div>
               </div>
             )}
 
-            <ChatComposer
-              composerRef={composerRef}
-              capMenuRef={capMenuRef}
-              capBtnRef={capBtnRef}
-              spaceMenuRef={spaceMenuRef}
-              spaceBtnRef={spaceBtnRef}
-              dragCounter={dragCounter}
-              dragging={dragging}
-              capMenuOpen={capMenuOpen}
-              spaceMenuOpen={spaceMenuOpen}
-              hasMessages={hasMessages}
-              attachments={attachments}
-              attachmentError={attachmentError}
-              activeCap={activeCap}
-              knowledgeBases={kbOptions}
-              connectedAgents={agentOptions}
-              selectedAgent={selectedAgent}
-              onSelectAgent={handleSelectAgent}
-              subagentBudget={subagentBudget}
-              onSubagentBudgetChange={setSubagentBudget}
-              llmOptions={llmOptions}
-              activeLLMDefault={activeLLMDefault}
-              llmSelection={state.llmSelection}
-              llmOptionsLoading={llmOptionsLoading}
-              llmOptionsError={llmOptionsError}
-              selectedBookReferences={selectedBookReferences}
-              selectedNotebookRecords={selectedNotebookRecords}
-              selectedHistorySessions={selectedHistorySessions}
-              selectedAgentSessions={selectedAgentSessions}
-              selectedQuestionEntries={selectedQuestionEntries}
-              notebookReferenceGroups={notebookReferenceGroups}
-              selectedPersona={null}
-              selectedMemoryFiles={selectedMemoryFiles}
-              selectedKnowledgeBases={selectedKbOnly}
-              isStreaming={state.isStreaming}
-              isVisualizeMode={isVisualizeMode}
-              capabilityNeedsConfig={capabilityNeedsConfig}
-              capabilityConfigConfirmed={capabilityConfigConfirmed}
-              onRequestConfigConfirm={ensureActivityPanelOpen}
-              capabilities={CAPABILITIES}
-              onSetCapMenuOpen={setCapMenuOpen}
-              onSetSpaceMenuOpen={setSpaceMenuOpen}
-              onToggleKB={handleToggleKB}
-              onSelectLLM={setLLMSelection}
-              onSelectNotebookPicker={handleSelectNotebookPicker}
-              onSelectBookPicker={handleSelectBookPicker}
-              onSelectHistoryPicker={handleSelectHistoryPicker}
-              onSelectAgentsPicker={handleSelectAgentsPicker}
-              onSelectQuestionBankPicker={handleSelectQuestionBankPicker}
-              onSelectPersonaPicker={handleSelectPersonaPicker}
-              onSelectMemoryPicker={handleSelectMemoryPicker}
-              onClearPersona={handleClearPersona}
-              personaSelection={state.personaSelection}
-              onPersonaSelectionChange={setPersonaSelection}
-              personaSelectorOpen={personaSelectorOpen}
-              onPersonaSelectorOpenChange={setPersonaSelectorOpen}
-              onToggleMemoryFile={handleToggleMemoryFile}
-              onSend={handleSend}
-              onRemoveAttachment={removeAttachment}
-              onPreviewAttachment={handlePreviewPendingAttachment}
-              onRemoveHistory={handleRemoveHistory}
-              onRemoveAgent={handleRemoveAgent}
-              onRemoveBookReference={handleRemoveBookReference}
-              onRemoveNotebook={handleRemoveNotebook}
-              onRemoveQuestion={handleRemoveQuestion}
-              onDragEnter={handleDragEnter}
-              onDragLeave={handleDragLeave}
-              onDragOver={handleDragOver}
-              onDrop={handleDrop}
-              onPaste={handlePaste}
-              onAddFiles={handleAddFiles}
-              onSelectCapability={handleSelectCapability}
-              onCancelStreaming={cancelStreamingTurn}
-              prefillInputRef={prefillInputRef}
-            />
+            {courseSessionReadOnly ? (
+              <div className="mx-auto mb-3 flex w-full max-w-3xl items-center justify-between gap-4 rounded-2xl border border-[var(--border)] bg-[var(--muted)]/35 px-4 py-3 text-sm">
+                <div>
+                  <div className="font-medium text-[var(--foreground)]">
+                    {t("This archived course conversation is read-only.")}
+                  </div>
+                  <div className="text-xs text-[var(--muted-foreground)]">
+                    {t("Restore the course to continue this conversation.")}
+                  </div>
+                </div>
+                {sessionCourse?.state === "archived" ? (
+                  <button
+                    type="button"
+                    onClick={() => void restoreCourse(sessionCourse)}
+                    className="shrink-0 rounded-lg bg-[var(--primary)] px-3 py-2 text-xs font-medium text-[var(--primary-foreground)]"
+                  >
+                    {t("Restore course")}
+                  </button>
+                ) : null}
+              </div>
+            ) : !hasLlm ? (
+              <div className="mx-auto mb-5 w-full max-w-3xl rounded-2xl border border-[var(--border)] bg-[var(--muted)]/35 px-4 py-3 text-sm">
+                <div className="font-medium text-[var(--foreground)]">
+                  {t("Course organization and learning remain available.")}
+                </div>
+                <div className="mt-1 text-xs text-[var(--muted-foreground)]">
+                  {t("Chat and regeneration require an assigned LLM model. Contact your administrator for model access.")}
+                </div>
+              </div>
+            ) : (
+              <ChatComposer
+                composerRef={composerRef}
+                capMenuRef={capMenuRef}
+                capBtnRef={capBtnRef}
+                spaceMenuRef={spaceMenuRef}
+                spaceBtnRef={spaceBtnRef}
+                dragCounter={dragCounter}
+                dragging={dragging}
+                capMenuOpen={capMenuOpen}
+                spaceMenuOpen={spaceMenuOpen}
+                hasMessages={hasMessages}
+                attachments={attachments}
+                attachmentError={attachmentError}
+                activeCap={activeCap}
+                knowledgeBases={kbOptions}
+                connectedAgents={agentOptions}
+                selectedAgent={selectedAgent}
+                onSelectAgent={handleSelectAgent}
+                subagentBudget={subagentBudget}
+                onSubagentBudgetChange={setSubagentBudget}
+                llmOptions={llmOptions}
+                activeLLMDefault={activeLLMDefault}
+                llmSelection={state.llmSelection}
+                llmOptionsLoading={llmOptionsLoading}
+                llmOptionsError={llmOptionsError}
+                selectedBookReferences={selectedBookReferences}
+                selectedNotebookRecords={selectedNotebookRecords}
+                selectedHistorySessions={selectedHistorySessions}
+                selectedAgentSessions={selectedAgentSessions}
+                selectedQuestionEntries={selectedQuestionEntries}
+                notebookReferenceGroups={notebookReferenceGroups}
+                selectedPersona={null}
+                selectedMemoryFiles={selectedMemoryFiles}
+                selectedKnowledgeBases={selectedKbOnly}
+                isStreaming={state.isStreaming}
+                isVisualizeMode={isVisualizeMode}
+                capabilityNeedsConfig={capabilityNeedsConfig}
+                capabilityConfigConfirmed={capabilityConfigConfirmed}
+                onRequestConfigConfirm={ensureActivityPanelOpen}
+                capabilities={CAPABILITIES}
+                onSetCapMenuOpen={setCapMenuOpen}
+                onSetSpaceMenuOpen={setSpaceMenuOpen}
+                onToggleKB={handleToggleKB}
+                onSelectLLM={setLLMSelection}
+                onSelectNotebookPicker={handleSelectNotebookPicker}
+                onSelectBookPicker={handleSelectBookPicker}
+                onSelectHistoryPicker={handleSelectHistoryPicker}
+                onSelectAgentsPicker={handleSelectAgentsPicker}
+                onSelectQuestionBankPicker={handleSelectQuestionBankPicker}
+                onSelectPersonaPicker={handleSelectPersonaPicker}
+                onSelectMemoryPicker={handleSelectMemoryPicker}
+                onClearPersona={handleClearPersona}
+                personaSelection={state.personaSelection}
+                onPersonaSelectionChange={setPersonaSelection}
+                personaSelectorOpen={personaSelectorOpen}
+                onPersonaSelectorOpenChange={setPersonaSelectorOpen}
+                onToggleMemoryFile={handleToggleMemoryFile}
+                onSend={handleSend}
+                onRemoveAttachment={removeAttachment}
+                onPreviewAttachment={handlePreviewPendingAttachment}
+                onRemoveHistory={handleRemoveHistory}
+                onRemoveAgent={handleRemoveAgent}
+                onRemoveBookReference={handleRemoveBookReference}
+                onRemoveNotebook={handleRemoveNotebook}
+                onRemoveQuestion={handleRemoveQuestion}
+                onDragEnter={handleDragEnter}
+                onDragLeave={handleDragLeave}
+                onDragOver={handleDragOver}
+                onDrop={handleDrop}
+                onPaste={handlePaste}
+                onAddFiles={handleAddFiles}
+                onSelectCapability={handleSelectCapability}
+                onCancelStreaming={cancelStreamingTurn}
+                prefillInputRef={prefillInputRef}
+                courseMode={courseMode}
+              />
+            )}
             <div
               aria-hidden="true"
               className="shrink-0"

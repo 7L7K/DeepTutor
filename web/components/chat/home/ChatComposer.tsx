@@ -212,6 +212,7 @@ export default memo(function ChatComposer({
   onCancelStreaming,
   prefillInputRef,
   inputPlaceholder,
+  courseMode = false,
 }: {
   composerRef: RefObject<HTMLDivElement | null>;
   capMenuRef: RefObject<HTMLDivElement | null>;
@@ -319,6 +320,8 @@ export default memo(function ChatComposer({
   prefillInputRef?: React.MutableRefObject<((text: string) => void) | null>;
   /** Override the composer placeholder (e.g. quiz follow-up). */
   inputPlaceholder?: string;
+  /** Private Course mode permits text plus server-resolved Course sources only. */
+  courseMode?: boolean;
 }) {
   const { t } = useTranslation();
   const CapIcon = activeCap.icon;
@@ -567,10 +570,10 @@ export default memo(function ChatComposer({
               ? "border-[var(--primary)] bg-[var(--primary)]/[0.03]"
               : "border-[var(--border)]/55"
           }`}
-          onDragEnter={onDragEnter}
-          onDragLeave={onDragLeave}
-          onDragOver={onDragOver}
-          onDrop={onDrop}
+          onDragEnter={courseMode ? undefined : onDragEnter}
+          onDragLeave={courseMode ? undefined : onDragLeave}
+          onDragOver={courseMode ? undefined : onDragOver}
+          onDrop={courseMode ? undefined : onDrop}
           data-drag-counter={dragCounter.current}
         >
           {dragging && (
@@ -622,14 +625,14 @@ export default memo(function ChatComposer({
             canSendEmpty={hasReferences}
             onSend={doSend}
             onInputChange={handleInputChange}
-            onPaste={onPaste}
-            connectedAgents={connectedAgents}
-            selectedAgent={selectedAgent}
-            onSelectAgent={onSelectAgent}
+            onPaste={courseMode ? () => undefined : onPaste}
+            connectedAgents={courseMode ? [] : connectedAgents}
+            selectedAgent={courseMode ? null : selectedAgent}
+            onSelectAgent={courseMode ? undefined : onSelectAgent}
             selectedCounts={spaceSelectionCounts}
             knowledgeAvailable={false}
             personaAvailable={!onPersonaSelectionChange}
-            onSelectAttach={handlePickFiles}
+            onSelectAttach={courseMode ? () => undefined : handlePickFiles}
             agentsAvailable={agentsAvailable}
             onSelectNotebookPicker={onSelectNotebookPicker}
             onSelectBookPicker={onSelectBookPicker}
@@ -782,6 +785,7 @@ export default memo(function ChatComposer({
                     className="dt-popup-up absolute bottom-full left-0 z-50 mb-1.5 w-[260px] overflow-visible rounded-xl border border-[var(--border)] bg-[var(--popover)] py-1 shadow-lg backdrop-blur-md"
                   >
                     {capabilities
+                      .filter((cap) => !courseMode || cap.value === "")
                       .filter((cap) => !cap.loopEngine)
                       .map((cap) => (
                         <CapMenuItem
@@ -793,7 +797,7 @@ export default memo(function ChatComposer({
                       ))}
                     {(() => {
                       const loopCaps = capabilities.filter(
-                        (cap) => cap.loopEngine,
+                        (cap) => cap.loopEngine && (!courseMode || cap.value === "mastery_path"),
                       );
                       if (loopCaps.length === 0) return null;
                       const loopSelected = loopCaps.some(
@@ -878,6 +882,7 @@ export default memo(function ChatComposer({
               </div>
 
               <div className="relative flex min-w-0 flex-1 items-center">
+                {!courseMode ? (
                 <button
                   ref={spaceBtnRef}
                   type="button"
@@ -897,8 +902,13 @@ export default memo(function ChatComposer({
                     </span>
                   )}
                 </button>
+                ) : (
+                  <span className="px-2 text-[11px] text-[var(--muted-foreground)]">
+                    {t("Course sources only")}
+                  </span>
+                )}
                 <AnimatePresence>
-                  {spaceMenuOpen && (
+                  {!courseMode && spaceMenuOpen && (
                     <motion.div
                       ref={spaceMenuRef}
                       className="absolute bottom-full left-0 z-50 mb-1.5"
@@ -935,7 +945,7 @@ export default memo(function ChatComposer({
               </div>
 
               <div className="ml-auto flex shrink-0 items-center gap-1.5">
-                {connectedAgents.length > 0 && onSelectAgent ? (
+                {!courseMode && connectedAgents.length > 0 && onSelectAgent ? (
                   <AgentSelector
                     agents={connectedAgents}
                     selected={selectedAgent}
@@ -944,7 +954,7 @@ export default memo(function ChatComposer({
                     onBudgetChange={onSubagentBudgetChange}
                   />
                 ) : null}
-                {knowledgeBases.length > 0 ? (
+                {!courseMode && knowledgeBases.length > 0 ? (
                   <KnowledgeSelector
                     knowledgeBases={knowledgeBases}
                     selected={selectedKnowledgeBases}

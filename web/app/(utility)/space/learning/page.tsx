@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { useTranslation } from "react-i18next";
 import {
@@ -23,6 +23,14 @@ import {
   type MasteryMapResult,
   type ObjectiveStatus,
 } from "@/lib/learning-api";
+import { CourseBar } from "@/components/courses/CourseBar";
+import { useCourses } from "@/context/CourseContext";
+import {
+  getCourseLearning,
+  initCourseLearning,
+  resetCourseLearning,
+} from "@/lib/course-api";
+import { isCurrentCourseRequest } from "@/lib/course-selection";
 
 /**
  * Mastery Path dashboard — the persistent "screen" of the mastery experience.
@@ -35,6 +43,11 @@ import {
  * that session in mastery mode.
  */
 export default function MasteryPathPage() {
+  const { activeCourse } = useCourses();
+  return activeCourse ? <CourseLearningPage /> : <GeneralMasteryPathPage />;
+}
+
+function GeneralMasteryPathPage() {
   const { i18n } = useTranslation();
   const zh = i18n.language?.toLowerCase().startsWith("zh");
   const tr = useCallback((cn: string, en: string) => (zh ? cn : en), [zh]);
@@ -217,6 +230,157 @@ export default function MasteryPathPage() {
   );
 }
 
+function CourseLearningPage() {
+  const { t } = useTranslation();
+  const { activeCourse } = useCourses();
+  const router = useRouter();
+  const [detail, setDetail] = useState<MasteryMapResult | null>(null);
+  const [initialized, setInitialized] = useState(false);
+  const [loading, setLoading] = useState(true);
+  const [moduleName, setModuleName] = useState("");
+  const [objectives, setObjectives] = useState("");
+  const [error, setError] = useState<string | null>(null);
+  const [resetConfirming, setResetConfirming] = useState(false);
+  const loadEpochRef = useRef(0);
+  const activeCourseIdRef = useRef<string | null>(activeCourse?.id || null);
+  activeCourseIdRef.current = activeCourse?.id || null;
+
+  const load = useCallback(async () => {
+    if (!activeCourse) return;
+    const requestEpoch = ++loadEpochRef.current;
+    const requestedCourseId = activeCourse.id;
+    setLoading(true);
+    try {
+      const result = await getCourseLearning(requestedCourseId);
+      if (!isCurrentCourseRequest(
+        requestEpoch,
+        loadEpochRef.current,
+        requestedCourseId,
+        activeCourseIdRef.current,
+      )) return;
+      setInitialized(result.initialized);
+      setDetail(
+        result.initialized && result.next && result.map
+          ? {
+              book_id: result.learning_path_id,
+              next: result.next,
+              map: result.map,
+            }
+          : null,
+      );
+      setError(null);
+    } catch (cause) {
+      if (!isCurrentCourseRequest(
+        requestEpoch,
+        loadEpochRef.current,
+        requestedCourseId,
+        activeCourseIdRef.current,
+      )) return;
+      setError(cause instanceof Error ? cause.message : "Could not load course learning");
+    } finally {
+      if (isCurrentCourseRequest(
+        requestEpoch,
+        loadEpochRef.current,
+        requestedCourseId,
+        activeCourseIdRef.current,
+      )) setLoading(false);
+    }
+  }, [activeCourse]);
+
+  useEffect(() => {
+    void load();
+  }, [load]);
+
+  if (!activeCourse) return null;
+
+  async function initialize() {
+    const course = activeCourse;
+    if (!course) return;
+    const names = objectives.split("\n").map((item) => item.trim()).filter(Boolean);
+    if (!moduleName.trim() || !names.length) {
+      setError("Add a module name and at least one objective.");
+      return;
+    }
+    setLoading(true);
+    try {
+      const moduleId = `${course.id}_m1`;
+      await initCourseLearning(course.id, [
+        {
+          id: moduleId,
+          name: moduleName.trim(),
+          order: 0,
+          pass_threshold: 0.7,
+          knowledge_points: names.map((name, index) => ({
+            id: `${moduleId}_kp${index + 1}`,
+            name,
+            type: "concept",
+            module_id: moduleId,
+          })),
+        },
+      ]);
+      await load();
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "Could not initialize learning");
+      setLoading(false);
+    }
+  }
+
+  async function reset() {
+    const course = activeCourse;
+    if (!course) return;
+    setResetConfirming(false);
+    setLoading(true);
+    try {
+      await resetCourseLearning(course.id);
+      await load();
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "Could not reset course learning");
+      setLoading(false);
+    }
+  }
+
+  return (
+    <div className="flex h-full flex-col overflow-hidden">
+      <CourseBar />
+      <div className="border-b border-[var(--border)] px-6 py-3">
+        <h1 className="font-semibold text-[var(--foreground)]">{t("{{course}} learning", { course: activeCourse.title })}</h1>
+        <p className="text-xs text-[var(--muted-foreground)]">{t("Private objectives, mastery, errors, and review queue")}</p>
+        {resetConfirming ? (
+          <div role="alertdialog" aria-label={t("Confirm learning reset")} className="mt-3 flex flex-wrap items-center gap-2 rounded-lg border border-[var(--border)] bg-[var(--card)] p-3 text-sm">
+            <span>{t("Reset mastery and review progress for this course?")}</span>
+            <button onClick={() => void reset()} className="rounded-lg bg-red-600 px-3 py-1.5 text-white">{t("Reset progress")}</button>
+            <button onClick={() => setResetConfirming(false)} className="rounded-lg px-3 py-1.5 hover:bg-[var(--muted)]">{t("Cancel")}</button>
+          </div>
+        ) : null}
+      </div>
+      <div className="flex-1 overflow-y-auto">
+        {loading ? (
+          <div className="flex h-full items-center justify-center"><Loader2 className="h-5 w-5 animate-spin" /></div>
+        ) : detail ? (
+          <MapView
+            result={detail}
+            zh={false}
+            tr={(_cn, en) => en}
+            onContinue={() => router.push("/home")}
+            onRedo={() => setResetConfirming(true)}
+          />
+        ) : !initialized ? (
+          <div className="mx-auto max-w-xl space-y-4 px-6 py-8">
+            <div>
+              <h2 className="font-medium text-[var(--foreground)]">{t("Set your first learning module")}</h2>
+              <p className="mt-1 text-sm text-[var(--muted-foreground)]">{t("Enter the topics you want to master. This does not call a model.")}</p>
+            </div>
+            <input value={moduleName} onChange={(event) => setModuleName(event.target.value)} placeholder={t("Module name, e.g. Cell Biology")} className="w-full rounded-lg border border-[var(--border)] bg-[var(--card)] px-3 py-2" />
+            <textarea value={objectives} onChange={(event) => setObjectives(event.target.value)} placeholder={t("One objective per line\nExplain cellular respiration\nCompare mitosis and meiosis")} rows={7} className="w-full rounded-lg border border-[var(--border)] bg-[var(--card)] px-3 py-2" />
+            <button onClick={() => void initialize()} className="rounded-lg bg-[var(--primary)] px-4 py-2 text-sm text-[var(--primary-foreground)]">{t("Initialize learning")}</button>
+            {error ? <p className="text-sm text-red-500">{error}</p> : null}
+          </div>
+        ) : null}
+      </div>
+    </div>
+  );
+}
+
 const STATUS_META: Record<
   ObjectiveStatus,
   { cn: string; en: string; className: string }
@@ -262,7 +426,7 @@ function MapView({
   tr: (cn: string, en: string) => string;
   onContinue: () => void;
   onRedo: () => void;
-  onDelete: () => void;
+  onDelete?: () => void;
 }) {
   const { map, next } = result;
   const pct = map.counts.total
@@ -304,13 +468,13 @@ function MapView({
           >
             <RotateCcw className="w-4 h-4" />
           </button>
-          <button
+          {onDelete ? <button
             onClick={onDelete}
             title={tr("删除", "Delete")}
             className="p-1.5 rounded-md text-[var(--muted-foreground)] hover:bg-red-500/10 hover:text-red-500 cursor-pointer"
           >
             <Trash2 className="w-4 h-4" />
-          </button>
+          </button> : null}
         </div>
       </div>
 

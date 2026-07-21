@@ -42,14 +42,13 @@ import {
   normalizeBookReferences,
   type BookReferencePayload,
 } from "@/lib/book-references";
+import {
+  courseIdForChatSession,
+  getRuntimeActiveCourseId,
+} from "@/lib/course-selection";
 
 type SessionRuntimeStatus =
-  | "idle"
-  | "running"
-  | "completed"
-  | "failed"
-  | "cancelled"
-  | "rejected";
+  "idle" | "running" | "completed" | "failed" | "cancelled" | "rejected";
 
 interface OutgoingAttachment {
   type: string;
@@ -83,6 +82,7 @@ export interface SendMessageOptions {
 
 export interface ChatState {
   sessionId: string | null;
+  courseId: string | null;
   sessionTitle: string;
   enabledTools: string[];
   activeCapability: string | null;
@@ -187,6 +187,7 @@ type Action =
       attachments?: MessageAttachment[];
       requestSnapshot?: MessageRequestSnapshot;
       parentMessageId?: number | null;
+      courseId?: string | null;
     }
   | { type: "POP_LAST_ASSISTANT"; key: string }
   | { type: "RESTORE_ASSISTANT"; key: string; message: MessageItem }
@@ -219,6 +220,7 @@ type Action =
       personaSelection?: string;
       language?: string;
       selectedBranches?: Record<string, number>;
+      courseId?: string | null;
     }
   | { type: "SET_SESSION_TITLE"; key: string; title: string }
   | { type: "DELETE_TURN"; key: string; messageId: number }
@@ -239,10 +241,12 @@ type Action =
 function createSessionEntry(
   key: string,
   sessionId: string | null = null,
+  courseId: string | null = null,
 ): SessionEntry {
   return {
     key,
     sessionId,
+    courseId,
     sessionTitle: "",
     enabledTools: [],
     activeCapability: null,
@@ -335,6 +339,10 @@ function reducer(state: ProviderState, action: Action): ProviderState {
           ...state.sessions,
           [action.key]: {
             ...session,
+            courseId:
+              action.courseId !== undefined
+                ? action.courseId
+                : session.courseId,
             messages: [
               ...session.messages,
               {
@@ -586,6 +594,10 @@ function reducer(state: ProviderState, action: Action): ProviderState {
             language: action.language ?? existing.language,
             selectedBranches:
               action.selectedBranches ?? existing.selectedBranches,
+            courseId:
+              action.courseId !== undefined
+                ? action.courseId
+                : existing.courseId,
             updatedAt: Date.now(),
           },
         },
@@ -1132,7 +1144,11 @@ export function UnifiedChatProvider({
       if (existing) {
         const session = stateRef.current.sessions[key];
         if (session) {
-          existing.client.setResumeState(session.activeTurnId, session.lastSeq);
+          existing.client.setResumeState(
+            session.activeTurnId,
+            session.lastSeq,
+            session.courseId,
+          );
         }
         if (!existing.client.connected) existing.client.connect();
         return existing;
@@ -1164,7 +1180,10 @@ export function UnifiedChatProvider({
                 i18n.t(
                   "Connection lost while generating. Please retry your message.",
                 ),
-                { tone: "error", durationMs: 6000 },
+                {
+                  tone: "error",
+                  durationMs: 6000,
+                },
               );
             }
           },
@@ -1173,7 +1192,11 @@ export function UnifiedChatProvider({
       runnersRef.current.set(key, record);
       const session = stateRef.current.sessions[key];
       if (session?.activeTurnId) {
-        record.client.setResumeState(session.activeTurnId, session.lastSeq);
+        record.client.setResumeState(
+          session.activeTurnId,
+          session.lastSeq,
+          session.courseId,
+        );
       }
       record.client.connect();
       return record;
@@ -1195,7 +1218,10 @@ export function UnifiedChatProvider({
             i18n.t(
               "Couldn't reach the server. Please check your connection and retry.",
             ),
-            { tone: "error", durationMs: 6000 },
+            {
+              tone: "error",
+              durationMs: 6000,
+            },
           );
           return;
         }
@@ -1246,6 +1272,7 @@ export function UnifiedChatProvider({
         selectedBranches: normalizeSelectedBranches(
           session.preferences?.selected_branches,
         ),
+        courseId: session.course_id || null,
       });
       if (activeTurn?.turn_id || activeTurn?.id) {
         const key = session.session_id || session.id;
@@ -1253,6 +1280,7 @@ export function UnifiedChatProvider({
           type: "subscribe_turn",
           turn_id: activeTurn.turn_id || activeTurn.id,
           after_seq: 0,
+          course_id: session.course_id || null,
         });
       }
     },
@@ -1373,6 +1401,11 @@ export function UnifiedChatProvider({
         dispatch({ type: "NEW_SESSION", key });
       }
       const session = currentState.sessions[key] ?? createSessionEntry(key);
+      const courseId = courseIdForChatSession(
+        session.sessionId,
+        session.courseId,
+        getRuntimeActiveCourseId(),
+      );
       const replaySnapshot = options?.requestSnapshotOverride;
       const effectiveCapability =
         replaySnapshot?.capability ?? session.activeCapability;
@@ -1477,6 +1510,7 @@ export function UnifiedChatProvider({
           attachments: effectiveAttachments,
           requestSnapshot,
           parentMessageId: localParentId,
+          courseId,
         });
       }
       dispatch({ type: "STREAM_START", key });
@@ -1530,6 +1564,7 @@ export function UnifiedChatProvider({
         ...(wireParentId !== undefined
           ? { parent_message_id: wireParentId }
           : {}),
+        course_id: courseId,
       });
     },
     [makeDraftKey, sendThroughRunner],
@@ -1545,7 +1580,11 @@ export function UnifiedChatProvider({
     const runner = runnersRef.current.get(key);
     if (runner?.client.connected) {
       if (turnId) {
-        runner.client.send({ type: "cancel_turn", turn_id: turnId });
+        runner.client.send({
+          type: "cancel_turn",
+          turn_id: turnId,
+          course_id: session.courseId,
+        });
       }
       runner.client.disconnect();
       runnersRef.current.delete(key);
@@ -1588,7 +1627,7 @@ export function UnifiedChatProvider({
         if (typeof reply.text === "string") message.text = reply.text;
         if (Array.isArray(reply.answers)) message.answers = reply.answers;
       }
-      sendThroughRunner(key, message);
+      sendThroughRunner(key, { ...message, course_id: session.courseId });
     },
     [sendThroughRunner],
   );
@@ -1621,6 +1660,7 @@ export function UnifiedChatProvider({
       overrides: {
         language: readStoredLanguage(),
       },
+      course_id: session.courseId,
     });
   }, [sendThroughRunner]);
 
@@ -1628,6 +1668,7 @@ export function UnifiedChatProvider({
     const current = ensureSelectedSession(state);
     return {
       sessionId: current.sessionId,
+      courseId: current.courseId,
       sessionTitle: current.sessionTitle,
       enabledTools: current.enabledTools,
       activeCapability: current.activeCapability,
