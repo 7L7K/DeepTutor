@@ -161,8 +161,10 @@ def list_users() -> list[dict]:
 
 def delete_user(username: str) -> bool:
     """
-    Remove a user from the store. Returns True if the user existed.
+    Disable a user in the store. Returns True if the user existed.
 
+    The identity/workspace are retained for reversible account quarantine;
+    existing tokens stop validating on their next operation.
     """
     from deeptutor.multi_user.identity import delete_user as _delete_user
 
@@ -268,14 +270,26 @@ def decode_token(token: str) -> TokenPayload | None:
 
     try:
         payload = jwt.decode(token, AUTH_SECRET, algorithms=[_ALGORITHM])
-        username = payload.get("sub")
-        if not username:
+        token_username = str(payload.get("sub") or "")
+        if not token_username:
             return None
-        user_id = str(payload.get("uid") or "")
-        if not user_id:
-            record = _load_users().get(str(username)) or {}
-            user_id = str(record.get("id") or "")
-        return TokenPayload(username=username, role=payload.get("role", "user"), user_id=user_id)
+        token_user_id = str(payload.get("uid") or "")
+        if not token_user_id:
+            return None
+        users = _load_users()
+        matched_username = ""
+        record: dict[str, Any] | None = None
+        for username, candidate in users.items():
+            if str(candidate.get("id") or "") == token_user_id:
+                matched_username = str(username)
+                record = candidate
+                break
+        if record is None or bool(record.get("disabled", False)):
+            return None
+        role = str(record.get("role") or "user")
+        if role not in {"admin", "user"}:
+            role = "user"
+        return TokenPayload(username=matched_username, role=role, user_id=token_user_id)
     except JWTError:
         return None
 
@@ -367,6 +381,9 @@ def authenticate(username: str, password: str) -> TokenPayload | None:
 
     record = users.get(username)
     if not record:
+        return None
+
+    if isinstance(record, dict) and bool(record.get("disabled", False)):
         return None
 
     hashed = record.get("hash", "") if isinstance(record, dict) else record

@@ -21,6 +21,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 import logging
+import os
 from pathlib import Path
 import zipfile
 
@@ -93,7 +94,8 @@ def safe_extract_zip(
     """
     limits = limits or ZipExtractionLimits()
     target_dir = Path(target_dir)
-    target_dir.mkdir(parents=True, exist_ok=True)
+    target_dir.mkdir(parents=True, exist_ok=True, mode=0o700)
+    target_dir.chmod(0o700)
     target_root = target_dir.resolve()
 
     # Never extract nested archives — they are an unbounded-recursion vector.
@@ -110,6 +112,7 @@ def safe_extract_zip(
                 f"Archive has too many entries: {len(members)} > {limits.max_entries}"
             )
 
+        planned: list[tuple[zipfile.ZipInfo, str, Path]] = []
         for info in members:
             member = info.filename
             basename = member.replace("\\", "/").rsplit("/", 1)[-1]
@@ -155,17 +158,26 @@ def safe_extract_zip(
                 result.skipped.append((member, "path escapes target directory"))
                 continue
 
-            written = _extract_member(archive, info, destination, limits.max_entry_bytes)
-            if written > info.file_size:
-                # Decompressed more than the header declared → treat as a bomb.
-                destination.unlink(missing_ok=True)
-                raise ArchiveTooLargeError(
-                    f"Zip entry decompressed past its declared size: {member}"
-                )
-
-            total_bytes += written
+            total_bytes += info.file_size
             seen_names.add(safe_name)
-            result.extracted.append(destination)
+            planned.append((info, member, destination))
+
+        # Only write after every member has passed archive-wide metadata
+        # checks. If a corrupt member expands beyond its declaration, roll
+        # back all files created by this extraction attempt.
+        try:
+            for info, member, destination in planned:
+                written = _extract_member(archive, info, destination, limits.max_entry_bytes)
+                if written > info.file_size:
+                    destination.unlink(missing_ok=True)
+                    raise ArchiveTooLargeError(
+                        f"Zip entry decompressed past its declared size: {member}"
+                    )
+                result.extracted.append(destination)
+        except Exception:
+            for destination in result.extracted:
+                destination.unlink(missing_ok=True)
+            raise
 
     return result
 
@@ -184,14 +196,25 @@ def _extract_member(
     returned still exceeds the limit so the caller can detect the overflow.
     """
     written = 0
-    with archive.open(info) as source, open(destination, "wb") as sink:
-        while True:
-            chunk = source.read(chunk_size)
-            if not chunk:
-                break
-            written += len(chunk)
-            if written > max_entry_bytes:
+    flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL
+    if hasattr(os, "O_NOFOLLOW"):
+        flags |= os.O_NOFOLLOW
+    created = False
+    try:
+        descriptor = os.open(destination, flags, 0o600)
+        created = True
+        with archive.open(info) as source, os.fdopen(descriptor, "wb") as sink:
+            while True:
+                chunk = source.read(chunk_size)
+                if not chunk:
+                    break
+                written += len(chunk)
+                if written > max_entry_bytes:
+                    sink.write(chunk)
+                    return written  # signal overflow; caller cleans up
                 sink.write(chunk)
-                return written  # signal overflow; caller cleans up
-            sink.write(chunk)
+    except Exception:
+        if created:
+            destination.unlink(missing_ok=True)
+        raise
     return written

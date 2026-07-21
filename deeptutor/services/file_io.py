@@ -22,6 +22,7 @@ def atomic_write_json(path: Path, payload: dict[str, Any]) -> None:
             delete=False,
         ) as handle:
             temporary_path = Path(handle.name)
+            os.chmod(temporary_path, 0o600)
             json.dump(payload, handle, indent=2, ensure_ascii=False)
             handle.write("\n")
             handle.flush()
@@ -30,6 +31,7 @@ def atomic_write_json(path: Path, payload: dict[str, Any]) -> None:
             except OSError:
                 pass
         temporary_path.replace(path)
+        os.chmod(path, 0o600)
     finally:
         if temporary_path is not None:
             temporary_path.unlink(missing_ok=True)
@@ -48,6 +50,7 @@ def atomic_write_text(path: Path, text: str) -> None:
             delete=False,
         ) as handle:
             temporary_path = Path(handle.name)
+            os.chmod(temporary_path, 0o600)
             handle.write(text)
             handle.flush()
             try:
@@ -55,6 +58,7 @@ def atomic_write_text(path: Path, text: str) -> None:
             except OSError:
                 pass
         temporary_path.replace(path)
+        os.chmod(path, 0o600)
     finally:
         if temporary_path is not None:
             temporary_path.unlink(missing_ok=True)

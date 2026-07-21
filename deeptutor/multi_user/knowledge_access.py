@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from contextvars import ContextVar
 from functools import lru_cache
 from pathlib import Path
 from typing import Any
@@ -17,7 +18,20 @@ from .paths import get_admin_path_service, get_current_path_service
 
 ADMIN_PREFIX = "admin:kb:"
 USER_PREFIX = "user:kb:"
+PERSONAL_PREFIX = "personal:kb:"
 DEFAULT_KB_ALIASES = {"", "default", "current", "selected", "默认", "默认知识库", "当前知识库"}
+_managed_course_kb_authority: ContextVar[frozenset[str]] = ContextVar(
+    "managed_course_kb_authority", default=frozenset()
+)
+
+
+def is_managed_course_kb(name: str) -> bool:
+    return str(name or "").startswith("course_crs_")
+
+
+def set_managed_course_kb_authority(names: list[str] | tuple[str, ...] | set[str]) -> None:
+    """Set server-derived Course KB names permitted in the current turn context."""
+    _managed_course_kb_authority.set(frozenset(str(name) for name in names if str(name)))
 
 
 @lru_cache(maxsize=128)
@@ -47,6 +61,8 @@ def _strip_resource_prefix(value: str) -> tuple[str | None, str]:
         return "admin", raw[len(ADMIN_PREFIX) :]
     if raw.startswith(USER_PREFIX):
         return "user", raw[len(USER_PREFIX) :]
+    if raw.startswith(PERSONAL_PREFIX):
+        return "personal", raw[len(PERSONAL_PREFIX) :]
     return None, raw
 
 
@@ -68,6 +84,27 @@ def _assigned_admin_names() -> set[str]:
 def resolve_kb(kb_ref: str, *, require_write: bool = False) -> KnowledgeResource:
     user = get_current_user()
     requested_source, name = _strip_resource_prefix(kb_ref)
+
+    if is_managed_course_kb(name):
+        authorized = _managed_course_kb_authority.get()
+        if requested_source != "personal" or name not in authorized:
+            raise HTTPException(status_code=404, detail="Knowledge base not found")
+
+    if requested_source == "personal":
+        manager = current_kb_manager()
+        resolved = _resolve_default_or_name(
+            manager,
+            name,
+            allow_managed=name in _managed_course_kb_authority.get(),
+        )
+        return KnowledgeResource(
+            id=f"{PERSONAL_PREFIX}{resolved}",
+            name=resolved,
+            base_dir=current_kb_base_dir(),
+            source="user",
+            assigned=False,
+            read_only=False,
+        )
 
     if user.is_admin:
         manager = admin_kb_manager()
@@ -150,14 +187,24 @@ def resolve_kb(kb_ref: str, *, require_write: bool = False) -> KnowledgeResource
     raise HTTPException(status_code=404, detail=f"Knowledge base '{name}' not found")
 
 
-def _resolve_default_or_name(manager: KnowledgeBaseManager, name: str) -> str:
+def _resolve_default_or_name(
+    manager: KnowledgeBaseManager,
+    name: str,
+    *,
+    allow_managed: bool = False,
+) -> str:
     requested = str(name or "").strip()
     names = manager.list_knowledge_bases()
     if requested and requested in names:
-        return requested
+        resolved = requested
+        if is_managed_course_kb(resolved) and not allow_managed:
+            raise HTTPException(status_code=404, detail="Knowledge base not found")
+        return resolved
     if requested.lower() in DEFAULT_KB_ALIASES:
         default_kb = manager.get_default()
         if default_kb and default_kb in names:
+            if is_managed_course_kb(default_kb):
+                raise HTTPException(status_code=404, detail="Knowledge base not found")
             return default_kb
         raise HTTPException(status_code=404, detail="No default knowledge base is configured")
     raise HTTPException(status_code=404, detail=f"Knowledge base '{requested}' not found")
@@ -172,6 +219,8 @@ def list_visible_knowledge_bases() -> list[dict[str, Any]]:
     manager = current_kb_manager()
     items: list[dict[str, Any]] = []
     for name in manager.list_knowledge_bases():
+        if is_managed_course_kb(name):
+            continue
         items.append(
             {
                 "id": f"admin:kb:{name}" if user.is_admin else f"user:kb:{name}",

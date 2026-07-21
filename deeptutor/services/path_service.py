@@ -129,6 +129,10 @@ class PathService:
     def get_chat_history_db(self) -> Path:
         return self._user_data_dir / "chat_history.db"
 
+    def get_courses_db(self) -> Path:
+        """Private course metadata database for this workspace owner."""
+        return self._user_data_dir / "courses.db"
+
     def get_public_outputs_root(self) -> Path:
         return self._user_data_dir
 
@@ -424,16 +428,17 @@ class PathService:
 def get_path_service() -> PathService:
     try:
         from deeptutor.multi_user.paths import get_current_path_service
-
-        return get_current_path_service()
-    except Exception:
+    except ImportError:
         import logging as _logging
 
         _logging.getLogger(__name__).warning(
-            "get_path_service() fell back to default instance; multi-user path resolution failed",
+            "get_path_service() fell back to default instance; multi-user routing is unavailable",
             exc_info=True,
         )
         return PathService.get_instance()
+    # Once multi-user routing imports successfully, ownership/path failures are
+    # authorization failures. Never turn them into the shared admin workspace.
+    return get_current_path_service()
 
 
 __all__ = [
