@@ -11,6 +11,7 @@ from contextvars import Token
 from dataclasses import dataclass, field
 import json
 import logging
+from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal
 
 from deeptutor.core.stream import StreamEvent, StreamEventType
@@ -236,6 +237,17 @@ def _request_snapshot_metadata(
         snapshot["memoryReferences"] = memory_references
     if llm_selection:
         snapshot["llmSelection"] = llm_selection
+    course_context = payload.get("course_context")
+    if isinstance(course_context, dict) and course_context:
+        snapshot.update(
+            {
+                "courseId": course_context.get("course_id"),
+                "courseRevision": course_context.get("course_revision"),
+                "sourceIds": list(course_context.get("source_ids") or []),
+                "sourceRevisions": dict(course_context.get("source_revisions") or {}),
+                "sourceFingerprints": dict(course_context.get("source_fingerprints") or {}),
+            }
+        )
     return {"request_snapshot": snapshot}
 
 
@@ -597,6 +609,8 @@ class _TurnExecution:
     session_id: str
     capability: str
     payload: dict[str, Any]
+    owner_user_id: str = ""
+    owner_role: str = ""
     task: asyncio.Task[None] | None = None
     subscribers: list[_LiveSubscriber] = field(default_factory=list)
     events: list[dict[str, Any]] = field(default_factory=list)
@@ -633,6 +647,36 @@ class TurnRuntimeManager:
         """
         return await self._has_live_execution(turn_id)
 
+    @staticmethod
+    def _execution_owner_is_current(execution: _TurnExecution) -> bool:
+        """Revalidate account existence, status, and role before turn commits."""
+        from deeptutor.services import auth as auth_service
+
+        if not auth_service.AUTH_ENABLED:
+            return True
+        users = auth_service._load_users()
+        for record in users.values():
+            if str(record.get("id") or "") != execution.owner_user_id:
+                continue
+            if bool(record.get("disabled", False)):
+                return False
+            current_role = str(record.get("role") or "user")
+            return current_role == execution.owner_role
+        return False
+
+    def _assert_execution_owner_current(self, execution: _TurnExecution) -> None:
+        if not self._execution_owner_is_current(execution):
+            raise PermissionError("Account authorization changed during turn")
+
+    async def _publish_authorized_live_event(
+        self,
+        execution: _TurnExecution,
+        event: StreamEvent,
+    ) -> dict[str, Any]:
+        """Stop an in-flight stream before publishing under stale authority."""
+        self._assert_execution_owner_current(execution)
+        return await self._publish_live_event(execution, event)
+
     async def _has_live_execution(self, turn_id: str) -> bool:
         """Whether this process still owns the turn's in-memory runner."""
         async with self._lock:
@@ -665,7 +709,13 @@ class TurnRuntimeManager:
         for turn in await self.store.list_active_turns(session_id):
             await self._fail_orphan_running_turn(turn)
 
-    async def start_turn(self, payload: dict[str, Any]) -> tuple[dict[str, Any], dict[str, Any]]:
+    async def start_turn(
+        self,
+        payload: dict[str, Any],
+        *,
+        preserved_course_context: dict[str, Any] | None = None,
+        replace_assistant_message_id: int | str | None = None,
+    ) -> tuple[dict[str, Any], dict[str, Any]]:
         capability = str(payload.get("capability") or "chat")
         raw_config = dict(payload.get("config", {}) or {})
         runtime_only_keys = (
@@ -694,8 +744,44 @@ class TurnRuntimeManager:
             "capability": capability,
             "config": {**validated_public_config, **runtime_only_config},
         }
-        session = await self.store.ensure_session(payload.get("session_id"))
-        preferences = session.get("preferences") or {}
+        supplied_session_id = str(payload.get("session_id") or "").strip() or None
+        course_id = str(payload.get("course_id") or "").strip() or None
+        from deeptutor.multi_user.knowledge_access import set_managed_course_kb_authority
+
+        set_managed_course_kb_authority([])
+        if course_id:
+            from deeptutor.courses.service import resolve_course_turn_payload
+
+            payload = resolve_course_turn_payload(
+                course_id,
+                payload,
+                preserved_context=preserved_course_context,
+            )
+        elif str(payload.get("mastery_path_id") or "").startswith("lp_crs_"):
+            # Course learning identity is server-derived authority. A generic
+            # turn must never smuggle a Course path id into mastery tools and
+            # bypass archive/ownership checks.
+            raise RuntimeError("Course learning paths require an authorized Course turn")
+
+        # Reject unavailable model-backed work before creating a generic
+        # session. Course organization and model-free learning use separate
+        # HTTP APIs and remain available without an assigned model.
+        from deeptutor.multi_user.context import get_current_user
+        from deeptutor.multi_user.model_access import has_capability_access
+
+        current_user = get_current_user()
+        if not current_user.is_admin and not has_capability_access("llm"):
+            raise RuntimeError(
+                "No LLM model is assigned to your account. Please contact an administrator."
+            )
+        session: dict[str, Any] | None = None
+        if supplied_session_id or not course_id:
+            session = await self.store.ensure_session(
+                supplied_session_id,
+                course_id=course_id,
+                require_existing=bool(supplied_session_id and course_id),
+            )
+        preferences = session.get("preferences") or {} if session else {}
         # Persona is a session-level preference (mirrors llm_selection): an
         # explicit ``persona`` key in the payload — including an empty string,
         # which means "Default" / no persona — wins and is persisted below; an
@@ -725,13 +811,11 @@ class TurnRuntimeManager:
             # never silently fall through to the global LLM client (which is
             # configured from admin runtime settings). Admin keeps the existing behavior
             # (None llm_selection → default config from admin scope).
-            from deeptutor.multi_user.context import get_current_user
             from deeptutor.multi_user.model_access import (
                 has_capability_access,
                 redacted_model_access,
             )
 
-            current_user = get_current_user()
             if not current_user.is_admin:
                 # Single gate, shared with the frontend lock and any HTTP
                 # surface: no usable LLM grant → a clear terminal error here
@@ -790,30 +874,70 @@ class TurnRuntimeManager:
                 "tools": [t for t in (payload.get("tools") or []) if t in allowed_tools],
             }
         payload = {**payload, "llm_selection": llm_selection}
-        await self._recover_orphan_running_turns_for_session(session["id"])
-        preference_update: dict[str, Any] = {
-            "capability": capability,
-            "tools": list(payload.get("tools") or []),
-            "knowledge_bases": list(payload.get("knowledge_bases") or []),
-            "language": str(payload.get("language") or "en"),
-        }
-        if llm_selection:
-            preference_update["llm_selection"] = llm_selection
-        if persona_explicit:
-            # Persist explicit set AND explicit clear ("" = back to Default).
-            preference_update["persona"] = persona_pref
-        await self.store.update_session_preferences(session["id"], preference_update)
-        turn = await self.store.create_turn(session["id"], capability=capability)
+
+        async def persist_new_turn(
+            current_payload: dict[str, Any],
+        ) -> tuple[dict[str, Any], dict[str, Any]]:
+            nonlocal session
+            if course_id:
+                from deeptutor.courses.service import resolve_course_turn_payload
+
+                # Refresh Course/source provenance inside the same lifecycle
+                # lock used by archive. Either the running turn is persisted
+                # first (and archive returns 409), or archive wins and this
+                # resolver rejects the now-archived Course.
+                current_payload = resolve_course_turn_payload(
+                    course_id,
+                    current_payload,
+                    preserved_context=preserved_course_context,
+                )
+            if session is None:
+                session = await self.store.ensure_session(
+                    None,
+                    course_id=course_id,
+                    require_existing=False,
+                )
+            await self._recover_orphan_running_turns_for_session(session["id"])
+            preference_update: dict[str, Any] = {
+                "capability": capability,
+                "tools": list(current_payload.get("tools") or []),
+                "knowledge_bases": list(current_payload.get("knowledge_bases") or []),
+                "language": str(current_payload.get("language") or "en"),
+            }
+            if llm_selection:
+                preference_update["llm_selection"] = llm_selection
+            if persona_explicit:
+                # Persist explicit set AND explicit clear ("" = back to Default).
+                preference_update["persona"] = persona_pref
+            await self.store.update_session_preferences(session["id"], preference_update)
+            new_turn = await self.store.create_turn(session["id"], capability=capability)
+            return current_payload, new_turn
+
+        if course_id:
+            from deeptutor.courses.service import course_operation_lock
+
+            async with course_operation_lock(course_id):
+                payload, turn = await persist_new_turn(payload)
+        else:
+            payload, turn = await persist_new_turn(payload)
+        assert session is not None
+        from deeptutor.multi_user.context import get_current_user
+
+        current_owner = get_current_user()
         execution = _TurnExecution(
             turn_id=turn["id"],
             session_id=session["id"],
             capability=capability,
             payload=dict(payload),
+            owner_user_id=current_owner.id,
+            owner_role=current_owner.role,
         )
         session_metadata: dict[str, Any] = {
             "session_id": session["id"],
             "turn_id": turn["id"],
         }
+        if course_id:
+            session_metadata["course_id"] = course_id
         regenerated_from = runtime_only_config.get("_regenerated_from_message_id")
         if regenerated_from is not None:
             session_metadata["regenerated_from_message_id"] = regenerated_from
@@ -830,6 +954,19 @@ class TurnRuntimeManager:
                 metadata=session_metadata,
             ),
         )
+        if replace_assistant_message_id is not None:
+            # Keep the previous answer durable while the replacement runs. The
+            # worker inserts the new sibling first and removes the old answer
+            # only after the new message commit succeeds, so a provider error,
+            # cancellation, or process crash cannot erase the last good answer.
+            payload = {
+                **payload,
+                "config": {
+                    **dict(payload.get("config", {}) or {}),
+                    "_replace_assistant_message_id": int(replace_assistant_message_id),
+                },
+            }
+            execution.payload = dict(payload)
         async with self._lock:
             self._executions[turn["id"]] = execution
             execution.task = asyncio.create_task(self._run_turn(execution))
@@ -854,6 +991,7 @@ class TurnRuntimeManager:
         session = await self.store.get_session(session_id)
         if session is None:
             raise RuntimeError("nothing_to_regenerate")
+        course_id = str(session.get("course_id") or "").strip()
 
         active = await self.store.get_active_turn(session_id)
         if active is not None:
@@ -871,7 +1009,6 @@ class TurnRuntimeManager:
                 if turn_id:
                     previous_turn_id = turn_id
                     break
-            await self.store.delete_message(last_message["id"])
 
         preferences = session.get("preferences") or {}
         overrides = overrides or {}
@@ -918,6 +1055,7 @@ class TurnRuntimeManager:
 
         payload: dict[str, Any] = {
             "session_id": session_id,
+            "course_id": course_id or None,
             "capability": capability,
             "content": str(last_user.get("content", "") or ""),
             "tools": tools,
@@ -943,7 +1081,24 @@ class TurnRuntimeManager:
         }
         if llm_selection:
             payload["llm_selection"] = llm_selection
-        return await self.start_turn(payload)
+        preserved_course_context = None
+        if course_id:
+            preserved_course_context = {
+                "course_id": str(snapshot.get("courseId") or ""),
+                "course_revision": int(snapshot.get("courseRevision") or 0),
+                "source_ids": list(snapshot.get("sourceIds") or []),
+                "source_revisions": dict(snapshot.get("sourceRevisions") or {}),
+                "source_fingerprints": dict(snapshot.get("sourceFingerprints") or {}),
+            }
+        return await self.start_turn(
+            payload,
+            preserved_course_context=preserved_course_context,
+            replace_assistant_message_id=(
+                last_message["id"]
+                if last_message is not None and last_message.get("role") == "assistant"
+                else None
+            ),
+        )
 
     async def cancel_turn(self, turn_id: str) -> bool:
         async with self._lock:
@@ -962,6 +1117,40 @@ class TurnRuntimeManager:
         except asyncio.CancelledError:
             pass
         return True
+
+    async def has_live_course_turn(self, course_id: str) -> bool:
+        """Return whether this runtime still owns any task for the Course.
+
+        Persisted status may become terminal before post-turn writes (such as
+        title materialization) finish. Course archive therefore checks both
+        the database and the runtime execution registry.
+        """
+        async with self._lock:
+            session_ids = {
+                execution.session_id
+                for execution in self._executions.values()
+                if execution.task is None or not execution.task.done()
+            }
+        for session_id in session_ids:
+            session = await self.store.get_session(session_id)
+            if session and str(session.get("course_id") or "") == course_id:
+                return True
+        return False
+
+    async def recover_orphan_course_turns(self, course_id: str) -> int:
+        """Fail restart-orphaned Course turns before lifecycle decisions.
+
+        A persisted ``running`` row is not proof of live work after restart.
+        This reconciles rows against this process's execution registry so an
+        orphan cannot indefinitely block Course archive or learning reset.
+        """
+        recovered = 0
+        for turn in await self.store.list_active_course_turns(course_id):
+            before = str(turn.get("status") or "")
+            after = await self._fail_orphan_running_turn(turn)
+            if before == "running" and str((after or {}).get("status") or "") == "failed":
+                recovered += 1
+        return recovered
 
     async def submit_user_reply(
         self,
@@ -996,6 +1185,8 @@ class TurnRuntimeManager:
         self,
         turn_id: str,
         after_seq: int = 0,
+        *,
+        reconcile_orphan: bool = True,
     ) -> AsyncIterator[dict[str, Any]]:
         backlog = await self.store.get_turn_events(turn_id, after_seq=after_seq)
         last_seq = after_seq
@@ -1046,8 +1237,9 @@ class TurnRuntimeManager:
             yield _track(item)
 
         turn = await self.store.get_turn(turn_id)
-        if execution is None:
+        if execution is None and reconcile_orphan:
             turn = await self._fail_orphan_running_turn(turn)
+        if execution is None:
             if turn is None or turn.get("status") != "running":
                 # Turn already finished and we didn't see a DONE in any of the
                 # persisted history above — synthesise one so the caller can
@@ -1145,11 +1337,17 @@ class TurnRuntimeManager:
         self,
         session_id: str,
         after_seq: int = 0,
+        *,
+        reconcile_orphan: bool = True,
     ) -> AsyncIterator[dict[str, Any]]:
         active_turn = await self.store.get_active_turn(session_id)
         if active_turn is None:
             return
-        async for item in self.subscribe_turn(active_turn["id"], after_seq=after_seq):
+        async for item in self.subscribe_turn(
+            active_turn["id"],
+            after_seq=after_seq,
+            reconcile_orphan=reconcile_orphan,
+        ):
             yield item
 
     async def _run_turn(self, execution: _TurnExecution) -> None:
@@ -1186,6 +1384,7 @@ class TurnRuntimeManager:
         generated_attachments: list[dict[str, Any]] = []
         seen_artifact_urls: set[str] = set()
         stream_done_sent = False
+        terminal_stream_error = ""
         llm_scope_token: Token[LLMConfig | None] | None = None
         reset_active_llm_selection: Callable[[Token[LLMConfig | None] | None], None] | None = None
         # One queue per turn for ``ask_user`` style pause-resume.
@@ -1218,7 +1417,12 @@ class TurnRuntimeManager:
             followup_question_context = _extract_followup_question_context(request_config)
             persist_user_message = _extract_persist_user_message(request_config)
             is_regenerate = _extract_regenerate_flag(request_config)
-            request_config.pop("_regenerated_from_message_id", None)
+            regenerated_from_message_id = request_config.pop(
+                "_regenerated_from_message_id", None
+            )
+            replace_assistant_message_id = request_config.pop(
+                "_replace_assistant_message_id", None
+            )
             request_config.pop("_superseded_turn_id", None)
             raw_user_content = str(payload.get("content", "") or "")
             # Edit-branching tip: when the FE includes ``parent_message_id``
@@ -1581,6 +1785,7 @@ class TurnRuntimeManager:
 
             new_user_message_id: int | None = None
             if persist_user_message:
+                self._assert_execution_owner_current(execution)
                 # Pass parent explicitly only when the FE pinned it (covers
                 # both branched edits with a positive id and root edits
                 # with explicit null). Otherwise let the store auto-append.
@@ -1615,6 +1820,7 @@ class TurnRuntimeManager:
                 user_message=effective_user_message,
                 conversation_history=conversation_history,
                 enabled_tools=payload.get("tools"),
+                allowed_builtin_tools=payload.get("allowed_builtin_tools"),
                 active_capability=payload.get("capability"),
                 knowledge_bases=payload.get("knowledge_bases", []),
                 attachments=attachments,
@@ -1644,6 +1850,8 @@ class TurnRuntimeManager:
                     "llm_selection": payload.get("llm_selection") or {},
                     "llm_model": str(getattr(llm_config, "model", "") or ""),
                     "llm_provider": str(getattr(llm_config, "provider_name", "") or ""),
+                    "course_context": dict(payload.get("course_context") or {}),
+                    "mastery_path_id": str(payload.get("mastery_path_id") or ""),
                     # Per-turn full-text payload for read_source. Empty when
                     # the manifest is empty (non-chat capabilities, or chat
                     # turns with no attached sources). Consumed by the chat
@@ -1658,15 +1866,31 @@ class TurnRuntimeManager:
                 },
             )
 
-            orch = ChatOrchestrator()
             pending_done_event: StreamEvent | None = None
-            async for event in orch.handle(context):
+            from deeptutor.courses.deterministic_provider import (
+                course_chat_events,
+            )
+            from deeptutor.courses.deterministic_provider import (
+                enabled as deterministic_provider_enabled,
+            )
+
+            event_stream = (
+                course_chat_events(context)
+                if deterministic_provider_enabled() and payload.get("course_id")
+                else ChatOrchestrator().handle(context)
+            )
+            async for event in event_stream:
                 if event.type == StreamEventType.SESSION:
                     continue
                 if event.type == StreamEventType.DONE:
                     pending_done_event = event
                     continue
-                payload_event = await self._publish_live_event(execution, event)
+                if event.type == StreamEventType.ERROR and (
+                    event.metadata.get("turn_terminal")
+                    or event.metadata.get("status") == "failed"
+                ):
+                    terminal_stream_error = str(event.content or "Turn failed").strip()
+                payload_event = await self._publish_authorized_live_event(execution, event)
                 if payload_event.get("type") not in {"done", "session"}:
                     assistant_events.append(payload_event)
                 if _should_capture_assistant_content(event):
@@ -1680,6 +1904,42 @@ class TurnRuntimeManager:
                         seen_artifact_urls.add(attachment["url"])
                         generated_attachments.append(attachment)
 
+            if terminal_stream_error:
+                # The orchestrator reports provider/capability exceptions as
+                # terminal stream events so all transports see the error. Do
+                # not turn that event sequence into a blank assistant answer
+                # and a falsely completed turn. Preserve only content that was
+                # actually streamed before the failure.
+                partial_content = _persisted_answer()
+                if partial_content or generated_attachments:
+                    self._assert_execution_owner_current(execution)
+                    await self.store.add_message(
+                        session_id=session_id,
+                        role="assistant",
+                        content=partial_content,
+                        capability=capability_name,
+                        events=assistant_events,
+                        attachments=generated_attachments or None,
+                        parent_message_id=new_user_message_id,
+                    )
+                await self._flush_buffered_events(execution)
+                await self.store.update_turn_status(
+                    turn_id,
+                    "failed",
+                    terminal_stream_error,
+                )
+                failed_done = pending_done_event or StreamEvent(
+                    type=StreamEventType.DONE,
+                    source=capability_name,
+                )
+                failed_done.metadata = {
+                    **failed_done.metadata,
+                    "status": "failed",
+                }
+                await self._publish_live_event(execution, failed_done)
+                stream_done_sent = True
+                return
+
             # The persisted answer is the captured content minus any narration
             # rounds (their text stayed in the trace, never the answer).
             assistant_content = _persisted_answer()
@@ -1690,6 +1950,7 @@ class TurnRuntimeManager:
             # parent, we use it; otherwise we let the store auto-append
             # (legacy behavior).
             if new_user_message_id is not None:
+                self._assert_execution_owner_current(execution)
                 await self.store.add_message(
                     session_id=session_id,
                     role="assistant",
@@ -1699,7 +1960,19 @@ class TurnRuntimeManager:
                     attachments=generated_attachments or None,
                     parent_message_id=new_user_message_id,
                 )
+            elif is_regenerate and regenerated_from_message_id is not None:
+                self._assert_execution_owner_current(execution)
+                await self.store.add_message(
+                    session_id=session_id,
+                    role="assistant",
+                    content=assistant_content,
+                    capability=capability_name,
+                    events=assistant_events,
+                    attachments=generated_attachments or None,
+                    parent_message_id=int(regenerated_from_message_id),
+                )
             elif branch_parent_explicit:
+                self._assert_execution_owner_current(execution)
                 await self.store.add_message(
                     session_id=session_id,
                     role="assistant",
@@ -1710,6 +1983,7 @@ class TurnRuntimeManager:
                     parent_message_id=branch_parent_id,
                 )
             else:
+                self._assert_execution_owner_current(execution)
                 await self.store.add_message(
                     session_id=session_id,
                     role="assistant",
@@ -1718,6 +1992,14 @@ class TurnRuntimeManager:
                     events=assistant_events,
                     attachments=generated_attachments or None,
                 )
+            if replace_assistant_message_id is not None:
+                replaced = await self.store.delete_message(int(replace_assistant_message_id))
+                if not replaced:
+                    logger.warning(
+                        "Regeneration replacement %s was already unavailable in session %s",
+                        replace_assistant_message_id,
+                        session_id,
+                    )
             await self._flush_buffered_events(execution)
             await self.store.update_turn_status(turn_id, "completed")
             if pending_done_event is None:
@@ -1728,13 +2010,16 @@ class TurnRuntimeManager:
                 )
             await self._publish_live_event(execution, pending_done_event)
             stream_done_sent = True
-            if not is_regenerate:
+            if not is_regenerate and not (
+                deterministic_provider_enabled() and payload.get("course_id")
+            ):
                 # Title generation is post-turn metadata. Keep it after DONE
                 # so the composer and duration clock stop as soon as the
                 # assistant answer is saved; the frontend keeps this socket
                 # open briefly so the later ``session_meta`` title update can
                 # still arrive.
                 try:
+                    self._assert_execution_owner_current(execution)
                     await self._maybe_generate_session_title(
                         execution=execution,
                         session_id=session_id,
@@ -1771,7 +2056,10 @@ class TurnRuntimeManager:
             # suppressed separately so the status update below always runs —
             # a turn left "running" gets mislabelled as a restart orphan.
             partial_content = _persisted_answer()
-            if partial_content or generated_attachments or assistant_events:
+            if (
+                self._execution_owner_is_current(execution)
+                and (partial_content or generated_attachments or assistant_events)
+            ):
                 with contextlib.suppress(Exception):
                     await asyncio.shield(
                         self.store.add_message(
@@ -2008,11 +2296,16 @@ class TurnRuntimeManager:
                 continue
             self._mirror_event_to_workspace(execution, persisted)
 
-    @staticmethod
-    def _mirror_event_to_workspace(execution: _TurnExecution, payload: dict[str, Any]) -> None:
+    def _mirror_event_to_workspace(self, execution: _TurnExecution, payload: dict[str, Any]) -> None:
         """Mirror turn events to task-local ``events.jsonl`` files under ``data/user/workspace``."""
         try:
-            path_service = get_path_service()
+            db_path = getattr(self.store, "db_path", None)
+            if db_path is not None:
+                from deeptutor.services.path_service import PathService
+
+                path_service = PathService(workspace_root=Path(db_path).resolve().parent.parent)
+            else:
+                path_service = get_path_service()
             task_dir = path_service.get_task_workspace(execution.capability, execution.turn_id)
             task_dir.mkdir(parents=True, exist_ok=True)
             event_file = task_dir / "events.jsonl"
@@ -2028,10 +2321,10 @@ _runtime_lock = threading.Lock()
 _runtime_instances: dict[str, TurnRuntimeManager] = {}
 
 
-def get_turn_runtime_manager() -> TurnRuntimeManager:
-    from deeptutor.services.session import get_session_store
+def get_turn_runtime_manager(*, personal: bool = False) -> TurnRuntimeManager:
+    from deeptutor.services.session import get_personal_sqlite_session_store, get_session_store
 
-    store = get_session_store()
+    store = get_personal_sqlite_session_store() if personal else get_session_store()
     key = str(getattr(store, "db_path", id(store)))
     with _runtime_lock:
         if key not in _runtime_instances:

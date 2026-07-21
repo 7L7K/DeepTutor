@@ -103,6 +103,19 @@ class SQLiteSessionStore:
         self._migrate_legacy_db(path_service)
         self._lock = asyncio.Lock()
         self._initialize()
+        self._restrict_database_permissions()
+
+    def _restrict_database_permissions(self) -> None:
+        """Keep transcripts private even when the process umask is permissive."""
+        for path in (self.db_path, Path(f"{self.db_path}-wal"), Path(f"{self.db_path}-shm")):
+            if not path.exists():
+                continue
+            try:
+                path.chmod(0o600)
+            except OSError as exc:
+                raise RuntimeError(
+                    f"Could not enforce private transcript database permissions for {path}"
+                ) from exc
 
     def _migrate_legacy_db(self, path_service) -> None:
         """Move the legacy ``data/chat_history.db`` into ``data/user/`` once."""
@@ -122,6 +135,7 @@ class SQLiteSessionStore:
                 """
                 CREATE TABLE IF NOT EXISTS sessions (
                     id TEXT PRIMARY KEY,
+                    course_id TEXT,
                     title TEXT NOT NULL DEFAULT 'New conversation',
                     created_at REAL NOT NULL,
                     updated_at REAL NOT NULL,
@@ -235,6 +249,8 @@ class SQLiteSessionStore:
             columns = {row[1] for row in conn.execute("PRAGMA table_info(sessions)").fetchall()}
             if "preferences_json" not in columns:
                 conn.execute("ALTER TABLE sessions ADD COLUMN preferences_json TEXT DEFAULT '{}'")
+            if "course_id" not in columns:
+                conn.execute("ALTER TABLE sessions ADD COLUMN course_id TEXT")
             if "kind" in columns:
                 try:
                     conn.execute("ALTER TABLE sessions DROP COLUMN kind")
@@ -275,9 +291,9 @@ class SQLiteSessionStore:
                 "CREATE INDEX IF NOT EXISTS idx_messages_parent "
                 "ON messages(session_id, parent_message_id)"
             )
-            self._migrate_notebook_entries_add_turn_id(conn)
             self._migrate_notebook_entries_add_user_answer_images(conn)
             self._migrate_notebook_entries_add_ai_judgment(conn)
+            self._migrate_notebook_entries_add_turn_id(conn)
             conn.commit()
 
     @staticmethod
@@ -328,25 +344,30 @@ class SQLiteSessionStore:
                 explanation TEXT DEFAULT '',
                 difficulty TEXT DEFAULT '',
                 user_answer TEXT DEFAULT '',
+                user_answer_images_json TEXT DEFAULT '[]',
                 is_correct INTEGER DEFAULT 0,
                 bookmarked INTEGER DEFAULT 0,
                 followup_session_id TEXT DEFAULT '',
+                ai_judgment TEXT DEFAULT '',
                 created_at REAL NOT NULL,
                 updated_at REAL NOT NULL,
                 UNIQUE(session_id, turn_id, question_id)
             );
 
+            CREATE TEMP TABLE notebook_entry_categories_backup AS
+                SELECT entry_id, category_id FROM notebook_entry_categories;
+
             INSERT INTO notebook_entries_new (
                 id, session_id, turn_id, question_id, question, question_type,
                 options_json, correct_answer, explanation, difficulty,
-                user_answer, is_correct, bookmarked, followup_session_id,
-                created_at, updated_at
+                user_answer, user_answer_images_json, is_correct, bookmarked,
+                followup_session_id, ai_judgment, created_at, updated_at
             )
             SELECT
                 id, session_id, COALESCE(turn_id, ''), question_id, question,
                 question_type, options_json, correct_answer, explanation,
-                difficulty, user_answer, is_correct, bookmarked,
-                followup_session_id, created_at, updated_at
+                difficulty, user_answer, user_answer_images_json, is_correct,
+                bookmarked, followup_session_id, ai_judgment, created_at, updated_at
             FROM notebook_entries;
 
             DROP TABLE notebook_entries;
@@ -357,6 +378,10 @@ class SQLiteSessionStore:
 
             CREATE INDEX IF NOT EXISTS idx_notebook_entries_bookmarked
                 ON notebook_entries(bookmarked, created_at DESC);
+
+            INSERT OR IGNORE INTO notebook_entry_categories (entry_id, category_id)
+                SELECT entry_id, category_id FROM notebook_entry_categories_backup;
+            DROP TABLE notebook_entry_categories_backup;
             """
         )
 
@@ -420,6 +445,7 @@ class SQLiteSessionStore:
         self,
         title: str | None = None,
         session_id: str | None = None,
+        course_id: str | None = None,
     ) -> dict[str, Any]:
         now = time.time()
         resolved_id = session_id or f"unified_{int(now * 1000)}_{uuid.uuid4().hex[:8]}"
@@ -428,17 +454,18 @@ class SQLiteSessionStore:
             conn.execute(
                 """
                 INSERT INTO sessions (
-                    id, title, created_at, updated_at,
+                    id, course_id, title, created_at, updated_at,
                     compressed_summary, summary_up_to_msg_id
                 )
-                VALUES (?, ?, ?, ?, '', 0)
+                VALUES (?, ?, ?, ?, ?, '', 0)
                 """,
-                (resolved_id, resolved_title[:100], now, now),
+                (resolved_id, course_id, resolved_title[:100], now, now),
             )
             conn.commit()
         return {
             "id": resolved_id,
             "session_id": resolved_id,
+            "course_id": course_id,
             "title": resolved_title[:100],
             "created_at": now,
             "updated_at": now,
@@ -450,8 +477,9 @@ class SQLiteSessionStore:
         self,
         title: str | None = None,
         session_id: str | None = None,
+        course_id: str | None = None,
     ) -> dict[str, Any]:
-        return await self._run(self._create_session_sync, title, session_id)
+        return await self._run(self._create_session_sync, title, session_id, course_id)
 
     def _get_session_sync(self, session_id: str) -> dict[str, Any] | None:
         with self._connect() as conn:
@@ -459,6 +487,7 @@ class SQLiteSessionStore:
                 """
                 SELECT
                     s.id,
+                    s.course_id,
                     s.title,
                     s.created_at,
                     s.updated_at,
@@ -514,12 +543,18 @@ class SQLiteSessionStore:
     async def ensure_session(
         self,
         session_id: str | None = None,
+        course_id: str | None = None,
+        require_existing: bool = False,
     ) -> dict[str, Any]:
         if session_id:
             session = await self.get_session(session_id)
             if session is not None:
+                if (session.get("course_id") or None) != (course_id or None):
+                    raise RuntimeError("Session not found")
                 return session
-        return await self.create_session()
+            if require_existing:
+                raise RuntimeError("Session not found")
+        return await self.create_session(course_id=course_id)
 
     @staticmethod
     def _serialize_turn(row: sqlite3.Row) -> dict[str, Any]:
@@ -1273,6 +1308,7 @@ class SQLiteSessionStore:
     _SESSION_SUMMARY_SQL = """
         SELECT
             s.id,
+            s.course_id,
             s.title,
             s.created_at,
             s.updated_at,
@@ -1352,6 +1388,41 @@ class SQLiteSessionStore:
         offset: int = 0,
     ) -> list[dict[str, Any]]:
         return await self._run(self._list_sessions_sync, limit, offset)
+
+    def _has_active_course_turn_sync(self, course_id: str) -> bool:
+        with self._connect() as conn:
+            row = conn.execute(
+                """SELECT 1
+                   FROM turns t
+                   INNER JOIN sessions s ON s.id = t.session_id
+                   WHERE s.course_id = ? AND t.status = 'running'
+                   LIMIT 1""",
+                (course_id,),
+            ).fetchone()
+        return row is not None
+
+    async def has_active_course_turn(self, course_id: str) -> bool:
+        return await self._run(self._has_active_course_turn_sync, course_id)
+
+    def _list_active_course_turns_sync(self, course_id: str) -> list[dict[str, Any]]:
+        with self._connect() as conn:
+            rows = conn.execute(
+                """SELECT
+                       t.*,
+                       COALESCE(
+                         (SELECT MAX(seq) FROM turn_events te WHERE te.turn_id = t.id),
+                         0
+                       ) AS last_seq
+                   FROM turns t
+                   INNER JOIN sessions s ON s.id = t.session_id
+                   WHERE s.course_id = ? AND t.status = 'running'
+                   ORDER BY t.updated_at DESC""",
+                (course_id,),
+            ).fetchall()
+        return [self._serialize_turn(row) for row in rows]
+
+    async def list_active_course_turns(self, course_id: str) -> list[dict[str, Any]]:
+        return await self._run(self._list_active_course_turns_sync, course_id)
 
     async def list_imported_sessions(
         self,
@@ -1841,4 +1912,19 @@ def get_sqlite_session_store() -> SQLiteSessionStore:
     return _instances[key]
 
 
-__all__ = ["SQLiteSessionStore", "get_sqlite_session_store", "make_imported_session_id"]
+def get_personal_sqlite_session_store() -> SQLiteSessionStore:
+    from deeptutor.multi_user.paths import get_personal_path_service
+
+    db_path = get_personal_path_service().get_chat_history_db().resolve()
+    key = str(db_path)
+    if key not in _instances:
+        _instances[key] = SQLiteSessionStore(db_path=db_path)
+    return _instances[key]
+
+
+__all__ = [
+    "SQLiteSessionStore",
+    "get_personal_sqlite_session_store",
+    "get_sqlite_session_store",
+    "make_imported_session_id",
+]

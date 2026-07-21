@@ -170,6 +170,7 @@ class LearningService:
         question_type: str = "short",
         self_attribution: str = "",
         scheduler: SpacedRepetitionScheduler | None = None,
+        persist: bool = True,
     ) -> bool:
         """Grade one answer and fold it through the full post-answer pipeline.
 
@@ -179,6 +180,25 @@ class LearningService:
         interactive stage. Grading is fail-closed: with no stored expected
         answer the attempt is recorded wrong, never right.
         """
+        pending_matches = bool(
+            progress.pending_question
+            and progress.pending_question.question_id == question_id
+        )
+        prior = (
+            next(
+                (
+                    attempt
+                    for attempt in progress.quiz_attempts
+                    if attempt.question_id == question_id
+                ),
+                None,
+            )
+            if pending_matches
+            else None
+        )
+        if prior is not None:
+            return prior.is_correct
+
         is_correct = bool(expected_answer) and grade_answer(
             user_answer, expected_answer, question_type
         )
@@ -206,7 +226,8 @@ class LearningService:
                 progress.repetition_states[knowledge_point_id] = state
                 scheduler.schedule_next(state, kp_type, is_correct)
                 progress.review_queue = scheduler.build_review_queue(progress)
-        self.save(progress)
+        if persist:
+            self.save(progress)
         return is_correct
 
     # ── Loop-driven tutoring helpers ─────────────────────────────────────
@@ -290,6 +311,25 @@ class LearningService:
 
     def save(self, progress: LearningProgress) -> None:
         self._store.save(progress)
+
+    def reset_progress(self, progress: LearningProgress) -> None:
+        """Clear learner outcomes while preserving the explicit module plan."""
+        progress.current_stage = LearningStage.DIAGNOSTIC
+        progress.mastery_levels = {}
+        progress.qualitative_mastery = {}
+        progress.quiz_attempts = []
+        progress.error_records = []
+        progress.repetition_states = {}
+        progress.review_queue = []
+        progress.pending_question = None
+        progress.feynman_retries = {}
+        progress.feynman_explanations = {}
+        progress.stage_failure_counts = {}
+        progress.stage_failure_notes = {}
+        progress.diagnostic = None
+        progress.current_kp_index = 0
+        progress.current_module_id = progress.modules[0].id if progress.modules else ""
+        self.save(progress)
 
 
 __all__ = ["LearningService"]

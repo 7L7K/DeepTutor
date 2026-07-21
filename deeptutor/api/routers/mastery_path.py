@@ -15,7 +15,6 @@ from deeptutor.learning.models import (
     KnowledgePoint,
     KnowledgeType,
     LearningModule,
-    LearningStage,
 )
 from deeptutor.learning.service import LearningService
 from deeptutor.learning.storage import LearningStore
@@ -35,6 +34,8 @@ def _validate_book_id(book_id: str) -> None:
     """Reject empty or path-traversal-bearing book ids (shared by all endpoints)."""
     if not book_id or ".." in book_id or "/" in book_id or "\\" in book_id or ":" in book_id:
         raise HTTPException(status_code=400, detail="Invalid book_id")
+    if book_id.startswith("lp_crs_"):
+        raise HTTPException(status_code=404, detail="Learning path not found")
 
 
 def _parse_modules(body_modules: list[dict]) -> list[LearningModule]:
@@ -74,11 +75,17 @@ def _validate_runnable_modules(modules: list[LearningModule], *, status_code: in
             )
 
 
-async def _cancel_active_learning_turn(book_id: str) -> None:
+async def _cancel_active_learning_turn(session_id: str | None) -> None:
+    """Cancel by persisted chat-session identity, never by learning-path identity."""
+    if not session_id:
+        return
     from deeptutor.services.session import get_turn_runtime_manager
 
     runtime = get_turn_runtime_manager()
-    active_turn = await runtime.store.get_active_turn(book_id)
+    session = await runtime.store.get_session(session_id)
+    if session is None:
+        raise HTTPException(status_code=404, detail="Session not found")
+    active_turn = await runtime.store.get_active_turn(session_id)
     if active_turn:
         await runtime.cancel_turn(active_turn["id"])
 
@@ -88,6 +95,7 @@ async def _cancel_active_learning_turn(book_id: str) -> None:
 
 class InitModulesRequest(BaseModel):
     modules: list[dict]  # list of LearningModule-compatible dicts
+    session_id: str | None = None
 
 
 class ChapterImport(BaseModel):
@@ -97,6 +105,7 @@ class ChapterImport(BaseModel):
 
 class ImportFromBookRequest(BaseModel):
     chapters: list[ChapterImport]
+    session_id: str | None = None
 
 
 # ── Endpoints ────────────────────────────────────────────────────────────────
@@ -105,7 +114,13 @@ class ImportFromBookRequest(BaseModel):
 @router.get("/progress")
 async def list_all_progress():
     service = get_learning_service()
-    return service.list_progress()
+    result = service.list_progress()
+    result["summaries"] = [
+        item
+        for item in result.get("summaries", [])
+        if not str(item.get("book_id") or "").startswith("lp_crs_")
+    ]
+    return result
 
 
 @router.get("/progress/{book_id}")
@@ -136,7 +151,7 @@ async def init_modules(book_id: str, body: InitModulesRequest):
     _validate_book_id(book_id)
     modules = _parse_modules(body.modules)
     _validate_runnable_modules(modules)
-    await _cancel_active_learning_turn(book_id)
+    await _cancel_active_learning_turn(body.session_id)
     service = get_learning_service()
     progress = service.get_or_create(book_id)
     service.init_modules(progress, modules)
@@ -170,7 +185,7 @@ async def import_from_book(book_id: str, body: ImportFromBookRequest):
             )
         )
     _validate_runnable_modules(modules)
-    await _cancel_active_learning_turn(book_id)
+    await _cancel_active_learning_turn(body.session_id)
     service = get_learning_service()
     progress = service.get_or_create(book_id)
     service.init_modules(progress, modules)
@@ -191,28 +206,14 @@ async def delete_progress(book_id: str):
 
 
 @router.post("/progress/{book_id}/redo")
-async def redo_progress(book_id: str):
+async def redo_progress(book_id: str, session_id: str | None = None):
     _validate_book_id(book_id)
+    await _cancel_active_learning_turn(session_id)
     store = LearningStore()
     progress = store.load(book_id)
     if progress is None:
         raise HTTPException(status_code=404, detail="Progress not found")
-    progress.current_stage = LearningStage.DIAGNOSTIC
-    progress.mastery_levels = {}
-    progress.qualitative_mastery = {}
-    progress.quiz_attempts = []
-    progress.error_records = []
-    progress.repetition_states = {}
-    progress.review_queue = []
-    progress.pending_question = None
-    progress.feynman_retries = {}
-    progress.feynman_explanations = {}
-    progress.stage_failure_counts = {}
-    progress.stage_failure_notes = {}
-    progress.diagnostic = None
-    progress.current_kp_index = 0
-    progress.current_module_id = progress.modules[0].id if progress.modules else ""
-    store.save(progress)
+    LearningService(store).reset_progress(progress)
     return {"status": "ok"}
 
 
@@ -226,6 +227,7 @@ class NotebookRecordInput(BaseModel):
 class GenerateFromNotebookRequest(BaseModel):
     notebook_id: str
     records: list[NotebookRecordInput]
+    session_id: str | None = None
 
 
 @router.post("/progress/{book_id}/generate-from-notebook")
@@ -294,7 +296,7 @@ async def generate_from_notebook(book_id: str, body: GenerateFromNotebookRequest
             )
         )
     _validate_runnable_modules(modules, status_code=502)
-    await _cancel_active_learning_turn(book_id)
+    await _cancel_active_learning_turn(body.session_id)
     service = get_learning_service()
     progress = service.get_or_create(book_id)
     service.init_modules(progress, modules)

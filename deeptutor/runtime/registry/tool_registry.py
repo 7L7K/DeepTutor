@@ -18,6 +18,26 @@ from deeptutor.tools.prompting import ToolPromptComposer
 logger = logging.getLogger(__name__)
 
 
+def _assert_current_account_authority() -> None:
+    """Fence every tool side effect against the live account record."""
+    from deeptutor.services import auth as auth_service
+
+    if not auth_service.AUTH_ENABLED:
+        return
+    from deeptutor.multi_user.context import get_current_user
+
+    current = get_current_user()
+    for record in auth_service._load_users().values():
+        if str(record.get("id") or "") != current.id:
+            continue
+        if bool(record.get("disabled", False)):
+            break
+        if str(record.get("role") or "user") == current.role:
+            return
+        break
+    raise PermissionError("Account authorization changed before tool execution")
+
+
 class ToolRegistry:
     """
     Singleton-ish registry of all available tools.
@@ -148,6 +168,7 @@ class ToolRegistry:
         tool = self._tools.get(resolved_name)
         if tool is None:
             raise KeyError(f"Unknown tool: {name}")
+        _assert_current_account_authority()
         return await tool.execute(**resolved_kwargs)
 
 

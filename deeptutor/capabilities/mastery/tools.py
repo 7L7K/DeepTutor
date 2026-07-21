@@ -69,10 +69,17 @@ _ALLOWED_KP_TYPES = {t.value for t in KnowledgeType}
 logger = logging.getLogger(__name__)
 
 
-def _new_service() -> LearningService:
+def _new_service(path_id: str = "") -> LearningService:
     from deeptutor.learning.service import LearningService
     from deeptutor.learning.storage import LearningStore
 
+    if str(path_id).startswith("lp_crs_"):
+        from deeptutor.multi_user.paths import get_personal_path_service
+
+        paths = get_personal_path_service()
+        return LearningService(
+            LearningStore(root=paths.get_workspace_dir() / "learning")
+        )
     return LearningService(LearningStore())
 
 
@@ -145,17 +152,9 @@ async def _sync_mastery_attempt_to_question_bank(
         "user_answer": user_answer,
         "is_correct": is_correct,
     }
-    try:
-        from deeptutor.services.session import get_sqlite_session_store
+    from deeptutor.services.session import get_sqlite_session_store
 
-        await get_sqlite_session_store().upsert_notebook_entries(session_id, [item])
-    except Exception:
-        logger.warning(
-            "Failed to sync mastery question %s to question bank for session %s",
-            pending.question_id,
-            session_id,
-            exc_info=True,
-        )
+    await get_sqlite_session_store().upsert_notebook_entries(session_id, [item])
 
 
 def _json_result(payload: dict[str, Any], *, meta_key: str, success: bool = True) -> ToolResult:
@@ -193,7 +192,7 @@ class MasteryStatusTool(BaseTool):
         path_id = _resolve_path_id(kwargs)
         if not path_id:
             return _no_path_result()
-        service = _new_service()
+        service = _new_service(path_id)
         progress = service.get_or_create(path_id)
         if not any(module.knowledge_points for module in progress.modules):
             return _json_result(
@@ -314,7 +313,7 @@ class MasteryQuizTool(BaseTool):
             expected = resolved_expected
             options = format_options(choice_options)
 
-        service = _new_service()
+        service = _new_service(path_id)
         progress = service.get_or_create(path_id)
         kp, module_id, _ = find_knowledge_point(progress, kp_id)
         if kp is None:
@@ -378,7 +377,7 @@ class MasteryGradeTool(BaseTool):
         from deeptutor.learning.scheduler import SpacedRepetitionScheduler
 
         answer = str(kwargs.get("answer") or "")
-        service = _new_service()
+        service = _new_service(path_id)
         scheduler = SpacedRepetitionScheduler()
         progress = service.get_or_create(path_id)
         pending = progress.pending_question
@@ -403,17 +402,23 @@ class MasteryGradeTool(BaseTool):
             expected_answer=expected_answer,
             question_type=pending.question_type,
             scheduler=scheduler,
+            persist=False,
         )
-        await _sync_mastery_attempt_to_question_bank(
-            session_id=_resolve_session_id(kwargs),
-            turn_id=_resolve_turn_id(kwargs),
-            pending=pending,
-            user_answer=answer,
-            is_correct=is_correct,
-            choice_options=choice_options,
-            correct_answer=expected_answer,
-        )
-        service.clear_pending_question(progress)
+        if not path_id.startswith("lp_crs_"):
+            # Generic Question Notebook is intentionally unavailable in Course
+            # mode. For generic mastery, its UPSERT happens before the one JSON
+            # commit so a retry is idempotent across both stores.
+            await _sync_mastery_attempt_to_question_bank(
+                session_id=_resolve_session_id(kwargs),
+                turn_id=_resolve_turn_id(kwargs),
+                pending=pending,
+                user_answer=answer,
+                is_correct=is_correct,
+                choice_options=choice_options,
+                correct_answer=expected_answer,
+            )
+        progress.pending_question = None
+        service.save(progress)
         kp, _, _ = find_knowledge_point(progress, pending.knowledge_point_id)
         mastered = bool(kp and is_mastered(progress, kp))
         payload = {
@@ -471,7 +476,7 @@ class MasteryAssessTool(BaseTool):
         passed = bool(kwargs.get("passed"))
         feedback = str(kwargs.get("feedback") or "").strip()
 
-        service = _new_service()
+        service = _new_service(path_id)
         progress = service.get_or_create(path_id)
         kp, _, _ = find_knowledge_point(progress, kp_id)
         if kp is None:
@@ -562,7 +567,7 @@ class MasteryBuildTool(BaseTool):
         if mode not in {"replace", "append"}:
             mode = "replace"
 
-        service = _new_service()
+        service = _new_service(path_id)
         progress = service.get_or_create(path_id)
         offset = len(progress.modules) if mode == "append" else 0
         new_modules, error = _parse_modules(kwargs.get("modules"), path_id, offset)

@@ -110,7 +110,10 @@ class PocketBaseSessionStore:
         self,
         title: str | None = None,
         session_id: str | None = None,
+        course_id: str | None = None,
     ) -> dict[str, Any]:
+        if course_id:
+            raise RuntimeError("Private course sessions do not support PocketBase")
         now = time.time()
         resolved_id = session_id or f"unified_{int(now * 1000)}_{uuid.uuid4().hex[:8]}"
         resolved_title = (title or "New conversation").strip() or "New conversation"
@@ -155,11 +158,17 @@ class PocketBaseSessionStore:
     async def ensure_session(
         self,
         session_id: str | None = None,
+        course_id: str | None = None,
+        require_existing: bool = False,
     ) -> dict[str, Any]:
+        if course_id:
+            raise RuntimeError("Private course sessions do not support PocketBase")
         if session_id:
             session = await self.get_session(session_id)
             if session is not None:
                 return session
+            if require_existing:
+                raise RuntimeError("Session not found")
         return await self.create_session()
 
     def _session_record_to_dict(
@@ -177,6 +186,7 @@ class PocketBaseSessionStore:
         return {
             "id": sid,
             "session_id": sid,
+            "course_id": None,
             "title": t,
             "created_at": created,
             "updated_at": updated,

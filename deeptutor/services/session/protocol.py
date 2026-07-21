@@ -16,6 +16,7 @@ class SessionStoreProtocol(Protocol):
         self,
         title: str | None = None,
         session_id: str | None = None,
+        course_id: str | None = None,
     ) -> dict[str, Any]: ...
 
     async def get_session(self, session_id: str) -> dict[str, Any] | None: ...
@@ -23,6 +24,8 @@ class SessionStoreProtocol(Protocol):
     async def ensure_session(
         self,
         session_id: str | None = None,
+        course_id: str | None = None,
+        require_existing: bool = False,
     ) -> dict[str, Any]: ...
 
     async def create_turn(self, session_id: str, capability: str = "") -> dict[str, Any]: ...

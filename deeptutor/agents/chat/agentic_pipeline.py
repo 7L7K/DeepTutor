@@ -443,6 +443,14 @@ class AgenticChatPipeline:
 
     async def _prepare_deferred_tools(self, context: UnifiedContext) -> None:
         self._pageindex_docs = {}
+        if (context.metadata or {}).get("course_context"):
+            # Phase 2 Course mode authorizes only the server-derived RAG shards.
+            # Deferred MCP tools use separate remote authority and some providers
+            # expose account-wide document ids, so they stay unavailable until a
+            # Course-scoped MCP contract validates every resource argument.
+            self._deferred_pool = []
+            self._deferred_loader = None
+            return
         try:
             from deeptutor.services.mcp import get_mcp_manager, load_loaded_tools
 
@@ -899,6 +907,14 @@ class AgenticChatPipeline:
         )
         exec_dir = task_dir / "exec" if task_dir is not None else None
         if tool_name == "rag":
+            requested_kb = str(kwargs.get("kb_name") or "").strip()
+            attached_kbs = self._rag_kbs(context)
+            if requested_kb not in attached_kbs:
+                # Tool-schema enums guide cooperative models but are not an
+                # authorization boundary.  Enforce the attached set again at
+                # dispatch so a hallucinated or prompt-injected kb_name cannot
+                # reach another accessible Knowledge base.
+                raise ValueError("RAG knowledge base is not attached to this turn")
             kwargs.setdefault("mode", "hybrid")
         elif tool_name == "load_tools":
             kwargs["_tool_loader"] = self._deferred_loader
