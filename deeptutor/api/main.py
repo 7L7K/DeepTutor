@@ -137,6 +137,11 @@ async def lifespan(app: FastAPI):
     # Validate configuration consistency
     validate_tool_consistency()
     validate_course_backend_compatibility()
+    # Disabled by default. When explicitly enabled, reject unsafe integration
+    # configuration before acquiring runtime work or serving any request.
+    from deeptutor.integrations.blueway.config import BlueWaySettings
+
+    blueway_settings = BlueWaySettings.from_environment()
     from deeptutor.courses.deployment import SingleProcessCourseLock
     from deeptutor.multi_user.paths import SYSTEM_ROOT
 
@@ -144,6 +149,10 @@ async def lifespan(app: FastAPI):
         SYSTEM_ROOT / "course-single-process.lock"
     )
     course_process_lock.acquire()
+    if blueway_settings.enabled:
+        from deeptutor.integrations.blueway.service import build_blueway_service
+
+        build_blueway_service().reconcile_startup()
 
     # Initialize LLM client early so OPENAI_* env vars are available before
     # any downstream provider integrations start.
@@ -357,6 +366,8 @@ from deeptutor.api.routers import (
     attachments,
     auth,
     book,
+    # BlueWay lives outside generic routers because its authority and credential
+    # boundary are product-specific; it is still mounted behind require_auth.
     capabilities_settings,
     chat,
     co_writer,
@@ -385,6 +396,7 @@ from deeptutor.api.routers import (
 from deeptutor.api.routers import (
     tools as tools_router,
 )
+from deeptutor.integrations.blueway import router as blueway_router
 from deeptutor.multi_user.router import router as multi_user_router  # noqa: E402
 
 # Auth router is public — login/logout/register/status require no token
@@ -412,6 +424,12 @@ app.include_router(
     courses.router,
     prefix="/api/v1/courses",
     tags=["courses"],
+    dependencies=_auth,
+)
+app.include_router(
+    blueway_router.router,
+    prefix="/api/v1/integrations/blueway",
+    tags=["blueway-integration"],
     dependencies=_auth,
 )
 app.include_router(

@@ -23,13 +23,24 @@ logger = logging.getLogger(__name__)
 # process FastAPI deployments (the ``deeptutor start`` launcher) are fully covered;
 # multi-worker deployments still race and must rely on an external user store
 # (e.g. PocketBase), which is documented in the multi-user README.
-_USERS_WRITE_LOCK = threading.Lock()
+_USERS_WRITE_LOCK = threading.RLock()
 
 AUTH_DIR = SYSTEM_ROOT / "auth"
 USERS_FILE = AUTH_DIR / "users.json"
 SECRET_FILE = AUTH_DIR / "auth_secret"
 LEGACY_USERS_FILE = PROJECT_ROOT / "data" / "user" / "auth_users.json"
 LEGACY_SECRET_FILE = PROJECT_ROOT / "data" / "user" / "auth_secret"
+
+
+def identity_write_lock() -> threading.RLock:
+    """Return the single-process identity authority lock.
+
+    Callers that make an owned resource visible must hold this lock before
+    verifying the account and then acquiring their resource lock.  Account
+    disable/delete/role mutations already use the same lock, so this gives a
+    defined identity -> resource lock order within one process.
+    """
+    return _USERS_WRITE_LOCK
 
 
 def new_user_id() -> str:

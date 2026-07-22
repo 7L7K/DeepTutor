@@ -1,0 +1,47 @@
+{
+  "schema_version": 1,
+  "snapshot_id": "bws_b654f0a1b9ea68de040ae1008dcc93456622207f6430c9473afbcb4f01da65e9",
+  "snapshot_revision": 42,
+  "generated_at": "2026-07-22T12:00:00.000Z",
+  "complete": true,
+  "next_cursor": null,
+  "datasets": {
+    "courses": [
+      {"id":"course_1782356000000_chem101","course_id":"course_1782356000000_chem101","state":"current","title":"CHEM 130","revision":"a9d44b175077700b5c65a77d43c2a1858c7c0fa0aeac59c992e1ccf41ca7dd80","content_sha256":"a9d44b175077700b5c65a77d43c2a1858c7c0fa0aeac59c992e1ccf41ca7dd80"},
+      {"id":"course_1782356000001_chem102","course_id":"course_1782356000001_chem102","state":"current","title":"CHEM 130","revision":"7af319d193929e40f4a8ebcd343a158030f9c280fcc9dbc7c26991764253a13a","content_sha256":"7af319d193929e40f4a8ebcd343a158030f9c280fcc9dbc7c26991764253a13a"}
+    ],
+    "class_meetings": [
+      {"id":"meeting-chem-a","course_id":"course_1782356000000_chem101","state":"current","title":"CHEM 130","days":["mon","wed"],"start_time":"09:00","end_time":"10:15","room":"Science 201","location_text":"Science building, room 201","revision":"f4bb5379c416debb9109009d489d9b24526d2e0b25cfbd58e954bcf9ffc9dd5a","content_sha256":"f4bb5379c416debb9109009d489d9b24526d2e0b25cfbd58e954bcf9ffc9dd5a"},
+      {"id":"meeting-chem-b","course_id":"course_1782356000001_chem102","state":"current","title":"CHEM 130","days":["thu","tue"],"start_time":"13:00","end_time":"14:15","room":"Science 202","revision":"e5b25cb55f8985cb7d1bf83e3704b44bb8552ead010d692dd778bcccd7eaa537","content_sha256":"e5b25cb55f8985cb7d1bf83e3704b44bb8552ead010d692dd778bcccd7eaa537"}
+    ],
+    "schedule_events": [],
+    "assignments": [
+      {"id":"assignment-unlinked","state":"unlinked","title":"Library research","details":"Keep this private until it has a native courseId.","revision":"ab18a2363cf3e08f6e62c78b9b31e22a36bb01eb5673303332889f6e8896a95d","content_sha256":"ab18a2363cf3e08f6e62c78b9b31e22a36bb01eb5673303332889f6e8896a95d"},
+      {"id":"assignment-linked","course_id":"course_1782356000000_chem101","state":"current","title":"Problem set 1","due_at":"2026-08-01","details":"Read chapters 1 through 3.","revision":"69884b2b6ac82753f66ca3b3a9760cf69e7cab1b216d4cd995c3b6c123119302","content_sha256":"69884b2b6ac82753f66ca3b3a9760cf69e7cab1b216d4cd995c3b6c123119302"}
+    ],
+    "class_notes": [
+      {"id":"note-unlinked","state":"unlinked","body":"A note without a course stays unlinked.","revision":"a49591402cf038ad26cae185e28d9d4c660a6295e1acf2166af5a212321ab74d","content_sha256":"a49591402cf038ad26cae185e28d9d4c660a6295e1acf2166af5a212321ab74d"}
+    ],
+    "class_links": [
+      {"id":"link-a","course_id":"course_1782356000000_chem101","state":"current","label":"Course site","link_type":"courseSite","revision":"87386ab295ba07f0c13dab6f8aae5dc6ede5b2f735b7bc606462db487c0eebe5","content_sha256":"87386ab295ba07f0c13dab6f8aae5dc6ede5b2f735b7bc606462db487c0eebe5"}
+    ],
+    "course_profiles": [
+      {"id":"profile-a","course_id":"course_1782356000000_chem101","state":"current","title":"CHEM 130","instructor_name":"Dr. Example","revision":"a73860085d5da9c91520deef0bd8b3b839eebb37f6ac7a4b67879aa7dad49e34","content_sha256":"a73860085d5da9c91520deef0bd8b3b839eebb37f6ac7a4b67879aa7dad49e34"}
+    ],
+    "syllabus_facts": [
+      {"id":"fact-a","course_id":"course_1782356000000_chem101","state":"current","kind":"grading","title":"Grading","value":"Weekly problem sets","revision":"7d6599272d2fb551efaba51454079e912badf2db886eeec90f21cab1c64c4c9f","content_sha256":"7d6599272d2fb551efaba51454079e912badf2db886eeec90f21cab1c64c4c9f"}
+    ],
+    "source_texts": [],
+    "capture_metadata": [
+      {"id":"capture-chem-a","course_id":"course_1782356000000_chem101","state":"current","content_hash":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","content_version":"1","duration_ms":"3120000","completed_at":"2026-07-22T11:00:00.000Z","metadata_version":"1","course_name_snapshot":"CHEM 130","meeting_date":"2026-07-22","meeting_binding_status":"linked","schedule_item_id":"meeting-chem-a","schedule_event_id":"schedule-event-chem-a","scheduled_start_at":"2026-07-22T09:00:00.000Z","scheduled_end_at":"2026-07-22T10:15:00.000Z","recording_name":"CHEM 130 lecture","recorded_at":"2026-07-22T09:00:00.000Z","stopped_at":"2026-07-22T09:52:00.000Z","revision":"5092c02940f519faf8465501eb7e9516752ecc9fb0a6fab8af3a94723be5d197","content_sha256":"5092c02940f519faf8465501eb7e9516752ecc9fb0a6fab8af3a94723be5d197"}
+    ],
+    "capture_notes": [],
+    "transcripts": []
+  },
+  "unavailable": [
+    {"dataset":"source_texts","reason":"sanitized_account_owned_source_text_unavailable"},
+    {"dataset":"capture_notes","reason":"account_owned_capture_notes_unavailable"},
+    {"dataset":"transcripts","reason":"ready_account_owned_transcripts_unavailable"}
+  ],
+  "payload_sha256": "57bdc8c4a79ce2e92afad097e5b55bf82340bf4653415383f8931dbab10f9e74"
+}

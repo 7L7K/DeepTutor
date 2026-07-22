@@ -133,6 +133,10 @@ class PathService:
         """Private course metadata database for this workspace owner."""
         return self._user_data_dir / "courses.db"
 
+    def get_integration_credentials_dir(self) -> Path:
+        """Private, non-public credential directory for server integrations."""
+        return self._user_data_dir / "integration_credentials"
+
     def get_public_outputs_root(self) -> Path:
         return self._user_data_dir
 
