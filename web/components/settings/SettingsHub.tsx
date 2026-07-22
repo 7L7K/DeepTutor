@@ -21,7 +21,7 @@ import {
 /**
  * Settings hub — the landing page of `/settings`.
  *
- * Six category blocks and a resident Status module, nothing else. The blocks
+ * Category blocks and a resident Status module, nothing else. The blocks
  * are intentionally calmer than the Learning Space tiles (monochrome inline
  * icons, a chevron, a quiet preview line instead of a focal count) so Settings
  * reads as a control surface rather than a dashboard. Categories with several
