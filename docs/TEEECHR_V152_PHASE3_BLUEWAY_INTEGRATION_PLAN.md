@@ -883,3 +883,19 @@ does not imply that an unchecked live surface works.
 Closeout classification: **source/contract implementation pass; enablement blocked
 pending database/Edge/browser runtime proof**. Local commits may preserve the
 reviewed source without enabling or deploying it.
+
+### Local reviewed commits
+
+TEEECHR (`feature/teeechr-v152-phase3-blueway-integration`):
+
+- `42166282` — private BlueWay Course sync, credential, repository, API, and tests;
+- `9d7c0337` — BlueWay Settings UI and stale-identity response fencing;
+- `96e2a227` — contract, proof ledger, and changelog.
+
+BlueWay (`feature/teeechr-blueway-integration`):
+
+- `28f16fc` — private delegated authority, bounded academic export, and tests;
+- `a35cc5d` — signed-in consent route, account-switch fencing, and changelog.
+
+Neither branch was pushed, deployed, enabled, or merged. The BlueWay canonical
+Class Capture transcription checkout remained untouched.
