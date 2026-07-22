@@ -4,7 +4,7 @@ Status: approved implementation contract
 TEEECHR base: `8d297d24b6a458f49c59e54ed457487cccaf8f51`
 TEEECHR branch: `feature/teeechr-v152-phase3-blueway-integration`
 BlueWay base: `d379385b5bebafc024b754432ddf546fb8cb2bfe`
-BlueWay branch: `feature/teeechr-blueway-integration`
+BlueWay branch: `feature/teeechr-blueway-runtime-enablement`
 Last updated: 2026-07-22
 
 Implementation checkouts:
@@ -254,7 +254,8 @@ TEEECHR_INTEGRATION_MASTER_KEY
 `TEEECHR_BLUEWAY_APPROVAL_URL` is a pinned HTTPS BlueWay app/universal-link route;
 it is separate from the Supabase Edge origin. `TEEECHR_BLUEWAY_API_SECRET`
 authenticates only the TEEECHR server to BlueWay's
-pairing/token Edge boundary. It is never returned to the browser or stored in a
+pairing/token Edge boundary through `x-teeechr-integration-secret`; it is never a
+Supabase `apikey`, secret API key, or service-role credential. It is never returned to the browser or stored in a
 personal Course database. BlueWay's short rotation-receipt encryption key remains a
 separate Edge secret and is never sent by TEEECHR.
 
@@ -737,15 +738,18 @@ BlueWay private Postgres/Supabase schema:
 
 ### Proof boundaries
 
-The following remain independent and cannot be inferred from source/tests:
+The following remain independent and cannot be inferred from one another:
 
-- hosted Supabase migration/function deployment;
-- real BlueWay account pairing;
-- real transcript-provider generation;
-- real embeddings/chat retrieval over imported transcripts;
-- Expo web/native simulator/physical iPhone runtime;
-- TEEECHR deployment or multi-server behavior;
-- GitHub push/PR/release state.
+- hosted Supabase migration/function deployment (proved below);
+- real BlueWay account pairing and owner-isolated sync (proved below through
+  authenticated HTTP/API surfaces; the signed-in browser click remains open);
+- real transcript-provider generation (not proved);
+- real embeddings/chat retrieval over imported transcripts (not proved);
+- Expo web preview rendering (proved) versus native simulator/physical iPhone
+  runtime (not proved);
+- local TEEECHR runtime (proved) versus deployment or multi-server behavior
+  (not proved);
+- GitHub push/PR/release state (not yet proved in this ledger).
 
 ## 14. Risks and unknowns
 
@@ -771,17 +775,18 @@ The following remain independent and cannot be inferred from source/tests:
 
 Phase 3 is complete only when:
 
-- [ ] One authenticated TEEECHR user can complete deterministic BlueWay pairing.
-- [ ] Pairing immediately queues a complete private academic sync.
-- [ ] Every valid BlueWay course maps to exactly one private TEEECHR Course.
+- [x] One authenticated TEEECHR user can complete deterministic BlueWay pairing.
+- [x] Pairing immediately queues a complete private academic sync.
+- [x] Every valid BlueWay course maps to exactly one private TEEECHR Course.
 - [ ] Unlinked records are retained without guessed ownership.
-- [ ] Structured records are durable and restart-safe.
+- [x] Structured records, encrypted connection authority, ready Course bundles, and
+      both isolated profiles survived a local TEEECHR process restart.
 - [ ] Changed academic bundles and transcripts use immutable CourseSource successors.
-- [ ] Disconnect/revocation blocks late work and preserves imported data.
-- [ ] No BlueWay write-back, hard deletion, raw-audio import, or paid provider call exists.
+- [x] Disconnect/revocation blocks late work and preserves imported data.
+- [x] No BlueWay write-back, hard deletion, raw-audio import, or paid provider call exists.
 - [ ] Ownership, replay, race, payload, prompt-injection, and log-redaction gates pass.
 - [ ] Beta-scale deterministic proof passes for 50 profiles.
-- [ ] Both repositories pass focused and broad relevant checks.
+- [ ] Both repositories pass the final focused and broad relevant checks.
 - [ ] Changelogs, handoff, diff review, untracked review, and closeout backcheck are done.
 - [ ] Untested live/provider/deployment/device surfaces are reported explicitly.
 
@@ -806,6 +811,9 @@ does not imply that an unchecked live surface works.
 - [x] The academic export uses an exact dataset/field allowlist, a database-side
       count/byte preflight before JSON aggregation, Edge-side record/body limits,
       stable hashes, and no silent truncation.
+- [x] Completed normalized transcripts export only owner-matched segment text and
+      timing with exact Course/capture identity; audio, provider metadata, word
+      timings, speaker/confidence data, storage paths, and location remain excluded.
 - [x] Raw audio, object paths, arbitrary URLs, profile/auth/device data, home/live/
       precise location, mobility, place history, and capture location snapshots are
       absent from the export contract and consent copy.
@@ -831,21 +839,26 @@ does not imply that an unchecked live surface works.
 - [x] Disconnect is local-first and generation-fenced; imported Course data remains.
 - [x] Minimal BlueWay consent and TEEECHR Settings surfaces expose no credential or
       export payload in browser persistence and clear identity-scoped state.
-- [x] Both changelogs describe source scope and explicitly withhold live deployment.
+- [x] Both changelogs distinguish the deployed hosted proof from still-unproved
+      provider, signed-in-browser, native-device, and TEEECHR-hosting surfaces.
 - [x] No paid model, embedding, transcription, or chat-provider call was made.
-- [x] No raw audio transfer, BlueWay write-back, hard deletion, push, or deployment
-      path was added or exercised.
+- [x] No paid provider, raw audio transfer, BlueWay write-back, or hard deletion
+      was exercised. Hosted migrations, three Edge Functions, and an Expo preview
+      were deliberately deployed for the reviewed runtime proof below.
 
 ### Local deterministic proof captured on 2026-07-22
 
-- TEEECHR full Python suite: `2835 passed, 6 skipped`; only the pre-existing shared
-  pytest temporary-directory cleanup warning remained.
+- TEEECHR full Python suite before the final SQLite-sidecar hardening: `2835 passed,
+  6 skipped`; the final impacted Course/identity/BlueWay suite then passed `218`
+  tests, and the last focused permission-repair run passed `6` adversarial tests.
+  Only the pre-existing shared pytest temporary-directory cleanup warning remained.
 - TEEECHR focused Course/Knowledge/identity/path/BlueWay suite: `95 passed` before
   the final validator hardening; the final full suite above includes the final tree.
 - TEEECHR Ruff over every changed Python surface: pass.
 - TEEECHR web node suite: `168 passed`; TypeScript: pass; production build: pass,
   including `/settings/blueway`.
-- BlueWay focused integration suite: `23 passed`; TypeScript: pass.
+- BlueWay final focused integration/transcription suite: `170 passed` across `13`
+  test files; TypeScript: pass.
 - BlueWay full Vitest suite: `238` files passed and `2` unrelated release/native
   policy files failed (`2559` tests passed, `10` failed, `2` todo). The isolated
   worktree intentionally has no generated iOS project and its installed Expo Audio
@@ -854,35 +867,73 @@ does not imply that an unchecked live surface works.
   `a47f0041c2c66f3b36c32f7d9618b8718a2cc2596d8a9e564ebe751192da040c`.
 - `git diff --check`: pass in both repositories.
 - Secret-pattern scan over the new TEEECHR integration/browser surfaces: no match.
-- Final independent source/security review: no remaining P0, P1, or P2 finding;
-  adversarial type/order/durability probes and their focused regressions pass.
+- Final independent source/security review: no remaining P0, P1, or P2 finding.
+  The reviewer reproduced a broken-symlink ACL retry edge case; the final `lstat()`
+  repair and adversarial regression were re-reviewed and received a PASS verdict.
 - `supabase db lint --local`: not run successfully; the CLI could not connect to a
   local Postgres instance (`LegacyDbConnectError` / `PgClient: Failed to connect`).
 
-### Enablement checklist — intentionally not claimed
+### Hosted/runtime proof captured on 2026-07-22
 
-- [ ] Apply the BlueWay migration twice to a disposable local or review Postgres
-      database and inspect the resulting schema, constraints, ACLs, RLS, functions,
-      cron job, and replay behavior.
-- [ ] Exercise concurrent SQL transactions for exact grant replacement, client
-      disable, refresh reuse, revocation, export, auth-user deletion, and receipt
-      cleanup.
-- [ ] Serve the three Edge Functions with the real named-secret and user-auth
-      boundaries, then prove error/log redaction and response bounds.
-- [ ] Run deterministic browser pairing with Alice/Bob, identity switching, two
-      private Courses each, sync/reload/disconnect/reconnect, and guessed foreign IDs.
-- [ ] Run one real BlueWay-account pairing/export/revoke cycle against a disposable
-      integration client only after the SQL/Edge review passes.
+- [x] Applied the Class Capture transcription and Phase 3 integration migrations to
+      Supabase project `bzpgfrzvhorhoensjtsz`, including forward repairs for SQL
+      ambiguity, completed-transcript export, PostgreSQL-safe device-code validation,
+      and explicit refresh-token revocation state.
+- [x] Hosted `db lint --level error` returns no findings. All seven integration
+      tables have RLS enabled; `anon`, `authenticated`, and `service_role` have no
+      private-schema usage; public RPC execute grants match the contract.
+- [x] Deployed `teeechr-pairing`, `teeechr-connection`, and `teeechr-export`. Missing
+      and wrong integration secrets return `401`; the dedicated secret is rejected
+      as a Supabase API key; unauthenticated consent calls return `401`.
+- [x] Ran concurrent hosted refresh, revoke, and export calls on separate sessions:
+      no `40P01`/`40001`, the grant/family were revoked, and every refresh/access
+      token row recorded revocation. The disposable concurrency rows were removed.
+- [x] Provisioned two real email-confirmed Supabase test accounts. Each JWT saw only
+      its own same-titled schedule row; Alice's foreign-owner insert returned `403`.
+- [x] Paired two separate authenticated local TEEECHR profiles to those two BlueWay
+      accounts, exchanged credentials server-side, completed both syncs, produced one
+      ready deterministic Course bundle per owner, and returned `404` for both crossed
+      Course reads despite identical course titles.
+- [x] Restarted the TEEECHR process with the same protected configuration; both
+      profiles retained active connections and exactly one private Course. A transient
+      SQLite `courses.db-shm` disappearance found during the proof now has focused
+      permission-walk and macOS ACL-batch regressions without weakening symlink,
+      hard-link, owner, or extant-file rejection. After restart, a hosted Bob sync
+      completed while 40 concurrent integration/Course reads all returned `200`.
+- [x] Disconnected and reconnected each live test profile independently. Both remote
+      revocations completed, both replacement pairings used the real account JWT, both
+      syncs completed, and each profile retained its original private Course identity.
+- [x] Deployed the consent route to
+      `https://blueway-teeechr-beta--e8zhh5g89c.expo.app/teeechr-connect` and verified
+      its included/excluded/retention copy. The preview correctly disables approval
+      when signed out.
+
+### Remaining enablement checklist
+
+- [ ] Complete a fresh full migration replay in disposable Supabase/Postgres and a
+      pre-migration logical dump. Docker was unavailable for the CLI reset/dump; the
+      hosted forward ledger and idempotent repair paths were checked instead.
+- [ ] Complete the signed-in consent click in BlueWay web/native UI. The deployed web
+      build has no supported sign-in flow, so current approval proof used the same real
+      user JWT against the deployed user-auth Edge Function rather than injecting a
+      browser session or adding a test backdoor.
+- [ ] Disable the disposable client/accounts when the proof packet is closed. They remain
+      enabled temporarily so the signed-in browser/native and real-transcript gaps can be
+      exercised without reprovisioning identities.
+- [ ] Produce a completed account-owned Class Capture transcript through a real
+      provider. The database/export/TEEECHR ingestion contract is deployed, but the
+      transcription worker/webhook/completion/deletion-retention runtime is not built
+      and the hosted project currently has zero transcript rows.
 - [ ] Prove malicious imported instructions remain ordinary Course Knowledge text
       through the exact Chat/RAG runtime with no tool or cross-workspace authority.
-- [ ] Reconcile and review the independent BlueWay Class Capture transcription
-      branch before making transcript availability a live product claim.
-- [ ] Enable the seeded BlueWay client, deploy, push, or run a paid-provider smoke.
-      Each remains a separate user-approved action.
+- [ ] Run a paid chat/embedding smoke only after provider credentials/model choice are
+      explicitly available; none are configured in this TEEECHR checkout.
+- [ ] Push both reviewed branches and record remote commit identities after final
+      backcheck. TEEECHR must target the user's `fork`, never upstream `origin`.
 
-Closeout classification: **source/contract implementation pass; enablement blocked
-pending database/Edge/browser runtime proof**. Local commits may preserve the
-reviewed source without enabling or deploying it.
+Current classification: **hosted database/Edge and two-owner API pairing/sync pass;
+signed-in browser, real transcription/provider, native device, TEEECHR hosting, and
+final push remain separate open proof surfaces**.
 
 ### Local reviewed commits
 
@@ -891,11 +942,17 @@ TEEECHR (`feature/teeechr-v152-phase3-blueway-integration`):
 - `42166282` — private BlueWay Course sync, credential, repository, API, and tests;
 - `9d7c0337` — BlueWay Settings UI and stale-identity response fencing;
 - `96e2a227` — contract, proof ledger, and changelog.
+- `dcc08fa4` — runtime credential/identity hardening and SQLite-sidecar permission repair.
 
-BlueWay (`feature/teeechr-blueway-integration`):
+BlueWay (pre-enablement commits, originally on `feature/teeechr-blueway-integration`):
 
 - `28f16fc` — private delegated authority, bounded academic export, and tests;
 - `a35cc5d` — signed-in consent route, account-switch fencing, and changelog.
+- `19d8b53` — exact reviewed default-off Class Capture transcription foundation;
+- `b1551dc` — hosted SQL/Edge security repairs and completed-transcript export.
 
-Neither branch was pushed, deployed, enabled, or merged. The BlueWay canonical
-Class Capture transcription checkout remained untouched.
+The runtime repairs are now committed locally after the final backcheck; hosted
+migrations, three Edge Functions, the seeded client, and the Expo preview are enabled
+as recorded above. No branch has yet been pushed or merged. The canonical BlueWay
+Class Capture checkout remained untouched; its exact default-off transcription patch
+was copied byte-for-byte into the isolated integration worktree before hosted migration.
