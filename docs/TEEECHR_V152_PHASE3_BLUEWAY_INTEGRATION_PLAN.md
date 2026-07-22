@@ -928,12 +928,15 @@ does not imply that an unchecked live surface works.
       through the exact Chat/RAG runtime with no tool or cross-workspace authority.
 - [ ] Run a paid chat/embedding smoke only after provider credentials/model choice are
       explicitly available; none are configured in this TEEECHR checkout.
-- [ ] Push both reviewed branches and record remote commit identities after final
-      backcheck. TEEECHR must target the user's `fork`, never upstream `origin`.
+- [x] Pushed both reviewed branches after the final backcheck. BlueWay tracks the
+      user's `origin/feature/teeechr-blueway-runtime-enablement`; TEEECHR tracks the
+      user's `fork/feature/teeechr-v152-phase3-blueway-integration`, never upstream
+      `origin`.
 
-Current classification: **hosted database/Edge and two-owner API pairing/sync pass;
-signed-in browser, real transcription/provider, native device, TEEECHR hosting, and
-final push remain separate open proof surfaces**.
+Current classification: **hosted database/Edge, two-owner API pairing/sync, reviewed
+local commits, and remote branch publication pass; signed-in browser, real
+transcription/provider, native device, TEEECHR hosting, and fresh full migration replay
+remain separate open proof surfaces**.
 
 ### Local reviewed commits
 
@@ -951,8 +954,8 @@ BlueWay (pre-enablement commits, originally on `feature/teeechr-blueway-integrat
 - `19d8b53` — exact reviewed default-off Class Capture transcription foundation;
 - `b1551dc` — hosted SQL/Edge security repairs and completed-transcript export.
 
-The runtime repairs are now committed locally after the final backcheck; hosted
+The runtime repairs are committed and published after the final backcheck; hosted
 migrations, three Edge Functions, the seeded client, and the Expo preview are enabled
-as recorded above. No branch has yet been pushed or merged. The canonical BlueWay
-Class Capture checkout remained untouched; its exact default-off transcription patch
-was copied byte-for-byte into the isolated integration worktree before hosted migration.
+as recorded above. Neither branch is merged. The canonical BlueWay Class Capture
+checkout remained untouched; its exact default-off transcription patch was copied
+byte-for-byte into the isolated integration worktree before hosted migration.
