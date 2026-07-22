@@ -4,6 +4,13 @@
 
 ### Added
 
+- Added the disabled-by-default Phase 3 BlueWay academic-read integration foundation:
+  owner-scoped delegated pairing, encrypted rotating credentials, durable sync receipts,
+  exact external-course mappings, retained unlinked records, and deterministic immutable
+  Course Knowledge bundles without BlueWay write-back or paid provider calls.
+- Added a minimal BlueWay Settings surface for connect, pending approval, sync readiness,
+  unlinked-record count, local-first disconnect, and revocation retry without exposing
+  access or refresh credentials to the browser.
 - Added the Phase 2 private Course foundation on the v1.5.2 baseline.
 - Added per-profile `courses.db` storage with optimistic revisions, source lineage,
   archive/restore lifecycle, write epochs, crash reconciliation, and no Course
@@ -22,6 +29,14 @@
 
 ### Changed
 
+- BlueWay snapshots now preserve opaque `courseId` identity, classroom/room schedule
+  text, assignments, notes, course facts, and completed capture metadata while keeping
+  raw audio, capture location snapshots, credentials, profile/location/device data,
+  arbitrary URLs, and unavailable transcript/source datasets outside the import.
+- BlueWay sync stages every changed Course bundle before one generation-fenced SQLite
+  visibility commit, retains prior ready Knowledge after failed replacement, archives
+  remotely removed material from active retrieval, and permits deterministic retry of
+  failed snapshots without losing failed-source provenance.
 - Revalidate the current local account and role on every authenticated HTTP request
   and unified WebSocket command, before background turn/source commits, before tool
   execution, and while streaming turn events; disabled, removed, or role-changed
@@ -61,6 +76,15 @@
 
 ### Security and compatibility
 
+- BlueWay credentials use AES-256-GCM with owner/connection/provider/scope AAD and
+  private no-follow files; connection, refresh, snapshot, Course, source, and background
+  commits recheck owner and grant-generation authority and fail closed on account loss,
+  disconnect, archive, replay conflict, malformed payloads, and oversized responses;
+  browser status/connect results are identity- and request-epoch fenced across logout.
+- The integration requires authenticated local JSON/SQLite mode, one process, pinned
+  HTTPS endpoints, an explicit server secret and master key, and an operator-enabled
+  BlueWay client. PocketBase, multiple replicas, sharing, raw-audio transfer, deployment,
+  and hosted-provider proof remain outside this phase.
 - Missing and foreign Course resources share the same not-found behavior.
 - Generic Knowledge, attachment, history, Book, notebook, memory, and arbitrary KB
   selection cannot grant Course Chat access; Course Knowledge is resolved server-side.
@@ -98,5 +122,9 @@
 
 ### Validation
 
+- Added deterministic BlueWay protocol, credential-tamper, snapshot-boundary,
+  same-title isolation, pairing-pending, replay, reconnect, archive/removal, retry,
+  all-or-nothing Knowledge visibility, 50-profile, and concurrent non-provider tests;
+  hosted Supabase SQL/Edge execution and real account/device pairing remain unproved.
 - A bounded real-provider smoke validated OpenAI `text-embedding-3-small` source indexing
   and a provenance-bound `gpt-5-mini` Course answer without title-generation fallback.
