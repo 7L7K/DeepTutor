@@ -80,7 +80,12 @@ class HttpBlueWayTransport:
 
     def _pairing(self, body: dict[str, str]) -> dict[str, Any]:
         try:
-            with self._client.stream("POST", f"{self.settings.base_url}/functions/v1/teeechr-pairing", headers={"apikey": self.settings.api_secret}, json=body) as response:
+            with self._client.stream(
+                "POST",
+                f"{self.settings.base_url}/functions/v1/teeechr-pairing",
+                headers={"x-teeechr-integration-secret": self.settings.api_secret},
+                json=body,
+            ) as response:
                 return self._json_stream(response)
         except httpx.HTTPError as exc:
             raise BlueWayTransportError("BlueWay pairing transport failed") from exc

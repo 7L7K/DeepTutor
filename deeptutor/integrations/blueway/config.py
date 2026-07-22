@@ -52,7 +52,7 @@ class BlueWaySettings:
             raise IntegrationConfigurationError("BlueWay base URL must be an origin without a path")
         if not client_id or len(client_id) > 160:
             raise IntegrationConfigurationError("BlueWay client ID is required")
-        if len(api_secret) < 24 or len(api_secret) > 1024:
+        if len(api_secret) < 32 or len(api_secret) > 1024:
             raise IntegrationConfigurationError("BlueWay server API secret is required")
         approval = urlparse(approval_url)
         if approval.scheme != "https" or not approval.netloc or approval.username or approval.password or not approval.path or approval.query or approval.fragment:

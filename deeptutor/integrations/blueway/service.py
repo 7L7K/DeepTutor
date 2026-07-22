@@ -61,6 +61,7 @@ class BlueWayService:
         self.settings = settings
         self.transport = transport or HttpBlueWayTransport(settings)
         self._attempts: dict[str, PairingAttempt] = {}
+        self._starting_owners: set[str] = set()
         self._completed_attempts: dict[tuple[str, str], tuple[str, float]] = {}
         self._exchanging_attempts: set[tuple[str, str]] = set()
         self._lock = threading.RLock()
@@ -107,8 +108,6 @@ class BlueWayService:
     def start_connection(self) -> PairingAttempt:
         owner = self._owner()
         repository = self._repository()  # validates config/backend before making any provider request
-        # Identity -> service registry is the required lock order. Exchange
-        # completion follows it while acquiring the same locks reentrantly.
         with identity_write_lock():
             self._assert_owner_current(owner)
             with self._lock:
@@ -117,26 +116,35 @@ class BlueWayService:
                 self._assert_owner_current(owner)
                 if repository.visible_connection() is not None:
                     raise CourseConflictError("Disconnect BlueWay before starting a replacement pairing")
-                if any(attempt.owner_user_id == owner for attempt in self._attempts.values()):
+                if owner in self._starting_owners or any(attempt.owner_user_id == owner for attempt in self._attempts.values()):
                     raise CourseConflictError("BlueWay pairing is already pending")
-                # Keep the process lock through the provider start.  This is a
-                # deliberate small critical section: it prevents a second device
-                # grant from being created before the first one has local state.
-                verifier = self._verifier()
-                device_code, user_code = self._device_code(), self._user_code()
-                authorization = self.transport.begin_device_authorization(
-                    client_id=self.settings.client_id, audience=self.settings.client_id, device_code=device_code,
-                    user_code=user_code, pkce_challenge=self._challenge(verifier),
-                )
-                if authorization.expires_at <= now or not authorization.device_code or not authorization.user_code:
-                    raise BlueWayUnavailableError("BlueWay returned an invalid device authorization")
-                attempt = PairingAttempt(
-                    id=f"bwa_{secrets.token_hex(16)}", owner_user_id=owner,
-                    device_code=device_code, verifier=verifier,
-                    user_code=authorization.user_code, verification_uri=authorization.verification_uri,
-                    expires_at=authorization.expires_at, request_id=authorization.request_id,
-                )
-                self._attempts[attempt.id] = attempt
+                self._starting_owners.add(owner)
+        verifier = self._verifier()
+        device_code, user_code = self._device_code(), self._user_code()
+        try:
+            authorization = self.transport.begin_device_authorization(
+                client_id=self.settings.client_id, audience=self.settings.client_id, device_code=device_code,
+                user_code=user_code, pkce_challenge=self._challenge(verifier),
+            )
+            with identity_write_lock():
+                self._assert_owner_current(owner)
+                with self._lock:
+                    now = time.time()
+                    self._assert_owner_current(owner)
+                    if repository.visible_connection() is not None:
+                        raise CourseConflictError("Disconnect BlueWay before starting a replacement pairing")
+                    if authorization.expires_at <= now or not authorization.device_code or not authorization.user_code:
+                        raise BlueWayUnavailableError("BlueWay returned an invalid device authorization")
+                    attempt = PairingAttempt(
+                        id=f"bwa_{secrets.token_hex(16)}", owner_user_id=owner,
+                        device_code=device_code, verifier=verifier,
+                        user_code=authorization.user_code, verification_uri=authorization.verification_uri,
+                        expires_at=authorization.expires_at, request_id=authorization.request_id,
+                    )
+                    self._attempts[attempt.id] = attempt
+        finally:
+            with self._lock:
+                self._starting_owners.discard(owner)
         return attempt
 
     def get_attempt(self, attempt_id: str) -> PairingAttempt:
@@ -195,16 +203,24 @@ class BlueWayService:
             self._exchanging_attempts.add(key)
         try:
             attempt = self.get_attempt(attempt_id)
-            # Identity -> provider -> credential/SQLite is one local authority
-            # interval.  A disable/delete mutation uses the same identity lock.
             with identity_write_lock():
                 self._assert_owner_current(owner)
                 if self._repository().visible_connection() is not None:
                     raise CourseConflictError("Disconnect BlueWay before exchanging a replacement pairing")
-                exchange = self.transport.exchange(
-                    request_id=attempt.request_id, device_code=attempt.device_code, code_verifier=attempt.verifier
-                )
+            exchange = self.transport.exchange(
+                request_id=attempt.request_id, device_code=attempt.device_code, code_verifier=attempt.verifier
+            )
+            try:
                 connection = self.complete_connection_for_transport(attempt_id=attempt_id, exchange=exchange)
+            except Exception:
+                # The owner can be disabled while the provider is responding.
+                # Do not retain the new remote grant if its local authority can
+                # no longer be committed under the current account record.
+                try:
+                    self.transport.revoke(refresh_token=exchange.refresh_token)
+                except Exception:
+                    pass
+                raise
             with self._lock:
                 self._completed_attempts[key] = (connection.id, attempt.expires_at)
             return connection

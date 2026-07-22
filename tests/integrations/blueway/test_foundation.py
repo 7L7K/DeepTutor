@@ -223,7 +223,7 @@ def test_approval_url_is_an_explicit_pinned_deployment_url(tmp_path: Path, monke
     monkeypatch.setenv("TEEECHR_BLUEWAY_INTEGRATION_ENABLED", "true")
     monkeypatch.setenv("TEEECHR_BLUEWAY_BASE_URL", "https://api.blueway.example")
     monkeypatch.setenv("TEEECHR_BLUEWAY_CLIENT_ID", "client-test")
-    monkeypatch.setenv("TEEECHR_BLUEWAY_API_SECRET", "s" * 24)
+    monkeypatch.setenv("TEEECHR_BLUEWAY_API_SECRET", "s" * 32)
     monkeypatch.setenv("TEEECHR_BLUEWAY_APPROVAL_URL", "https://consent.blueway.example/approve")
     monkeypatch.setenv("TEEECHR_INTEGRATION_MASTER_KEY", base64.b64encode(b"k" * 32).decode())
     settings = BlueWaySettings.from_environment()
@@ -239,7 +239,7 @@ def test_approval_url_is_an_explicit_pinned_deployment_url(tmp_path: Path, monke
 def test_http_pairing_rejects_chunked_oversize_and_preserves_authorization_pending() -> None:
     settings = BlueWaySettings(
         enabled=True, base_url="https://api.blueway.example", client_id="client-test",
-        api_secret="s" * 24, approval_url="https://consent.blueway.example/approve", master_key=b"k" * 32,
+        api_secret="s" * 32, approval_url="https://consent.blueway.example/approve", master_key=b"k" * 32,
     )
 
     class Oversize(httpx.SyncByteStream):
@@ -250,14 +250,22 @@ def test_http_pairing_rejects_chunked_oversize_and_preserves_authorization_pendi
         def close(self) -> None:
             pass
 
+    seen_headers: list[httpx.Headers] = []
+
+    def oversized_response(request: httpx.Request) -> httpx.Response:
+        seen_headers.append(request.headers)
+        return httpx.Response(200, stream=Oversize())
+
     oversized = HttpBlueWayTransport(
         settings,
-        client=httpx.Client(transport=httpx.MockTransport(lambda _request: httpx.Response(200, stream=Oversize()))),
+        client=httpx.Client(transport=httpx.MockTransport(oversized_response)),
     )
     with pytest.raises(BlueWayTransportError, match="byte limit"):
         oversized.begin_device_authorization(
             client_id="client-test", audience="client-test", device_code="device", user_code="user", pkce_challenge="challenge",
         )
+    assert seen_headers[0]["x-teeechr-integration-secret"] == "s" * 32
+    assert "apikey" not in seen_headers[0]
 
     pending = HttpBlueWayTransport(
         settings,
@@ -265,6 +273,78 @@ def test_http_pairing_rejects_chunked_oversize_and_preserves_authorization_pendi
     )
     with pytest.raises(BlueWayAuthorizationPending):
         pending.exchange(request_id="request", device_code="device", code_verifier="verifier")
+
+
+def test_slow_pairing_provider_does_not_hold_identity_lock_or_allow_duplicate_start(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    service, _courses = _service(tmp_path, monkeypatch)
+    entered, release = threading.Event(), threading.Event()
+
+    class BlockingStart(FakeTransport):
+        def begin_device_authorization(self, **kwargs) -> DeviceAuthorization:
+            entered.set()
+            assert release.wait(5)
+            return super().begin_device_authorization(**kwargs)
+
+    service.transport = BlockingStart()
+    result: dict[str, object] = {}
+
+    def start() -> None:
+        result["attempt"] = service.start_connection()
+
+    thread = threading.Thread(target=start)
+    thread.start()
+    assert entered.wait(5)
+    lock = user_identity.identity_write_lock()
+    assert lock.acquire(blocking=False)
+    lock.release()
+    with pytest.raises(CourseConflictError, match="already pending"):
+        service.start_connection()
+    release.set()
+    thread.join(5)
+    assert not thread.is_alive() and isinstance(result["attempt"], object)
+
+
+def test_owner_disable_during_exchange_revokes_uncommitted_remote_grant(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    service, courses = _service(tmp_path, monkeypatch)
+    attempt = service.start_connection()
+    entered, release = threading.Event(), threading.Event()
+    active = [True]
+
+    class BlockingExchange(FakeTransport):
+        def exchange(self, **_kwargs) -> TokenExchange:
+            entered.set()
+            assert release.wait(5)
+            return TokenExchange("grant-a", "subject-a", "access", "2026-07-23T00:00:00Z", "refresh-secret")
+
+    transport = BlockingExchange()
+    service.transport = transport
+
+    def owner_check(_owner: str) -> None:
+        if not active[0]:
+            raise BlueWayUnavailableError("disabled")
+
+    monkeypatch.setattr(service, "_assert_owner_current", owner_check)
+    result: dict[str, object] = {}
+
+    def exchange() -> None:
+        try:
+            service.exchange_connection_for_transport(attempt_id=attempt.id)
+        except Exception as exc:  # noqa: BLE001 - capture the exact cross-thread result.
+            result["error"] = exc
+
+    thread = threading.Thread(target=exchange)
+    thread.start()
+    assert entered.wait(5)
+    lock = user_identity.identity_write_lock()
+    assert lock.acquire(blocking=False)
+    active[0] = False
+    lock.release()
+    release.set()
+    thread.join(5)
+    assert not thread.is_alive()
+    assert isinstance(result.get("error"), BlueWayUnavailableError)
+    assert transport.revocations == ["refresh-secret"]
+    assert BlueWayRepository(courses).visible_connection() is None
 
 
 def test_pending_pairing_poll_does_not_queue_until_the_provider_approves(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

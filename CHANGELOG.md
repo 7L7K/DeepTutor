@@ -30,9 +30,11 @@
 ### Changed
 
 - BlueWay snapshots now preserve opaque `courseId` identity, classroom/room schedule
-  text, assignments, notes, course facts, and completed capture metadata while keeping
-  raw audio, capture location snapshots, credentials, profile/location/device data,
-  arbitrary URLs, and unavailable transcript/source datasets outside the import.
+  text, assignments, notes, course facts, completed capture metadata, and completed
+  normalized transcript segments while keeping raw audio, capture location snapshots,
+  provider metadata, word timings, speaker/confidence data, credentials,
+  profile/location/device data, arbitrary URLs, and unavailable source datasets
+  outside the import.
 - BlueWay sync stages every changed Course bundle before one generation-fenced SQLite
   visibility commit, retains prior ready Knowledge after failed replacement, archives
   remotely removed material from active retrieval, and permits deterministic retry of
@@ -76,6 +78,8 @@
 
 ### Security and compatibility
 
+- BlueWay pairing now uses a dedicated integration header rather than the Supabase `apikey` channel, and provider start/exchange calls no longer hold the global identity lock; current account authority is revalidated before every local commit and a newly issued remote grant is revoked if that commit is no longer authorized.
+
 - BlueWay credentials use AES-256-GCM with owner/connection/provider/scope AAD and
   private no-follow files; connection, refresh, snapshot, Course, source, and background
   commits recheck owner and grant-generation authority and fail closed on account loss,
@@ -100,8 +104,11 @@
   terminal instead of remaining indefinitely active.
 - Private-tree repair now enforces `0700` directories and `0600` files, rejects symlinks,
   hard links, and owner mismatches, removes macOS extended ACLs, and fails closed when a
-  permission repair cannot be completed. Upload and archive extraction use no-clobber,
-  no-follow writes and operation-scoped rollback.
+  permission repair cannot be completed. Its SQLite walk and macOS ACL cleanup tolerate
+  only a sidecar that is independently verified to have disappeared during the repair,
+  preventing WAL/SHM churn from causing a transient API failure without weakening the
+  checks for extant files. Upload and archive extraction use no-clobber, no-follow writes
+  and operation-scoped rollback.
 - Personal path resolution rejects traversal and symlink escapes. Course mastery resolves
   through the same strict personal profile path for learners and admins, and Course grading
   retries do not duplicate an already-recorded pending-question attempt.
@@ -125,6 +132,7 @@
 - Added deterministic BlueWay protocol, credential-tamper, snapshot-boundary,
   same-title isolation, pairing-pending, replay, reconnect, archive/removal, retry,
   all-or-nothing Knowledge visibility, 50-profile, and concurrent non-provider tests;
-  hosted Supabase SQL/Edge execution and real account/device pairing remain unproved.
+  the reviewed hosted migrations and Edge functions now pass two-account pairing,
+  owner-isolated sync, revoke/reconnect, process-restart, and concurrent status-read proof.
 - A bounded real-provider smoke validated OpenAI `text-embedding-3-small` source indexing
   and a provenance-bound `gpt-5-mini` Course answer without title-generation fallback.

@@ -197,6 +197,79 @@ def test_private_workspace_fails_closed_on_cross_profile_hard_link(
         paths.ensure_user_workspace("u_attacker")
 
 
+def test_private_permission_repair_tolerates_a_vanished_sqlite_sidecar(
+    tmp_path, monkeypatch,
+) -> None:
+    root = tmp_path / "private"
+    root.mkdir()
+    stable = root / "courses.db"
+    stable.write_bytes(b"sqlite")
+    stable.chmod(0o644)
+
+    def snapshot_walk(_root, **_kwargs):
+        return [(str(root), [], ["courses.db", "courses.db-shm"])]
+
+    monkeypatch.setattr(paths.os, "walk", snapshot_walk)
+
+    paths.restrict_private_tree_permissions(root)
+
+    assert stat.S_IMODE(stable.stat().st_mode) == 0o600
+
+
+def test_private_permission_repair_retries_acl_batch_after_sidecar_vanishes(
+    tmp_path, monkeypatch,
+) -> None:
+    root = tmp_path / "private"
+    root.mkdir()
+    stable = root / "courses.db"
+    stable.write_bytes(b"sqlite")
+    volatile = root / "courses.db-shm"
+    volatile.write_bytes(b"wal")
+    calls: list[list[str]] = []
+
+    def flaky_chmod(command, **_kwargs):
+        calls.append(command)
+        if len(calls) == 1:
+            volatile.unlink()
+            raise paths.subprocess.CalledProcessError(1, command)
+        if command[-1] == str(volatile):
+            raise paths.subprocess.CalledProcessError(1, command)
+        return paths.subprocess.CompletedProcess(command, 0)
+
+    monkeypatch.setattr(paths.sys, "platform", "darwin")
+    monkeypatch.setattr(paths.subprocess, "run", flaky_chmod)
+
+    paths.restrict_private_tree_permissions(root)
+
+    assert stable.exists()
+    assert not volatile.exists()
+
+
+def test_private_permission_repair_does_not_treat_broken_symlink_as_vanished(
+    tmp_path, monkeypatch,
+) -> None:
+    root = tmp_path / "private"
+    root.mkdir()
+    stable = root / "courses.db"
+    stable.write_bytes(b"sqlite")
+    volatile = root / "courses.db-shm"
+    volatile.write_bytes(b"wal")
+    calls: list[list[str]] = []
+
+    def adversarial_chmod(command, **_kwargs):
+        calls.append(command)
+        if len(calls) == 1:
+            volatile.unlink()
+            volatile.symlink_to(root / "missing-target")
+        raise paths.subprocess.CalledProcessError(1, command)
+
+    monkeypatch.setattr(paths.sys, "platform", "darwin")
+    monkeypatch.setattr(paths.subprocess, "run", adversarial_chmod)
+
+    with pytest.raises(RuntimeError, match="Could not clear extended ACLs"):
+        paths.restrict_private_tree_permissions(root)
+
+
 @pytest.mark.skipif(not hasattr(paths.os, "geteuid"), reason="POSIX ownership check")
 def test_private_workspace_fails_closed_on_os_owner_mismatch(
     tmp_path, monkeypatch

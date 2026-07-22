@@ -58,8 +58,9 @@ def restrict_private_tree_permissions(root: Path) -> None:
         raise ValueError("private workspace root cannot be a symbolic link")
     expected_uid = os.geteuid() if hasattr(os, "geteuid") else None
 
-    def assert_owned(path: Path) -> None:
-        if expected_uid is not None and path.lstat().st_uid != expected_uid:
+    def assert_owned(path: Path, path_stat: os.stat_result | None = None) -> None:
+        resolved_stat = path_stat if path_stat is not None else path.lstat()
+        if expected_uid is not None and resolved_stat.st_uid != expected_uid:
             raise RuntimeError(
                 f"private workspace path is owned by another OS account: {path}"
             )
@@ -75,40 +76,83 @@ def restrict_private_tree_permissions(root: Path) -> None:
         safe_dirs: list[str] = []
         for name in dirnames:
             child = current_path / name
-            mode = child.lstat().st_mode
-            assert_owned(child)
+            try:
+                child_stat = child.lstat()
+            except FileNotFoundError:
+                # SQLite WAL sidecars and atomically replaced files may vanish
+                # after os.walk snapshots the directory. A missing entry grants
+                # no authority and will be inspected on the next pass if it
+                # reappears.
+                continue
+            mode = child_stat.st_mode
+            assert_owned(child, child_stat)
             if stat.S_ISLNK(mode):
                 raise RuntimeError(f"symbolic link is not allowed in private workspace: {child}")
             if stat.S_ISDIR(mode):
-                child.chmod(0o700)
+                try:
+                    child.chmod(0o700)
+                except FileNotFoundError:
+                    continue
                 repaired_paths.append(child)
                 safe_dirs.append(name)
         dirnames[:] = safe_dirs
         for name in filenames:
             child = current_path / name
-            mode = child.lstat().st_mode
-            assert_owned(child)
+            try:
+                child_stat = child.lstat()
+            except FileNotFoundError:
+                continue
+            mode = child_stat.st_mode
+            assert_owned(child, child_stat)
             if stat.S_ISLNK(mode):
                 raise RuntimeError(f"symbolic link is not allowed in private workspace: {child}")
             if stat.S_ISREG(mode):
-                if child.lstat().st_nlink > 1:
+                if child_stat.st_nlink > 1:
                     raise RuntimeError(
                         f"hard-linked file is not allowed in private workspace: {child}"
                     )
-                child.chmod(0o600)
+                try:
+                    child.chmod(0o600)
+                except FileNotFoundError:
+                    continue
                 repaired_paths.append(child)
     if sys.platform == "darwin":
         # POSIX mode bits do not override a macOS extended ACL. Strip inherited
         # or restored ACL entries before considering a private tree repaired.
         unique_paths = list(dict.fromkeys(repaired_paths))
         for offset in range(0, len(unique_paths), 200):
+            batch = unique_paths[offset : offset + 200]
             try:
                 subprocess.run(
-                    ["/bin/chmod", "-N", *map(str, unique_paths[offset : offset + 200])],
+                    ["/bin/chmod", "-N", *map(str, batch)],
                     check=True,
                     capture_output=True,
                 )
-            except (OSError, subprocess.CalledProcessError) as exc:
+            except subprocess.CalledProcessError as batch_error:
+                # One transient SQLite sidecar can disappear after the walk and
+                # make macOS chmod reject the whole batch. Retry individually so
+                # only that verified-missing path is ignored; any extant path or
+                # OS error still fails the private-workspace check closed.
+                for candidate in batch:
+                    try:
+                        subprocess.run(
+                            ["/bin/chmod", "-N", str(candidate)],
+                            check=True,
+                            capture_output=True,
+                        )
+                    except subprocess.CalledProcessError as path_error:
+                        try:
+                            candidate.lstat()
+                        except FileNotFoundError:
+                            continue
+                        raise RuntimeError(
+                            f"Could not clear extended ACLs from private workspace {root}"
+                        ) from path_error
+                    except OSError as path_error:
+                        raise RuntimeError(
+                            f"Could not clear extended ACLs from private workspace {root}"
+                        ) from path_error
+            except OSError as exc:
                 raise RuntimeError(
                     f"Could not clear extended ACLs from private workspace {root}"
                 ) from exc
