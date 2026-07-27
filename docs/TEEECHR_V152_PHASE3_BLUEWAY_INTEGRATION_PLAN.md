@@ -1,19 +1,34 @@
 # TEEECHR v1.5.2 Phase 3 — BlueWay Private Academic Integration
 
-Status: approved implementation contract
+Status: implemented and published on the reviewed feature branch; final Phase 3A
+runtime/documentation closeout remains open
 TEEECHR base: `8d297d24b6a458f49c59e54ed457487cccaf8f51`
 TEEECHR branch: `feature/teeechr-v152-phase3-blueway-integration`
-BlueWay base: `d379385b5bebafc024b754432ddf546fb8cb2bfe`
-BlueWay branch: `feature/teeechr-blueway-runtime-enablement`
-Last updated: 2026-07-22
+Historical BlueWay Phase 3 base: `d379385b5bebafc024b754432ddf546fb8cb2bfe`
+Current BlueWay authority: canonical `main` at
+`c402753d267039c590efc9c6565d949fc4802089`
+Last updated: 2026-07-27
+
+2026-07-27 reconciliation:
+
+- BlueWay's surviving integration source is now consolidated on canonical
+  BlueWay `main` at `c402753d267039c590efc9c6565d949fc4802089`.
+- TEEECHR remains intentionally preserved on
+  `feature/teeechr-v152-phase3-blueway-integration` at
+  `21362314cafc8e2d5ac993a8878e01d5977bba94`; no upstream or fork-`main`
+  integration is authorized by this document.
+- The original task checklists below are reconciled to the later proof ledger.
+  Remaining current work is defined in
+  `docs/TEEECHR_V152_PHASE3A_PHASE4_LEARNING_WORKFLOWS_PLAN.md`.
+- Upstream DeepTutor v1.5.5 compatibility, historical Practice/Flashcard data
+  migration, and any `main` promotion are separate future lanes.
 
 Implementation checkouts:
 
 - TEEECHR: `/Users/home/Desktop/2k26/teeech/DeepTutor-v1.5.2-baseline`
-- BlueWay Phase 3 worktree: `/Users/home/Developer/BlueWay-teeechr-integration`
-- BlueWay canonical parent checkout: `/Users/home/Developer/BlueWay-local`
-  (left on its independently active Class Capture branch; Phase 3 must not switch
-  or modify that checkout)
+- BlueWay canonical checkout: `/Users/home/Developer/BlueWay-local`
+- Historical BlueWay Phase 3 worktrees are provenance/reference only; do not use
+  them as current implementation authority.
 
 ## 1. Goal and non-goals
 
@@ -505,15 +520,15 @@ the provider, price, data-retention policy, and one bounded paid proof are appro
 - **Scope:** Supabase migrations and shared validation only.
 - **Inputs/outputs:** private pairing/grant/token tables and hardened functions.
 - **Acceptance:**
-  - [ ] Owner is derived from authenticated claims.
-  - [ ] Codes expire and cannot replay.
-  - [ ] PKCE/client/audience checks pass.
-  - [ ] Refresh rotation and family reuse revocation pass.
-  - [ ] Reuse revocation remains committed after the RPC returns its typed denial;
+  - [x] Owner is derived from authenticated claims.
+  - [x] Codes expire and cannot replay.
+  - [x] PKCE/client/audience checks pass.
+  - [x] Refresh rotation and family reuse revocation pass.
+  - [x] Reuse revocation remains committed after the RPC returns its typed denial;
         it is not undone by a raised PostgreSQL exception.
-  - [ ] One active grant/account is enforced.
-  - [ ] Private schema/table privileges are denied directly.
-  - [ ] BlueWay auth-account deletion removes private grant/token metadata without
+  - [x] One active grant/account is enforced.
+  - [x] Private schema/table privileges are denied directly.
+  - [x] BlueWay auth-account deletion removes private grant/token metadata without
         being blocked by restrictive foreign keys.
 - **Risk:** hand-rolled OAuth mistakes. Use a narrow device-authorization subset,
   hashed secrets, exact states, and independent SQL/security review.
@@ -523,15 +538,15 @@ the provider, price, data-retention policy, and one bounded paid proof are appro
 - **Scope:** export function, fixed record adapters, sanitizer, schemas, tests.
 - **Inputs/outputs:** versioned complete/paginated academic snapshots.
 - **Acceptance:**
-  - [ ] Exact dataset and field allowlist.
-  - [ ] `courseId` preserved; titles never become identity.
-  - [ ] Page/body/record/text/transcript limits enforced.
-  - [ ] The 501st, malformed, or oversized record fails the snapshot instead of
+  - [x] Exact dataset and field allowlist.
+  - [x] `courseId` preserved; titles never become identity.
+  - [x] Page/body/record/text/transcript limits enforced.
+  - [x] The 501st, malformed, or oversized record fails the snapshot instead of
         disappearing from a response marked complete.
-  - [ ] Unchanged account truth has a stable snapshot ID across page requests.
-  - [ ] Partial pages cannot imply deletion.
-  - [ ] Auth/profile/location/device/raw-audio fields are absent.
-  - [ ] Deterministic fixtures and hashes pass.
+  - [x] Unchanged account truth has a stable snapshot ID across page requests.
+  - [x] Partial pages cannot imply deletion.
+  - [x] Auth/profile/location/device/raw-audio fields are absent.
+  - [x] Deterministic fixtures and hashes pass.
 - **Risk:** several sources are local/deferred today. Export reports them explicitly
   unavailable until account-owned sanitized content exists; it never invents data.
 
@@ -540,11 +555,11 @@ the provider, price, data-retention policy, and one bounded paid proof are appro
 - **Scope:** feature-local Expo route/store/client and focused tests.
 - **Inputs/outputs:** connection code entry/deep link, consent, approval, revocation.
 - **Acceptance:**
-  - [ ] Consent copy names included and excluded categories.
-  - [ ] Latest supported account data uploads before approval.
-  - [ ] Account switch invalidates stale approval work.
-  - [ ] No tokens enter BlueWay dataset stores or analytics.
-  - [ ] No broad Profile/class/Schedule redesign.
+  - [x] Consent copy names included and excluded categories.
+  - [x] Latest supported account data uploads before approval.
+  - [x] Account switch invalidates stale approval work.
+  - [x] No tokens enter BlueWay dataset stores or analytics.
+  - [x] No broad Profile/class/Schedule redesign.
 - **Risk:** remote auth/runtime proof is distinct from deterministic source/tests.
 
 ### P3-05 — TEEECHR encrypted connection authority
@@ -552,11 +567,11 @@ the provider, price, data-retention policy, and one bounded paid proof are appro
 - **Scope:** configuration, `PathService`, encryption, models, repository, API start/status.
 - **Inputs/outputs:** active personal connection and encrypted rotating credential.
 - **Acceptance:**
-  - [ ] AES-GCM AAD binds owner/connection/provider/scope.
-  - [ ] Tamper, wrong key, wrong owner, and key-version tests fail closed.
-  - [ ] Files/directories are `0600`/`0700`.
-  - [ ] Integration-enabled startup rejects missing auth/key/TLS/local backend.
-  - [ ] Browser never receives access/refresh tokens.
+  - [x] AES-GCM AAD binds owner/connection/provider/scope.
+  - [x] Tamper, wrong key, wrong owner, and key-version tests fail closed.
+  - [x] Files/directories are `0600`/`0700`.
+  - [x] Integration-enabled startup rejects missing auth/key/TLS/local backend.
+  - [x] Browser never receives access/refresh tokens.
 - **Risk:** credential rotation crash. Replace the encrypted file atomically before
   using the successor token for further work. Retry a lost response only with the
   identical rotation request ID inside the encrypted receipt window; different reuse
@@ -567,15 +582,15 @@ the provider, price, data-retention policy, and one bounded paid proof are appro
 - **Scope:** `courses.db` schema and repository/service methods.
 - **Inputs/outputs:** connection, Course map, record, and sync-run rows.
 - **Acceptance:**
-  - [ ] Schema migration is idempotent with foreign keys/WAL/checks/indexes.
-  - [ ] Course plus first mapping is one transaction.
-  - [ ] Same-title/different-ID classes remain separate.
-  - [ ] Learner Course rename is preserved.
-  - [ ] Unlinked records remain unlinked.
-  - [ ] Complete snapshots archive missing records; partial snapshots do not.
-  - [ ] `unavailable` datasets retain earlier records and sources; they never act
+  - [x] Schema migration is idempotent with foreign keys/WAL/checks/indexes.
+  - [x] Course plus first mapping is one transaction.
+  - [x] Same-title/different-ID classes remain separate.
+  - [x] Learner Course rename is preserved.
+  - [x] Unlinked records remain unlinked.
+  - [x] Complete snapshots archive missing records; partial snapshots do not.
+  - [x] `unavailable` datasets retain earlier records and sources; they never act
         as an empty authoritative dataset.
-  - [ ] Archived remote records and transcripts leave active Course retrieval while
+  - [x] Archived remote records and transcripts leave active Course retrieval while
         their immutable historical provenance remains available.
 - **Risk:** mixed repository concurrency. Use `BEGIN IMMEDIATE`, busy timeout, the
   current single-process invariant, and per-connection operation locks.
@@ -585,16 +600,16 @@ the provider, price, data-retention policy, and one bounded paid proof are appro
 - **Scope:** HTTP client, validator, coordinator, restart reconciliation.
 - **Inputs/outputs:** durable run receipts and imported structured records.
 - **Acceptance:**
-  - [ ] Pinned HTTPS origin, no redirects, strict timeouts and size caps.
-  - [ ] Token refresh once on 401; auth failures stop safely.
-  - [ ] Snapshot replay and conflict behavior are deterministic.
-  - [ ] Disconnect/disable/archive/revision races fail closed.
-  - [ ] Offline disconnect immediately enters `revocation_pending` and blocks all
+  - [x] Pinned HTTPS origin, no redirects, strict timeouts and size caps.
+  - [x] Token refresh once on 401; auth failures stop safely.
+  - [x] Snapshot replay and conflict behavior are deterministic.
+  - [x] Disconnect/disable/archive/revision races fail closed.
+  - [x] Offline disconnect immediately enters `revocation_pending` and blocks all
         local work until remote revocation can be retried.
-  - [ ] Startup resumes pending revocation and refuses a second connection until
+  - [x] Startup resumes pending revocation and refuses a second connection until
         the first is remotely revoked or explicitly repaired.
-  - [ ] Restart requeues only safe interrupted states.
-  - [ ] Maximum three concurrent syncs and one per connection.
+  - [x] Restart requeues only safe interrupted states.
+  - [x] Maximum three concurrent syncs and one per connection.
 - **Risk:** background work outlives authority. Carry and revalidate generation at
   every stage and before commits.
 
@@ -603,12 +618,12 @@ the provider, price, data-retention policy, and one bounded paid proof are appro
 - **Scope:** internal Course ingestion refactor, renderer, task authority fencing.
 - **Inputs/outputs:** deterministic JSON/Markdown CourseSource bundles.
 - **Acceptance:**
-  - [ ] Browser upload behavior remains unchanged.
-  - [ ] Internal input follows the same format/size/path checks.
-  - [ ] Identical bundle hash creates no duplicate.
-  - [ ] Changed bundle creates one successor.
-  - [ ] Revoked/archived/stale work cannot become ready.
-  - [ ] Provenance survives regeneration.
+  - [x] Browser upload behavior remains unchanged.
+  - [x] Internal input follows the same format/size/path checks.
+  - [x] Identical bundle hash creates no duplicate.
+  - [x] Changed bundle creates one successor.
+  - [x] Revoked/archived/stale work cannot become ready.
+  - [x] Provenance survives regeneration.
 - **Risk:** RAG provider calls. Automated validation uses deterministic local providers.
 
 ### P3-09 — Transcript-ready source support
@@ -616,26 +631,30 @@ the provider, price, data-retention policy, and one bounded paid proof are appro
 - **Scope:** export validator, record mirror, renderer, source kinds, fixtures.
 - **Inputs/outputs:** immutable timestamped transcript CourseSources.
 - **Acceptance:**
-  - [ ] No raw audio reaches TEEECHR.
-  - [ ] Raw/cleaned/derived layers remain distinct.
-  - [ ] Replacement preserves old hash/provenance.
+  - [x] No raw audio reaches TEEECHR.
+  - [x] Raw/cleaned/derived layers remain distinct.
+  - [x] Replacement preserves old hash/provenance.
   - [ ] Malicious transcript instructions cannot widen tools/Knowledge.
-  - [ ] Transcript content never appears in logs.
-  - [ ] No paid provider call runs.
-- **Risk:** real transcripts do not exist yet. Deterministic fixtures prove ingestion;
-  provider generation remains a separately approved subphase.
+  - [x] Transcript content never appears in logs.
+  - [x] Paid provider calls require explicit approval and separate proof; one
+        bounded embedding/chat smoke was approved and recorded without making
+        provider use part of automated validation.
+- **Risk:** BlueWay now has real completed transcripts, but one non-empty
+  transcript has not yet been proved through the current export into private
+  TEEECHR Course Knowledge. Deterministic fixtures prove the ingestion contract;
+  Phase 3A closes the real end-to-end boundary.
 
 ### P3-10 — Minimal TEEECHR UI
 
 - **Scope:** Settings integration route, status card, Course badge, unlinked list.
 - **Inputs/outputs:** connect, sync status, Sync now, disconnect, readiness states.
 - **Acceptance:**
-  - [ ] No course picker during initial connection.
-  - [ ] Connection acceptance and Knowledge readiness are shown separately.
-  - [ ] Logout/identity switch clears all stale integration state.
-  - [ ] Disconnect explains retained local material.
-  - [ ] No credentials in browser persistence.
-  - [ ] Generic Course Chat/learning behavior remains intact.
+  - [x] No course picker during initial connection.
+  - [x] Connection acceptance and Knowledge readiness are shown separately.
+  - [x] Logout/identity switch clears all stale integration state.
+  - [x] Disconnect explains retained local material.
+  - [x] No credentials in browser persistence.
+  - [x] Generic Course Chat/learning behavior remains intact.
 - **Risk:** broad settings redesign. Keep feature-local components and reuse current
   Settings and CourseContext patterns.
 
@@ -644,18 +663,18 @@ the provider, price, data-retention policy, and one bounded paid proof are appro
 - **Scope:** BlueWay tests/SQL tests, TEEECHR pytest/web tests, deterministic E2E.
 - **Inputs/outputs:** test reports and explicit proof boundaries.
 - **Acceptance:**
-  - [ ] Wrong owner/client/audience/PKCE, expired/replayed code tests.
-  - [ ] Token rotation/reuse/revocation tests.
-  - [ ] Identical refresh retry returns its bounded receipt; different reuse revokes
+  - [x] Wrong owner/client/audience/PKCE, expired/replayed code tests.
+  - [x] Token rotation/reuse/revocation tests.
+  - [x] Identical refresh retry returns its bounded receipt; different reuse revokes
         the token family.
-  - [ ] Two-user and two-admin isolation tests.
-  - [ ] Duplicate/out-of-order/partial/corrupt/oversized snapshot tests.
-  - [ ] Disable/disconnect/archive/revision/crash race tests.
+  - [x] Two-user and two-admin isolation tests.
+  - [x] Duplicate/out-of-order/partial/corrupt/oversized snapshot tests.
+  - [x] Disable/disconnect/archive/revision/crash race tests.
   - [ ] Prompt-injection/unsafe URL/log-redaction tests.
-  - [ ] 50 profiles and ten concurrent non-provider operations.
+  - [x] 50 profiles and ten concurrent non-provider operations.
   - [ ] Two-user browser proof with two courses each.
-  - [ ] Source/tests, browser, backend/data, provider, deployment, simulator, and
-    physical-device claims remain separate.
+  - [x] Source/tests, browser, backend/data, provider, deployment, simulator, and
+        physical-device claims remain separate.
 - **Risk:** hosted Supabase mutation. Default proof is local SQL/fakes; any hosted
   proof requires explicit approval and a reversible test-account plan.
 
@@ -663,13 +682,13 @@ the provider, price, data-retention policy, and one bounded paid proof are appro
 
 - **Scope:** diffs, tracked/untracked files, changelogs, handoff, commits.
 - **Acceptance:**
-  - [ ] `section-closeout-backcheck` completed.
-  - [ ] Independent diff/security/data-lifecycle review completed.
-  - [ ] TEEECHR and BlueWay changelogs updated.
-  - [ ] No secrets, build output, DBs, transcripts, tokens, or QA artifacts tracked.
-  - [ ] Exact untested proof surfaces reported.
-  - [ ] Commit-or-park decision made separately in each repository.
-  - [ ] No push/deployment occurs without explicit authority.
+  - [ ] Final Phase 3A `section-closeout-backcheck` completed after current runtime proof.
+  - [x] Independent diff/security/data-lifecycle review completed for the published source.
+  - [x] TEEECHR and BlueWay changelogs updated.
+  - [x] No secrets, build output, DBs, transcripts, tokens, or QA artifacts tracked.
+  - [x] Exact untested proof surfaces reported.
+  - [x] Commit-or-park decision made separately in each repository.
+  - [x] No push/deployment occurs without explicit authority.
 
 ## 13. Verification plan
 
@@ -742,19 +761,23 @@ The following remain independent and cannot be inferred from one another:
 
 - hosted Supabase migration/function deployment (proved below);
 - real BlueWay account pairing and owner-isolated sync (proved below through
-  authenticated HTTP/API surfaces; the signed-in browser click remains open);
-- real transcript-provider generation (not proved);
-- real embeddings/chat retrieval over imported transcripts (not proved);
-- Expo web preview rendering (proved) versus native simulator/physical iPhone
-  runtime (not proved);
+  authenticated HTTP/API surfaces; current native signed-in consent is also proved);
+- real BlueWay transcript-provider generation (proved) versus non-empty
+  transcript ingestion into TEEECHR Course Knowledge (not proved);
+- real embeddings/chat over an ordinary Course source (proved) versus retrieval
+  over an imported real transcript (not proved);
+- Expo web preview, simulator route, signed TestFlight artifact, and physical
+  consent routing (proved to their separate recorded boundaries);
 - local TEEECHR runtime (proved) versus deployment or multi-server behavior
   (not proved);
-- GitHub push/PR/release state (not yet proved in this ledger).
+- GitHub branch publication (proved) versus TEEECHR `main` promotion or a
+  production release (not proved and not authorized).
 
 ## 14. Risks and unknowns
 
-1. **Transcription provider and retention:** unknown and intentionally disabled.
-   Connection/export/sync and deterministic transcript ingestion proceed first.
+1. **Transcript-to-learning runtime:** BlueWay provider generation and cleanup are
+   proved, but TEEECHR still needs one non-empty real transcript import, citation,
+   restart, and prompt-injection proof.
 2. **Deferred BlueWay source text/capture notes:** some data is currently device-local.
    The export reports absence honestly until sanitized account-owned copies exist.
 3. **Cross-repository atomicity:** impossible. Each repository is independently
@@ -778,17 +801,18 @@ Phase 3 is complete only when:
 - [x] One authenticated TEEECHR user can complete deterministic BlueWay pairing.
 - [x] Pairing immediately queues a complete private academic sync.
 - [x] Every valid BlueWay course maps to exactly one private TEEECHR Course.
-- [ ] Unlinked records are retained without guessed ownership.
+- [x] Unlinked records are retained without guessed ownership.
 - [x] Structured records, encrypted connection authority, ready Course bundles, and
       both isolated profiles survived a local TEEECHR process restart.
-- [ ] Changed academic bundles and transcripts use immutable CourseSource successors.
+- [x] Changed academic bundles and transcripts use immutable CourseSource successors.
 - [x] Disconnect/revocation blocks late work and preserves imported data.
-- [x] No BlueWay write-back, hard deletion, raw-audio import, or paid provider call exists.
+- [x] No BlueWay write-back, hard deletion, or raw-audio import exists; paid
+      provider use remains separately approved and excluded from automation.
 - [ ] Ownership, replay, race, payload, prompt-injection, and log-redaction gates pass.
-- [ ] Beta-scale deterministic proof passes for 50 profiles.
+- [x] Beta-scale deterministic proof passes for 50 profiles.
 - [ ] Both repositories pass the final focused and broad relevant checks.
 - [ ] Changelogs, handoff, diff review, untracked review, and closeout backcheck are done.
-- [ ] Untested live/provider/deployment/device surfaces are reported explicitly.
+- [x] Untested live/provider/deployment/device surfaces are reported explicitly.
 
 ## 16. Implementation and proof ledger
 
@@ -908,35 +932,48 @@ does not imply that an unchecked live surface works.
       its included/excluded/retention copy. The preview correctly disables approval
       when signed out.
 
-### Remaining enablement checklist
+### Reconciled remaining enablement checklist
 
-- [ ] Complete a fresh full migration replay in disposable Supabase/Postgres and a
-      pre-migration logical dump. Docker was unavailable for the CLI reset/dump; the
-      hosted forward ledger and idempotent repair paths were checked instead.
-- [ ] Complete the signed-in consent click in BlueWay web/native UI. The deployed web
-      build has no supported sign-in flow, so current approval proof used the same real
-      user JWT against the deployed user-auth Edge Function rather than injecting a
-      browser session or adding a test backdoor.
-- [ ] Disable the disposable client/accounts when the proof packet is closed. They remain
-      enabled temporarily so the signed-in browser/native and real-transcript gaps can be
-      exercised without reprovisioning identities.
-- [ ] Produce a completed account-owned Class Capture transcript through a real
-      provider. The database/export/TEEECHR ingestion contract is deployed, but the
-      transcription worker/webhook/completion/deletion-retention runtime is not built
-      and the hosted project currently has zero transcript rows.
+- [x] Complete fresh and upgrade migration replay against a disposable
+      hosted-equivalent Supabase/Postgres checkpoint. BlueWay canonical `main`
+      now carries the immutable checkpoint packages, ledger comparison,
+      forward-repair verification, and effective-definition tests.
+- [x] Complete the signed-in consent click in the BlueWay native flow. The QR
+      handoff reached the signed-in phone approval route and the resulting
+      connection became visible through the owner-bound Connected Apps status.
+- [ ] Inventory and retire only confirmed disposable proof accounts/grants after
+      the remaining Phase 3A proof packet closes. Do not disable the active beta
+      integration client or a real beta user's connection as cleanup.
+- [x] Produce completed account-owned Class Capture transcripts through the real
+      provider on the BlueWay side. BlueWay now retains normalized completed
+      transcripts, including valid no-speech completions, without exporting raw
+      audio or provider metadata.
+- [ ] Prove one non-empty real transcript crosses the current BlueWay export into
+      the exact private TEEECHR CourseSource, survives restart, and is retrievable
+      with source provenance. No-speech/zero-segment transcripts must be omitted
+      without failing the complete snapshot.
 - [ ] Prove malicious imported instructions remain ordinary Course Knowledge text
       through the exact Chat/RAG runtime with no tool or cross-workspace authority.
-- [ ] Run a paid chat/embedding smoke only after provider credentials/model choice are
-      explicitly available; none are configured in this TEEECHR checkout.
+- [x] Run one separately approved bounded real embedding/chat smoke. The
+      TEEECHR changelog records `text-embedding-3-small` indexing and a
+      provenance-bound `gpt-5-mini` Course answer; automated validation remains
+      provider-free.
+- [ ] Complete the current integrated two-user browser proof with two separate
+      TEEECHR profiles, BlueWay accounts, and same-titled Courses.
+- [ ] Rerun the exact TEEECHR full Python/web/type/build validation at the
+      current published commit, then complete the final Phase 3A closeout.
 - [x] Pushed both reviewed branches after the final backcheck. BlueWay tracks the
       user's `origin/feature/teeechr-blueway-runtime-enablement`; TEEECHR tracks the
       user's `fork/feature/teeechr-v152-phase3-blueway-integration`, never upstream
       `origin`.
 
-Current classification: **hosted database/Edge, two-owner API pairing/sync, reviewed
-local commits, and remote branch publication pass; signed-in browser, real
-transcription/provider, native device, TEEECHR hosting, and fresh full migration replay
-remain separate open proof surfaces**.
+Current classification: **source implementation, hosted database/Edge,
+BlueWay native consent, real BlueWay transcription, two-owner API pairing/sync,
+bounded provider smoke, reviewed commits, and remote branch publication pass.
+Real transcript-to-TEEECHR ingestion, exact transcript prompt-injection proof,
+current two-user browser proof, fixture retirement, fresh exact-branch TEEECHR
+validation, and final Phase 3A closeout remain open. Upstream integration and
+historical Practice/Flashcard data migration are explicitly outside Phase 3A.**
 
 ### Local reviewed commits
 

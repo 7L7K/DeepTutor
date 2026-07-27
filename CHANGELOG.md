@@ -29,6 +29,12 @@
 
 ### Changed
 
+- Reconciled the Phase 3 BlueWay checklist with the later hosted, native-consent,
+  database-checkpoint, transcription, provider-smoke, and branch-publication
+  evidence. Added the Phase 3A closeout and Phase 4 Course-owned Practice/Quiz/
+  Flashcards roadmap while explicitly deferring historical learner-data import,
+  upstream v1.5.5 integration, and any `main` promotion.
+
 - BlueWay snapshots now preserve opaque `courseId` identity, classroom/room schedule
   text, assignments, notes, course facts, completed capture metadata, and completed
   normalized transcript segments while keeping raw audio, capture location snapshots,
