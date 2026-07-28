@@ -1,6 +1,6 @@
 # TEEECHR v1.5.2 Phase 3A and Phase 4 — Close BlueWay, Restore Learning Workflows
 
-Status: **Phase 3A accepted; Phase 4 implementation active; P4-01 complete.**
+Status: **Phase 3A accepted; Phase 4 implementation active; P4-01 and P4-02A complete.**
 The real two-owner Apple/device flow, hosted fixture retirement, publication,
 deployment, and release certification remain parked. They do not block Phase 4,
 and Phase 4 must not imply that those distinct surfaces passed.
@@ -106,8 +106,8 @@ The P4-01 subordinate artifacts are:
 - `docs/TEEECHR_V152_PHASE4_P4_01_COMMIT_MAP.md`
 
 They provide executable detail for this plan but do not override it. P4-01 was
-implemented on the local Phase 4 branch by `1cc75f2f`; P4-02A is the next
-active slice.
+implemented on the local Phase 4 branch by `1cc75f2f`. P4-02A was implemented
+by `6bdb5179`; P4-02B is the next active slice.
 
 ## 1. Goal and non-goals
 
@@ -746,6 +746,8 @@ release-certification gates above remain explicitly unproved.
 
 ### P4-02A — Practice authoring persistence
 
+Status: **completed for the local engineering boundary by `6bdb5179`.**
+
 - **Scope:** introduce PracticeSet, PracticeSetRevision, and PracticeQuestion
   migration plus Course-rooted repository/service methods.
 - **Inputs / outputs:** create/list/read/archive sets; draft, ready, successor
@@ -759,6 +761,23 @@ release-certification gates above remain explicitly unproved.
 - **Doc alignment:** Section 5 and historical Practice behavior.
 - **Risk / unknown:** do not freeze generation-only fields into the manual
   authoring contract unnecessarily.
+- **Implementation receipt:**
+  - migration `0001_practice_authoring.sql` is governed by the P4-01
+    exact-byte ledger and both packaged wheels;
+  - P4-02A exposes manual authoring only; generated provenance remains reserved
+    for the server-owned P4-05 operation;
+  - database triggers and indexes enforce active Course/Practice parents,
+    draft-only creation, nonempty publication, one ready revision, immutable
+    ready history, forward-only current revision, archive-only retention, and
+    no direct-SQL question insertion beneath ready or archived parents;
+  - every multi-step write uses the shared resolved-path lock and
+    `BEGIN IMMEDIATE`, requires the exact Course write epoch, and resolves
+    source receipts from ready Course sources on the server;
+  - focused Practice/migration/Course/BlueWay proof passed `74` tests; the
+    broader Course plus BlueWay bootstrap/credential-recovery proof passed
+    `136` tests with `6` existing warnings; Ruff and diff hygiene passed;
+  - independent Terra review replayed the direct-SQL and stale-epoch attacks
+    and returned PASS with no P0/P1 finding.
 
 ### P4-02B — Attempt persistence
 
