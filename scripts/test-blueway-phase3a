@@ -1,0 +1,68 @@
+#!/usr/bin/env bash
+# Run the hermetic Phase 3A proof and write a compact machine-readable result.
+set -u
+
+repo_root="$(cd "$(dirname "$0")/.." && pwd)"
+report_path="${1:-$(mktemp -d)/teeechr-phase3a-proof.json}"
+junit_path="${report_path%.json}.junit.xml"
+mkdir -p "$(dirname "$report_path")"
+python_bin="${PYTHON_BIN:-$repo_root/.venv/bin/python}"
+if [ ! -x "$python_bin" ]; then
+  python_bin="${PYTHON_BIN:-python3}"
+fi
+
+cd "$repo_root"
+set +e
+"$python_bin" -m pytest -q \
+  tests/integrations/blueway/test_phase3a_hermetic_e2e.py \
+  tests/integrations/blueway/test_repository_bootstrap.py \
+  --junitxml "$junit_path"
+test_status=$?
+set -e
+
+head_commit="$(git rev-parse HEAD 2>/dev/null || true)"
+if [ -n "$(git status --porcelain --untracked-files=all 2>/dev/null)" ]; then
+  worktree_dirty="true"
+else
+  worktree_dirty="false"
+fi
+"$python_bin" - "$report_path" "$junit_path" "$test_status" "$head_commit" "$worktree_dirty" <<'PY'
+from datetime import datetime, timezone
+import hashlib
+import json
+from pathlib import Path
+import sys
+
+report, junit, status, head_commit, worktree_dirty = sys.argv[1:]
+tested_paths = [
+    "deeptutor/integrations/blueway/repository.py",
+    "scripts/test-blueway-phase3a",
+    "tests/integrations/blueway/phase3a_hermetic_harness.py",
+    "tests/integrations/blueway/test_phase3a_hermetic_e2e.py",
+    "tests/integrations/blueway/test_repository_bootstrap.py",
+]
+payload = {
+    "schema_version": 1,
+    "suite": "teeechr-phase3a-hermetic",
+    "result": "passed" if status == "0" else "failed",
+    "exit_code": int(status),
+    "git_head": head_commit or None,
+    "tested_source": "working_tree",
+    "worktree_dirty": worktree_dirty == "true",
+    "tested_path_sha256": {
+        path: hashlib.sha256(Path(path).read_bytes()).hexdigest()
+        for path in tested_paths
+    },
+    "generated_at": datetime.now(timezone.utc).isoformat(),
+    "junit_report": str(Path(junit).resolve()),
+    "scope": {
+        "external_authority": "synthetic local BlueWay HTTP server",
+        "teeechr": ["authenticated routes", "SQLite", "encrypted credentials", "restart re-instantiation"],
+        "excluded": ["hosted BlueWay", "Apple identity issuance", "real device deep links", "paid providers"],
+    },
+}
+Path(report).write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+print(Path(report).resolve())
+PY
+
+exit "$test_status"
