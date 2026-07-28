@@ -1,8 +1,28 @@
 # TEEECHR v1.5.2 Phase 3A and Phase 4 — Close BlueWay, Restore Learning Workflows
 
-Status: **Phase 3A remains open.** The original roadmap below remains the Phase 4
-planning authority, but its pre-closeout branch/commit statements are superseded by
-the 2026-07-27 receipt below.
+Status: **Phase 3A engineering closure accepted; Phase 4 planning is active.**
+The real two-owner Apple/device flow, hosted fixture retirement, publication,
+deployment, and release certification remain parked. They do not block Phase 4,
+and Phase 4 must not imply that those distinct surfaces passed.
+
+### 2026-07-28 Phase 3A engineering closeout
+
+- The primary real BlueWay connection was recovered under persistent
+  single-host credential authority and completed one bounded sync without
+  replacing retained Course/source/mapping/record identities.
+- A provider-free hermetic command now proves authenticated Alice/Bob route
+  isolation, real local BlueWay HTTP transport, private SQLite persistence,
+  encrypted credential re-instantiation, revocation, same-subject reconnect,
+  and non-duplicating Course mapping reuse.
+- A replay-index bootstrap race found by the harness was repaired and
+  adversarially tested so initialization never removes a correct live replay
+  guard.
+- Final focused results are hermetic `5 passed`, affected legacy/schema
+  `27 passed`, Ruff/shell/diff checks pass, and no P0-P2 independent-review
+  finding remains.
+- The user accepted this as the Phase 3A engineering boundary. Native Apple,
+  current device/browser, hosted cleanup, merge, push, deployment, and release
+  claims remain separate.
 
 ### 2026-07-27 Phase 3A closeout-repair receipt
 
@@ -40,9 +60,10 @@ the 2026-07-27 receipt below.
   `docs/TEEECHR_V152_PHASE3A_REAL_TRANSCRIPT_RECEIPT.md` closes the real
   transcript/CourseSource/restart/citation gate without another sync or paid
   call.
-- Still open: persistent credential-loss recovery, two-account browser isolation,
-  disposable revoke/reconnect, and confirmed fixture cleanup. These gates prevent
-  Phase 3A completion.
+- At the time of this 2026-07-27 receipt, persistent credential-loss recovery,
+  two-account browser isolation, disposable revoke/reconnect, and confirmed
+  fixture cleanup remained open. The 2026-07-28 engineering acceptance above
+  supersedes that status while preserving the native/hosted release gates.
 
 Last updated: 2026-07-28
 
@@ -348,8 +369,8 @@ authority.
 ## 7A. Phase 4 code-seam decisions
 
 The 2026-07-27 read-only current/historical implementation audit adds these
-constraints before P4-01 may begin. They refine the task breakdown; they do not
-authorize Phase 4 implementation while Phase 3A remains open.
+constraints before P4-01 may begin. They refine the task breakdown and now form
+the Phase 4 implementation entry contract.
 
 ### Course database evolution
 
@@ -519,16 +540,17 @@ authority for the separate real transfer receipt in P3A-03.
   ephemeral process-only key and are cryptographically unrecoverable. Do not
   attempt current local disconnect or a new-key sync.
 
-**2026-07-27 source status:** the single-host persistent authority, fail-closed
+**Historical 2026-07-27 source status:** the single-host persistent authority, fail-closed
 `credential_recovery_required` state, same-subject recovery exchange, generation
 fences, credential quarantine, recovery API, Settings UI, and provider-free
 adversarial tests are implemented on the Phase 3A closeout branch. This is source
 and deterministic-test proof only. The primary grant remains untouched; hosted
 pairing-secret rotation, persistent-authority runtime bootstrap/restart,
 same-account live recovery, and the post-recovery bounded sync still require
-their separate operational gates.
+their separate operational gates. The 2026-07-28 live recovery receipt and
+engineering acceptance above supersede this historical operational status.
 
-### P3A-05 — Complete current two-user browser isolation
+### P3A-05 — Parked release certification: current two-user browser isolation
 
 - **Scope:** two disposable TEEECHR users and two separate BlueWay accounts.
 - **Inputs / outputs:** browser/API receipt with two same-titled Courses.
@@ -549,7 +571,7 @@ consent/status/sync. It does not prove a second BlueWay account's consent,
 export/sync, or independently mapped imported Course, and therefore does not
 satisfy this gate.
 
-### P3A-06 — Prove disposable disconnect/reconnect and retire fixtures
+### P3A-06 — Parked release certification: disposable reconnect and fixtures
 
 - **Scope:** disposable proof accounts only; the active beta client and primary
   user connection are not cleanup targets.
@@ -564,6 +586,9 @@ satisfy this gate.
 - **Risk / unknown:** cleanup authority must distinguish active beta users from fixtures.
 
 ### P3A-07 — Final Phase 3 closeout
+
+Status: **completed for the accepted engineering boundary.** The parked
+release-certification gates above remain explicitly unproved.
 
 - **Scope:** exact diffs, tests, docs, evidence, branches, and handoff.
 - **Inputs / outputs:** closeout receipt and promotion recommendation.
@@ -820,9 +845,10 @@ external BlueWay title, or client-selected filesystem path.
   text remains passive and cannot obtain tool authority.
 - Persistent credential authority and owner-approved recovery pass before any
   new-key sync or disconnect/reconnect attempt.
-- Current two-user browser isolation and disposable disconnect/reconnect pass.
-- Fixture cleanup is reviewed separately from active beta authority.
-- Final closeout records all remaining unproved surfaces.
+- Hermetic two-owner isolation and disposable disconnect/reconnect pass.
+- Current native two-real-owner browser/device proof and fixture cleanup remain
+  parked release-certification gates.
+- Final engineering closeout records all remaining unproved surfaces.
 
 ### Phase 4
 
@@ -843,8 +869,8 @@ P3A truth reconciliation
     -> real transcript ingest
       -> transcript prompt-injection proof
         -> persistent credential authority + recovery
-          -> two-user browser + disposable revoke/reconnect
-            -> Phase 3 closeout
+          -> hermetic two-owner + revoke/reconnect
+            -> Phase 3 engineering closeout
               -> Phase 4 schema
                 -> manual Practice/Quiz
                   -> grading/mastery adapter
@@ -853,6 +879,10 @@ P3A truth reconciliation
                         -> grounded Flashcard generation
                           -> learner actions/remediation
                             -> beta-scale proof and closeout
+
+Parallel release-certification lane:
+  real second Apple owner -> current browser/device isolation
+    -> disposable hosted revoke/reconnect -> reviewed fixture retirement
 ```
 
 Upstream integration begins only through a separately approved future plan.

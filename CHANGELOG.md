@@ -4,6 +4,12 @@
 
 ### Added
 
+- Added a hermetic Phase 3A BlueWay regression command that exercises the real
+  authenticated TEEECHR integration and Course routes against a loopback
+  synthetic BlueWay HTTP authority. It proves two-owner isolation, encrypted
+  credential persistence across service re-instantiation, remote revocation,
+  same-subject reconnect, and non-duplicating Course mapping reuse without
+  hosted accounts, devices, or paid providers.
 - Added persistent single-host BlueWay secret authority and an owner-approved
   credential-recovery flow. Unreadable credentials now enter a durable
   generation-fenced recovery status; same-subject recovery retains the exact
@@ -37,6 +43,25 @@
 
 ### Changed
 
+- Phase 3A is accepted as engineering-complete for the current persistent
+  single-host beta boundary. The repeatable owner/revocation/reconnect harness
+  and final no-P0-P2 review close the local engineering lane; a second real
+  Sign in with Apple owner, current device/browser flow, hosted fixture
+  retirement, deployment, and release publication remain separate
+  certification gates.
+- Serialized same-process BlueWay SQLite schema bootstrap and made replay-index
+  creation idempotent, preventing a request/background-worker initialization
+  race while preserving the existing unique completed-snapshot replay guard.
+- Completed the owner-approved live BlueWay credential recovery on the
+  authoritative single-host runtime. The hosted pairing secret was rotated, the
+  persistent authority survived a restart without bootstrap inputs, the same
+  connection and opaque BlueWay subject were recovered, and one bounded sync
+  preserved all Course/source/mapping/record identities while importing only the
+  supported academic record categories.
+- The live recovery runtime was restarted with the canonical BlueWay approval
+  URL (`blueway-teeechr-beta.expo.app`) instead of the obsolete preview
+  deployment. A consumed-and-revoked temporary approval was safely retried
+  without changing retained learner data.
 - Made the mimic-WebSocket test harness install an explicit local test identity,
   so the full suite no longer depends on whether the auth router happened to be
   imported before its isolated config fake.
@@ -47,9 +72,9 @@
   leak settings state across tests.
 - Added a production-shaped, provider-free import-to-Course-Chat proof that imported
   transcript-like instructions remain passive content and cannot acquire tool
-  authority. This is local proof only: a current real BlueWay export/sync-to-
-  CourseSource/citation receipt, browser isolation, revoke/reconnect, fixture
-  cleanup, and final Phase 3A closeout remain open.
+  authority. Later receipts close the real transcript transfer and accepted
+  engineering boundary; native two-owner browser/device certification and
+  hosted fixture retirement remain parked.
 
 - Reconciled the Phase 3 BlueWay checklist with the later hosted, native-consent,
   database-checkpoint, transcription, provider-smoke, and branch-publication

@@ -1,8 +1,10 @@
 # TEEECHR BlueWay Credential Authority and Recovery Runbook
 
 Status: source implementation and provider-free tests are present on the Phase 3A
-closeout branch. No hosted secret rotation, primary-grant mutation, live recovery,
-deployment, or disposable-account proof is authorized by this document.
+closeout branch. The owner approved and completed the hosted pairing-secret
+rotation, real persistent-authority bootstrap/restart, primary same-subject
+recovery, and one bounded post-recovery sync on 2026-07-28. Disposable-account
+proof, final fixture retirement, publication, and deployment remain separate.
 
 ## Safety contract
 
@@ -118,15 +120,51 @@ Do not delete the authority, credential envelopes, quarantine, database rows, or
 imported Course material as rollback. Disable the optional BlueWay integration and
 preserve evidence for review.
 
-## Proof still required
+## Release certification still required
 
-- Real persistent-authority startup/restart on the authoritative runtime.
-- Hosted pairing-secret rotation under separate approval.
-- Primary same-account owner recovery without changing Course/source identities.
 - One disposable second BlueWay account.
 - Current Alice/Bob browser isolation across both applications.
 - Disposable Disconnect/reconnect and reviewed fixture retirement.
-- Final Phase 3A closeout backcheck, reviewed commit, and publication decision.
+
+These gates no longer block Phase 4 engineering. The accepted Phase 3A
+engineering boundary is the persistent single-host runtime plus the hermetic
+two-owner/revocation/reconnect proof. Native Apple/device behavior, hosted
+fixture retirement, publication, and deployment remain separately labeled
+release-certification claims.
+
+## Live primary recovery proof captured on 2026-07-28
+
+- The stopped authoritative runtime was snapshotted into a private `0700`
+  evidence directory. The primary Course database, WAL/SHM sidecars, encrypted
+  envelope, account map, and older active local proof connection were preserved
+  as `0600` files with recorded hashes.
+- The hosted `TEEECHR_INTEGRATION_API_SECRET` was rotated without deploying Edge
+  code, changing migrations, touching transcript data, or revoking the primary
+  grant as part of the rotation.
+- Recovery bootstrap created
+  `data/system/integrations/blueway-secret-authority.json` as one regular,
+  single-link `0600` file in a `0700` directory. A second process start succeeded
+  with the bootstrap flag and all temporary secret inputs removed. The protected
+  one-time secret file was then deleted.
+- The unreadable primary envelope moved to the private quarantine directory. The
+  same local connection ID and opaque BlueWay subject became healthy at revision
+  and generation `3`; the replacement credential remained `0600`.
+- During the owner flow, an obsolete approval-preview URL and an accidental
+  Connected Apps Disconnect consumed and revoked one temporary grant. No local
+  Course data changed. The runtime was restarted with the canonical approval URL,
+  `https://blueway-teeechr-beta.expo.app/teeechr-connect`, and a fresh one-time
+  request completed successfully.
+- Exact preflight/post-recovery comparison found zero added or removed Course,
+  source, mapping, record, or historical sync identities. The retained workspace
+  contained 5 Courses, 5 ready sources, 37 supported records, and 5 Course maps.
+- One bounded post-recovery sync completed without error and produced exactly one
+  new durable sync receipt. Its counts matched the prior receipt: 5 Courses,
+  2 assignments, 22 capture-metadata records, 5 class meetings, 1 class note,
+  and 7 transcripts. Imported payload-key inspection found no raw-audio,
+  location, device, or local-URI authority.
+- BlueWay hosted state showed exactly one active grant for the recovered owner;
+  the mistakenly disconnected temporary grant remained revoked. No destructive
+  primary Disconnect proof is authorized after recovery.
 
 ## Local source proof captured on 2026-07-27
 
@@ -141,6 +179,6 @@ preserve evidence for review.
 - Secret-pattern scan over the intended recovery diff: no match.
 - Independent security/diff review: no remaining P0, P1, or P2 finding.
 
-This is source and provider-free test proof. It does not prove persistent
-authority on the real runtime, a hosted secret rotation, a live replacement
-grant, browser recovery, a second owner, deployment, or release publication.
+This source/test proof is now supplemented by the live primary recovery receipt
+above. It still does not prove a second owner, disposable Disconnect/reconnect,
+fixture retirement, deployment, or release publication.

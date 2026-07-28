@@ -1,8 +1,33 @@
 # TEEECHR v1.5.2 Phase 3 — BlueWay Private Academic Integration
 
-Status: **implemented source foundation with Phase 3A still open.** The historical
-implementation and hosted ledgers below are retained as evidence, but their
-branch/publication claims are not current authority.
+Status: **Phase 3A engineering closure accepted for the persistent single-host
+beta boundary.** The real two-owner Apple/device flow, hosted fixture retirement,
+publication, deployment, and release certification remain parked and must not be
+inferred from the hermetic proof. Historical implementation and hosted ledgers
+below remain evidence, but their branch/publication claims are not current
+authority.
+
+### 2026-07-28 engineering closeout acceptance
+
+- The owner accepted the split between repeatable engineering closure and
+  native/hosted release certification.
+- The primary real connection remains preserved after same-subject credential
+  recovery and a bounded post-recovery sync with no Course/source/mapping/record
+  identity replacement.
+- The hermetic Phase 3A command now exercises the real authenticated TEEECHR
+  integration/Course routes, `HttpBlueWayTransport`, private SQLite workspaces,
+  encrypted credentials, service re-instantiation, two-owner isolation,
+  revocation, same-subject reconnect, and non-duplicating Course mapping reuse.
+- A closeout review found and repaired a replay-index bootstrap race. Correct
+  replay protection remains installed; only a mismatched legacy definition is
+  replaced inside an immediate transaction. The adversarial overlap test proves
+  a competing duplicate-completion writer remains fenced.
+- Final focused receipt: hermetic `5 passed`; affected Phase 3/recovery/schema
+  coverage `27 passed`; Ruff, shell syntax, and diff checks pass; independent
+  re-review reports no remaining P0-P2 finding. Existing macOS pytest temporary
+  cleanup warnings remain unrelated.
+- No push, merge, deployment, new hosted mutation, real second account, or paid
+  provider call is included in this acceptance.
 
 ### 2026-07-27 superseding Phase 3A receipt
 
@@ -30,11 +55,12 @@ branch/publication claims are not current authority.
   production-shaped provider-free import-to-Course-Chat path proves imported text
   remains passive; and auth-setting tests isolate their settings state.
 - The real transcript transfer/CourseSource/citation gate is now closed by
-  `docs/TEEECHR_V152_PHASE3A_REAL_TRANSCRIPT_RECEIPT.md`. Phase 3A remains open
-  for persistent credential-loss recovery, current two-account browser
-  isolation, disposable revoke/reconnect, and confirmed fixture cleanup. No
-  paid/provider call, deployment, push, merge, or hosted mutation occurred in
-  this repair lane.
+  `docs/TEEECHR_V152_PHASE3A_REAL_TRANSCRIPT_RECEIPT.md`. At the time of this
+  2026-07-27 receipt, persistent credential-loss recovery, current two-account
+  browser isolation, disposable revoke/reconnect, and confirmed fixture cleanup
+  remained open. The 2026-07-28 acceptance above supersedes that engineering
+  status. No paid/provider call, deployment, push, merge, or hosted mutation
+  occurred in the earlier repair lane.
 
 TEEECHR v1.5.2 foundation: `b728354863540466f5410bec3530eb55a9fe0edc`
 Historical Phase 3 implementation base: `8d297d24b6a458f49c59e54ed457487cccaf8f51`
@@ -1000,15 +1026,30 @@ does not imply that an unchecked live surface works.
       TEEECHR changelog records `text-embedding-3-small` indexing and a
       provenance-bound `gpt-5-mini` Course answer; automated validation remains
       provider-free.
+- [x] Add a repeatable hermetic Phase 3A command using the real authenticated
+      TEEECHR integration/Course routes, `HttpBlueWayTransport`, private SQLite
+      workspaces, encrypted credentials, and service re-instantiation against a
+      loopback synthetic BlueWay authority. The proof covers two-owner
+      isolation, foreign identifiers, revocation, same-subject reconnect, and
+      non-duplicating Course mapping reuse. It deliberately begins after
+      BlueWay account authentication and therefore does not claim Apple token,
+      TestFlight, universal-link, TLS, hosted-secret, or physical-device proof.
 - [ ] Complete the current integrated two-user browser proof with two separate
       TEEECHR profiles, BlueWay accounts, and same-titled Courses.
 - [x] Rerun the exact TEEECHR full Python/web/type/build validation at the local
       closeout commit and record its exact SHA externally.
 - [x] Implement the local persistent-secret authority and owner-approved
       same-subject credential-recovery contract with provider-free adversarial
-      coverage. This does not claim hosted secret rotation or live recovery.
-- [ ] Complete final Phase 3A closeout after persistent credential recovery,
-      two-account browser, disposable revoke/reconnect, and fixture gates pass.
+      coverage.
+- [x] Rotate the hosted pairing secret under owner approval, bootstrap and
+      restart-prove the real persistent authority without temporary secret
+      inputs, recover the same primary connection/opaque subject, preserve every
+      Course/source/mapping/record identity, and complete one bounded durable
+      post-recovery sync.
+- [x] Accept Phase 3A engineering closeout at the persistent single-host plus
+      hermetic two-owner/revoke/reconnect boundary. The current two-real-owner
+      browser/device flow and confirmed fixture retirement remain separately
+      parked release-certification gates.
 - [x] Pushed both reviewed branches after the final backcheck. BlueWay tracks the
       user's `origin/feature/teeechr-blueway-runtime-enablement`; TEEECHR tracks the
       user's `fork/feature/teeechr-v152-phase3-blueway-integration`, never upstream
@@ -1018,12 +1059,14 @@ Current classification: **source implementation,
 hosted database/Edge, BlueWay native consent, real BlueWay transcription,
 two-owner API pairing/sync, bounded provider smoke, real transcript-to-TEEECHR
 ingestion with deterministic citation, passive transcript prompt-injection
-handling, fresh exact-branch validation, reviewed commits, and prior remote
-branch publication pass. Local recovery source and deterministic tests pass;
-hosted secret rotation and live primary recovery remain gated. Current two-user
-browser proof, disposable revoke/reconnect, fixture retirement, and final Phase
-3A closeout remain open. Upstream integration and historical Practice/Flashcard
-data migration are explicitly outside Phase 3A.**
+handling, fresh exact-branch validation, reviewed commits, prior remote branch
+publication, live persistent-authority recovery, and bounded post-recovery sync
+pass. The repeatable hermetic two-owner/revoke/reconnect regression also passes,
+but it does not replace the current two-real-Apple-owner browser/device gate.
+That native proof, confirmed disposable-fixture retirement, publication,
+deployment, upstream integration, and historical Practice/Flashcard data
+migration remain open. Phase 4 engineering may proceed without representing
+those parked release surfaces as passed.**
 
 ### Historical local reviewed commits
 
