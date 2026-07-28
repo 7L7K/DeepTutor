@@ -163,3 +163,16 @@
   owner-isolated sync, revoke/reconnect, process-restart, and concurrent status-read proof.
 - A bounded real-provider smoke validated OpenAI `text-embedding-3-small` source indexing
   and a provenance-bound `gpt-5-mini` Course answer without title-generation fallback.
+- Added a content-free real-transcript receipt: the owner-bound hosted aggregate
+  has `7` non-empty completed transcripts and `2` valid no-speech completions;
+  the completed TEEECHR sync retained the `7` searchable records in
+  hash-matching private Course bundles, and a post-restart deterministic lookup
+  emitted exactly one owner-authorized `blueway-course-bundle.json` citation
+  while a foreign profile received none.
+- Recorded the newly discovered credential-lifecycle beta blocker: the prior
+  runtime kept the local AES master key and local copy of the matching pairing
+  secret only in process environment, so its remaining encrypted credentials
+  cannot support future sync or server-initiated revoke. The hosted pairing
+  secret remains present and any later replacement requires separate approval.
+  Phase 3A now requires persistent secret authority, decryptability preflight,
+  and a safe owner-approved recovery path before disconnect/reconnect proof.

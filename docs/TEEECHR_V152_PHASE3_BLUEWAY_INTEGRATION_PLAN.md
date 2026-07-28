@@ -29,15 +29,17 @@ branch/publication claims are not current authority.
   private real `ask_user` reply receipt; no-speech transcripts are omitted; the
   production-shaped provider-free import-to-Course-Chat path proves imported text
   remains passive; and auth-setting tests isolate their settings state.
-- Phase 3A remains open for a real current non-empty export/sync to the exact private
-  `CourseSource` with citation receipt, current two-account browser isolation,
-  disposable revoke/reconnect, and confirmed fixture cleanup. No paid/provider
-  call, deployment, push, merge, or hosted mutation occurred in this repair lane.
+- The real transcript transfer/CourseSource/citation gate is now closed by
+  `docs/TEEECHR_V152_PHASE3A_REAL_TRANSCRIPT_RECEIPT.md`. Phase 3A remains open
+  for persistent credential-loss recovery, current two-account browser
+  isolation, disposable revoke/reconnect, and confirmed fixture cleanup. No
+  paid/provider call, deployment, push, merge, or hosted mutation occurred in
+  this repair lane.
 
 TEEECHR v1.5.2 foundation: `b728354863540466f5410bec3530eb55a9fe0edc`
 Historical Phase 3 implementation base: `8d297d24b6a458f49c59e54ed457487cccaf8f51`
 Historical BlueWay Phase 3 base: `d379385b5bebafc024b754432ddf546fb8cb2bfe`
-Last updated: 2026-07-27
+Last updated: 2026-07-28
 
 Historical 2026-07-27 reconciliation (superseded as current authority by the
 Phase 3A receipt above):
@@ -793,10 +795,12 @@ The following remain independent and cannot be inferred from one another:
 - hosted Supabase migration/function deployment (proved below);
 - real BlueWay account pairing and owner-isolated sync (proved below through
   authenticated HTTP/API surfaces; current native signed-in consent is also proved);
-- real BlueWay transcript-provider generation (proved) versus non-empty
-  transcript ingestion into TEEECHR Course Knowledge (not proved);
-- real embeddings/chat over an ordinary Course source (proved) versus retrieval
-  over an imported real transcript (not proved);
+- real BlueWay transcript-provider generation (proved) and non-empty transcript
+  ingestion into private TEEECHR Course Knowledge with deterministic citation
+  retrieval (proved by the content-free receipt);
+- real embeddings/chat over an ordinary Course source (proved) versus a separate
+  paid-provider answer over an imported real transcript (not run and not required
+  for the deterministic P3A-03 transfer/citation gate);
 - Expo web preview, simulator route, signed TestFlight artifact, and physical
   consent routing (proved to their separate recorded boundaries);
 - local TEEECHR runtime (proved) versus deployment or multi-server behavior
@@ -806,9 +810,11 @@ The following remain independent and cannot be inferred from one another:
 
 ## 14. Risks and unknowns
 
-1. **Transcript-to-learning runtime:** BlueWay provider generation and cleanup are
-   proved, but TEEECHR still needs one non-empty real transcript import, citation,
-   restart, and prompt-injection proof.
+1. **Credential recovery authority:** the real transcript transfer, restart,
+   citation, and provider-free passive-content boundaries are proved, but the old
+   process-only credential key is unavailable. TEEECHR needs persistent secret
+   authority, decryptability preflight, and owner-approved recovery before another
+   sync or disconnect/reconnect attempt.
 2. **Deferred BlueWay source text/capture notes:** some data is currently device-local.
    The export reports absence honestly until sanitized account-owned copies exist.
 3. **Cross-repository atomicity:** impossible. Each repository is independently
@@ -816,14 +822,13 @@ The following remain independent and cannot be inferred from one another:
 4. **Single-process durability:** supported. Multiple workers/replicas remain rejected.
 5. **Windows host permissions:** TEEECHR’s current private POSIX/macOS proof does not
    establish Windows DACL isolation. Do not claim Windows multi-profile privacy.
-6. **BlueWay local branch divergence:** the canonical checkout is 11 commits ahead of
-   `origin/main`. Preserve that history; do not rebase, reset, or push implicitly.
-7. **Concurrent BlueWay transcription work:** the canonical BlueWay checkout is on
-   `feature/class-capture-transcription-foundation` with independent uncommitted
-   schema, function, runtime, test, and documentation work. Phase 3 was therefore
-   built in `/Users/home/Developer/BlueWay-teeechr-integration`. The two reviewed
-   branches must be integrated explicitly after both are stable; no file copying,
-   checkout switching, reset, or inferred merge is authorized.
+6. **BlueWay local branch divergence:** as observed on 2026-07-28, the canonical
+   checkout is on `main` at `1203983c`, two commits ahead of `origin/main`, with
+   unrelated user-owned uncommitted work. Preserve that state; do not rebase,
+   reset, stage, or push it implicitly.
+7. **BlueWay proof authority:** the clean isolated transcript-proof worktree at
+   `1752e5f` remains the bounded source authority for this receipt. Do not infer
+   that its clean state authorizes changes to the dirty canonical checkout.
 
 ## 15. Exit criteria
 
@@ -979,14 +984,18 @@ does not imply that an unchecked live surface works.
       provider on the BlueWay side. BlueWay now retains normalized completed
       transcripts, including valid no-speech completions, without exporting raw
       audio or provider metadata.
-- [ ] Prove one non-empty real transcript crosses the current BlueWay export into
-      the exact private TEEECHR CourseSource, survives restart, and is retrievable
-      with source provenance. No-speech/zero-segment transcripts must be omitted
-      without failing the complete snapshot.
+- [x] Prove one non-empty real transcript from a previously completed,
+      owner-approved BlueWay export retains its exact private TEEECHR
+      CourseSource/citation boundary after restart. No-speech/zero-segment
+      transcripts must be omitted without failing the complete snapshot. The
+      content-free receipt records `7` real searchable transcripts, `2` valid
+      no-speech completions, bundle-hash matches, restart survival, one
+      owner-authorized citation, and a foreign-profile denial without logging
+      transcript text or stable identity fingerprints.
 - [x] Prove malicious imported instructions remain ordinary Course Knowledge text
       through the provider-free production-shaped import-to-Chat/RAG runtime with
-      no tool or cross-workspace authority. This does not replace the open real
-      transcript transfer/citation gate above.
+      no tool or cross-workspace authority. This is distinct from, and does not
+      replace, the real-transfer receipt that closes the gate above.
 - [x] Run one separately approved bounded real embedding/chat smoke. The
       TEEECHR changelog records `text-embedding-3-small` indexing and a
       provenance-bound `gpt-5-mini` Course answer; automated validation remains
@@ -995,20 +1004,22 @@ does not imply that an unchecked live surface works.
       TEEECHR profiles, BlueWay accounts, and same-titled Courses.
 - [x] Rerun the exact TEEECHR full Python/web/type/build validation at the local
       closeout commit and record its exact SHA externally.
-- [ ] Complete final Phase 3A closeout after the real transcript, two-account
-      browser, disposable revoke/reconnect, and fixture gates pass.
+- [ ] Complete final Phase 3A closeout after persistent credential recovery,
+      two-account browser, disposable revoke/reconnect, and fixture gates pass.
 - [x] Pushed both reviewed branches after the final backcheck. BlueWay tracks the
       user's `origin/feature/teeechr-blueway-runtime-enablement`; TEEECHR tracks the
       user's `fork/feature/teeechr-v152-phase3-blueway-integration`, never upstream
       `origin`.
 
-Historical classification at the time of the previous ledger: **source implementation, hosted database/Edge,
-BlueWay native consent, real BlueWay transcription, two-owner API pairing/sync,
-bounded provider smoke, reviewed commits, and remote branch publication pass.
-Real transcript-to-TEEECHR ingestion, exact transcript prompt-injection proof,
-current two-user browser proof, fixture retirement, fresh exact-branch TEEECHR
-validation, and final Phase 3A closeout remain open. Upstream integration and
-historical Practice/Flashcard data migration are explicitly outside Phase 3A.**
+Current classification after the 2026-07-28 receipt: **source implementation,
+hosted database/Edge, BlueWay native consent, real BlueWay transcription,
+two-owner API pairing/sync, bounded provider smoke, real transcript-to-TEEECHR
+ingestion with deterministic citation, passive transcript prompt-injection
+handling, fresh exact-branch validation, reviewed commits, and prior remote
+branch publication pass. Persistent credential recovery, current two-user browser
+proof, disposable revoke/reconnect, fixture retirement, and final Phase 3A
+closeout remain open. Upstream integration and historical Practice/Flashcard data
+migration are explicitly outside Phase 3A.**
 
 ### Historical local reviewed commits
 

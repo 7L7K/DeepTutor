@@ -10,12 +10,14 @@ the 2026-07-27 receipt below.
   `/Users/home/Desktop/2k26/teeech/DeepTutor-v1.5.2-baseline` on
   `feature/teeechr-v152-phase3a-closeout`. The exact validated source/test repair
   tip is `850e7316` (five local commits). This documentation-only superseding
-  receipt follows that validated tip; the immutable command/SHA receipt is Linear
-  project comment `ffa56940-2ec2-4b56-9e8d-47fdf0b8436d`. The branch is not
-  pushed or a Phase 3A completion claim.
+  receipt at `bd6c117e` follows that validated tip; the immutable command/SHA
+  receipt is Linear project comment
+  `ffa56940-2ec2-4b56-9e8d-47fdf0b8436d`. The branch is not pushed or a Phase
+  3A completion claim.
 - Canonical BlueWay authority is `/Users/home/Developer/BlueWay-local`, `main` at
-  `1752e5f`, one local commit ahead of `origin/main`. Its user-owned dirty worktree
-  is preserved and read-only for this lane. The isolated Phase 3A proof worktree is
+  `1203983c`, two local commits ahead of `origin/main` as observed on
+  2026-07-28. Its user-owned dirty worktree is preserved and read-only for this
+  lane. The isolated Phase 3A proof worktree is
   `/Users/home/Desktop/2k26/teeech/BlueWay-phase3a-transcript-proof` on
   `feature/teeechr-phase3a-transcript-proof` at `1752e5f`; this receipt makes no
   claim about its current cleanliness.
@@ -34,12 +36,15 @@ the 2026-07-27 receipt below.
   private, real `ask_user` reply receipt; no-speech transcript omission; a
   production-shaped, provider-free import-to-Course-Chat passive-content proof; and
   auth-setting test isolation.
-- Still open: a current non-empty real BlueWay export/sync into the exact private
-  `CourseSource` with citation receipt, two-account browser isolation, disposable
-  revoke/reconnect, and confirmed fixture cleanup. These gates prevent Phase 3A
-  completion.
+- The content-free receipt in
+  `docs/TEEECHR_V152_PHASE3A_REAL_TRANSCRIPT_RECEIPT.md` closes the real
+  transcript/CourseSource/restart/citation gate without another sync or paid
+  call.
+- Still open: persistent credential-loss recovery, two-account browser isolation,
+  disposable revoke/reconnect, and confirmed fixture cleanup. These gates prevent
+  Phase 3A completion.
 
-Last updated: 2026-07-27
+Last updated: 2026-07-28
 
 ## 1. Goal and non-goals
 
@@ -431,9 +436,11 @@ authorize Phase 4 implementation while Phase 3A remains open.
 - **Doc alignment:** Phase 3 verification plan.
 - **Risk / unknown:** dependency or upstream service drift since 2026-07-22.
 
-**2026-07-27 receipt:** local backend, focused repair, web, TypeScript, build,
-lint, i18n, Ruff, and diff checks passed as recorded above. This completes neither
-the real transcript/citation gate nor browser/revoke/fixture gates.
+**2026-07-27 source/test receipt:** local backend, focused repair, web,
+TypeScript, build, lint, i18n, Ruff, and diff checks passed as recorded above.
+That receipt did not itself close the live proof gates; P3A-03 is now closed by
+the separate 2026-07-28 real-transfer receipt, while browser, recovery,
+revoke/reconnect, and fixture gates remain open.
 
 ### P3A-03 — Prove a real transcript reaches private Course Knowledge
 
@@ -448,8 +455,21 @@ the real transcript/citation gate nor browser/revoke/fixture gates.
   - the source survives restart and is searchable only by its owner/Course;
   - no transcript text is copied into logs or proof documents.
 - **Doc alignment:** Phase 3 transcript contract and BlueWay academic export fixture.
-- **Risk / unknown:** the currently connected account may not own an eligible
-  non-empty transcript. Use a disposable approved witness if necessary.
+- **Historical pre-proof condition:** an eligible non-empty transcript had to
+  exist under the approved owner. The 2026-07-28 receipt below proves that
+  condition for the recorded transfer without another sync.
+
+**2026-07-28 real-transfer receipt:** this gate is now proved by the content-free
+receipt in `docs/TEEECHR_V152_PHASE3A_REAL_TRANSCRIPT_RECEIPT.md`. The exact
+owner-bound hosted aggregate has `9` completed transcripts: `7` with non-empty
+segments and `2` valid no-speech completions. The completed TEEECHR sync retained
+those `7` searchable transcripts in `5` hash-matching ready Course bundles.
+After process restart, an exact transcript CourseSource emitted one
+`blueway-course-bundle.json` citation for its owning profile and none for a
+foreign profile. No raw identity, per-user, Course, source,
+Knowledge-reference, bundle-content, transcript-content, or bearer fingerprint
+entered the tracked receipt. The published evidence-artifact and verifier
+SHA-256 values are reproducibility checksums only.
 
 ### P3A-04 — Prove transcript prompt text remains passive
 
@@ -464,13 +484,40 @@ the real transcript/citation gate nor browser/revoke/fixture gates.
 - **Doc alignment:** `deeptutor/services/session/turn_runtime.py` and
   `deeptutor/multi_user/knowledge_access.py`.
 - **Residual boundary:** the provider-free production-shaped import-to-Chat proof
-  below closes the local tool/passive-content contract. It does not prove the
-  separate current real BlueWay transfer and citation gate in P3A-03.
+  below closes the local tool/passive-content contract. It does not replace the
+  separately documented real-transfer receipt that closes P3A-03.
 
 **2026-07-27 repair proof:** production-shaped provider-free import-to-Course-Chat
 coverage satisfies this local passive-content/tool-authority gate: malicious-looking
 imported text remains passive and cannot obtain tool authority. It is not the
-required current real BlueWay transcript-to-CourseSource/citation receipt in P3A-03.
+authority for the separate real transfer receipt in P3A-03.
+
+### P3A-04A — Repair persistent credential and recovery authority
+
+- **Scope:** TEEECHR secret loading, encrypted credential preflight, recovery
+  lifecycle, and provider-free tests; hosted secret rotation remains a later
+  separately approved action.
+- **Inputs / outputs:** persistent owner-controlled AES and pairing secrets,
+  envelope key identity, safe recovery state/API, and recovery proof.
+- **Acceptance criteria:**
+  - a normal server restart preserves credential decryptability;
+  - integration startup fails closed into `credential_recovery_required` when
+    an active credential is unreadable, while non-integration TEEECHR
+    functionality remains available;
+  - status distinguishes an active, decryptable connection from
+    `credential_recovery_required`;
+  - Disconnect preflight-decrypts the credential before entering
+    `revocation_pending`, then preserves local-first generation fencing before
+    any network revoke;
+  - recovery preserves Courses, sources, records, mappings, mastery, and sync
+    history while quarantining the unreadable envelope;
+  - an owner-approved replacement pairing atomically replaces the remote grant
+    and reuses Course identity only by owner and opaque external identity;
+  - no secret is committed, logged, returned to the browser, or silently
+    regenerated.
+- **Risk / unknown:** the two existing envelopes were encrypted with an
+  ephemeral process-only key and are cryptographically unrecoverable. Do not
+  attempt current local disconnect or a new-key sync.
 
 ### P3A-05 — Complete current two-user browser isolation
 
@@ -484,6 +531,14 @@ required current real BlueWay transcript-to-CourseSource/citation receipt in P3A
 - **Doc alignment:** Phase 3 P3-11 and Course ownership tests.
 - **Risk / unknown:** existing hosted two-owner proof used API/runtime surfaces;
   this task closes the current browser flow.
+
+If only one disposable BlueWay account is available, record a partial proof
+only: two disposable TEEECHR profiles may prove same-title local Course
+isolation, non-enumerating foreign Course/source/session/sync `404`s, and
+Alice-to-Bob logout/cache clearing; one account may prove one real BlueWay
+consent/status/sync. It does not prove a second BlueWay account's consent,
+export/sync, or independently mapped imported Course, and therefore does not
+satisfy this gate.
 
 ### P3A-06 — Prove disposable disconnect/reconnect and retire fixtures
 
@@ -753,8 +808,9 @@ external BlueWay title, or client-selected filesystem path.
 - Current TEEECHR branch validation passes.
 - One real non-empty transcript reaches the correct private Course Knowledge.
 - Provider-free production-shaped Course Chat proof shows imported transcript-like
-  text remains passive and cannot obtain tool authority; P3A-03 still requires the
-  separate current real transcript/CourseSource/citation receipt.
+  text remains passive and cannot obtain tool authority.
+- Persistent credential authority and owner-approved recovery pass before any
+  new-key sync or disconnect/reconnect attempt.
 - Current two-user browser isolation and disposable disconnect/reconnect pass.
 - Fixture cleanup is reviewed separately from active beta authority.
 - Final closeout records all remaining unproved surfaces.
@@ -777,16 +833,17 @@ P3A truth reconciliation
   -> exact TEEECHR revalidation
     -> real transcript ingest
       -> transcript prompt-injection proof
-        -> two-user browser + disposable revoke/reconnect
-          -> Phase 3 closeout
-            -> Phase 4 schema
-              -> manual Practice/Quiz
-                -> grading/mastery adapter
-                  -> grounded Practice generation
-                    -> manual Flashcards
-                      -> grounded Flashcard generation
-                        -> learner actions/remediation
-                          -> beta-scale proof and closeout
+        -> persistent credential authority + recovery
+          -> two-user browser + disposable revoke/reconnect
+            -> Phase 3 closeout
+              -> Phase 4 schema
+                -> manual Practice/Quiz
+                  -> grading/mastery adapter
+                    -> grounded Practice generation
+                      -> manual Flashcards
+                        -> grounded Flashcard generation
+                          -> learner actions/remediation
+                            -> beta-scale proof and closeout
 ```
 
 Upstream integration begins only through a separately approved future plan.
