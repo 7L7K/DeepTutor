@@ -979,16 +979,20 @@ does not imply that an unchecked live surface works.
       the exact private TEEECHR CourseSource, survives restart, and is retrievable
       with source provenance. No-speech/zero-segment transcripts must be omitted
       without failing the complete snapshot.
-- [ ] Prove malicious imported instructions remain ordinary Course Knowledge text
-      through the exact Chat/RAG runtime with no tool or cross-workspace authority.
+- [x] Prove malicious imported instructions remain ordinary Course Knowledge text
+      through the provider-free production-shaped import-to-Chat/RAG runtime with
+      no tool or cross-workspace authority. This does not replace the open real
+      transcript transfer/citation gate above.
 - [x] Run one separately approved bounded real embedding/chat smoke. The
       TEEECHR changelog records `text-embedding-3-small` indexing and a
       provenance-bound `gpt-5-mini` Course answer; automated validation remains
       provider-free.
 - [ ] Complete the current integrated two-user browser proof with two separate
       TEEECHR profiles, BlueWay accounts, and same-titled Courses.
-- [ ] Rerun the exact TEEECHR full Python/web/type/build validation at the
-      current published commit, then complete the final Phase 3A closeout.
+- [x] Rerun the exact TEEECHR full Python/web/type/build validation at the local
+      closeout commit and record its exact SHA externally.
+- [ ] Complete final Phase 3A closeout after the real transcript, two-account
+      browser, disposable revoke/reconnect, and fixture gates pass.
 - [x] Pushed both reviewed branches after the final backcheck. BlueWay tracks the
       user's `origin/feature/teeechr-blueway-runtime-enablement`; TEEECHR tracks the
       user's `fork/feature/teeechr-v152-phase3-blueway-integration`, never upstream

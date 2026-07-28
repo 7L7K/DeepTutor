@@ -459,8 +459,9 @@ the real transcript/citation gate nor browser/revoke/fixture gates.
   - the response may discuss the text but cannot treat it as authority.
 - **Doc alignment:** `deeptutor/services/session/turn_runtime.py` and
   `deeptutor/multi_user/knowledge_access.py`.
-- **Risk / unknown:** source-level tool fences exist, but the exact imported
-  transcript-to-Chat runtime has not been captured as one proof.
+- **Residual boundary:** the provider-free production-shaped import-to-Chat proof
+  below closes the local tool/passive-content contract. It does not prove the
+  separate current real BlueWay transfer and citation gate in P3A-03.
 
 **2026-07-27 repair proof:** production-shaped provider-free import-to-Course-Chat
 coverage satisfies this local passive-content/tool-authority gate: malicious-looking

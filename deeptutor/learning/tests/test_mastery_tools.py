@@ -164,6 +164,25 @@ async def test_build_unknown_type_defaults_to_concept(path_id):
 async def test_status_empty_path_asks_for_build(path_id):
     payload = json.loads((await MasteryStatusTool().execute(_mastery_path_id=path_id)).content)
     assert payload["status"] == "empty"
+    assert "mastery_build" in payload["message"]
+
+
+@pytest.mark.asyncio
+async def test_course_status_empty_path_requires_owned_learning_setup(path_id, monkeypatch):
+    service = LearningService(LearningStore())
+    monkeypatch.setattr(mastery_tools, "_new_service", lambda _path_id: service)
+    payload = json.loads(
+        (
+            await MasteryStatusTool().execute(
+                _mastery_path_id="lp_crs_one",
+                _course_id="crs_one",
+            )
+        ).content
+    )
+
+    assert payload["status"] == "empty"
+    assert "Course learning setup" in payload["message"]
+    assert "mastery_build" not in payload["message"]
 
 
 @pytest.mark.asyncio

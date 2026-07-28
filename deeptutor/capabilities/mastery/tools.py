@@ -247,13 +247,20 @@ class MasteryStatusTool(BaseTool):
         service = _new_service(path_id)
         progress = service.get_or_create(path_id)
         if not any(module.knowledge_points for module in progress.modules):
+            if _resolve_course_id(kwargs):
+                message = (
+                    "This Course has no mastery objectives yet. Initialize Course learning "
+                    "from the owned Course learning setup before starting mastery."
+                )
+            else:
+                message = (
+                    "No mastery path has been built yet. Design one from the "
+                    "learner's materials and call mastery_build."
+                )
             return _json_result(
                 {
                     "status": "empty",
-                    "message": (
-                        "No mastery path has been built yet. Design one from the "
-                        "learner's materials and call mastery_build."
-                    ),
+                    "message": message,
                 },
                 meta_key="mastery_status",
             )
