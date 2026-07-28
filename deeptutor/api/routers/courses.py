@@ -12,7 +12,7 @@ from deeptutor.courses.service import (
     course_operation_lock,
     get_current_course_service,
 )
-from deeptutor.learning.storage import LearningDataError
+from deeptutor.learning.storage import LearningConflictError, LearningDataError
 
 router = APIRouter()
 
@@ -202,11 +202,16 @@ async def init_course_learning(course_id: str, body: InitCourseLearningRequest):
 
 @router.post("/{course_id}/learning/reset")
 async def reset_course_learning(course_id: str, body: ResetCourseLearningRequest):
+    from deeptutor.courses.grading_repository import CourseGradingRepository
     from deeptutor.learning.service import LearningService
 
     try:
         async with course_operation_lock(course_id):
             course, store = _course_learning_store(course_id, require_active=True)
+            if CourseGradingRepository(_service().repository).has_course_evidence(course.id):
+                raise CourseConflictError(
+                    "Course learning with grading evidence cannot be reset"
+                )
             await _cancel_owned_course_session(course.id, body.session_id)
             progress = store.load(course.learning_path_id)
             if progress is None:
@@ -220,6 +225,8 @@ async def reset_course_learning(course_id: str, body: ResetCourseLearningRequest
     except CourseNotFoundError as exc:
         raise HTTPException(status_code=404, detail="Course resource not found") from exc
     except CourseConflictError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except LearningConflictError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
     except LearningDataError as exc:
         raise HTTPException(

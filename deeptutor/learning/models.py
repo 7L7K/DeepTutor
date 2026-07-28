@@ -201,6 +201,10 @@ class LearningProgress(BaseModel):
     error_records: list[ErrorRecord] = Field(default_factory=list)
     repetition_states: dict[str, RepetitionState] = Field(default_factory=dict)
     review_queue: list[ReviewTask] = Field(default_factory=list)
+    # Course grading applies through a recoverable SQLite outbox.  This durable
+    # receipt is written before SQLite is acknowledged, so replay after a crash
+    # cannot append the same assessment evidence twice.
+    grading_evidence_receipts: dict[str, str] = Field(default_factory=dict)
     # A single outstanding question; grading reads its expected answer so the
     # model never has to recall it across turns.
     pending_question: PendingQuestion | None = None

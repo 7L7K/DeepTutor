@@ -842,21 +842,21 @@ def test_database_freezes_answers_after_submit_or_parent_archive_and_receipts_ca
 
 def test_migration_0002_replay_tamper_and_rollback_are_transactional(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     path = tmp_path / "courses.db"
-    assert ensure_course_schema(path) == (0, 1, 2)
+    assert ensure_course_schema(path) == (0, 1, 2, 3)
     assert ensure_course_schema(path) == ()
     artifacts = runner.discover_migrations()
     assessment = artifacts[2]
     tampered = runner.MigrationArtifact.from_resource(
         assessment.filename, assessment.content + b"\n-- altered bytes\n"
     )
-    monkeypatch.setattr(runner, "discover_migrations", lambda: (*artifacts[:2], tampered))
+    monkeypatch.setattr(runner, "discover_migrations", lambda: (*artifacts[:2], tampered, *artifacts[3:]))
     with pytest.raises(CourseMigrationError, match="receipt mismatch"):
         ensure_course_schema(path)
 
     broken = runner.MigrationArtifact.from_resource(
         "0002_attempts.sql", b"CREATE TABLE should_rollback (id INTEGER);\nNOT VALID SQL;"
     )
-    monkeypatch.setattr(runner, "discover_migrations", lambda: (*artifacts[:2], broken))
+    monkeypatch.setattr(runner, "discover_migrations", lambda: (*artifacts[:2], broken, *artifacts[3:]))
     fresh = tmp_path / "broken.db"
     with pytest.raises(CourseMigrationError, match="0002_attempts.sql failed"):
         ensure_course_schema(fresh)
@@ -866,13 +866,13 @@ def test_migration_0002_replay_tamper_and_rollback_are_transactional(tmp_path: P
         ).fetchone()[0] == 0
 
 
-def test_upgrade_from_exact_p4_02a_state_applies_only_0002_and_preserves_rows(
+def test_upgrade_from_exact_p4_02b_state_applies_only_0003_and_preserves_rows(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     path = tmp_path / "courses.db"
     artifacts = runner.discover_migrations()
-    monkeypatch.setattr(runner, "discover_migrations", lambda: artifacts[:2])
-    assert ensure_course_schema(path) == (0, 1)
+    monkeypatch.setattr(runner, "discover_migrations", lambda: artifacts[:3])
+    assert ensure_course_schema(path) == (0, 1, 2)
 
     courses, practice, _ = _services(path, "u_alice")
     course = courses.create_course("Biology")
@@ -891,7 +891,7 @@ def test_upgrade_from_exact_p4_02a_state_applies_only_0002_and_preserves_rows(
         }
 
     monkeypatch.setattr(runner, "discover_migrations", lambda: artifacts)
-    assert ensure_course_schema(path) == (2,)
+    assert ensure_course_schema(path) == (3,)
     assert ensure_course_schema(path) == ()
     with courses._connect() as conn:
         after = {
@@ -904,6 +904,6 @@ def test_upgrade_from_exact_p4_02a_state_applies_only_0002_and_preserves_rows(
             for row in conn.execute(
                 "SELECT version FROM schema_migrations ORDER BY version"
             )
-        ) == (0, 1, 2)
+        ) == (0, 1, 2, 3)
     assert before == after
     assert practice_set.id and revision.id and len(questions) == 2

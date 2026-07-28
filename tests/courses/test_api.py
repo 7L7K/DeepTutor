@@ -169,6 +169,49 @@ def test_course_learning_is_explicit_private_and_resettable(course_client) -> No
     assert after["mastery_levels"] == {}
 
 
+def test_course_learning_reset_rejects_authoritative_grading_history(
+    course_client, monkeypatch
+) -> None:
+    from deeptutor.courses.grading_repository import CourseGradingRepository
+
+    created = course_client.post(
+        "/api/v1/courses", headers=_auth("bob"), json={"title": "Biology"}
+    ).json()
+    module = {
+        "id": "bio_m1",
+        "name": "Cells",
+        "order": 0,
+        "knowledge_points": [
+            {
+                "id": "bio_kp1",
+                "name": "Explain ATP",
+                "type": "concept",
+                "module_id": "bio_m1",
+            }
+        ],
+    }
+    assert course_client.post(
+        f"/api/v1/courses/{created['id']}/learning/init",
+        headers=_auth("bob"),
+        json={"modules": [module]},
+    ).status_code == 200
+    monkeypatch.setattr(
+        CourseGradingRepository,
+        "has_course_evidence",
+        lambda self, course_id: course_id == created["id"],
+    )
+
+    response = course_client.post(
+        f"/api/v1/courses/{created['id']}/learning/reset",
+        headers=_auth("bob"),
+        json={},
+    )
+    assert response.status_code == 409
+    assert response.json()["detail"] == (
+        "Course learning with grading evidence cannot be reset"
+    )
+
+
 def test_course_source_api_accepts_only_prepared_owned_operation(
     course_client, monkeypatch
 ) -> None:

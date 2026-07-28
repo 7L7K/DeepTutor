@@ -4,12 +4,19 @@
 
 ### Added
 
+- Added SQLite-authoritative deterministic exact-answer grading for submitted
+  Course quiz attempts. Immutable per-item/per-objective evidence binds the
+  frozen answer contract, response, objective, result, error classification,
+  item result, and aggregate score; a digest-checked outbox projects each
+  mapped effect into Course mastery at most once and safely resumes after
+  interruption or parent archive. Course learning reset now rejects any
+  Course with grading history, and archive or Practice successor replacement
+  terminalizes submitted ungraded attempts without deletion.
 - Added Course-owned resumable quiz-attempt persistence with immutable
   ready-revision membership, server-authoritative question order, one active
   attempt per Practice set, CAS answer autosave, exact durable idempotency
   receipts, submission/abandonment freeze, and archive/successor
-  terminalization without hard deletion. Deterministic grading remains
-  reserved for P4-03.
+  terminalization without hard deletion.
 - Added Course-owned manual Practice authoring persistence with immutable ready
   revisions and questions, successor history, server-resolved source receipts,
   typed answer/citation contracts, archive/restore epochs, and uniform

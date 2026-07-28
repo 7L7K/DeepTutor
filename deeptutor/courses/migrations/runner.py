@@ -6,12 +6,14 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 import hashlib
 from importlib import resources
+import json
 from pathlib import Path
 import re
 import sqlite3
 import threading
 import time
 from typing import Any, Iterable
+import unicodedata
 
 from deeptutor.courses.database_lock import course_database_lock
 
@@ -82,12 +84,118 @@ def open_course_connection(db_path: Path | str) -> sqlite3.Connection:
 
     conn = sqlite3.connect(Path(db_path), timeout=10.0)
     conn.row_factory = sqlite3.Row
+    _register_course_validation_functions(conn)
     conn.execute("PRAGMA foreign_keys = ON")
     if int(conn.execute("PRAGMA foreign_keys").fetchone()[0]) != 1:
         conn.close()
         raise CourseMigrationError("SQLite foreign-key enforcement is unavailable")
     conn.execute("PRAGMA busy_timeout = 10000")
     return conn
+
+
+def _register_course_validation_functions(conn: sqlite3.Connection) -> None:
+    """Install deterministic validators used by managed grading triggers."""
+
+    def canonical_sha256(value: object) -> str | None:
+        try:
+            parsed = json.loads(str(value))
+            canonical = json.dumps(
+                parsed, allow_nan=False, ensure_ascii=False, sort_keys=True, separators=(",", ":")
+            )
+            return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+        except (TypeError, ValueError, json.JSONDecodeError):
+            return None
+
+    def exact_evidence_valid(
+        payload_sha256: object, grading_json: object, algorithm: object,
+        attempt_id: object, attempt_item_id: object, question_id: object,
+        objective_id: object, module_id: object, knowledge_type: object,
+        is_correct: object, error_type: object, answer_contract_json: object,
+        response_json: object,
+    ) -> int:
+        digest = canonical_sha256(grading_json)
+        if digest is None or digest != str(payload_sha256) or algorithm != "exact-v1":
+            return 0
+        try:
+            payload = json.loads(str(grading_json))
+        except (TypeError, ValueError, json.JSONDecodeError):
+            return 0
+        required = {
+            "algorithm", "attempt_id", "attempt_item_id", "question_id", "objective_id",
+            "module_id", "knowledge_type", "contract_sha256", "response_sha256",
+            "is_correct", "error_type",
+        }
+        if not isinstance(payload, dict) or set(payload) != required:
+            return 0
+        if any(
+            not isinstance(payload[key], str) or len(payload[key]) != 64
+            or any(char not in "0123456789abcdef" for char in payload[key])
+            for key in ("contract_sha256", "response_sha256")
+        ):
+            return 0
+        try:
+            contract = json.loads(str(answer_contract_json))
+            response = json.loads(str(response_json))
+            expected_answer = contract["answer"]
+            actual_answer = response["answer"]
+            if set(contract) != {"kind", "answer"} or contract["kind"] != "exact":
+                return 0
+            if set(response) != {"answer"}:
+                return 0
+            if not isinstance(expected_answer, str) or not isinstance(actual_answer, str):
+                return 0
+            def normalize(value: str) -> str:
+                return unicodedata.normalize("NFC", value).strip().casefold()
+            actual_correct = normalize(actual_answer) == normalize(expected_answer)
+            actual_error = None if actual_correct else (
+                "metacognitive" if not actual_answer.strip() else "application"
+            )
+        except (KeyError, TypeError, ValueError, json.JSONDecodeError):
+            return 0
+        expected = {
+            "algorithm": algorithm, "attempt_id": attempt_id, "attempt_item_id": attempt_item_id,
+            "question_id": question_id, "objective_id": objective_id, "module_id": module_id,
+            "knowledge_type": knowledge_type, "is_correct": bool(is_correct), "error_type": error_type,
+        }
+        return int(
+            all(payload[key] == value for key, value in expected.items())
+            and payload["contract_sha256"] == canonical_sha256(answer_contract_json)
+            and payload["response_sha256"] == canonical_sha256(response_json)
+            and payload["is_correct"] == actual_correct
+            and payload["error_type"] == actual_error
+        )
+
+    def item_grading_valid(grading_json: object, is_correct: object, error_type: object) -> int:
+        try:
+            payload = json.loads(str(grading_json))
+            ids = payload.get("evidence_ids")
+            return int(
+                isinstance(payload, dict)
+                and set(payload) == {"algorithm", "is_correct", "evidence_ids"}
+                and payload["algorithm"] == "exact-v1"
+                and payload["is_correct"] == bool(is_correct)
+                and isinstance(ids, list) and bool(ids)
+                and len(ids) == len(set(ids)) and all(isinstance(item, str) and item.startswith("grd_") for item in ids)
+            )
+        except (TypeError, ValueError, json.JSONDecodeError):
+            return 0
+
+    def score_valid(score_json: object, correct: object, total: object) -> int:
+        try:
+            payload = json.loads(str(score_json))
+            return int(
+                isinstance(payload, dict) and set(payload) == {"correct", "total", "fraction"}
+                and payload["correct"] == int(correct) and payload["total"] == int(total)
+                and isinstance(payload["fraction"], (int, float))
+                and payload["fraction"] == int(correct) / int(total)
+            )
+        except (TypeError, ValueError, ZeroDivisionError, json.JSONDecodeError):
+            return 0
+
+    conn.create_function("teeechr_canonical_sha256", 1, canonical_sha256, deterministic=True)
+    conn.create_function("teeechr_exact_evidence_valid", 13, exact_evidence_valid, deterministic=True)
+    conn.create_function("teeechr_item_grading_valid", 3, item_grading_valid, deterministic=True)
+    conn.create_function("teeechr_score_valid", 3, score_valid, deterministic=True)
 
 
 def ensure_course_schema(
@@ -285,6 +393,7 @@ def _expected_signature(
 ) -> dict[str, Any]:
     conn = sqlite3.connect(":memory:", isolation_level=None)
     conn.row_factory = sqlite3.Row
+    _register_course_validation_functions(conn)
     conn.execute("PRAGMA foreign_keys = ON")
     try:
         for artifact in artifacts:

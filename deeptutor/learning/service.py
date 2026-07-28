@@ -9,6 +9,7 @@ from deeptutor.learning.grading import classify_error, grade_answer
 from deeptutor.learning.mastery import compute_mastery
 from deeptutor.learning.models import (
     ErrorRecord,
+    KnowledgeType,
     LearningModule,
     LearningProgress,
     LearningStage,
@@ -16,7 +17,7 @@ from deeptutor.learning.models import (
     QuizAttempt,
     RetryAttempt,
 )
-from deeptutor.learning.storage import LearningStore
+from deeptutor.learning.storage import LearningConflictError, LearningStore
 
 if TYPE_CHECKING:
     from deeptutor.learning.scheduler import SpacedRepetitionScheduler
@@ -230,6 +231,61 @@ class LearningService:
             self.save(progress)
         return is_correct
 
+    def record_course_grading_evidence(
+        self,
+        progress: LearningProgress,
+        *,
+        evidence_id: str,
+        payload_sha256: str,
+        question_id: str,
+        knowledge_point_id: str,
+        module_id: str,
+        is_correct: bool,
+        user_answer: str,
+        knowledge_type: KnowledgeType,
+        scheduler: SpacedRepetitionScheduler | None = None,
+    ) -> bool:
+        """Persist one already-determined Course grading effect exactly once.
+
+        The Course assessment repository owns the immutable answer contract and
+        deterministic result.  This method deliberately does not accept an
+        expected answer or invoke a model/fuzzy grader; it only folds that
+        sealed result into private learning progress.
+        """
+        if not evidence_id or len(payload_sha256) != 64:
+            raise ValueError("evidence_id and payload_sha256 are required")
+        if evidence_id in progress.grading_evidence_receipts:
+            if progress.grading_evidence_receipts[evidence_id] != payload_sha256:
+                raise LearningConflictError("Course grading evidence payload conflicts")
+            return is_correct
+        self.record_quiz_attempt(
+            progress,
+            QuizAttempt(
+                question_id=question_id,
+                knowledge_point_id=knowledge_point_id,
+                module_id=module_id,
+                is_correct=is_correct,
+                user_answer=user_answer,
+                error_type=None if is_correct else classify_error(user_answer),
+            ),
+        )
+        if knowledge_point_id:
+            self.update_mastery(
+                progress,
+                knowledge_point_id,
+                self.calculate_mastery(progress, knowledge_point_id),
+            )
+            if scheduler is not None:
+                state = progress.repetition_states.get(knowledge_point_id)
+                if state is None:
+                    state = scheduler.get_initial_state(knowledge_type)
+                progress.repetition_states[knowledge_point_id] = state
+                scheduler.schedule_next(state, knowledge_type, is_correct)
+                progress.review_queue = scheduler.build_review_queue(progress)
+        progress.grading_evidence_receipts[evidence_id] = payload_sha256
+        self.save(progress)
+        return is_correct
+
     # ── Loop-driven tutoring helpers ─────────────────────────────────────
 
     def set_pending_question(self, progress: LearningProgress, pending: PendingQuestion) -> None:
@@ -314,6 +370,10 @@ class LearningService:
 
     def reset_progress(self, progress: LearningProgress) -> None:
         """Clear learner outcomes while preserving the explicit module plan."""
+        if progress.grading_evidence_receipts:
+            raise LearningConflictError(
+                "Course learning with grading evidence cannot be reset"
+            )
         progress.current_stage = LearningStage.DIAGNOSTIC
         progress.mastery_levels = {}
         progress.qualitative_mastery = {}
@@ -321,6 +381,7 @@ class LearningService:
         progress.error_records = []
         progress.repetition_states = {}
         progress.review_queue = []
+        progress.grading_evidence_receipts = {}
         progress.pending_question = None
         progress.feynman_retries = {}
         progress.feynman_explanations = {}
