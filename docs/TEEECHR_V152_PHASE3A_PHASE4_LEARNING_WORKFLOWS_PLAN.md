@@ -67,6 +67,47 @@ and Phase 4 must not imply that those distinct surfaces passed.
 
 Last updated: 2026-07-28
 
+## Canonical authority
+
+This file is the canonical engineering decision and phase-order authority for
+Phase 4. The root migration handoff is an operator overview and
+`FUTURE_DUE.md` is the deferred-work ledger; neither may redefine the schema,
+invariants, or implementation order recorded here.
+
+Accepted Phase 4 starting point:
+`af5eab79ec7b918242b228de67af358944323fd9`.
+
+Active local implementation branch:
+`feature/teeechr-v152-phase4-learning`.
+
+### Phase 4 implementation goal
+
+Deliver a private, Course-owned college learning loop on the accepted Phase 3A
+foundation: establish one restart-safe and checksum-backed `courses.db` schema
+authority; implement immutable Practice revisions, resumable attempts,
+deterministic grading with idempotent mastery evidence, manual and grounded
+Practice, persistent manual and grounded Flashcards, and Course-scoped learner
+actions/remediation; then qualify ownership, archive, revision, replay,
+concurrency, restart, browser identity isolation, prompt-injection resistance,
+and 50-profile beta behavior without paid providers, hosted mutation, BlueWay
+source changes, deployment, push, merge, hard deletion, historical-data import,
+or upstream integration.
+
+Completion means P4-01 through P4-10 pass their slice-local and integrated
+acceptance criteria, affected regressions and production build pass, the
+repository closeout backcheck finds no unresolved P0-P2 issue, and exact
+unproved release surfaces remain documented.
+
+The P4-01 subordinate artifacts are:
+
+- `docs/TEEECHR_V152_PHASE4_DATABASE_CONTRACT.md`
+- `docs/contracts/teeechr_phase3a_courses_schema_manifest.json`
+- `docs/TEEECHR_V152_PHASE4_P4_01_TEST_SPEC.md`
+- `docs/TEEECHR_V152_PHASE4_P4_01_COMMIT_MAP.md`
+
+They provide executable detail for this plan but do not override it. P4-01 is
+planning-only until a Phase 4 implementation branch is explicitly begun.
+
 ## 1. Goal and non-goals
 
 ### Goal
@@ -104,7 +145,7 @@ Three histories remain distinct:
 | History | Current authority | Purpose | Rule |
 | --- | --- | --- | --- |
 | Historical product fork | `/Users/home/Desktop/2k26/teeech/DeepTutor`, `safety/teeechr-pre-v152-20260720` at `3c2d5a47` | Behavioral and UX reference for Practice, quizzes, Flashcards, access onboarding, and learner actions | Preserve; inspect and selectively reimplement behavior; never merge wholesale |
-| Current Course/BlueWay product | `/Users/home/Desktop/2k26/teeech/DeepTutor-v1.5.2-baseline`, `feature/teeechr-v152-phase3a-closeout`; exact validated source/test tip `850e7316`, followed by this documentation-only superseding receipt | Active implementation authority for Phase 3A; Phase 4 remains planned | Validate and close only the listed open gates; do not treat the local branch as a published completion |
+| Current Course/BlueWay product | `/Users/home/Desktop/2k26/teeech/DeepTutor-v1.5.2-baseline`, `feature/teeechr-v152-phase4-learning`, based exactly on accepted Phase 3A commit `af5eab79` | Active Phase 4 implementation authority; Phase 3A engineering is accepted | Keep commits local; no push, merge, or deployment without separate approval |
 | Moving upstream | `HKUDS/DeepTutor` `main`, observed at v1.5.5 commit `47d05809` on 2026-07-27 | Future compatibility source | Monitor only; no integration in this plan |
 
 Before Phase 4 implementation, preserve the historical fork `main` with an
@@ -166,7 +207,7 @@ All records live inside the authenticated owner's private Course database or a
 strict personal path derived from that owner. API callers never supply
 `owner_user_id`.
 
-### PracticeSet
+### PracticeSet, PracticeSetRevision, and PracticeQuestion
 
 ```text
 PracticeSet
@@ -175,26 +216,31 @@ PracticeSet
   course_id
   title
   mode: manual | generated
-  state: draft | ready | archived
-  source_snapshot_json
-  objective_ids_json
-  generation_receipt_json?
-  revision
+  state: draft | archived
+  current_revision_id?
   write_epoch
   created_at
   updated_at
   archived_at?
 ```
 
-`source_snapshot_json` contains only server-resolved source IDs, revisions, and
-fingerprints. Display names and prompt text are not authority.
-
-### PracticeQuestion
+```text
+PracticeSetRevision
+  id: prv_<opaque UUID>
+  practice_set_id
+  revision_number
+  state: draft | ready | superseded
+  source_snapshot_json
+  objective_ids_json
+  generation_receipt_json?
+  created_at
+  ready_at?
+```
 
 ```text
 PracticeQuestion
   id: qst_<opaque UUID>
-  practice_set_id
+  practice_set_revision_id
   question_type
   prompt
   answer_contract_json
@@ -202,14 +248,17 @@ PracticeQuestion
   objective_ids_json
   citation_json
   ordinal
-  revision
   created_at
 ```
 
-Questions become immutable when their PracticeSet becomes ready. Corrected or
-regenerated sets create successors; they do not rewrite completed attempts.
+`PracticeSetRevision` is the sole historical authority for immutable question
+content, objectives, citations, and source provenance. Its
+`source_snapshot_json` contains only server-resolved source IDs, revisions, and
+fingerprints. Questions become immutable when their revision becomes ready.
+Corrected or regenerated content creates a successor revision; it does not
+rewrite completed attempts. Display names and prompt text are never authority.
 
-### QuizAttempt and QuizAttemptItem
+### QuizAttempt, QuizAttemptItem, and QuizAttemptAnswer
 
 ```text
 QuizAttempt
@@ -217,9 +266,8 @@ QuizAttempt
   owner_user_id
   course_id
   practice_set_id
+  practice_set_revision_id
   state: in_progress | submitted | graded | abandoned | archived
-  practice_set_revision
-  source_snapshot_json
   score_json?
   revision
   started_at
@@ -233,19 +281,30 @@ QuizAttemptItem
   id: ati_<opaque UUID>
   attempt_id
   question_id
-  response_json?
+  display_ordinal
+  option_order_json?
+  randomized_values_json?
   grading_json?
   error_type?
-  objective_ids_json
-  citation_json
-  revision
-  answered_at?
   graded_at?
 ```
 
-An attempt binds permanently to one Course, PracticeSet revision, question set,
-and source snapshot. It cannot be moved to another Course or silently upgraded
-to a newer generated set.
+```text
+QuizAttemptAnswer
+  attempt_item_id
+  response_json?
+  revision
+  answered_at?
+```
+
+An attempt references exactly one immutable `PracticeSetRevision`; it does not
+duplicate full question text, citations, objectives, or source snapshots.
+Attempt items persist presentation-specific facts such as question order,
+option order, and randomized values. Answers use compare-and-swap revisions.
+Submission freezes answers, and grading results become immutable.
+
+An attempt cannot be moved to another Course or silently upgraded to a newer
+revision. Archive-only retention keeps its referenced revision reviewable.
 
 ### FlashcardDeck, Flashcard, and FlashcardReview
 
@@ -375,17 +434,27 @@ the Phase 4 implementation entry contract.
 ### Course database evolution
 
 - `courses.db` currently has no schema-version ledger. Its existing
-  `CREATE TABLE IF NOT EXISTS` statements and one ad hoc column repair are not
-  sufficient provenance for six assessment/Flashcard tables.
-- P4-01 must first add a transactional, idempotent Course-schema migration
-  ledger. Existing databases may adopt the baseline only after the runner verifies
-  the expected Course/source tables, columns, indexes, ownership fields, and
-  foreign-key behavior. Partial or unknown shapes fail closed rather than being
-  silently relabeled.
-- Each migration records an immutable version/name/checksum receipt and runs under
-  the repository write lock with foreign keys enabled. Fresh-database replay and
-  upgrade replay from the Phase 3A schema must converge to the same effective
-  definitions.
+  `CREATE TABLE IF NOT EXISTS` statements and ad hoc Course/BlueWay repairs are
+  not sufficient provenance. `CourseRepository` and `BlueWayRepository`
+  currently form two independent schema authorities; P4-01 must replace both
+  with one migration runner before adding learning tables.
+- P4-01 is internally split into P4-01A migration kernel, P4-01B Phase 3A
+  baseline adoption, and P4-01C bootstrap unification. It adds no Practice,
+  attempt, grading, Flashcard, or review table.
+- Existing databases may adopt the baseline only after the runner structurally
+  verifies a known ledger-free profile. The current manifest recognizes exact
+  Course-only and Course-plus-BlueWay profiles because BlueWay initialization
+  was optional. Partial or unknown shapes fail closed with a useful difference.
+- Each migration records an immutable version/name/checksum receipt derived
+  from exact checked-in SQL bytes and runs under the per-database repository
+  write lock with verified foreign keys. Fresh creation and adoption must
+  converge to the same effective definitions.
+- The current lock is per `CourseRepository` instance. P4-01A replaces it with
+  a canonical resolved-path lock registry; `BEGIN IMMEDIATE` remains the SQLite
+  writer-exclusion authority and the Python lock is not a multi-process claim.
+- Future tables are introduced just in time: Practice revisions/questions in
+  P4-02A, attempts/answers in P4-02B, grading evidence in P4-03, and
+  Flashcards/reviews in P4-06.
 - Assessment tables live in the same per-user `courses.db`. They must reuse the
   same connection and write-lock authority as `CourseRepository`; do not create a
   second per-file repository with an independent lock or a caller-supplied owner.
@@ -408,6 +477,10 @@ the Phase 4 implementation entry contract.
   and the review scheduler are reusable. The adapter idempotency key is the
   immutable assessment attempt-item identity. Flashcard ratings never call the
   mastery adapter directly.
+- `PracticeSetRevision` owns immutable historical question/source/citation
+  content. Attempts reference one revision and persist only presentation order,
+  randomized values, learner answers, submission, and grading; they do not copy
+  complete question snapshots.
 
 ### Frontend and historical behavior boundary
 
@@ -425,6 +498,27 @@ the Phase 4 implementation entry contract.
 - The first implementation slice remains manual Practice and manual Flashcards.
   Provider-backed generation, model session analysis, historical-data import, and
   upstream reconciliation stay behind their separate gates.
+
+### Executable invariants and slice-local proof
+
+Each safety principle must map to a database constraint, transactional
+repository predicate, service behavior, or test. At minimum:
+
+- Course membership is enforced by foreign keys and Course-rooted queries.
+- Attempt revision membership is immutable.
+- Ready questions reject updates.
+- Autosave uses compare-and-swap answer revisions.
+- Submission freezes answers.
+- A unique grading-evidence receipt prevents duplicate mastery effects.
+- Course archive/write epoch is rechecked in the write transaction.
+- Missing and foreign resources use the same service-level `404`.
+- Flashcard reviews have no direct mastery adapter.
+- Stored migration checksums block rewritten artifacts.
+
+Basic isolation, concurrency, restart, replay, archive, and browser behavior are
+proved in the slice that introduces them. P4-09 retains integrated 50-profile,
+extended-concurrency, and full learning-loop qualification; it is not the first
+place fundamental invariants are tested.
 
 ## 8. Phase 3A task breakdown
 
@@ -603,40 +697,94 @@ release-certification gates above remain explicitly unproved.
 
 ## 9. Phase 4 task breakdown
 
-### P4-01 — Assessment and Flashcard schema contract
+### P4-01A — Migration kernel
 
-- **Scope:** Course models/repository migrations and model-only tests.
-- **Inputs / outputs:** the opaque IDs and tables in Section 5.
+- **Scope:** immutable migration discovery, ledger, exact-byte checksums,
+  transactions, per-database locking, foreign-key verification, and diagnostics.
+- **Inputs / outputs:** migration runner only; no learning table.
 - **Acceptance criteria:**
-  - foreign keys, checks, indexes, WAL, and optimistic revisions pass;
-  - two users and same-titled Courses cannot collide;
-  - no hard-delete path exists;
-  - schema upgrade is restart-safe and idempotent.
-- **Doc alignment:** `CourseRepository._initialize`.
-- **Risk / unknown:** keep the schema small enough to avoid duplicating all
-  `LearningProgress` state.
+  - duplicate versions/names and unknown receipts fail closed;
+  - tampering, failed SQL, failed postconditions, and foreign-key violations
+    roll back the active migration and receipt;
+  - concurrent startup results in one writer and one completed-state observer;
+  - every normal repository connection enables and verifies foreign keys.
+- **Doc alignment:** `docs/TEEECHR_V152_PHASE4_DATABASE_CONTRACT.md`.
+- **Risk / unknown:** connection-level foreign-key policy must not exist only in
+  the migration runner.
 
-### P4-02 — Practice set and attempt repository
+### P4-01B — Phase 3A baseline adoption
 
-- **Scope:** repository/service methods only.
-- **Inputs / outputs:** create/list/read/archive sets; start/save/submit/grade attempts.
+- **Scope:** checked-in `0000_phase3a_baseline.sql`, structural manifest
+  comparator, known-profile adoption, and preservation tests.
+- **Inputs / outputs:** one canonical Phase 3A schema and one baseline receipt.
+- **Acceptance criteria:**
+  - empty, exact Course-only, and exact Course-plus-BlueWay states converge;
+  - partial, unknown, and managed-name-collision states fail before mutation;
+  - Course, source, mapping, record, sync, and replay-guard identities and values
+    remain unchanged;
+  - diagnostics identify exact structural differences.
+- **Doc alignment:**
+  `docs/contracts/teeechr_phase3a_courses_schema_manifest.json`.
+- **Risk / unknown:** any additional historical shape requires explicit
+  source-backed fixture authority; it is never guessed.
+
+### P4-01C — Single bootstrap authority
+
+- **Scope:** route fresh database creation through migrations and remove or
+  reduce Course/BlueWay DDL bootstraps to migration-runner calls.
+- **Inputs / outputs:** exactly one managed-schema creation/evolution path.
+- **Acceptance criteria:**
+  - repeated startup is a no-op;
+  - restart and concurrent repository wrappers are safe;
+  - existing Course and BlueWay repository behavior remains green;
+  - no independent ad hoc repair path remains.
+- **Doc alignment:** `CourseRepository._initialize`,
+  `BlueWayRepository._initialize`, and the P4-01 commit map.
+- **Risk / unknown:** conversion must preserve the repaired live BlueWay replay
+  guard continuously.
+
+### P4-02A — Practice authoring persistence
+
+- **Scope:** introduce PracticeSet, PracticeSetRevision, and PracticeQuestion
+  migration plus Course-rooted repository/service methods.
+- **Inputs / outputs:** create/list/read/archive sets; draft, ready, successor
+  revision, questions, objectives, citations, and source receipt.
+- **Acceptance criteria:**
+  - ready revisions and questions are immutable;
+  - corrections create successors;
+  - foreign/missing identifiers return the same `404`;
+  - two users and same-titled Courses remain isolated;
+  - archive and restart preserve history.
+- **Doc alignment:** Section 5 and historical Practice behavior.
+- **Risk / unknown:** do not freeze generation-only fields into the manual
+  authoring contract unnecessarily.
+
+### P4-02B — Attempt persistence
+
+- **Scope:** introduce QuizAttempt, QuizAttemptItem, and QuizAttemptAnswer
+  migration plus start/resume/autosave/abandon/submit behavior.
+- **Inputs / outputs:** exact revision binding, presentation order, randomized
+  values, compare-and-swap answers, and submission freeze.
 - **Acceptance criteria:**
   - attempt membership never changes after creation;
-  - stale writes return `409`;
+  - concurrent stale autosaves are rejected;
+  - submission freezes answers and double submit is idempotent;
   - unknown and foreign IDs return the same `404`;
-  - submitted/graded attempts are immutable;
-  - restart preserves in-progress answers and graded history.
+  - restart preserves in-progress and submitted history.
 - **Doc alignment:** historical `practice.py` behavior and current Course repository.
 - **Risk / unknown:** autosave must not overwrite newer answers from another tab.
 
 ### P4-03 — Deterministic grading and mastery adapter
 
-- **Scope:** grading adapter, idempotency receipt, learning-service integration.
+- **Scope:** grading-evidence migration, adapter, idempotency receipt, and
+  learning-service integration.
 - **Inputs / outputs:** graded items and Course mastery updates.
 - **Acceptance criteria:**
   - deterministic question types use deterministic grading;
   - model-assisted grading is explicit, bounded, and separately labeled;
   - each graded attempt item affects mastery at most once;
+  - double submission and repeated worker retry cannot duplicate grading or
+    mastery evidence;
   - incorrect answers create error/review evidence;
   - Flashcard reviews do not directly change mastery.
 - **Doc alignment:** `LearningService.grade_and_record`.
@@ -651,6 +799,8 @@ release-certification gates above remain explicitly unproved.
   - works without a configured model;
   - active Course is visible on every page;
   - browser state is user- and Course-namespaced;
+  - refresh, back navigation, and server restart preserve the correct attempt;
+  - two authenticated browser identities cannot observe each other's state;
   - archive/identity changes make in-flight editors read-only or fail closed;
   - no broad redesign of Chat, Settings, or Course navigation.
 - **Doc alignment:** historical `PracticeWorkspace`.
@@ -659,7 +809,7 @@ release-certification gates above remain explicitly unproved.
 ### P4-05 — Grounded Practice generation
 
 - **Scope:** bounded generator, validator, background operation, progress API.
-- **Inputs / outputs:** immutable generated PracticeSet with citations.
+- **Inputs / outputs:** immutable generated PracticeSetRevision with citations.
 - **Acceptance criteria:**
   - only server-resolved active sources enter retrieval;
   - item/text/context/time limits are enforced;
@@ -673,12 +823,14 @@ release-certification gates above remain explicitly unproved.
 
 ### P4-06 — Flashcard repository and manual workflow
 
-- **Scope:** decks, cards, review events, scheduling policy, API, minimal UI.
+- **Scope:** introduce deck/card/review migration with repository, scheduling
+  policy, API, and minimal UI.
 - **Inputs / outputs:** persistent manual decks and review sessions.
 - **Acceptance criteria:**
   - deck/card/review ownership and Course binding pass;
   - rating produces deterministic next-review state;
   - missed-card loop and completion summary survive reload;
+  - scheduling and review history survive restart;
   - archive blocks new reviews while retaining history;
   - manual cards work without a model.
 - **Doc alignment:** historical `FlashcardService` and `FlashcardsWorkspace`.
@@ -822,6 +974,11 @@ external BlueWay title, or client-selected filesystem path.
 5. Archived source behavior: keep old assets visible?
    Recommendation: keep historical attempts/decks visible with an unavailable-source
    badge; block new generation until an active source is selected.
+6. Accepted-commit durability: publish a checkpoint branch before Phase 4?
+   Recommendation: push the exact `af5eab79` survivor branch without merging or
+   deploying, but only after separate explicit approval. Until then, preserve the
+   current no-push boundary and treat the Phase 4 documents as an uncommitted
+   planning slice.
 
 ### Engineering risks
 
@@ -871,14 +1028,18 @@ P3A truth reconciliation
         -> persistent credential authority + recovery
           -> hermetic two-owner + revoke/reconnect
             -> Phase 3 engineering closeout
-              -> Phase 4 schema
-                -> manual Practice/Quiz
-                  -> grading/mastery adapter
-                    -> grounded Practice generation
-                      -> manual Flashcards
-                        -> grounded Flashcard generation
-                          -> learner actions/remediation
-                            -> beta-scale proof and closeout
+              -> P4-01A migration kernel
+                -> P4-01B Phase 3A baseline adoption
+                  -> P4-01C single bootstrap authority
+                    -> P4-02A Practice revisions/questions
+                      -> P4-02B attempts/answers
+                        -> P4-03 grading/mastery adapter
+                          -> P4-04 manual Practice UI
+                            -> P4-05 grounded Practice generation
+                              -> P4-06 manual Flashcards
+                                -> P4-07 grounded Flashcards
+                                  -> P4-08 learner actions/remediation
+                                    -> P4-09/P4-10 proof and closeout
 
 Parallel release-certification lane:
   real second Apple owner -> current browser/device isolation

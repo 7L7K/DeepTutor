@@ -1,0 +1,234 @@
+{
+  "manifest_version": 1,
+  "authority_commit": "af5eab79ec7b918242b228de67af358944323fd9",
+  "database": "courses.db",
+  "canonical_profile": "phase3a_course_plus_blueway",
+  "legacy_profiles": {
+    "phase3a_course_only": {
+      "required_tables": ["courses", "course_sources"],
+      "required_named_indexes": [
+        "idx_courses_owner_updated",
+        "idx_course_sources_course_updated",
+        "idx_course_sources_operation",
+        "idx_course_sources_live_supersedes",
+        "idx_course_sources_idempotency"
+      ]
+    },
+    "phase3a_course_plus_blueway": {
+      "required_tables": [
+        "courses",
+        "course_sources",
+        "blueway_connections",
+        "blueway_course_maps",
+        "blueway_records",
+        "blueway_sync_runs"
+      ],
+      "required_named_indexes": [
+        "idx_courses_owner_updated",
+        "idx_course_sources_course_updated",
+        "idx_course_sources_operation",
+        "idx_course_sources_live_supersedes",
+        "idx_course_sources_idempotency",
+        "blueway_one_live_connection",
+        "blueway_runs_connection_updated",
+        "blueway_snapshot_replay"
+      ]
+    }
+  },
+  "tables": {
+    "courses": {
+      "columns": [
+        ["id", "TEXT", false, null, 1],
+        ["owner_user_id", "TEXT", true, null, 0],
+        ["title", "TEXT", true, null, 0],
+        ["state", "TEXT", true, null, 0],
+        ["revision", "INTEGER", true, "1", 0],
+        ["write_epoch", "INTEGER", true, "1", 0],
+        ["managed_kb_ref", "TEXT", false, null, 0],
+        ["created_at", "REAL", true, null, 0],
+        ["updated_at", "REAL", true, null, 0],
+        ["archived_at", "REAL", false, null, 0]
+      ],
+      "checks": [
+        "state IN ('active', 'archived')",
+        "revision >= 1",
+        "write_epoch >= 1"
+      ],
+      "foreign_keys": []
+    },
+    "course_sources": {
+      "columns": [
+        ["id", "TEXT", false, null, 1],
+        ["course_id", "TEXT", true, null, 0],
+        ["kind", "TEXT", true, null, 0],
+        ["display_name", "TEXT", true, null, 0],
+        ["state", "TEXT", true, null, 0],
+        ["manifest_json", "TEXT", true, "'[]'", 0],
+        ["content_sha256", "TEXT", true, null, 0],
+        ["revision", "INTEGER", true, "1", 0],
+        ["operation_id", "TEXT", false, null, 0],
+        ["idempotency_key", "TEXT", false, null, 0],
+        ["supersedes_source_id", "TEXT", false, null, 0],
+        ["created_at", "REAL", true, null, 0],
+        ["updated_at", "REAL", true, null, 0]
+      ],
+      "checks": [
+        "state IN ('processing', 'ready', 'failed', 'archived')",
+        "revision >= 1"
+      ],
+      "foreign_keys": [
+        ["course_id", "courses", "id", "NO ACTION", "RESTRICT"],
+        ["supersedes_source_id", "course_sources", "id", "NO ACTION", "RESTRICT"]
+      ],
+      "unique_constraints": [["operation_id"]]
+    },
+    "blueway_connections": {
+      "columns": [
+        ["id", "TEXT", false, null, 1],
+        ["owner_user_id", "TEXT", true, null, 0],
+        ["external_subject", "TEXT", true, null, 0],
+        ["state", "TEXT", true, null, 0],
+        ["scope_version", "TEXT", true, null, 0],
+        ["revision", "INTEGER", true, "1", 0],
+        ["grant_generation", "INTEGER", true, "1", 0],
+        ["credential_ref", "TEXT", false, null, 0],
+        ["credential_status", "TEXT", true, "'healthy'", 0],
+        ["created_at", "REAL", true, null, 0],
+        ["updated_at", "REAL", true, null, 0],
+        ["connected_at", "REAL", false, null, 0],
+        ["last_sync_at", "REAL", false, null, 0],
+        ["disconnected_at", "REAL", false, null, 0],
+        ["rotation_request_id", "TEXT", false, null, 0],
+        ["rotation_started_at", "REAL", false, null, 0]
+      ],
+      "checks": [
+        "state IN ('pending','active','revocation_pending','disconnected','error')",
+        "revision >= 1",
+        "grant_generation >= 1"
+      ],
+      "foreign_keys": []
+    },
+    "blueway_course_maps": {
+      "columns": [
+        ["connection_id", "TEXT", true, null, 1],
+        ["external_course_id", "TEXT", true, null, 2],
+        ["course_id", "TEXT", true, null, 0],
+        ["remote_title", "TEXT", true, null, 0],
+        ["remote_state", "TEXT", true, null, 0],
+        ["remote_hash", "TEXT", true, null, 0],
+        ["first_seen_snapshot_id", "TEXT", true, null, 0],
+        ["last_seen_snapshot_id", "TEXT", true, null, 0],
+        ["created_at", "REAL", true, null, 0],
+        ["updated_at", "REAL", true, null, 0]
+      ],
+      "checks": ["remote_state IN ('active','archived')"],
+      "foreign_keys": [
+        ["connection_id", "blueway_connections", "id", "NO ACTION", "RESTRICT"],
+        ["course_id", "courses", "id", "NO ACTION", "RESTRICT"]
+      ],
+      "unique_constraints": [["connection_id", "course_id"]]
+    },
+    "blueway_records": {
+      "columns": [
+        ["connection_id", "TEXT", true, null, 1],
+        ["record_kind", "TEXT", true, null, 2],
+        ["external_record_id", "TEXT", true, null, 3],
+        ["external_course_id", "TEXT", false, null, 0],
+        ["course_id", "TEXT", false, null, 0],
+        ["state", "TEXT", true, null, 0],
+        ["remote_revision", "TEXT", false, null, 0],
+        ["content_sha256", "TEXT", true, null, 0],
+        ["payload_json", "TEXT", true, null, 0],
+        ["current_source_id", "TEXT", false, null, 0],
+        ["first_seen_snapshot_id", "TEXT", true, null, 0],
+        ["last_seen_snapshot_id", "TEXT", true, null, 0],
+        ["created_at", "REAL", true, null, 0],
+        ["updated_at", "REAL", true, null, 0]
+      ],
+      "checks": ["state IN ('current','unlinked','archived')"],
+      "foreign_keys": [
+        ["connection_id", "blueway_connections", "id", "NO ACTION", "RESTRICT"],
+        ["course_id", "courses", "id", "NO ACTION", "RESTRICT"],
+        ["current_source_id", "course_sources", "id", "NO ACTION", "RESTRICT"]
+      ]
+    },
+    "blueway_sync_runs": {
+      "columns": [
+        ["id", "TEXT", false, null, 1],
+        ["connection_id", "TEXT", true, null, 0],
+        ["expected_generation", "INTEGER", true, null, 0],
+        ["snapshot_id", "TEXT", false, null, 0],
+        ["snapshot_sha256", "TEXT", false, null, 0],
+        ["state", "TEXT", true, null, 0],
+        ["attempt_count", "INTEGER", true, "0", 0],
+        ["counts_json", "TEXT", true, "'{}'", 0],
+        ["error_code", "TEXT", false, null, 0],
+        ["created_at", "REAL", true, null, 0],
+        ["updated_at", "REAL", true, null, 0],
+        ["completed_at", "REAL", false, null, 0]
+      ],
+      "checks": [
+        "state IN ('queued','fetching','validating','staging','indexing','completed','failed','cancelled')"
+      ],
+      "foreign_keys": [
+        ["connection_id", "blueway_connections", "id", "NO ACTION", "RESTRICT"]
+      ]
+    }
+  },
+  "named_indexes": {
+    "idx_courses_owner_updated": {
+      "table": "courses",
+      "unique": false,
+      "columns": [["owner_user_id", "ASC"], ["updated_at", "DESC"]],
+      "where": null
+    },
+    "idx_course_sources_course_updated": {
+      "table": "course_sources",
+      "unique": false,
+      "columns": [["course_id", "ASC"], ["updated_at", "DESC"]],
+      "where": null
+    },
+    "idx_course_sources_operation": {
+      "table": "course_sources",
+      "unique": false,
+      "columns": [["operation_id", "ASC"]],
+      "where": null
+    },
+    "idx_course_sources_live_supersedes": {
+      "table": "course_sources",
+      "unique": true,
+      "columns": [["supersedes_source_id", "ASC"]],
+      "where": "supersedes_source_id IS NOT NULL AND state IN ('processing', 'ready')"
+    },
+    "idx_course_sources_idempotency": {
+      "table": "course_sources",
+      "unique": true,
+      "columns": [["course_id", "ASC"], ["idempotency_key", "ASC"]],
+      "where": "idempotency_key IS NOT NULL"
+    },
+    "blueway_one_live_connection": {
+      "table": "blueway_connections",
+      "unique": true,
+      "columns": [["owner_user_id", "ASC"]],
+      "where": "state IN ('active', 'revocation_pending')"
+    },
+    "blueway_runs_connection_updated": {
+      "table": "blueway_sync_runs",
+      "unique": false,
+      "columns": [["connection_id", "ASC"], ["updated_at", "DESC"]],
+      "where": null
+    },
+    "blueway_snapshot_replay": {
+      "table": "blueway_sync_runs",
+      "unique": true,
+      "columns": [["connection_id", "ASC"], ["snapshot_id", "ASC"]],
+      "where": "snapshot_id IS NOT NULL AND state = 'completed'"
+    }
+  },
+  "unmanaged_object_policy": {
+    "ignore_sqlite_internal": true,
+    "allowlist": [],
+    "reject_managed_name_collisions": true,
+    "unknown_noncolliding_objects": "reject_until_explicitly_allowlisted"
+  }
+}
