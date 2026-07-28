@@ -7,19 +7,23 @@ branch/publication claims are not current authority.
 ### 2026-07-27 superseding Phase 3A receipt
 
 - TEEECHR is `/Users/home/Desktop/2k26/teeech/DeepTutor-v1.5.2-baseline` on
-  `feature/teeechr-v152-phase3a-closeout`; reviewed source/test tip `624f4a6a`
-  contains three local commits and this documentation receipt follows it. BlueWay
-  canonical is `/Users/home/Developer/BlueWay-local`, `main` at
+  `feature/teeechr-v152-phase3a-closeout`; exact validated source/test tip
+  `850e7316` contains five local commits and this documentation-only superseding
+  receipt follows it. The immutable command/SHA evidence is Linear project
+  comment `ffa56940-2ec2-4b56-9e8d-47fdf0b8436d`. BlueWay canonical is
+  `/Users/home/Developer/BlueWay-local`, `main` at
   `1752e5f`, one local commit ahead of `origin/main`, with preserved user-owned
   dirty work. The isolated BlueWay proof worktree is
   `/Users/home/Desktop/2k26/teeech/BlueWay-phase3a-transcript-proof` on
   `feature/teeechr-phase3a-transcript-proof` at `1752e5f`; its current cleanliness
   is not asserted here.
-- The local repair receipt is: `2861 passed, 6 skipped, 9 warnings` backend;
-  `119 passed` focused repairs; `168 passed` web-node tests; `tsc` pass; Next
-  production build with `52` routes; lint `0` errors/`101` warnings; i18n parity
-  pass with informational audit findings; Ruff and `git diff --check` pass; and
-  independent review with no P0-P2 finding.
+- The exact-`850e7316` local repair receipt is:
+  `2862 passed, 6 skipped, 9 warnings` backend; `168 passed` web-node tests;
+  `tsc` pass; Next production build with `52` routes; lint `0` errors/`101`
+  warnings; i18n parity pass with informational audit findings; Ruff,
+  `git diff --check`, the bounded changed-range secret scan, and clean-worktree
+  verification pass. The first independent closeout review found only stale
+  receipt text after the fifth commit; this section supersedes that text.
 - Repairs fence every tool batch to the round's authorized schema and reject an
   unauthorized batch atomically; mastery turns suppress build/assess and require a
   private real `ask_user` reply receipt; no-speech transcripts are omitted; the

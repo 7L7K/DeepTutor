@@ -8,9 +8,11 @@ the 2026-07-27 receipt below.
 
 - TEEECHR authority is
   `/Users/home/Desktop/2k26/teeech/DeepTutor-v1.5.2-baseline` on
-  `feature/teeechr-v152-phase3a-closeout`. The reviewed source/test repair tip is
-  `624f4a6a` (three local commits); this documentation receipt follows it. The
-  branch is not pushed or a Phase 3A completion claim.
+  `feature/teeechr-v152-phase3a-closeout`. The exact validated source/test repair
+  tip is `850e7316` (five local commits). This documentation-only superseding
+  receipt follows that validated tip; the immutable command/SHA receipt is Linear
+  project comment `ffa56940-2ec2-4b56-9e8d-47fdf0b8436d`. The branch is not
+  pushed or a Phase 3A completion claim.
 - Canonical BlueWay authority is `/Users/home/Developer/BlueWay-local`, `main` at
   `1752e5f`, one local commit ahead of `origin/main`. Its user-owned dirty worktree
   is preserved and read-only for this lane. The isolated Phase 3A proof worktree is
@@ -20,11 +22,13 @@ the 2026-07-27 receipt below.
 - The historical-fork safety branch remains preserved. Upstream v1.5.5 integration
   remains deferred; no push, merge, deployment, hosted mutation, or paid/provider
   call is authorized by this closeout lane.
-- Local source/validation receipt: backend `2861 passed, 6 skipped, 9 warnings`;
-  focused repaired suite `119 passed`; web node suite `168 passed`; `tsc` passed;
-  Next production build emitted `52` routes; lint reported `0` errors and `101`
-  warnings; i18n parity passed (audit findings informational); Ruff and
-  `git diff --check` passed; independent review found no P0-P2 issue.
+- Exact-`850e7316` local source/validation receipt: backend
+  `2862 passed, 6 skipped, 9 warnings`; web node suite `168 passed`; `tsc`
+  passed; Next production build emitted `52` routes; lint reported `0` errors
+  and `101` warnings; i18n parity passed (audit findings informational); Ruff,
+  `git diff --check`, the bounded changed-range secret scan, and clean-worktree
+  verification passed. The first independent closeout review found only stale
+  receipt text after the fifth commit; this section supersedes that text.
 - The repair set adds per-round tool-schema authority with atomic rejection of an
   unauthorized tool batch; Course mastery suppresses build/assess and requires a
   private, real `ask_user` reply receipt; no-speech transcript omission; a
@@ -74,7 +78,7 @@ Three histories remain distinct:
 | History | Current authority | Purpose | Rule |
 | --- | --- | --- | --- |
 | Historical product fork | `/Users/home/Desktop/2k26/teeech/DeepTutor`, `safety/teeechr-pre-v152-20260720` at `3c2d5a47` | Behavioral and UX reference for Practice, quizzes, Flashcards, access onboarding, and learner actions | Preserve; inspect and selectively reimplement behavior; never merge wholesale |
-| Current Course/BlueWay product | `/Users/home/Desktop/2k26/teeech/DeepTutor-v1.5.2-baseline`, `feature/teeechr-v152-phase3a-closeout`; reviewed source/test tip `624f4a6a`, followed by this documentation receipt | Active implementation authority for Phase 3A; Phase 4 remains planned | Validate and close only the listed open gates; do not treat the local branch as a published completion |
+| Current Course/BlueWay product | `/Users/home/Desktop/2k26/teeech/DeepTutor-v1.5.2-baseline`, `feature/teeechr-v152-phase3a-closeout`; exact validated source/test tip `850e7316`, followed by this documentation-only superseding receipt | Active implementation authority for Phase 3A; Phase 4 remains planned | Validate and close only the listed open gates; do not treat the local branch as a published completion |
 | Moving upstream | `HKUDS/DeepTutor` `main`, observed at v1.5.5 commit `47d05809` on 2026-07-27 | Future compatibility source | Monitor only; no integration in this plan |
 
 Before Phase 4 implementation, preserve the historical fork `main` with an

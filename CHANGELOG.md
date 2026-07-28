@@ -146,12 +146,15 @@
 
 ### Validation
 
-- Current local Phase 3A receipt: backend `2861 passed, 6 skipped, 9 warnings`;
-  focused repaired suite `119 passed`; web node suite `168 passed`; `tsc` pass; Next
-  production build with `52` routes; lint `0` errors/`101` warnings; i18n parity
-  pass with informational audit findings; Ruff and `git diff --check` pass; and an
-  independent review found no P0-P2 issue. No paid/provider call, deployment, push,
-  merge, or Phase 3A-complete claim is implied.
+- Exact-`850e7316` local Phase 3A source/test receipt: backend
+  `2862 passed, 6 skipped, 9 warnings`; web node suite `168 passed`; `tsc` pass;
+  Next production build with `52` routes; lint `0` errors/`101` warnings; i18n
+  parity pass with informational audit findings; Ruff, `git diff --check`, the
+  bounded changed-range secret scan, and clean-worktree verification pass. This
+  documentation-only superseding receipt follows that five-commit validated tip;
+  immutable command/SHA evidence is Linear project comment
+  `ffa56940-2ec2-4b56-9e8d-47fdf0b8436d`. No paid/provider call, deployment,
+  push, merge, or Phase 3A-complete claim is implied.
 
 - Added deterministic BlueWay protocol, credential-tamper, snapshot-boundary,
   same-title isolation, pairing-pending, replay, reconnect, archive/removal, retry,
