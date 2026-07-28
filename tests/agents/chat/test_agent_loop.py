@@ -8,7 +8,10 @@ from typing import Any
 import pytest
 
 from deeptutor.agents.chat.agent_loop import InlineThinkFilter
-from deeptutor.agents.chat.agentic_pipeline import AgenticChatPipeline
+from deeptutor.agents.chat.agentic_pipeline import (
+    AgenticChatPipeline,
+    UnauthorizedToolBatchError,
+)
 from deeptutor.capabilities.explore_context import explorer as explorer_mod
 from deeptutor.capabilities.mastery import MASTERY_TOOL_NAMES
 from deeptutor.core.context import Attachment, UnifiedContext
@@ -90,7 +93,13 @@ class _ScriptedChatClient:
 
             async def create(self, **kwargs):
                 self.parent.call_count += 1
-                self.parent.calls.append({**kwargs, "messages": list(kwargs.get("messages") or [])})
+                call = {**kwargs, "messages": list(kwargs.get("messages") or [])}
+                # Deferred loading mutates the live schema list between rounds;
+                # retain the per-call schema surface for tests without making a
+                # tools-disabled call look like it received an empty surface.
+                if "tools" in kwargs:
+                    call["tools"] = list(kwargs["tools"] or [])
+                self.parent.calls.append(call)
                 if not self.parent._script:
                     raise RuntimeError("Scripted client exhausted")
                 return _async_llm_stream(self.parent._script.pop(0))
@@ -706,6 +715,148 @@ async def test_ask_user_available_every_round(monkeypatch: pytest.MonkeyPatch) -
 
     loop_tools = {t["function"]["name"] for t in client.calls[0]["tools"]}
     assert loop_tools == {"web_search", "ask_user"}
+
+
+@pytest.mark.asyncio
+async def test_off_schema_tool_rejects_entire_batch_before_sibling_execution(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    registry = _Registry()
+    client = _ScriptedChatClient(
+        [
+            [
+                _llm_chunk(
+                    tool_calls=[
+                        {
+                            "id": "allowed",
+                            "name": "web_search",
+                            "arguments": json.dumps({"query": "safe"}),
+                        },
+                        {
+                            "id": "denied",
+                            "name": "web-search",
+                            "arguments": json.dumps({"query": "alias"}),
+                        },
+                    ]
+                )
+            ]
+        ]
+    )
+    pipeline = AgenticChatPipeline(language="en")
+    pipeline.registry = registry
+    monkeypatch.setattr(pipeline, "_compose_enabled_tools", lambda _context: ["web_search"])
+    monkeypatch.setattr(pipeline, "_build_openai_client", lambda: client)
+
+    bus = StreamBus()
+    events, consumer = await _collect_bus_events(bus)
+    with pytest.raises(UnauthorizedToolBatchError, match="authorized for this round"):
+        await pipeline.run(UnifiedContext(session_id="s1", user_message="Search"), bus)
+    await asyncio.sleep(0)
+    await bus.close()
+    await consumer
+
+    assert registry.executed == []
+    assert client.call_count == 1
+    assert not [event for event in events if event.type == StreamEventType.TOOL_CALL]
+
+
+@pytest.mark.asyncio
+async def test_load_tools_cannot_authorize_a_sibling_call_in_its_same_batch() -> None:
+    registry = _Registry()
+    pipeline = AgenticChatPipeline(language="en")
+    pipeline.registry = registry
+
+    with pytest.raises(UnauthorizedToolBatchError, match="authorized for this round"):
+        await pipeline._dispatch_tool_calls(
+            tool_calls=[
+                {"id": "load", "name": "load_tools", "arguments": '{"names": ["late_tool"]}'},
+                {"id": "late", "name": "late_tool", "arguments": "{}"},
+            ],
+            authorized_tool_names=frozenset({"load_tools"}),
+            context=UnifiedContext(session_id="s1", user_message="Load it"),
+            stream=StreamBus(),
+            iteration_index=0,
+        )
+
+    assert registry.executed == []
+
+
+@pytest.mark.asyncio
+async def test_loaded_deferred_tool_is_authorized_on_next_round_only(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def _schema(name: str) -> dict[str, Any]:
+        return {
+            "type": "function",
+            "function": {
+                "name": name,
+                "description": name,
+                "parameters": {"type": "object", "properties": {}},
+            },
+        }
+
+    class _Loader:
+        def __init__(self) -> None:
+            self.live_schemas: list[dict[str, Any]] | None = None
+            self.loaded_names: set[str] = set()
+
+        def initial_schemas(self) -> list[dict[str, Any]]:
+            return []
+
+        def bind_live_schemas(self, schemas: list[dict[str, Any]]) -> None:
+            self.live_schemas = schemas
+
+        def load(self, _names: list[str]) -> None:
+            assert self.live_schemas is not None
+            self.live_schemas.append(_schema("late_tool"))
+            self.loaded_names.add("late_tool")
+
+    class _DeferredRegistry(_Registry):
+        def build_openai_schemas(self, _enabled):
+            return [_schema("load_tools")]
+
+        async def execute(self, name: str, **kwargs):
+            self.executed.append({"name": name, "kwargs": kwargs})
+            if name == "load_tools":
+                kwargs["_tool_loader"].load(["late_tool"])
+            return ToolResult(content=f"{name} complete", success=True)
+
+    loader = _Loader()
+    registry = _DeferredRegistry()
+    client = _ScriptedChatClient(
+        [
+            [
+                _llm_chunk(
+                    tool_calls=[
+                        {
+                            "id": "load",
+                            "name": "load_tools",
+                            "arguments": json.dumps({"names": ["late_tool"]}),
+                        }
+                    ]
+                )
+            ],
+            [_llm_chunk(tool_calls=[{"id": "late", "name": "late_tool", "arguments": "{}"}])],
+            [_llm_chunk(content="Finished.")],
+        ]
+    )
+    pipeline = AgenticChatPipeline(language="en")
+    pipeline.registry = registry
+
+    async def _prepare(_context: UnifiedContext) -> None:
+        pipeline._deferred_loader = loader  # type: ignore[assignment]
+
+    monkeypatch.setattr(pipeline, "_prepare_deferred_tools", _prepare)
+    monkeypatch.setattr(pipeline, "_compose_enabled_tools", lambda _context: ["load_tools"])
+    monkeypatch.setattr(pipeline, "_build_openai_client", lambda: client)
+
+    await _run(pipeline, UnifiedContext(session_id="s1", user_message="Use the extension"))
+
+    assert [entry["name"] for entry in registry.executed] == ["load_tools", "late_tool"]
+    first_round_tools = {schema["function"]["name"] for schema in client.calls[0]["tools"]}
+    second_round_tools = {schema["function"]["name"] for schema in client.calls[1]["tools"]}
+    assert first_round_tools == {"load_tools"}
+    assert second_round_tools == {"load_tools", "late_tool"}
 
 
 @pytest.mark.asyncio

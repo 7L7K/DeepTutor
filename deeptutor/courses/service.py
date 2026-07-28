@@ -310,9 +310,14 @@ def resolve_course_turn_payload(
         # ``tools=[]`` disables user-toggleable tools, but chat also has
         # context/always-on auto-mounts (memory, notebooks, web_fetch, github,
         # cron, exec, ...).  Course sources are untrusted documents, so limit
-        # that built-in surface to server-derived retrieval only.  Mastery's
-        # Course-local tools are capability-owned and intentionally unaffected.
-        "allowed_builtin_tools": ["rag"],
+        # that built-in surface to server-derived retrieval only. Course
+        # mastery additionally needs the interactive answer handoff; it is
+        # server-authorized rather than inherited from generic chat.
+        "allowed_builtin_tools": (
+            ["rag", "ask_user"]
+            if str(payload.get("capability") or "") == "mastery_path"
+            else ["rag"]
+        ),
         "tools": [],
         "attachments": [],
         "notebook_references": [],

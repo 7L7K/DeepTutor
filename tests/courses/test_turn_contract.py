@@ -62,6 +62,18 @@ def test_course_turn_derives_resources_and_learning_identity_server_side(monkeyp
     assert "src_failed" not in payload["course_context"]["source_fingerprints"]
 
 
+def test_course_mastery_turn_explicitly_allows_interactive_answer_handoff(monkeypatch) -> None:
+    service = SimpleNamespace(
+        get=lambda _course_id: _course(),
+        list_sources=lambda _course_id: [_source("src_one")],
+    )
+    monkeypatch.setattr("deeptutor.courses.service.get_current_course_service", lambda: service)
+
+    payload = resolve_course_turn_payload("crs_one", {"capability": "mastery_path"})
+
+    assert payload["allowed_builtin_tools"] == ["rag", "ask_user"]
+
+
 def test_course_turn_tool_surface_excludes_auto_mounted_side_effects(monkeypatch) -> None:
     from deeptutor.agents.chat import agentic_pipeline
     from deeptutor.agents.chat.agentic_pipeline import AgenticChatPipeline
@@ -85,6 +97,60 @@ def test_course_turn_tool_surface_excludes_auto_mounted_side_effects(monkeypatch
     )
 
     assert tools == ["rag"]
+
+
+def test_course_mastery_tool_surface_keeps_only_course_safe_mastery_operations(monkeypatch) -> None:
+    from deeptutor.agents.chat import agentic_pipeline
+    from deeptutor.agents.chat.agentic_pipeline import AgenticChatPipeline
+    from deeptutor.core.context import UnifiedContext
+
+    pipeline = AgenticChatPipeline(language="en")
+    pipeline._exec_enabled = True
+    pipeline._deferred_loader = object()
+    monkeypatch.setattr(agentic_pipeline, "user_has_memory", lambda: True)
+    monkeypatch.setattr(agentic_pipeline, "user_has_notebooks", lambda: True)
+
+    tools = pipeline._compose_enabled_tools(
+        UnifiedContext(
+            enabled_tools=[],
+            allowed_builtin_tools=["rag", "ask_user"],
+            knowledge_bases=["personal:kb:course_crs_one_src_one"],
+            metadata={
+                "course_context": {"course_id": "crs_one"},
+                "mastery_mode": True,
+                "mastery_path_id": "lp_crs_one",
+            },
+        )
+    )
+
+    assert {"rag", "ask_user", "mastery_status", "mastery_quiz", "mastery_grade"}.issubset(
+        tools
+    )
+    assert {"mastery_build", "mastery_assess"}.isdisjoint(tools)
+
+
+def test_course_mastery_prompt_disables_unavailable_map_and_assessment_tools() -> None:
+    from deeptutor.capabilities.mastery.loop import MasteryLoopCapability, _load_system_prompt
+    from deeptutor.core.context import UnifiedContext
+
+    capability = MasteryLoopCapability()
+    generic = capability.system_block(
+        UnifiedContext(metadata={"mastery_mode": True}), language="en", prompts={}
+    )
+    course = capability.system_block(
+        UnifiedContext(
+            metadata={"mastery_mode": True, "course_context": {"course_id": "crs_one"}}
+        ),
+        language="en",
+        prompts={},
+    )
+
+    assert generic is not None and generic.content == _load_system_prompt("en")
+    assert course is not None
+    assert "Course map initialization happens only through the owned Course learning API/UI." in course.content
+    assert "Course initialization\nis required" in course.content
+    assert "Qualitative model-judgment assessment is\ndisabled" in course.content
+    assert "never request mastery_build or mastery_assess" in course.content
 
 
 def test_course_rag_dispatch_rejects_non_course_knowledge_name() -> None:

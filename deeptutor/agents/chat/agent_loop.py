@@ -130,6 +130,11 @@ class LLMCallResult:
     text: str
     tool_calls: list[dict[str, Any]] = field(default_factory=list)
     finish_reason: str = ""
+    # Exact server-built function names exposed to the provider for this LLM
+    # round.  It is deliberately a snapshot: a ``load_tools`` call can mutate
+    # the live schema list, but that newly loaded tool is not callable until
+    # the following round sees its schema.
+    authorized_tool_names: frozenset[str] = field(default_factory=frozenset)
 
 
 @dataclass(slots=True)
@@ -308,6 +313,7 @@ class AgentLoop:
             messages.append(assistant_message_with_tool_calls(result.text, result.tool_calls))
             dispatch = await self.pipeline._dispatch_tool_calls(
                 tool_calls=result.tool_calls,
+                authorized_tool_names=result.authorized_tool_names,
                 context=self.context,
                 stream=self.stream,
                 iteration_index=state.tool_steps,
@@ -437,6 +443,17 @@ class AgentLoop:
         max_tokens: int,
         tool_schemas: list[dict[str, Any]] | None = None,
     ) -> LLMCallResult:
+        # ``tool_schemas`` is a live list: deferred-tool loading appends to it
+        # after a round. Snapshot its exact function names before this LLM call
+        # so dispatch enforces what the provider actually received, rather than
+        # the broader registry or a later mutation.
+        authorized_tool_names = frozenset(
+            str(function.get("name") or "").strip()
+            for schema in tool_schemas or []
+            if isinstance(schema, dict)
+            and isinstance((function := schema.get("function")), dict)
+            and str(function.get("name") or "").strip()
+        )
         await self.pipeline._guard_context_window(messages, self.stream)
         stage = LOOP_STAGE
         call_id = new_call_id(f"chat-{stage}")
@@ -588,7 +605,12 @@ class AgentLoop:
                 },
             ),
         )
-        return LLMCallResult(text=text, tool_calls=tool_calls, finish_reason=finish_reason)
+        return LLMCallResult(
+            text=text,
+            tool_calls=tool_calls,
+            finish_reason=finish_reason,
+            authorized_tool_names=authorized_tool_names,
+        )
 
     async def _create_response_stream(
         self,
