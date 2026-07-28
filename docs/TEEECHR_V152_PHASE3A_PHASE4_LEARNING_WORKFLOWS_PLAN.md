@@ -107,7 +107,8 @@ The P4-01 subordinate artifacts are:
 
 They provide executable detail for this plan but do not override it. P4-01 was
 implemented on the local Phase 4 branch by `1cc75f2f`. P4-02A was implemented
-by `6bdb5179`, and P4-02B by `d613b8ad`; P4-03 is the next active slice.
+by `6bdb5179`, P4-02B by `d613b8ad`, and P4-03 by `96e073ee`; P4-04 is the
+next active slice.
 
 ## 1. Goal and non-goals
 
@@ -835,6 +836,32 @@ Status: **completed for the local engineering boundary by `d613b8ad`.**
   - Flashcard reviews do not directly change mastery.
 - **Doc alignment:** `LearningService.grade_and_record`.
 - **Risk / unknown:** qualitative questions require a separate judgment contract.
+
+#### P4-03 implementation receipt — 2026-07-28
+
+- implementation commit: `96e073ee`;
+- SQLite atomically seals deterministic exact-answer item results, immutable
+  per-objective evidence, and aggregate attempt score before any Learning JSON
+  projection;
+- evidence binds the frozen answer contract, canonical response object,
+  question objective, captured module/type mapping, result, and error class;
+- digest-checked pending evidence acts as a recoverable outbox, and the
+  Learning receipt prevents duplicate mastery, error, or review effects after
+  interruption, retry, or parent archive;
+- zero-objective and unresolved-objective evidence is retained as immutable
+  `unmapped` history without inventing mastery ownership;
+- Course learning reset rejects authoritative SQLite grading history even when
+  projection has not yet completed;
+- Course/Practice archive and Practice successor replacement terminalize both
+  in-progress and submitted ungraded attempts without deletion;
+- SQLite validators reject forged wrong-answer grades, unrelated objectives,
+  incomplete item evidence, and inconsistent aggregate scores;
+- the exact staged snapshot passed Ruff, `git diff --check`, `47` focused
+  grading/migration tests, and `462` impacted Course, BlueWay, and Learning
+  tests; independent Terra review found no P0-P2 issue;
+- the accepted runtime remains one application process. Multi-process Learning
+  JSON delivery and cryptographic authenticity against an actor who can rewrite
+  both SQLite and Learning JSON remain explicitly outside this phase.
 
 ### P4-04 — Manual Practice API and minimal UI
 
