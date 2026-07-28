@@ -232,14 +232,20 @@ def test_pairing_refuses_a_second_provider_grant_until_the_local_connection_is_t
 
 
 def test_approval_url_is_an_explicit_pinned_deployment_url(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    from deeptutor.multi_user import paths as multi_user_paths
+
     monkeypatch.setattr(blueway_config.auth_service, "AUTH_ENABLED", True)
     monkeypatch.setattr(blueway_config, "is_pocketbase_enabled", lambda: False)
+    monkeypatch.setattr(
+        multi_user_paths, "SYSTEM_ROOT", tmp_path / "data" / "system",
+    )
     monkeypatch.setenv("TEEECHR_BLUEWAY_INTEGRATION_ENABLED", "true")
     monkeypatch.setenv("TEEECHR_BLUEWAY_BASE_URL", "https://api.blueway.example")
     monkeypatch.setenv("TEEECHR_BLUEWAY_CLIENT_ID", "client-test")
     monkeypatch.setenv("TEEECHR_BLUEWAY_API_SECRET", "s" * 32)
     monkeypatch.setenv("TEEECHR_BLUEWAY_APPROVAL_URL", "https://consent.blueway.example/approve")
     monkeypatch.setenv("TEEECHR_INTEGRATION_MASTER_KEY", base64.b64encode(b"k" * 32).decode())
+    monkeypatch.setenv("TEEECHR_INTEGRATION_SECRET_BOOTSTRAP", "true")
     settings = BlueWaySettings.from_environment()
     assert settings.approval_url == "https://consent.blueway.example/approve"
     monkeypatch.setenv("TEEECHR_BLUEWAY_APPROVAL_URL", "https://user:pass@consent.blueway.example/approve")

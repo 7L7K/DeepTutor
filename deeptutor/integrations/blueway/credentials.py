@@ -40,6 +40,11 @@ class CredentialStore:
             raise CredentialError("Invalid integration connection id")
         return self.root / f"{connection_id}.rotation.enc"
 
+    def _recovery_path(self, connection_id: str) -> Path:
+        if not connection_id or "/" in connection_id or "\\" in connection_id:
+            raise CredentialError("Invalid integration connection id")
+        return self.root / f"{connection_id}.recovery.enc"
+
     def _secure_root(self) -> None:
         if self.root.exists() and self.root.is_symlink():
             raise CredentialError("Credential directory cannot be a symbolic link")
@@ -143,7 +148,102 @@ class CredentialStore:
             plaintext = self._decrypt(data, owner_user_id=owner_user_id, connection_id=connection_id, scope_version=scope_version)
         except (OSError, InvalidTag, ValueError) as exc:
             raise CredentialError("Credential cannot be decrypted") from exc
-        return plaintext.decode("utf-8")
+        try:
+            return plaintext.decode("utf-8")
+        except UnicodeDecodeError as exc:
+            raise CredentialError("Credential cannot be decrypted") from exc
+
+    def preflight(
+        self, *, owner_user_id: str, connection_id: str, scope_version: str,
+    ) -> None:
+        """Authenticate an envelope without provider or durable-state mutation."""
+        self.read(
+            owner_user_id=owner_user_id,
+            connection_id=connection_id,
+            scope_version=scope_version,
+        )
+
+    def stage_recovery(
+        self, *, owner_user_id: str, connection_id: str,
+        scope_version: str, refresh_token: str,
+    ) -> None:
+        self._write_path(
+            self._recovery_path(connection_id),
+            owner_user_id=owner_user_id,
+            connection_id=connection_id,
+            scope_version=f"{scope_version}:recovery",
+            refresh_token=refresh_token,
+        )
+
+    def clear_staged_recovery(self, connection_id: str) -> None:
+        path = self._recovery_path(connection_id)
+        if path.exists():
+            path.unlink()
+            self._fsync_root()
+
+    def promote_staged_recovery(
+        self, *, owner_user_id: str, connection_id: str, scope_version: str,
+    ) -> Path | None:
+        """Promote a verified replacement while retaining the old bytes privately."""
+        staged = self._recovery_path(connection_id)
+        try:
+            staged_data = self._read_target(staged)
+            plaintext = self._decrypt(
+                staged_data,
+                owner_user_id=owner_user_id,
+                connection_id=connection_id,
+                scope_version=f"{scope_version}:recovery",
+            )
+            refresh_token = plaintext.decode("utf-8")
+        except (OSError, InvalidTag, ValueError, UnicodeDecodeError) as exc:
+            raise CredentialError("Credential cannot be decrypted") from exc
+        quarantine = self.root / "quarantine"
+        if quarantine.exists() and quarantine.is_symlink():
+            raise CredentialError("Credential quarantine cannot be a symbolic link")
+        quarantine.mkdir(mode=0o700, exist_ok=True)
+        quarantine.chmod(0o700)
+        quarantine_info = quarantine.lstat()
+        expected_uid = os.geteuid() if hasattr(os, "geteuid") else None
+        if (
+            not stat.S_ISDIR(quarantine_info.st_mode)
+            or stat.S_ISLNK(quarantine_info.st_mode)
+            or (
+                expected_uid is not None
+                and quarantine_info.st_uid != expected_uid
+            )
+            or quarantine_info.st_mode & 0o077
+        ):
+            raise CredentialError(
+                "Credential quarantine fails private-directory checks"
+            )
+        primary = self._path(connection_id)
+        retained: Path | None = None
+        if primary.exists():
+            retained = quarantine / (
+                f"{connection_id}.{secrets.token_hex(16)}.enc"
+            )
+            os.replace(primary, retained)
+            retained.chmod(0o600)
+        try:
+            self._write_path(
+                primary,
+                owner_user_id=owner_user_id,
+                connection_id=connection_id,
+                scope_version=scope_version,
+                refresh_token=refresh_token,
+            )
+            staged.unlink()
+            self._fsync_root()
+            quarantine_fd = os.open(quarantine, os.O_RDONLY)
+            try:
+                os.fsync(quarantine_fd)
+            finally:
+                os.close(quarantine_fd)
+        except Exception:
+            if retained is not None and retained.exists() and not primary.exists():
+                os.replace(retained, primary)
+            raise
+        return retained
 
     def write_rotation_envelope(
         self, *, owner_user_id: str, connection_id: str, scope_version: str,
@@ -236,7 +336,11 @@ class CredentialStore:
             raise
 
     def remove(self, connection_id: str) -> None:
-        targets = (self._path(connection_id), self._rotation_path(connection_id))
+        targets = (
+            self._path(connection_id),
+            self._rotation_path(connection_id),
+            self._recovery_path(connection_id),
+        )
         if any(path.exists() for path in targets):
             for path in targets:
                 path.unlink(missing_ok=True)
@@ -253,7 +357,7 @@ class CredentialStore:
         self._secure_root()
         ids: set[str] = set()
         for path in self.root.glob("*.enc"):
-            if path.name.endswith(".rotation.enc"):
+            if path.name.endswith((".rotation.enc", ".recovery.enc")):
                 continue
             connection_id = path.name.removesuffix(".enc")
             if self._path(connection_id) != path or path.is_symlink():

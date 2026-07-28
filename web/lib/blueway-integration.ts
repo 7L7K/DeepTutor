@@ -1,6 +1,7 @@
 export type BlueWayConnectionState =
   | "pending"
   | "active"
+  | "credential_recovery_required"
   | "revocation_pending"
   | "disconnected"
   | "error";
@@ -42,6 +43,7 @@ export interface BlueWayConnectAttempt {
   user_code: string;
   verification_uri: string;
   expires_at: number;
+  mode?: "connect" | "recovery";
 }
 
 export interface BlueWayUnlinkedRecord {
@@ -142,6 +144,11 @@ function walk(value: unknown, seen: Set<object>): void {
       normalized === "access_token" ||
       normalized === "refresh_token" ||
       normalized === "client_secret" ||
+      normalized === "master_key" ||
+      normalized === "credential_ref" ||
+      normalized === "key_id" ||
+      normalized === "quarantine_path" ||
+      normalized === "staging_path" ||
       normalized === "pkce_verifier" ||
       normalized === "device_code"
     ) {

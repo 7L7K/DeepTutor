@@ -6,7 +6,12 @@ from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
 
 from .repository import BlueWayNotFoundError, Connection, SyncRun
-from .service import BlueWayService, BlueWayUnavailableError, build_blueway_service
+from .service import (
+    BlueWayCredentialRecoveryRequired,
+    BlueWayService,
+    BlueWayUnavailableError,
+    build_blueway_service,
+)
 from .transport import BlueWayTransportError
 
 router = APIRouter()
@@ -31,7 +36,13 @@ def _connection(connection: Connection | None) -> dict | None:
     if connection is None:
         return None
     return {
-        "id": connection.id, "state": connection.state, "revision": connection.revision,
+        "id": connection.id,
+        "state": (
+            "credential_recovery_required"
+            if connection.credential_status == "recovery_required"
+            else connection.state
+        ),
+        "revision": connection.revision,
         "scope_version": connection.scope_version, "connected_at": connection.connected_at,
         "last_sync_at": connection.last_sync_at,
     }
@@ -50,6 +61,11 @@ def _call(operation):
         raise HTTPException(status_code=404, detail="Integration resource not found") from exc
     except BlueWayUnavailableError as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
+    except BlueWayCredentialRecoveryRequired as exc:
+        raise HTTPException(
+            status_code=409,
+            detail="BlueWay credential recovery is required",
+        ) from exc
     except BlueWayTransportError as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
     except Exception as exc:
@@ -61,7 +77,7 @@ def _call(operation):
 
 @router.get("")
 def status():
-    service = _service()
+    service = _call(_service)
     if not service.settings.enabled:
         return {"enabled": False, "connection": None, "active_run": None}
     connection, run = _call(service.status)
@@ -77,9 +93,20 @@ def connect_start():
     }
 
 
+@router.post("/recovery/start")
+def recovery_start():
+    attempt = _call(lambda: _service().start_recovery())
+    return {
+        "attempt_id": attempt.id,
+        "user_code": attempt.user_code,
+        "verification_uri": attempt.verification_uri,
+        "expires_at": attempt.expires_at,
+    }
+
+
 @router.get("/connect/{attempt_id}/status")
 def connect_status(attempt_id: str):
-    service = _service()
+    service = _call(_service)
     attempt = _call(lambda: service.get_attempt(attempt_id))
     connection, run = _call(service.status)
     return {
@@ -94,6 +121,35 @@ def connect_poll(attempt_id: str):
     """Mutating approval poll; main's cookie-Origin middleware protects it."""
     connection, run = _call(lambda: _service().poll_connection(attempt_id=attempt_id))
     return {"enabled": True, "connection": _connection(connection), "active_run": _run(run)}
+
+
+@router.get("/recovery/{attempt_id}/status")
+def recovery_status(attempt_id: str):
+    service = _call(_service)
+    attempt = _call(lambda: service.get_attempt(attempt_id))
+    if attempt.mode != "recovery":
+        raise HTTPException(status_code=404, detail="Integration resource not found")
+    connection, run = _call(service.status)
+    return {
+        "enabled": service.settings.enabled,
+        "attempt_id": attempt.id,
+        "state": "pending",
+        "expires_at": attempt.expires_at,
+        "connection": _connection(connection),
+        "active_run": _run(run),
+    }
+
+
+@router.post("/recovery/{attempt_id}/poll", status_code=202)
+def recovery_poll(attempt_id: str):
+    connection, run = _call(
+        lambda: _service().poll_recovery(attempt_id=attempt_id)
+    )
+    return {
+        "enabled": True,
+        "connection": _connection(connection),
+        "active_run": _run(run),
+    }
 
 
 @router.post("/sync", status_code=202)

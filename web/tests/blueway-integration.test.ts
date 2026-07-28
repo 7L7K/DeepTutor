@@ -31,6 +31,19 @@ test("BlueWay status keeps connection and indexing readiness separate", () => {
   );
   assert.equal(blueWaySyncIsRunning({ id: "bwr_1", state: "indexing" }), true);
   assert.equal(blueWaySyncIsRunning({ id: "bwr_1", state: "completed" }), false);
+  assert.equal(
+    blueWayConnectionLabel({
+      enabled: true,
+      connection: {
+        id: "bwc_1",
+        state: "credential_recovery_required",
+        revision: 2,
+        scope_version: "academic.read.v1",
+      },
+      active_run: null,
+    }),
+    "credential_recovery_required",
+  );
 });
 
 test("delayed BlueWay actions cannot mutate a replacement identity", async () => {
@@ -90,6 +103,11 @@ test("browser integration payloads reject credential material recursively", () =
     "access_token",
     "refresh-token",
     "client_secret",
+    "master_key",
+    "credential_ref",
+    "key_id",
+    "quarantine_path",
+    "staging_path",
     "pkce_verifier",
     "device_code",
   ]) {

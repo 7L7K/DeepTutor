@@ -9,7 +9,9 @@ import {
   getBlueWayStatus,
   listBlueWayUnlinked,
   pollBlueWayConnection,
+  pollBlueWayRecovery,
   startBlueWayConnection,
+  startBlueWayRecovery,
   startBlueWaySync,
 } from "@/lib/blueway-api";
 import {
@@ -43,7 +45,9 @@ export default function BlueWaySettingsPage() {
     const requestSequence = ++requestSequenceRef.current;
     try {
       const next = attempt
-        ? await pollBlueWayConnection(attempt.attempt_id)
+        ? attempt.mode === "recovery"
+          ? await pollBlueWayRecovery(attempt.attempt_id)
+          : await pollBlueWayConnection(attempt.attempt_id)
         : await getBlueWayStatus();
       const nextUnlinked = next.connection?.state === "active"
         ? await listBlueWayUnlinked()
@@ -154,6 +158,8 @@ export default function BlueWaySettingsPage() {
               )}
               {state === "active"
                 ? "Connected"
+                : state === "credential_recovery_required"
+                  ? "Credential recovery required"
                 : state === "revocation_pending"
                   ? "Disconnecting safely"
                 : state === "unavailable"
@@ -211,6 +217,24 @@ export default function BlueWaySettingsPage() {
                 Disconnect
               </button>
             </div>
+          ) : state === "credential_recovery_required" ? (
+            <button
+              type="button"
+              disabled={busy}
+              onClick={() =>
+                void run(async (identityEpoch) => {
+                  await applyBlueWayActionIfCurrent(
+                    startBlueWayRecovery(),
+                    identityEpoch,
+                    () => identityEpochRef.current,
+                    (nextAttempt) => setAttempt(nextAttempt),
+                  );
+                })
+              }
+              className="rounded-lg border border-amber-500/30 px-3 py-2 text-xs font-medium text-amber-700 disabled:opacity-50 dark:text-amber-300"
+            >
+              Reconnect BlueWay
+            </button>
           ) : state === "revocation_pending" ? (
             <button
               type="button"
@@ -252,10 +276,16 @@ export default function BlueWaySettingsPage() {
           ) : null}
         </div>
 
+        {state === "credential_recovery_required" && (
+          <p className="mt-4 rounded-xl border border-amber-500/25 bg-amber-500/5 p-3 text-xs leading-relaxed text-amber-800 dark:text-amber-200">
+            TEEECHR cannot read the saved BlueWay credential, so sync and disconnect are safely paused. Your imported Courses, sources, mastery, and history remain available. Reconnect using the same BlueWay account to restore access.
+          </p>
+        )}
+
         {attempt && (
           <div className="mt-5 rounded-xl border border-blue-500/25 bg-blue-500/5 p-4">
             <p className="text-xs text-[var(--muted-foreground)]">
-              Open this BlueWay approval page, sign in, review the academic-data consent, and enter the one-time code:
+              Open this BlueWay approval page, sign in to {attempt.mode === "recovery" ? "the same BlueWay account" : "BlueWay"}, review the academic-data consent, and enter the one-time code:
             </p>
             <div className="mt-3 flex flex-wrap items-center gap-3">
               {verificationUri ? (

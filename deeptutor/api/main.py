@@ -137,11 +137,6 @@ async def lifespan(app: FastAPI):
     # Validate configuration consistency
     validate_tool_consistency()
     validate_course_backend_compatibility()
-    # Disabled by default. When explicitly enabled, reject unsafe integration
-    # configuration before acquiring runtime work or serving any request.
-    from deeptutor.integrations.blueway.config import BlueWaySettings
-
-    blueway_settings = BlueWaySettings.from_environment()
     from deeptutor.courses.deployment import SingleProcessCourseLock
     from deeptutor.multi_user.paths import SYSTEM_ROOT
 
@@ -149,6 +144,20 @@ async def lifespan(app: FastAPI):
         SYSTEM_ROOT / "course-single-process.lock"
     )
     course_process_lock.acquire()
+    # Persistent secret authority is resolved only after the single-process
+    # Course lock. A missing/locked authority disables BlueWay safely without
+    # taking generic TEEECHR offline; unsafe structural configuration remains
+    # a startup error.
+    from deeptutor.integrations.blueway.config import (
+        BlueWaySettings,
+        IntegrationSecretUnavailableError,
+    )
+
+    try:
+        blueway_settings = BlueWaySettings.from_environment()
+    except IntegrationSecretUnavailableError as exc:
+        blueway_settings = BlueWaySettings(enabled=False)
+        logger.warning("BlueWay integration unavailable: %s", exc)
     if blueway_settings.enabled:
         from deeptutor.integrations.blueway.service import build_blueway_service
 

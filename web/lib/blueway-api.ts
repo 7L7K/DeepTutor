@@ -32,6 +32,15 @@ export async function startBlueWayConnection(): Promise<BlueWayConnectAttempt> {
   );
 }
 
+export async function startBlueWayRecovery(): Promise<BlueWayConnectAttempt> {
+  const attempt = await integrationJson<BlueWayConnectAttempt>(
+    await apiFetch(apiUrl("/api/v1/integrations/blueway/recovery/start"), {
+      method: "POST",
+    }),
+  );
+  return { ...attempt, mode: "recovery" };
+}
+
 export async function getBlueWayConnectStatus(
   attemptId: string,
 ): Promise<BlueWayIntegrationStatus> {
@@ -49,6 +58,17 @@ export async function pollBlueWayConnection(
   return integrationJson<BlueWayIntegrationStatus>(
     await apiFetch(
       apiUrl(`/api/v1/integrations/blueway/connect/${encodeURIComponent(attemptId)}/poll`),
+      { method: "POST" },
+    ),
+  );
+}
+
+export async function pollBlueWayRecovery(
+  attemptId: string,
+): Promise<BlueWayIntegrationStatus> {
+  return integrationJson<BlueWayIntegrationStatus>(
+    await apiFetch(
+      apiUrl(`/api/v1/integrations/blueway/recovery/${encodeURIComponent(attemptId)}/poll`),
       { method: "POST" },
     ),
   );

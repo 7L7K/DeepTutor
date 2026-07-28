@@ -4,6 +4,14 @@
 
 ### Added
 
+- Added persistent single-host BlueWay secret authority and an owner-approved
+  credential-recovery flow. Unreadable credentials now enter a durable
+  generation-fenced recovery status; same-subject recovery retains the exact
+  connection and Course identities, while a different BlueWay subject is rejected
+  and its newly issued grant is revoked.
+- Added a recovery Settings state that keeps imported Course material available,
+  blocks Sync and Disconnect, and reuses the consent flow without exposing tokens,
+  credential references, key IDs, paths, or crypto diagnostics.
 - Added the disabled-by-default Phase 3 BlueWay academic-read integration foundation:
   owner-scoped delegated pairing, encrypted rotating credentials, durable sync receipts,
   exact external-course mappings, retained unlinked records, and deterministic immutable
@@ -29,6 +37,9 @@
 
 ### Changed
 
+- Made the mimic-WebSocket test harness install an explicit local test identity,
+  so the full suite no longer depends on whether the auth router happened to be
+  imported before its isolated config fake.
 - Phase 3A closeout repairs now bind every tool batch to the current round's
   authorized schema and reject an unauthorized batch atomically. Course mastery
   turns suppress build/assess actions and require a private, real `ask_user` reply
@@ -95,6 +106,14 @@
 
 ### Security and compatibility
 
+- BlueWay now authenticates the encrypted refresh credential before creating a
+  rotation receipt or entering `revocation_pending`. Credential failures fence and
+  cancel in-flight work without provider calls, preserve the primary grant and
+  imported learner data, and require explicit same-account recovery.
+- Persistent BlueWay authority uses exclusive fsynced creation plus `0700`/`0600`,
+  no-follow, owner, regular-file, and single-link checks. Legacy bootstrap persists
+  a key only after all referenced envelopes authenticate; recovery bootstrap is a
+  separate explicit operator mode and never overwrites unreadable envelopes.
 - BlueWay pairing now uses a dedicated integration header rather than the Supabase `apikey` channel, and provider start/exchange calls no longer hold the global identity lock; current account authority is revalidated before every local commit and a newly issued remote grant is revoked if that commit is no longer authorized.
 
 - BlueWay credentials use AES-256-GCM with owner/connection/provider/scope AAD and

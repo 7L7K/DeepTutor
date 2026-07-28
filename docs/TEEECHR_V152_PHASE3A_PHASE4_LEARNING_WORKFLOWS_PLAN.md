@@ -519,6 +519,15 @@ authority for the separate real transfer receipt in P3A-03.
   ephemeral process-only key and are cryptographically unrecoverable. Do not
   attempt current local disconnect or a new-key sync.
 
+**2026-07-27 source status:** the single-host persistent authority, fail-closed
+`credential_recovery_required` state, same-subject recovery exchange, generation
+fences, credential quarantine, recovery API, Settings UI, and provider-free
+adversarial tests are implemented on the Phase 3A closeout branch. This is source
+and deterministic-test proof only. The primary grant remains untouched; hosted
+pairing-secret rotation, persistent-authority runtime bootstrap/restart,
+same-account live recovery, and the post-recovery bounded sync still require
+their separate operational gates.
+
 ### P3A-05 — Complete current two-user browser isolation
 
 - **Scope:** two disposable TEEECHR users and two separate BlueWay accounts.

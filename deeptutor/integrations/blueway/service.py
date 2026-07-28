@@ -37,6 +37,10 @@ class BlueWayUnavailableError(RuntimeError):
     pass
 
 
+class BlueWayCredentialRecoveryRequired(RuntimeError):
+    """The owner must approve a replacement grant before BlueWay can continue."""
+
+
 @dataclass(frozen=True)
 class PairingAttempt:
     id: str
@@ -47,6 +51,10 @@ class PairingAttempt:
     verification_uri: str
     expires_at: float
     request_id: str
+    mode: str = "connect"
+    recovery_connection_id: str | None = None
+    recovery_revision: int | None = None
+    recovery_generation: int | None = None
 
 
 class BlueWayService:
@@ -83,6 +91,36 @@ class BlueWayService:
         return BlueWayRepository(
             CourseRepository(get_personal_path_service(owner_user_id).get_courses_db(), owner_user_id)
         )
+
+    def _credential_store(self, owner_user_id: str) -> CredentialStore:
+        paths = get_personal_path_service(owner_user_id)
+        return CredentialStore(
+            paths.get_integration_credentials_dir(),
+            self.settings.master_key,
+        )
+
+    def _preflight_connection(
+        self, repository: BlueWayRepository, connection: Connection,
+    ) -> tuple[Connection, CredentialStore, str]:
+        if connection.credential_status != "healthy":
+            raise BlueWayCredentialRecoveryRequired(
+                "BlueWay credential recovery is required"
+            )
+        store = self._credential_store(connection.owner_user_id)
+        try:
+            refresh_token = store.read(
+                owner_user_id=connection.owner_user_id,
+                connection_id=connection.id,
+                scope_version=connection.scope_version,
+            )
+        except CredentialError as exc:
+            repository.require_credential_recovery(
+                connection.id, expected_revision=connection.revision,
+            )
+            raise BlueWayCredentialRecoveryRequired(
+                "BlueWay credential recovery is required"
+            ) from exc
+        return connection, store, refresh_token
 
     @staticmethod
     def _assert_owner_current(owner_user_id: str) -> None:
@@ -140,7 +178,78 @@ class BlueWayService:
                         device_code=device_code, verifier=verifier,
                         user_code=authorization.user_code, verification_uri=authorization.verification_uri,
                         expires_at=authorization.expires_at, request_id=authorization.request_id,
+                        mode="connect",
                     )
+                    self._attempts[attempt.id] = attempt
+        finally:
+            with self._lock:
+                self._starting_owners.discard(owner)
+        return attempt
+
+    def start_recovery(self) -> PairingAttempt:
+        owner = self._owner()
+        repository = self._repository()
+        with identity_write_lock():
+            self._assert_owner_current(owner)
+            connection = repository.visible_connection()
+            if (
+                connection is None
+                or connection.credential_status != "recovery_required"
+            ):
+                raise BlueWayNotFoundError("Integration resource not found")
+            with self._lock:
+                now = time.time()
+                self._purge_expired_attempts(now)
+                if owner in self._starting_owners or any(
+                    attempt.owner_user_id == owner
+                    for attempt in self._attempts.values()
+                ):
+                    raise CourseConflictError("BlueWay pairing is already pending")
+                self._starting_owners.add(owner)
+        verifier = self._verifier()
+        device_code, user_code = self._device_code(), self._user_code()
+        try:
+            authorization = self.transport.begin_device_authorization(
+                client_id=self.settings.client_id,
+                audience=self.settings.client_id,
+                device_code=device_code,
+                user_code=user_code,
+                pkce_challenge=self._challenge(verifier),
+            )
+            with identity_write_lock():
+                self._assert_owner_current(owner)
+                current = repository.get_connection(connection.id)
+                if (
+                    current.credential_status != "recovery_required"
+                    or current.revision != connection.revision
+                    or current.grant_generation != connection.grant_generation
+                ):
+                    raise CourseConflictError(
+                        "BlueWay credential recovery is stale"
+                    )
+                if (
+                    authorization.expires_at <= time.time()
+                    or not authorization.device_code
+                    or not authorization.user_code
+                ):
+                    raise BlueWayUnavailableError(
+                        "BlueWay returned an invalid device authorization"
+                    )
+                attempt = PairingAttempt(
+                    id=f"bwa_{secrets.token_hex(16)}",
+                    owner_user_id=owner,
+                    device_code=device_code,
+                    verifier=verifier,
+                    user_code=authorization.user_code,
+                    verification_uri=authorization.verification_uri,
+                    expires_at=authorization.expires_at,
+                    request_id=authorization.request_id,
+                    mode="recovery",
+                    recovery_connection_id=current.id,
+                    recovery_revision=current.revision,
+                    recovery_generation=current.grant_generation,
+                )
+                with self._lock:
                     self._attempts[attempt.id] = attempt
         finally:
             with self._lock:
@@ -165,6 +274,8 @@ class BlueWayService:
         """
         with identity_write_lock():
             attempt = self.get_attempt(attempt_id)
+            if attempt.mode != "connect":
+                raise BlueWayNotFoundError("Integration resource not found")
             self._assert_owner_current(attempt.owner_user_id)
             repository = self._repository()
             if repository.visible_connection() is not None:
@@ -187,6 +298,73 @@ class BlueWayService:
         with self._lock:
             self._attempts.pop(attempt.id, None)
         return connection
+
+    def complete_recovery_for_transport(
+        self, *, attempt_id: str, exchange: TokenExchange,
+    ) -> Connection:
+        """Commit only an owner-approved replacement for the exact same subject."""
+        attempt = self.get_attempt(attempt_id)
+        if (
+            attempt.mode != "recovery"
+            or attempt.recovery_connection_id is None
+            or attempt.recovery_revision is None
+            or attempt.recovery_generation is None
+        ):
+            raise BlueWayNotFoundError("Integration resource not found")
+        repository = self._repository()
+        connection = repository.get_connection(
+            attempt.recovery_connection_id
+        )
+        if exchange.external_subject != connection.external_subject:
+            try:
+                self.transport.revoke(refresh_token=exchange.refresh_token)
+            finally:
+                with self._lock:
+                    self._attempts.pop(attempt.id, None)
+                raise BlueWayCredentialRecoveryRequired(
+                    "Recovery must use the same BlueWay account"
+                )
+        store = self._credential_store(connection.owner_user_id)
+        try:
+            with identity_write_lock():
+                self._assert_owner_current(attempt.owner_user_id)
+                current = repository.get_connection(connection.id)
+                if (
+                    current.credential_status != "recovery_required"
+                    or current.revision != attempt.recovery_revision
+                    or current.grant_generation != attempt.recovery_generation
+                ):
+                    raise CourseConflictError(
+                        "BlueWay credential recovery is stale"
+                    )
+                store.stage_recovery(
+                    owner_user_id=current.owner_user_id,
+                    connection_id=current.id,
+                    scope_version=current.scope_version,
+                    refresh_token=exchange.refresh_token,
+                )
+                store.promote_staged_recovery(
+                    owner_user_id=current.owner_user_id,
+                    connection_id=current.id,
+                    scope_version=current.scope_version,
+                )
+                completed = repository.complete_credential_recovery(
+                    current.id,
+                    expected_revision=current.revision,
+                    expected_generation=current.grant_generation,
+                )
+        except Exception:
+            store.clear_staged_recovery(connection.id)
+            try:
+                self.transport.revoke(refresh_token=exchange.refresh_token)
+            except Exception:
+                pass
+            with self._lock:
+                self._attempts.pop(attempt.id, None)
+            raise
+        with self._lock:
+            self._attempts.pop(attempt.id, None)
+        return completed
 
     def exchange_connection_for_transport(self, *, attempt_id: str) -> Connection:
         owner = self._owner()
@@ -238,18 +416,73 @@ class BlueWayService:
         self.schedule_sync(run)
         return connection, run
 
+    def poll_recovery(
+        self, *, attempt_id: str,
+    ) -> tuple[Connection | None, SyncRun | None]:
+        owner = self._owner()
+        key = (owner, attempt_id)
+        with self._lock:
+            self._purge_expired_attempts(time.time())
+            completed = self._completed_attempts.get(key)
+            if completed:
+                return self._repository().get_connection(completed[0]), None
+            if key in self._exchanging_attempts:
+                raise CourseConflictError(
+                    "BlueWay recovery is already being completed"
+                )
+            self._exchanging_attempts.add(key)
+        try:
+            attempt = self.get_attempt(attempt_id)
+            if attempt.mode != "recovery":
+                raise BlueWayNotFoundError("Integration resource not found")
+            try:
+                exchange = self.transport.exchange(
+                    request_id=attempt.request_id,
+                    device_code=attempt.device_code,
+                    code_verifier=attempt.verifier,
+                )
+            except BlueWayAuthorizationPending:
+                return None, None
+            connection = self.complete_recovery_for_transport(
+                attempt_id=attempt_id, exchange=exchange,
+            )
+            with self._lock:
+                self._completed_attempts[key] = (
+                    connection.id, attempt.expires_at,
+                )
+            return connection, None
+        finally:
+            with self._lock:
+                self._exchanging_attempts.discard(key)
+
     def status(self) -> tuple[Connection | None, SyncRun | None]:
         if not self.settings.enabled:
             return None, None
         repository = self._repository()
         connection = repository.visible_connection()
+        if (
+            connection is not None
+            and connection.credential_status == "healthy"
+        ):
+            try:
+                connection, _store, _token = self._preflight_connection(
+                    repository, connection,
+                )
+            except BlueWayCredentialRecoveryRequired:
+                connection = repository.get_connection(connection.id)
         return connection, repository.active_run(connection.id) if connection else None
 
     def queue_sync(self) -> SyncRun:
         repository = self._repository()
         connection = repository.active_connection()
         if connection is None:
+            visible = repository.visible_connection()
+            if visible is not None and visible.credential_status != "healthy":
+                raise BlueWayCredentialRecoveryRequired(
+                    "BlueWay credential recovery is required"
+                )
             raise BlueWayNotFoundError("Integration resource not found")
+        self._preflight_connection(repository, connection)
         return repository.queue_sync(connection.id)
 
     def schedule_sync(self, run: SyncRun) -> None:
@@ -291,18 +524,24 @@ class BlueWayService:
             if connection.grant_generation != run.expected_generation:
                 raise CourseConflictError("BlueWay sync run is stale or no longer writable")
             self._assert_owner_current(connection.owner_user_id)
-            paths = get_personal_path_service(connection.owner_user_id)
-            store = CredentialStore(paths.get_integration_credentials_dir(), self.settings.master_key)
+            connection, store, primary_refresh_token = (
+                self._preflight_connection(repository, connection)
+            )
             rotation_id = repository.prepare_rotation(connection.id, expected_generation=run.expected_generation)
             try:
                 refresh_token = store.read_rotation_envelope(
                     owner_user_id=connection.owner_user_id, connection_id=connection.id,
                     scope_version=connection.scope_version, expected_rotation_request_id=rotation_id,
                 )
-            except CredentialError:
-                raise
+            except CredentialError as exc:
+                repository.require_credential_recovery(
+                    connection.id, expected_revision=connection.revision,
+                )
+                raise BlueWayCredentialRecoveryRequired(
+                    "BlueWay credential recovery is required"
+                ) from exc
             if refresh_token is None:
-                refresh_token = store.read(owner_user_id=connection.owner_user_id, connection_id=connection.id, scope_version=connection.scope_version)
+                refresh_token = primary_refresh_token
                 store.write_rotation_envelope(
                     owner_user_id=connection.owner_user_id, connection_id=connection.id,
                     scope_version=connection.scope_version, refresh_token=refresh_token,
@@ -336,9 +575,11 @@ class BlueWayService:
             repository.require_repair(connection.id, expected_generation=run.expected_generation)
             store.remove(connection.id)
             raise
+        except BlueWayCredentialRecoveryRequired:
+            raise
         except (
             BlueWayTransportError, SnapshotValidationError, ValueError, CourseConflictError,
-            CredentialError, BundleMaterializationError, BlueWayUnavailableError,
+            BundleMaterializationError, BlueWayUnavailableError,
         ) as exc:
             repository.fail_run(run.id, error_code=type(exc).__name__)
             raise
@@ -358,16 +599,15 @@ class BlueWayService:
         connection = repository.visible_connection()
         if connection is None:
             raise BlueWayNotFoundError("Integration resource not found")
-        paths = get_personal_path_service(connection.owner_user_id)
-        store = CredentialStore(paths.get_integration_credentials_dir(), self.settings.master_key)
+        connection, store, refresh_token = self._preflight_connection(
+            repository, connection,
+        )
         if connection.state == "active":
             connection = repository.begin_disconnect(connection.id, expected_revision=expected_revision)
         elif connection.state != "revocation_pending" or connection.revision != expected_revision:
             raise CourseConflictError("BlueWay connection revision is stale")
         # The local generation is already fenced. On remote failure the pending
         # row and encrypted credential are retained solely for this retry.
-        refresh_token = store.read(owner_user_id=connection.owner_user_id, connection_id=connection.id,
-                                   scope_version=connection.scope_version)
         self.transport.revoke(refresh_token=refresh_token)
         disconnected = repository.complete_disconnect(connection.id, expected_revision=connection.revision)
         store.remove(connection.id)
@@ -378,8 +618,15 @@ class BlueWayService:
         if not self.settings.enabled:
             return {"revoked": 0, "orphans": 0, "interrupted": 0}
         repository = self._repository_for_owner(owner_user_id)
-        paths = get_personal_path_service(owner_user_id)
-        store = CredentialStore(paths.get_integration_credentials_dir(), self.settings.master_key)
+        store = self._credential_store(owner_user_id)
+        visible = repository.visible_connection()
+        if visible is not None:
+            if visible.credential_status != "healthy":
+                return {"revoked": 0, "orphans": 0, "interrupted": 0}
+            try:
+                self._preflight_connection(repository, visible)
+            except BlueWayCredentialRecoveryRequired:
+                return {"revoked": 0, "orphans": 0, "interrupted": 0}
         revoked = 0
         for connection in repository.pending_connections():
             try:

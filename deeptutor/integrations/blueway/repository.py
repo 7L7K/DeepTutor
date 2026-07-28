@@ -31,6 +31,7 @@ class Connection:
     revision: int
     grant_generation: int
     credential_ref: str | None
+    credential_status: str
     created_at: float
     updated_at: float
     connected_at: float | None
@@ -87,6 +88,7 @@ class BlueWayRepository:
                     revision INTEGER NOT NULL DEFAULT 1 CHECK (revision >= 1),
                     grant_generation INTEGER NOT NULL DEFAULT 1 CHECK (grant_generation >= 1),
                     credential_ref TEXT,
+                    credential_status TEXT NOT NULL DEFAULT 'healthy',
                     created_at REAL NOT NULL, updated_at REAL NOT NULL,
                     connected_at REAL, last_sync_at REAL, disconnected_at REAL,
                     rotation_request_id TEXT, rotation_started_at REAL
@@ -138,6 +140,11 @@ class BlueWayRepository:
                 conn.execute("ALTER TABLE blueway_connections ADD COLUMN rotation_request_id TEXT")
             if "rotation_started_at" not in columns:
                 conn.execute("ALTER TABLE blueway_connections ADD COLUMN rotation_started_at REAL")
+            if "credential_status" not in columns:
+                conn.execute(
+                    """ALTER TABLE blueway_connections
+                       ADD COLUMN credential_status TEXT NOT NULL DEFAULT 'healthy'"""
+                )
 
     def create_active_connection(
         self, *, external_subject: str, scope_version: str, connection_id: str | None = None
@@ -151,8 +158,9 @@ class BlueWayRepository:
                 conn.execute(
                     """INSERT INTO blueway_connections
                        (id, owner_user_id, external_subject, state, scope_version, revision, grant_generation,
-                        credential_ref, created_at, updated_at, connected_at, last_sync_at, disconnected_at, rotation_request_id, rotation_started_at)
-                       VALUES (?, ?, ?, 'active', ?, 1, 1, ?, ?, ?, ?, NULL, NULL, NULL, NULL)""",
+                        credential_ref, credential_status, created_at, updated_at, connected_at,
+                        last_sync_at, disconnected_at, rotation_request_id, rotation_started_at)
+                       VALUES (?, ?, ?, 'active', ?, 1, 1, ?, 'healthy', ?, ?, ?, NULL, NULL, NULL, NULL)""",
                     (connection_id, self.owner_user_id, external_subject, scope_version,
                      f"blueway:{connection_id}", now, now, now),
                 )
@@ -168,7 +176,8 @@ class BlueWayRepository:
         with self.courses._write_lock, self.courses._connect() as conn:  # noqa: SLF001
             row = conn.execute(
                 """SELECT rotation_request_id, rotation_started_at FROM blueway_connections
-                   WHERE id = ? AND owner_user_id = ? AND state = 'active' AND grant_generation = ?""",
+                   WHERE id = ? AND owner_user_id = ? AND state = 'active'
+                     AND credential_status = 'healthy' AND grant_generation = ?""",
                 (connection_id, self.owner_user_id, expected_generation),
             ).fetchone()
             if row is None:
@@ -185,7 +194,9 @@ class BlueWayRepository:
         with self.courses._write_lock, self.courses._connect() as conn:  # noqa: SLF001
             result = conn.execute(
                 """UPDATE blueway_connections SET rotation_request_id = NULL, rotation_started_at = NULL, updated_at = ?
-                   WHERE id = ? AND owner_user_id = ? AND state = 'active' AND grant_generation = ? AND rotation_request_id = ?""",
+                   WHERE id = ? AND owner_user_id = ? AND state = 'active'
+                     AND credential_status = 'healthy' AND grant_generation = ?
+                     AND rotation_request_id = ?""",
                 (time.time(), connection_id, self.owner_user_id, expected_generation, request_id),
             )
         if result.rowcount != 1:
@@ -194,7 +205,8 @@ class BlueWayRepository:
     def active_connection(self) -> Connection | None:
         with self.courses._connect() as conn:  # noqa: SLF001
             row = conn.execute(
-                "SELECT * FROM blueway_connections WHERE owner_user_id = ? AND state = 'active'",
+                """SELECT * FROM blueway_connections WHERE owner_user_id = ?
+                   AND state = 'active' AND credential_status = 'healthy'""",
                 (self.owner_user_id,),
             ).fetchone()
         return Connection.from_row(row) if row else None
@@ -214,11 +226,101 @@ class BlueWayRepository:
         sql = "SELECT * FROM blueway_connections WHERE id = ? AND owner_user_id = ?"
         params: list[Any] = [connection_id, self.owner_user_id]
         if active_only:
-            sql += " AND state = 'active'"
+            sql += " AND state = 'active' AND credential_status = 'healthy'"
         with self.courses._connect() as conn:  # noqa: SLF001
             row = conn.execute(sql, params).fetchone()
         if row is None:
             raise BlueWayNotFoundError("Integration resource not found")
+        return Connection.from_row(row)
+
+    def require_credential_recovery(
+        self, connection_id: str, *, expected_revision: int | None = None,
+    ) -> Connection:
+        """Fence an unreadable local credential without changing its remote grant.
+
+        This additive status is deliberately separate from the provider grant
+        lifecycle in ``state``.  It invalidates every in-flight generation and
+        preserves the connection, credential reference, Courses, records,
+        sources, mastery, and history for an owner-approved recovery.
+        """
+        now = time.time()
+        with self.courses._write_lock, self.courses._connect() as conn:  # noqa: SLF001
+            conn.execute("BEGIN IMMEDIATE")
+            row = conn.execute(
+                """SELECT * FROM blueway_connections
+                   WHERE id = ? AND owner_user_id = ?
+                     AND state IN ('active', 'revocation_pending')""",
+                (connection_id, self.owner_user_id),
+            ).fetchone()
+            if row is None:
+                raise BlueWayNotFoundError("Integration resource not found")
+            if (
+                expected_revision is not None
+                and int(row["revision"]) != expected_revision
+            ):
+                raise CourseConflictError("BlueWay connection revision is stale")
+            if str(row["credential_status"]) == "healthy":
+                conn.execute(
+                    """UPDATE blueway_connections
+                       SET credential_status = 'recovery_required',
+                           revision = revision + 1,
+                           grant_generation = grant_generation + 1,
+                           rotation_request_id = NULL,
+                           rotation_started_at = NULL,
+                           updated_at = ?
+                       WHERE id = ? AND owner_user_id = ?
+                         AND credential_status = 'healthy'""",
+                    (now, connection_id, self.owner_user_id),
+                )
+                conn.execute(
+                    """UPDATE blueway_sync_runs
+                       SET state = 'cancelled',
+                           error_code = 'credential_recovery_required',
+                           updated_at = ?, completed_at = ?
+                       WHERE connection_id = ?
+                         AND state IN ('queued','fetching','validating','staging','indexing')""",
+                    (now, now, connection_id),
+                )
+            updated = conn.execute(
+                "SELECT * FROM blueway_connections WHERE id = ?",
+                (connection_id,),
+            ).fetchone()
+        assert updated is not None
+        return Connection.from_row(updated)
+
+    def complete_credential_recovery(
+        self, connection_id: str, *, expected_revision: int,
+        expected_generation: int,
+    ) -> Connection:
+        """Reactivate the same connection after an owner-approved same-subject grant."""
+        now = time.time()
+        with self.courses._write_lock, self.courses._connect() as conn:  # noqa: SLF001
+            result = conn.execute(
+                """UPDATE blueway_connections
+                   SET credential_status = 'healthy',
+                       revision = revision + 1,
+                       grant_generation = grant_generation + 1,
+                       rotation_request_id = NULL,
+                       rotation_started_at = NULL,
+                       updated_at = ?
+                   WHERE id = ? AND owner_user_id = ?
+                     AND state IN ('active', 'revocation_pending')
+                     AND credential_status = 'recovery_required'
+                     AND revision = ? AND grant_generation = ?""",
+                (
+                    now, connection_id, self.owner_user_id,
+                    expected_revision, expected_generation,
+                ),
+            )
+            if result.rowcount != 1:
+                raise CourseConflictError(
+                    "BlueWay credential recovery is stale"
+                )
+            row = conn.execute(
+                "SELECT * FROM blueway_connections WHERE id = ?",
+                (connection_id,),
+            ).fetchone()
+        assert row is not None
         return Connection.from_row(row)
 
     def begin_disconnect(self, connection_id: str, *, expected_revision: int) -> Connection:
@@ -229,7 +331,8 @@ class BlueWayRepository:
                 """UPDATE blueway_connections
                    SET state = 'revocation_pending', revision = revision + 1,
                        grant_generation = grant_generation + 1, updated_at = ?
-                   WHERE id = ? AND owner_user_id = ? AND state = 'active' AND revision = ?""",
+                   WHERE id = ? AND owner_user_id = ? AND state = 'active'
+                     AND credential_status = 'healthy' AND revision = ?""",
                 (now, connection_id, self.owner_user_id, expected_revision),
             )
             if result.rowcount != 1:
@@ -250,7 +353,8 @@ class BlueWayRepository:
             result = conn.execute(
                 """UPDATE blueway_connections
                    SET state = 'disconnected', credential_ref = NULL, updated_at = ?, disconnected_at = ?
-                   WHERE id = ? AND owner_user_id = ? AND state = 'revocation_pending' AND revision = ?""",
+                   WHERE id = ? AND owner_user_id = ? AND state = 'revocation_pending'
+                     AND credential_status = 'healthy' AND revision = ?""",
                 (now, now, connection_id, self.owner_user_id, expected_revision),
             )
             if result.rowcount != 1:
@@ -262,7 +366,9 @@ class BlueWayRepository:
     def pending_connections(self) -> list[Connection]:
         with self.courses._connect() as conn:  # noqa: SLF001
             rows = conn.execute(
-                "SELECT * FROM blueway_connections WHERE owner_user_id = ? AND state = 'revocation_pending'",
+                """SELECT * FROM blueway_connections WHERE owner_user_id = ?
+                   AND state = 'revocation_pending'
+                   AND credential_status = 'healthy'""",
                 (self.owner_user_id,),
             ).fetchall()
         return [Connection.from_row(row) for row in rows]
@@ -284,7 +390,8 @@ class BlueWayRepository:
             changed = conn.execute(
                 """UPDATE blueway_connections SET state = 'error', credential_ref = NULL,
                    grant_generation = grant_generation + 1, revision = revision + 1, updated_at = ?
-                   WHERE id = ? AND owner_user_id = ? AND state = 'active' AND grant_generation = ?""",
+                   WHERE id = ? AND owner_user_id = ? AND state = 'active'
+                     AND credential_status = 'healthy' AND grant_generation = ?""",
                 (now, connection_id, self.owner_user_id, expected_generation),
             )
             if changed.rowcount != 1:
@@ -301,7 +408,9 @@ class BlueWayRepository:
         with self.courses._write_lock, self.courses._connect() as conn:  # noqa: SLF001
             conn.execute("BEGIN IMMEDIATE")
             connection = conn.execute(
-                "SELECT id, grant_generation FROM blueway_connections WHERE id = ? AND owner_user_id = ? AND state = 'active'",
+                """SELECT id, grant_generation FROM blueway_connections
+                   WHERE id = ? AND owner_user_id = ? AND state = 'active'
+                     AND credential_status = 'healthy'""",
                 (connection_id, self.owner_user_id),
             ).fetchone()
             if connection is None:
@@ -406,7 +515,8 @@ class BlueWayRepository:
                        AND courses.owner_user_id = ? AND courses.state = 'active'
                      ) AND EXISTS (
                        SELECT 1 FROM blueway_connections WHERE id = ? AND owner_user_id = ?
-                       AND state = 'active' AND grant_generation = ?
+                       AND state = 'active' AND credential_status = 'healthy'
+                       AND grant_generation = ?
                      )""",
                 (now, source_id, course_id, operation_id, expected_source_revision,
                  self.owner_user_id, connection_id, self.owner_user_id, expected_generation),
@@ -423,7 +533,8 @@ class BlueWayRepository:
             conn.execute("BEGIN IMMEDIATE")
             live = conn.execute(
                 """SELECT 1 FROM blueway_connections WHERE id = ? AND owner_user_id = ?
-                   AND state = 'active' AND grant_generation = ?""",
+                   AND state = 'active' AND credential_status = 'healthy'
+                   AND grant_generation = ?""",
                 (connection_id, self.owner_user_id, expected_generation),
             ).fetchone()
             if live is None:
@@ -483,7 +594,8 @@ class BlueWayRepository:
             conn.execute("BEGIN IMMEDIATE")
             live = conn.execute(
                 """SELECT 1 FROM blueway_connections WHERE id = ? AND owner_user_id = ?
-                   AND state = 'active' AND grant_generation = ?""",
+                   AND state = 'active' AND credential_status = 'healthy'
+                   AND grant_generation = ?""",
                 (connection_id, self.owner_user_id, expected_generation),
             ).fetchone()
             course = conn.execute("SELECT 1 FROM courses WHERE id = ? AND owner_user_id = ? AND state = 'active'", (course_id, self.owner_user_id)).fetchone()
@@ -507,7 +619,9 @@ class BlueWayRepository:
         with self.courses._write_lock, self.courses._connect() as conn:  # noqa: SLF001
             conn.execute("BEGIN IMMEDIATE")
             current = conn.execute(
-                "SELECT grant_generation FROM blueway_connections WHERE id = ? AND owner_user_id = ? AND state = 'active'",
+                """SELECT grant_generation FROM blueway_connections
+                   WHERE id = ? AND owner_user_id = ? AND state = 'active'
+                     AND credential_status = 'healthy'""",
                 (connection_id, self.owner_user_id),
             ).fetchone()
             if current is None:
@@ -556,6 +670,7 @@ class BlueWayRepository:
             connection = conn.execute(
                 """SELECT id FROM blueway_connections
                    WHERE id = ? AND owner_user_id = ? AND state = 'active'
+                     AND credential_status = 'healthy'
                      AND grant_generation = ?""",
                 (connection_id, self.owner_user_id, expected_generation),
             ).fetchone()
@@ -595,6 +710,7 @@ class BlueWayRepository:
             row = conn.execute(
                 """SELECT r.* FROM blueway_sync_runs r JOIN blueway_connections c ON c.id = r.connection_id
                    WHERE r.id = ? AND c.owner_user_id = ? AND c.state = 'active'
+                     AND c.credential_status = 'healthy'
                      AND c.grant_generation = r.expected_generation
                      AND r.state IN ('queued','fetching','validating','staging','indexing')""",
                 (run_id, self.owner_user_id),
@@ -634,6 +750,7 @@ class BlueWayRepository:
                 """SELECT r.*, c.id AS checked_connection_id, c.external_subject FROM blueway_sync_runs r
                    JOIN blueway_connections c ON c.id = r.connection_id
                    WHERE r.id = ? AND c.owner_user_id = ? AND c.state = 'active'
+                     AND c.credential_status = 'healthy'
                      AND c.grant_generation = r.expected_generation
                      AND r.state IN ('validating','staging')""",
                 (run_id, self.owner_user_id),
@@ -810,6 +927,7 @@ class BlueWayRepository:
             row = conn.execute(
                 """SELECT r.* FROM blueway_sync_runs r JOIN blueway_connections c ON c.id = r.connection_id
                    WHERE r.id = ? AND c.owner_user_id = ? AND c.state = 'active'
+                     AND c.credential_status = 'healthy'
                      AND c.grant_generation = r.expected_generation AND r.state = 'indexing'""",
                 (run_id, self.owner_user_id),
             ).fetchone()

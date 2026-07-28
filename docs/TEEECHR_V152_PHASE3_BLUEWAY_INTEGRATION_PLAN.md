@@ -1004,6 +1004,9 @@ does not imply that an unchecked live surface works.
       TEEECHR profiles, BlueWay accounts, and same-titled Courses.
 - [x] Rerun the exact TEEECHR full Python/web/type/build validation at the local
       closeout commit and record its exact SHA externally.
+- [x] Implement the local persistent-secret authority and owner-approved
+      same-subject credential-recovery contract with provider-free adversarial
+      coverage. This does not claim hosted secret rotation or live recovery.
 - [ ] Complete final Phase 3A closeout after persistent credential recovery,
       two-account browser, disposable revoke/reconnect, and fixture gates pass.
 - [x] Pushed both reviewed branches after the final backcheck. BlueWay tracks the
@@ -1011,15 +1014,16 @@ does not imply that an unchecked live surface works.
       user's `fork/feature/teeechr-v152-phase3-blueway-integration`, never upstream
       `origin`.
 
-Current classification after the 2026-07-28 receipt: **source implementation,
+Current classification: **source implementation,
 hosted database/Edge, BlueWay native consent, real BlueWay transcription,
 two-owner API pairing/sync, bounded provider smoke, real transcript-to-TEEECHR
 ingestion with deterministic citation, passive transcript prompt-injection
 handling, fresh exact-branch validation, reviewed commits, and prior remote
-branch publication pass. Persistent credential recovery, current two-user browser
-proof, disposable revoke/reconnect, fixture retirement, and final Phase 3A
-closeout remain open. Upstream integration and historical Practice/Flashcard data
-migration are explicitly outside Phase 3A.**
+branch publication pass. Local recovery source and deterministic tests pass;
+hosted secret rotation and live primary recovery remain gated. Current two-user
+browser proof, disposable revoke/reconnect, fixture retirement, and final Phase
+3A closeout remain open. Upstream integration and historical Practice/Flashcard
+data migration are explicitly outside Phase 3A.**
 
 ### Historical local reviewed commits
 
