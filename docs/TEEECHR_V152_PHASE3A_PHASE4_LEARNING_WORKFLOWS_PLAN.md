@@ -1,15 +1,39 @@
 # TEEECHR v1.5.2 Phase 3A and Phase 4 — Close BlueWay, Restore Learning Workflows
 
-Status: planning authority; documentation-only, implementation not started
+Status: **Phase 3A remains open.** The original roadmap below remains the Phase 4
+planning authority, but its pre-closeout branch/commit statements are superseded by
+the 2026-07-27 receipt below.
 
-Current implementation branch:
-`feature/teeechr-v152-phase3-blueway-integration`
+### 2026-07-27 Phase 3A closeout-repair receipt
 
-Current published implementation commit:
-`21362314cafc8e2d5ac993a8878e01d5977bba94`
-
-Current foundation:
-DeepTutor v1.5.2 at `b728354863540466f5410bec3530eb55a9fe0edc`
+- TEEECHR authority is
+  `/Users/home/Desktop/2k26/teeech/DeepTutor-v1.5.2-baseline` on
+  `feature/teeechr-v152-phase3a-closeout`. The reviewed source/test repair tip is
+  `624f4a6a` (three local commits); this documentation receipt follows it. The
+  branch is not pushed or a Phase 3A completion claim.
+- Canonical BlueWay authority is `/Users/home/Developer/BlueWay-local`, `main` at
+  `1752e5f`, one local commit ahead of `origin/main`. Its user-owned dirty worktree
+  is preserved and read-only for this lane. The isolated Phase 3A proof worktree is
+  `/Users/home/Desktop/2k26/teeech/BlueWay-phase3a-transcript-proof` on
+  `feature/teeechr-phase3a-transcript-proof` at `1752e5f`; this receipt makes no
+  claim about its current cleanliness.
+- The historical-fork safety branch remains preserved. Upstream v1.5.5 integration
+  remains deferred; no push, merge, deployment, hosted mutation, or paid/provider
+  call is authorized by this closeout lane.
+- Local source/validation receipt: backend `2861 passed, 6 skipped, 9 warnings`;
+  focused repaired suite `119 passed`; web node suite `168 passed`; `tsc` passed;
+  Next production build emitted `52` routes; lint reported `0` errors and `101`
+  warnings; i18n parity passed (audit findings informational); Ruff and
+  `git diff --check` passed; independent review found no P0-P2 issue.
+- The repair set adds per-round tool-schema authority with atomic rejection of an
+  unauthorized tool batch; Course mastery suppresses build/assess and requires a
+  private, real `ask_user` reply receipt; no-speech transcript omission; a
+  production-shaped, provider-free import-to-Course-Chat passive-content proof; and
+  auth-setting test isolation.
+- Still open: a current non-empty real BlueWay export/sync into the exact private
+  `CourseSource` with citation receipt, two-account browser isolation, disposable
+  revoke/reconnect, and confirmed fixture cleanup. These gates prevent Phase 3A
+  completion.
 
 Last updated: 2026-07-27
 
@@ -50,7 +74,7 @@ Three histories remain distinct:
 | History | Current authority | Purpose | Rule |
 | --- | --- | --- | --- |
 | Historical product fork | `/Users/home/Desktop/2k26/teeech/DeepTutor`, `safety/teeechr-pre-v152-20260720` at `3c2d5a47` | Behavioral and UX reference for Practice, quizzes, Flashcards, access onboarding, and learner actions | Preserve; inspect and selectively reimplement behavior; never merge wholesale |
-| Current Course/BlueWay product | `/Users/home/Desktop/2k26/teeech/DeepTutor-v1.5.2-baseline`, `feature/teeechr-v152-phase3-blueway-integration` at `21362314` | Active implementation authority for Phase 2, Phase 3A, and Phase 4 | Build and validate here or on a reviewed descendant branch |
+| Current Course/BlueWay product | `/Users/home/Desktop/2k26/teeech/DeepTutor-v1.5.2-baseline`, `feature/teeechr-v152-phase3a-closeout`; reviewed source/test tip `624f4a6a`, followed by this documentation receipt | Active implementation authority for Phase 3A; Phase 4 remains planned | Validate and close only the listed open gates; do not treat the local branch as a published completion |
 | Moving upstream | `HKUDS/DeepTutor` `main`, observed at v1.5.5 commit `47d05809` on 2026-07-27 | Future compatibility source | Monitor only; no integration in this plan |
 
 Before Phase 4 implementation, preserve the historical fork `main` with an
@@ -312,6 +336,66 @@ authority.
 | Access code | `deeptutor/api/routers/access.py:claim_access`, `AccessManager` | v1.5.2 authenticated users and role checks | Defer optional invitation/onboarding; never use access cookie as ownership | Claim results in a normal authenticated account before resource access |
 | NCE behavior | Historical domain normalization and prompts | General Course objectives/modules | Keep NCE only as an optional template | Biology and Calculus use the same ownership and persistence contracts |
 
+## 7A. Phase 4 code-seam decisions
+
+The 2026-07-27 read-only current/historical implementation audit adds these
+constraints before P4-01 may begin. They refine the task breakdown; they do not
+authorize Phase 4 implementation while Phase 3A remains open.
+
+### Course database evolution
+
+- `courses.db` currently has no schema-version ledger. Its existing
+  `CREATE TABLE IF NOT EXISTS` statements and one ad hoc column repair are not
+  sufficient provenance for six assessment/Flashcard tables.
+- P4-01 must first add a transactional, idempotent Course-schema migration
+  ledger. Existing databases may adopt the baseline only after the runner verifies
+  the expected Course/source tables, columns, indexes, ownership fields, and
+  foreign-key behavior. Partial or unknown shapes fail closed rather than being
+  silently relabeled.
+- Each migration records an immutable version/name/checksum receipt and runs under
+  the repository write lock with foreign keys enabled. Fresh-database replay and
+  upgrade replay from the Phase 3A schema must converge to the same effective
+  definitions.
+- Assessment tables live in the same per-user `courses.db`. They must reuse the
+  same connection and write-lock authority as `CourseRepository`; do not create a
+  second per-file repository with an independent lock or a caller-supplied owner.
+
+### Repository, API, and derived learning evidence
+
+- Put assessment operations behind a bounded `CourseAssessmentRepository` /
+  `CourseAssessmentService` seam composed from the authenticated Course repository.
+  API callers never provide `owner_user_id`, filesystem paths, KB names, or display
+  titles as authority.
+- Add a dedicated Course Practice/Flashcard router surface that reuses the existing
+  non-enumerating `404`, optimistic `409`, archive fence, and
+  `course_operation_lock` behavior. Do not overload source-ingestion operations or
+  generic `/api/v1/learning` deletion routes.
+- The new assessment tables are authoritative for Practice sets, immutable
+  questions, attempts/items, decks/cards, and reviews. `LearningProgress` under
+  `lp_<course_id>` receives only idempotent derived grading/mastery/error/review
+  evidence; it is not a second product-attempt store.
+- `LearningService.grade_and_record`, deterministic grading, mastery computation,
+  and the review scheduler are reusable. The adapter idempotency key is the
+  immutable assessment attempt-item identity. Flashcard ratings never call the
+  mastery adapter directly.
+
+### Frontend and historical behavior boundary
+
+- Add a Course-owned Practice workspace and Flashcard workflow using
+  `CourseContext`, `course-api.ts`, and the active immutable user/Course identity.
+  Do not turn the existing Book quiz/Flashcard blocks or generic Learning page into
+  the persistence authority.
+- Preserve the historical user behaviors: create/resume/review quiz attempts,
+  wrong-answer remediation, source-trust badges, persistent Flashcard study,
+  missed-card loops, and learner action chips.
+- Reimplement rather than port the historical storage and authority: tester-cookie
+  ownership, tester-prefixed IDs/KB names, destructive result replacement/reset,
+  repeat-submit semantics, client/model grading authority, NCE-only prompts,
+  uncited topic generation, and model-written coaching state are rejected.
+- The first implementation slice remains manual Practice and manual Flashcards.
+  Provider-backed generation, model session analysis, historical-data import, and
+  upstream reconciliation stay behind their separate gates.
+
 ## 8. Phase 3A task breakdown
 
 ### P3A-01 — Reconcile Phase 3 truth
@@ -322,8 +406,8 @@ authority.
   as `proved`, `partially proved`, `open`, or `deferred`.
 - **Acceptance criteria:**
   - stale task-level boxes no longer contradict the later proof ledger;
-  - BlueWay `main` is recorded at `c402753`;
-  - TEEECHR remains at `21362314`;
+  - the receipt records the current BlueWay and TEEECHR authorities rather than
+    historical branch-publication snapshots;
   - upstream integration is explicitly out of scope;
   - no runtime or deployment claim exceeds its evidence.
 - **Doc alignment:** `docs/TEEECHR_V152_PHASE3_BLUEWAY_INTEGRATION_PLAN.md`.
@@ -342,6 +426,10 @@ authority.
   - no paid provider call occurs.
 - **Doc alignment:** Phase 3 verification plan.
 - **Risk / unknown:** dependency or upstream service drift since 2026-07-22.
+
+**2026-07-27 receipt:** local backend, focused repair, web, TypeScript, build,
+lint, i18n, Ruff, and diff checks passed as recorded above. This completes neither
+the real transcript/citation gate nor browser/revoke/fixture gates.
 
 ### P3A-03 — Prove a real transcript reaches private Course Knowledge
 
@@ -373,6 +461,11 @@ authority.
   `deeptutor/multi_user/knowledge_access.py`.
 - **Risk / unknown:** source-level tool fences exist, but the exact imported
   transcript-to-Chat runtime has not been captured as one proof.
+
+**2026-07-27 repair proof:** production-shaped provider-free import-to-Course-Chat
+coverage satisfies this local passive-content/tool-authority gate: malicious-looking
+imported text remains passive and cannot obtain tool authority. It is not the
+required current real BlueWay transcript-to-CourseSource/citation receipt in P3A-03.
 
 ### P3A-05 — Complete current two-user browser isolation
 
@@ -654,7 +747,9 @@ external BlueWay title, or client-selected filesystem path.
 - The Phase 3 plan and proof ledger no longer contradict each other.
 - Current TEEECHR branch validation passes.
 - One real non-empty transcript reaches the correct private Course Knowledge.
-- Transcript prompt text remains passive in the exact Course Chat/RAG runtime.
+- Provider-free production-shaped Course Chat proof shows imported transcript-like
+  text remains passive and cannot obtain tool authority; P3A-03 still requires the
+  separate current real transcript/CourseSource/citation receipt.
 - Current two-user browser isolation and disposable disconnect/reconnect pass.
 - Fixture cleanup is reviewed separately from active beta authority.
 - Final closeout records all remaining unproved surfaces.

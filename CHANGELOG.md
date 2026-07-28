@@ -29,6 +29,17 @@
 
 ### Changed
 
+- Phase 3A closeout repairs now bind every tool batch to the current round's
+  authorized schema and reject an unauthorized batch atomically. Course mastery
+  turns suppress build/assess actions and require a private, real `ask_user` reply
+  receipt; valid no-speech transcripts are omitted; and auth-setting tests no longer
+  leak settings state across tests.
+- Added a production-shaped, provider-free import-to-Course-Chat proof that imported
+  transcript-like instructions remain passive content and cannot acquire tool
+  authority. This is local proof only: a current real BlueWay export/sync-to-
+  CourseSource/citation receipt, browser isolation, revoke/reconnect, fixture
+  cleanup, and final Phase 3A closeout remain open.
+
 - Reconciled the Phase 3 BlueWay checklist with the later hosted, native-consent,
   database-checkpoint, transcription, provider-smoke, and branch-publication
   evidence. Added the Phase 3A closeout and Phase 4 Course-owned Practice/Quiz/
@@ -134,6 +145,13 @@
   so the single-process Course lifecycle contract cannot be bypassed accidentally.
 
 ### Validation
+
+- Current local Phase 3A receipt: backend `2861 passed, 6 skipped, 9 warnings`;
+  focused repaired suite `119 passed`; web node suite `168 passed`; `tsc` pass; Next
+  production build with `52` routes; lint `0` errors/`101` warnings; i18n parity
+  pass with informational audit findings; Ruff and `git diff --check` pass; and an
+  independent review found no P0-P2 issue. No paid/provider call, deployment, push,
+  merge, or Phase 3A-complete claim is implied.
 
 - Added deterministic BlueWay protocol, credential-tamper, snapshot-boundary,
   same-title isolation, pairing-pending, replay, reconnect, archive/removal, retry,

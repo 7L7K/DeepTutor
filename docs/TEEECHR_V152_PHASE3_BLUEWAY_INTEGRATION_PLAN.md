@@ -1,15 +1,42 @@
 # TEEECHR v1.5.2 Phase 3 — BlueWay Private Academic Integration
 
-Status: implemented and published on the reviewed feature branch; final Phase 3A
-runtime/documentation closeout remains open
-TEEECHR base: `8d297d24b6a458f49c59e54ed457487cccaf8f51`
-TEEECHR branch: `feature/teeechr-v152-phase3-blueway-integration`
+Status: **implemented source foundation with Phase 3A still open.** The historical
+implementation and hosted ledgers below are retained as evidence, but their
+branch/publication claims are not current authority.
+
+### 2026-07-27 superseding Phase 3A receipt
+
+- TEEECHR is `/Users/home/Desktop/2k26/teeech/DeepTutor-v1.5.2-baseline` on
+  `feature/teeechr-v152-phase3a-closeout`; reviewed source/test tip `624f4a6a`
+  contains three local commits and this documentation receipt follows it. BlueWay
+  canonical is `/Users/home/Developer/BlueWay-local`, `main` at
+  `1752e5f`, one local commit ahead of `origin/main`, with preserved user-owned
+  dirty work. The isolated BlueWay proof worktree is
+  `/Users/home/Desktop/2k26/teeech/BlueWay-phase3a-transcript-proof` on
+  `feature/teeechr-phase3a-transcript-proof` at `1752e5f`; its current cleanliness
+  is not asserted here.
+- The local repair receipt is: `2861 passed, 6 skipped, 9 warnings` backend;
+  `119 passed` focused repairs; `168 passed` web-node tests; `tsc` pass; Next
+  production build with `52` routes; lint `0` errors/`101` warnings; i18n parity
+  pass with informational audit findings; Ruff and `git diff --check` pass; and
+  independent review with no P0-P2 finding.
+- Repairs fence every tool batch to the round's authorized schema and reject an
+  unauthorized batch atomically; mastery turns suppress build/assess and require a
+  private real `ask_user` reply receipt; no-speech transcripts are omitted; the
+  production-shaped provider-free import-to-Course-Chat path proves imported text
+  remains passive; and auth-setting tests isolate their settings state.
+- Phase 3A remains open for a real current non-empty export/sync to the exact private
+  `CourseSource` with citation receipt, current two-account browser isolation,
+  disposable revoke/reconnect, and confirmed fixture cleanup. No paid/provider
+  call, deployment, push, merge, or hosted mutation occurred in this repair lane.
+
+TEEECHR v1.5.2 foundation: `b728354863540466f5410bec3530eb55a9fe0edc`
+Historical Phase 3 implementation base: `8d297d24b6a458f49c59e54ed457487cccaf8f51`
 Historical BlueWay Phase 3 base: `d379385b5bebafc024b754432ddf546fb8cb2bfe`
-Current BlueWay authority: canonical `main` at
-`c402753d267039c590efc9c6565d949fc4802089`
 Last updated: 2026-07-27
 
-2026-07-27 reconciliation:
+Historical 2026-07-27 reconciliation (superseded as current authority by the
+Phase 3A receipt above):
 
 - BlueWay's surviving integration source is now consolidated on canonical
   BlueWay `main` at `c402753d267039c590efc9c6565d949fc4802089`.
@@ -967,7 +994,7 @@ does not imply that an unchecked live surface works.
       user's `fork/feature/teeechr-v152-phase3-blueway-integration`, never upstream
       `origin`.
 
-Current classification: **source implementation, hosted database/Edge,
+Historical classification at the time of the previous ledger: **source implementation, hosted database/Edge,
 BlueWay native consent, real BlueWay transcription, two-owner API pairing/sync,
 bounded provider smoke, reviewed commits, and remote branch publication pass.
 Real transcript-to-TEEECHR ingestion, exact transcript prompt-injection proof,
@@ -975,7 +1002,7 @@ current two-user browser proof, fixture retirement, fresh exact-branch TEEECHR
 validation, and final Phase 3A closeout remain open. Upstream integration and
 historical Practice/Flashcard data migration are explicitly outside Phase 3A.**
 
-### Local reviewed commits
+### Historical local reviewed commits
 
 TEEECHR (`feature/teeechr-v152-phase3-blueway-integration`):
 
@@ -991,8 +1018,7 @@ BlueWay (pre-enablement commits, originally on `feature/teeechr-blueway-integrat
 - `19d8b53` — exact reviewed default-off Class Capture transcription foundation;
 - `b1551dc` — hosted SQL/Edge security repairs and completed-transcript export.
 
-The runtime repairs are committed and published after the final backcheck; hosted
-migrations, three Edge Functions, the seeded client, and the Expo preview are enabled
-as recorded above. Neither branch is merged. The canonical BlueWay Class Capture
-checkout remained untouched; its exact default-off transcription patch was copied
-byte-for-byte into the isolated integration worktree before hosted migration.
+The preceding publication/runtime statements are historical and are superseded for
+current authority by the 2026-07-27 Phase 3A receipt. Neither branch is merged;
+the canonical BlueWay worktree remains read-only in this lane. The remaining live
+gates listed in that receipt are not satisfied by the historical hosted proof.
