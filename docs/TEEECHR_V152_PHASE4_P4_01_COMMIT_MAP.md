@@ -1,6 +1,6 @@
 # TEEECHR v1.5.2 Phase 4 P4-01 Commit Map
 
-Status: **planned; no Phase 4 implementation commit exists**
+Status: **P4-01 implemented locally; no push, merge, or deployment**
 
 Starting point: local accepted commit
 `af5eab79ec7b918242b228de67af358944323fd9`
@@ -29,7 +29,17 @@ Exit gate:
 - manifest matches fresh current Course-only and Course-plus-BlueWay fixtures;
 - documentation contains no competing P4-01 sequence.
 
-## Commit 2 — Add P4-01A migration kernel
+## Implemented commit 2 — P4-01A/B/C atomic database authority
+
+Actual commit: `1cc75f2f`
+
+The planned commits 2 through 4 were intentionally delivered as one atomic
+green commit. The migration runner, approved baseline, repository cutover, and
+their tests form one bootstrap authority; splitting them would have created
+intermediate commits where production repositories and validation fixtures
+disagreed about which schema path was authoritative.
+
+### P4-01A migration kernel
 
 Ownership:
 
@@ -47,7 +57,7 @@ Exit gate:
 - no domain table other than `schema_migrations` is newly designed;
 - existing Course/BlueWay behavior remains green.
 
-## Commit 3 — Add P4-01B baseline adoption
+### P4-01B baseline adoption
 
 Ownership:
 
@@ -63,7 +73,7 @@ Exit gate:
 - domain row digests and identity sets remain unchanged;
 - the BlueWay replay guard remains effective.
 
-## Commit 4 — Add P4-01C single bootstrap authority
+### P4-01C single bootstrap authority
 
 Ownership:
 
@@ -79,7 +89,7 @@ Exit gate:
 - repeated startup performs no schema write;
 - affected legacy tests pass.
 
-## Commit 5 — P4-01 closeout
+## Commit 3 — P4-01 closeout
 
 Ownership:
 
@@ -96,5 +106,6 @@ Exit gate:
   entered the slice;
 - push/merge decision is explicit.
 
-Every commit must leave the repository green and independently reviewable. Do
-not collapse the sequence into one large database-foundation commit.
+Every committed state remains green and independently reviewable. The
+implementation is atomic for the authority-boundary reason above; later Phase
+4 slices return to one behavior slice per reviewed local commit.

@@ -1,6 +1,6 @@
 # TEEECHR v1.5.2 Phase 3A and Phase 4 — Close BlueWay, Restore Learning Workflows
 
-Status: **Phase 3A engineering closure accepted; Phase 4 planning is active.**
+Status: **Phase 3A accepted; Phase 4 implementation active; P4-01 complete.**
 The real two-owner Apple/device flow, hosted fixture retirement, publication,
 deployment, and release certification remain parked. They do not block Phase 4,
 and Phase 4 must not imply that those distinct surfaces passed.
@@ -105,8 +105,9 @@ The P4-01 subordinate artifacts are:
 - `docs/TEEECHR_V152_PHASE4_P4_01_TEST_SPEC.md`
 - `docs/TEEECHR_V152_PHASE4_P4_01_COMMIT_MAP.md`
 
-They provide executable detail for this plan but do not override it. P4-01 is
-planning-only until a Phase 4 implementation branch is explicitly begun.
+They provide executable detail for this plan but do not override it. P4-01 was
+implemented on the local Phase 4 branch by `1cc75f2f`; P4-02A is the next
+active slice.
 
 ## 1. Goal and non-goals
 

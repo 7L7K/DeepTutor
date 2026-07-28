@@ -1,19 +1,19 @@
 # TEEECHR v1.5.2 Phase 4 P4-01 Test Specification
 
-Status: **approved test contract; tests not implemented**
+Status: **implemented and qualified on the local Phase 4 branch**
 
 Parent contract:
 `docs/TEEECHR_V152_PHASE4_DATABASE_CONTRACT.md`
 
 ## Test locations
 
-Expected implementation layout:
+Implemented layout:
 
 ```text
 tests/courses/migrations/test_runner.py
 tests/courses/migrations/test_baseline_adoption.py
-tests/courses/migrations/test_bootstrap_authority.py
-tests/courses/migrations/fixtures/
+tests/courses/migrations/test_packaging.py
+tests/integrations/blueway/test_repository_bootstrap.py
 ```
 
 Fixtures must be constructed from checked-in schema artifacts or explicit
@@ -94,5 +94,25 @@ Each P4-01 commit must run:
 5. `git diff --check`.
 
 The P4-01 closeout additionally runs the repository's broader affected backend
-suite and the section-closeout backcheck. No paid provider, hosted database,
-BlueWay deployment, or real-user database is involved.
+suite and the section-closeout backcheck. No paid provider, hosted database, or
+BlueWay deployment is involved. Five existing private databases were inspected
+read-only and replayed only through disposable SQLite backup copies; all domain
+row digests remained identical and the second startup was a no-op.
+
+## 2026-07-28 implementation receipt
+
+- Contract commit: `1f0bbf38`
+- Atomic implementation commit: `1cc75f2f`
+- Focused migration/Course/BlueWay/recovery suite: `65 passed`
+- Five disposable real-schema upgrade copies: all adopted once, all domain
+  rows preserved, all replayed as no-ops
+- Root and CLI wheels: both contain
+  `deeptutor/courses/migrations/sql/0000_phase3a_baseline.sql`
+- Ruff and `git diff --check`: passed
+- Independent Sol review: no unresolved P0-P2; its P3 collation,
+  composite-foreign-key, and manifest-provenance findings were repaired and
+  covered before this receipt
+- A broader combined Course/BlueWay run reached `137 passed` before one
+  pre-existing five-second threaded timing test failed; that exact test passed
+  alone. This is recorded as timing-suite debt, not hidden as a green full
+  affected-suite claim.
