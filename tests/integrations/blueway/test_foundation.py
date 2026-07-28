@@ -80,8 +80,22 @@ def _snapshot() -> dict:
             "class_links": [], "course_profiles": [], "syllabus_facts": [], "source_texts": [],
             "capture_metadata": [], "capture_notes": [],
             "transcripts": [
-                {"id": "tx-1", "course_id": "course-same-title-a", "layer": "raw", "segments": []},
-                {"id": "tx-2", "course_id": "course-same-title-b", "layer": "raw", "segments": []},
+                {
+                    "id": "tx-1",
+                    "course_id": "course-same-title-a",
+                    "layer": "raw",
+                    "segments": [
+                        {"start_ms": 0, "end_ms": 1, "text": "Course transcript."}
+                    ],
+                },
+                {
+                    "id": "tx-2",
+                    "course_id": "course-same-title-b",
+                    "layer": "raw",
+                    "segments": [
+                        {"start_ms": 0, "end_ms": 1, "text": "Course transcript."}
+                    ],
+                },
             ],
         }, "unavailable": [],
     }

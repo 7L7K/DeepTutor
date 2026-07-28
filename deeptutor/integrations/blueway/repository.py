@@ -371,8 +371,16 @@ class BlueWayRepository:
             ).fetchall()
         grouped: dict[tuple[str, str], list[dict[str, Any]]] = {}
         for row in rows:
+            record = json.loads(row["payload_json"])
+            # Preserve the validated receipt, but never grant an empty capture
+            # retrieval authority merely because it belongs to a mapped Course.
+            if row["record_kind"] == "transcripts" and not any(
+                isinstance(segment, dict) and str(segment.get("text") or "").strip()
+                for segment in record.get("segments", [])
+            ):
+                continue
             grouped.setdefault((str(row["course_id"]), str(row["external_course_id"])), []).append(
-                {"kind": row["record_kind"], "record": json.loads(row["payload_json"])}
+                {"kind": row["record_kind"], "record": record}
             )
         return [(course_id, external_course_id, records) for (course_id, external_course_id), records in sorted(grouped.items())]
 
