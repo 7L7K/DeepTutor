@@ -1,6 +1,6 @@
 # TEEECHR v1.5.2 Phase 3A and Phase 4 — Close BlueWay, Restore Learning Workflows
 
-Status: **Phase 3A accepted; Phase 4 implementation active; P4-01 and P4-02A complete.**
+Status: **Phase 3A accepted; Phase 4 implementation active; P4-01 through P4-02B complete.**
 The real two-owner Apple/device flow, hosted fixture retirement, publication,
 deployment, and release certification remain parked. They do not block Phase 4,
 and Phase 4 must not imply that those distinct surfaces passed.
@@ -107,7 +107,7 @@ The P4-01 subordinate artifacts are:
 
 They provide executable detail for this plan but do not override it. P4-01 was
 implemented on the local Phase 4 branch by `1cc75f2f`. P4-02A was implemented
-by `6bdb5179`; P4-02B is the next active slice.
+by `6bdb5179`, and P4-02B by `d613b8ad`; P4-03 is the next active slice.
 
 ## 1. Goal and non-goals
 
@@ -781,6 +781,8 @@ Status: **completed for the local engineering boundary by `6bdb5179`.**
 
 ### P4-02B — Attempt persistence
 
+Status: **completed for the local engineering boundary by `d613b8ad`.**
+
 - **Scope:** introduce QuizAttempt, QuizAttemptItem, and QuizAttemptAnswer
   migration plus start/resume/autosave/abandon/submit behavior.
 - **Inputs / outputs:** exact revision binding, presentation order, randomized
@@ -793,6 +795,30 @@ Status: **completed for the local engineering boundary by `6bdb5179`.**
   - restart preserves in-progress and submitted history.
 - **Doc alignment:** historical `practice.py` behavior and current Course repository.
 - **Risk / unknown:** autosave must not overwrite newer answers from another tab.
+- **Implementation receipt:**
+  - migration `0002_quiz_attempts.sql` is checksum-ledgered and packaged in
+    both wheels; a prior exact P4-02A database applies only `0002`, preserves
+    every Course/Practice row, creates empty attempt tables, and then replays
+    as a no-op;
+  - start authority requires the current ready Practice revision and derives
+    all question membership and order server-side; one in-progress attempt is
+    permitted per owner and Practice set;
+  - successor publication and Course/Practice archive atomically archive
+    in-progress attempts, preserve their immutable revision history, and never
+    revive them on restore;
+  - answers use exact-revision CAS writes and durable idempotency receipts that
+    replay the original response, revision, and timestamp even after later
+    autosaves; submission and abandonment are idempotent terminal operations;
+  - schema triggers enforce immutable bindings/presentation, monotonic answer
+    and attempt revisions, chronological timestamps, applied-answer receipt
+    consistency, no deletes, uniform owned-parent relationships, and reserve
+    grading fields for P4-03;
+  - focused Practice/migration/BlueWay proof passed `69` tests; the broader
+    Course plus BlueWay bootstrap/credential-recovery proof passed `153` tests
+    with `6` existing warnings; Ruff and diff hygiene passed;
+  - independent Terra review replayed timestamp, CAS, receipt-forgery,
+    uniform-404, successor, archive, and concurrency attacks and returned PASS
+    with no P0-P2 finding.
 
 ### P4-03 — Deterministic grading and mastery adapter
 
