@@ -11,7 +11,9 @@ from deeptutor.api import main as api_main
 def test_cors_allows_remote_http_origins_when_auth_disabled(
     monkeypatch,
 ) -> None:
-    monkeypatch.delenv("AUTH_ENABLED", raising=False)
+    # Explicitly disable auth for this test. Removing the environment variable
+    # must not silently override the persisted runtime setting.
+    monkeypatch.setenv("AUTH_ENABLED", "false")
     monkeypatch.delenv("CORS_ORIGIN", raising=False)
     monkeypatch.delenv("CORS_ORIGINS", raising=False)
     monkeypatch.setenv("FRONTEND_PORT", "3782")

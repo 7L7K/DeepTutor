@@ -78,6 +78,17 @@ def test_runtime_process_env_is_explicit_override(tmp_path: Path) -> None:
     assert _read_json(service.path_for("integrations"))["pocketbase_port"] == 8090
 
 
+def test_runtime_process_env_false_overrides_persisted_auth_enabled(tmp_path: Path) -> None:
+    service = RuntimeSettingsService(
+        tmp_path / "settings",
+        process_env={"AUTH_ENABLED": "false"},
+    )
+    service.save_auth({"enabled": True, "username": "admin"})
+
+    assert service.load_auth()["enabled"] is False
+    assert _read_json(service.path_for("auth"))["enabled"] is True
+
+
 def test_render_environment_uses_json_backed_runtime_names(monkeypatch, tmp_path: Path) -> None:
     _clear_runtime_env(monkeypatch)
     service = RuntimeSettingsService(tmp_path / "settings")
