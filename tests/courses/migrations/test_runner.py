@@ -95,8 +95,9 @@ def test_receipt_uses_exact_artifact_bytes_and_tamper_blocks_before_writes(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     path = tmp_path / "courses.db"
-    assert ensure_course_schema(path) == (0,)
-    artifact = discover_migrations()[0]
+    assert ensure_course_schema(path) == (0, 1)
+    artifacts = discover_migrations()
+    artifact = artifacts[0]
     with open_course_connection(path) as conn:
         receipt_before = tuple(conn.execute(
             "SELECT version, name, checksum_sha256 FROM schema_migrations"
@@ -108,7 +109,11 @@ def test_receipt_uses_exact_artifact_bytes_and_tamper_blocks_before_writes(
     assert receipt_before == (artifact.version, artifact.name, artifact.checksum_sha256)
     tampered = replace(artifact, content=artifact.content + b"\n-- changed bytes\n")
     tampered = replace(tampered, checksum_sha256=runner.hashlib.sha256(tampered.content).hexdigest())
-    monkeypatch.setattr(runner, "discover_migrations", lambda: (tampered,))
+    monkeypatch.setattr(
+        runner,
+        "discover_migrations",
+        lambda: (tampered, *artifacts[1:]),
+    )
 
     with pytest.raises(CourseMigrationError, match="receipt mismatch"):
         ensure_course_schema(path)
@@ -230,9 +235,9 @@ def test_concurrent_startup_applies_once_and_other_wrapper_observes_receipt(
 
     assert not first.is_alive() and not second.is_alive()
     assert errors == []
-    assert sorted(results) == [(), (0,)]
+    assert sorted(results) == [(), (0, 1)]
     with open_course_connection(path) as conn:
-        assert conn.execute("SELECT COUNT(*) FROM schema_migrations").fetchone()[0] == 1
+        assert conn.execute("SELECT COUNT(*) FROM schema_migrations").fetchone()[0] == 2
 
 
 def test_spawned_processes_first_start_apply_once_and_converge_on_one_receipt(
@@ -256,9 +261,9 @@ def test_spawned_processes_first_start_apply_once_and_converge_on_one_receipt(
     assert all(not process.is_alive() for process in processes)
     assert [process.exitcode for process in processes] == [0, 0]
     results = [outcomes.get(timeout=5) for _ in processes]
-    assert sorted(results) == [("ok", ()), ("ok", (0,))]
+    assert sorted(results) == [("ok", ()), ("ok", (0, 1))]
     with open_course_connection(path) as conn:
-        assert conn.execute("SELECT COUNT(*) FROM schema_migrations").fetchone()[0] == 1
+        assert conn.execute("SELECT COUNT(*) FROM schema_migrations").fetchone()[0] == 2
         assert str(conn.execute("PRAGMA journal_mode").fetchone()[0]).lower() == "wal"
         assert runner._schema_signature(conn, include_ledger=True) == runner._expected_signature(
             discover_migrations()

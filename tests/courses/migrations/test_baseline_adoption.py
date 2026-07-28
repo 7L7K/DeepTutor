@@ -30,11 +30,11 @@ def test_exact_legacy_profiles_adopt_without_rewriting_domain_rows(
         seed_phase3a_rows(conn, include_blueway=include_blueway)
         before = domain_digest(conn)
 
-    assert ensure_course_schema(path) == (0,)
+    assert ensure_course_schema(path) == (0, 1)
     with sqlite3.connect(path) as conn:
         conn.row_factory = sqlite3.Row
         assert domain_digest(conn) == before
-        assert conn.execute("SELECT COUNT(*) FROM schema_migrations").fetchone()[0] == 1
+        assert conn.execute("SELECT COUNT(*) FROM schema_migrations").fetchone()[0] == 2
         assert tuple(conn.execute(
             "SELECT id, revision, write_epoch, managed_kb_ref FROM courses"
         ).fetchone()) == ("crs_fixture", 3, 2, "personal:kb:fixture")
@@ -215,9 +215,9 @@ def test_explicit_column_collation_drift_fails_before_rewriting_the_receipt(
     tmp_path: Path,
 ) -> None:
     path = tmp_path / "courses.db"
-    ensure_course_schema(path)
-    receipt = _receipt(path)
     with sqlite3.connect(path) as conn:
+        conn.executescript(runner.discover_migrations()[0].content.decode("utf-8"))
+        conn.execute("DROP TABLE schema_migrations")
         conn.executescript(
             """PRAGMA foreign_keys = OFF;
                DROP INDEX idx_courses_owner_updated;
@@ -242,7 +242,11 @@ def test_explicit_column_collation_drift_fails_before_rewriting_the_receipt(
 
     with pytest.raises(CourseSchemaMismatchError, match="explicit_collations mismatch"):
         ensure_course_schema(path)
-    assert _receipt(path) == receipt
+    with sqlite3.connect(path) as conn:
+        assert conn.execute(
+            "SELECT COUNT(*) FROM sqlite_master "
+            "WHERE type = 'table' AND name = 'schema_migrations'"
+        ).fetchone()[0] == 0
 
 
 def test_checked_in_phase3a_manifest_matches_effective_baseline_authority() -> None:
@@ -250,7 +254,7 @@ def test_checked_in_phase3a_manifest_matches_effective_baseline_authority() -> N
     manifest = json.loads(
         (root / "docs/contracts/teeechr_phase3a_courses_schema_manifest.json").read_text()
     )
-    signature = runner._expected_signature(runner.discover_migrations())
+    signature = runner._expected_signature(runner.discover_migrations()[:1])
     tables = {
         name: value
         for name, value in signature["tables"].items()

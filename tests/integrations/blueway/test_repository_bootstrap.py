@@ -29,7 +29,7 @@ def test_fresh_blueway_repository_consumes_course_migrated_schema_without_ddl(
     ]
     assert schema_statements == []
     with courses._connect() as conn:  # noqa: SLF001 - migration receipt is sole authority.
-        assert conn.execute("SELECT COUNT(*) FROM schema_migrations").fetchone()[0] == 1
+        assert conn.execute("SELECT COUNT(*) FROM schema_migrations").fetchone()[0] == 2
 
 
 def test_fresh_course_repository_delegates_schema_creation_to_migration_runner(
@@ -55,18 +55,22 @@ def test_repeated_blueway_startup_is_receipt_and_schema_write_free(
     path = tmp_path / "courses.db"
     courses = CourseRepository(path, "owner_one")
     with courses._connect() as conn:  # noqa: SLF001 - establish receipt identity.
-        receipt_before = tuple(conn.execute(
+        receipts_before = [
+            tuple(row) for row in conn.execute(
             "SELECT version, name, checksum_sha256, applied_at_utc FROM schema_migrations"
-        ).fetchone())
+            " ORDER BY version"
+        ).fetchall()]
 
     BlueWayRepository(courses)
     restarted = CourseRepository(path, "owner_one")
     BlueWayRepository(restarted)
 
     with restarted._connect() as conn:  # noqa: SLF001 - prove restart remains no-op.
-        assert tuple(conn.execute(
+        assert [
+            tuple(row) for row in conn.execute(
             "SELECT version, name, checksum_sha256, applied_at_utc FROM schema_migrations"
-        ).fetchone()) == receipt_before
+            " ORDER BY version"
+        ).fetchall()] == receipts_before
 
 
 def test_concurrent_course_and_blueway_wrappers_share_one_path_lock_and_bootstrap_once(
@@ -96,7 +100,7 @@ def test_concurrent_course_and_blueway_wrappers_share_one_path_lock_and_bootstra
     assert errors == []
     assert len(locks) == 2 and locks[0] is locks[1]
     with CourseRepository(path, "owner_race")._connect() as conn:  # noqa: SLF001
-        assert conn.execute("SELECT COUNT(*) FROM schema_migrations").fetchone()[0] == 1
+        assert conn.execute("SELECT COUNT(*) FROM schema_migrations").fetchone()[0] == 2
 
 
 def test_blueway_bootstrap_delegates_only_to_course_schema_authority(

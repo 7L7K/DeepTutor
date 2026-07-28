@@ -4,6 +4,11 @@
 
 ### Added
 
+- Added Course-owned manual Practice authoring persistence with immutable ready
+  revisions and questions, successor history, server-resolved source receipts,
+  typed answer/citation contracts, archive/restore epochs, and uniform
+  owner-and-parent resolution. Generated Practice authority remains reserved
+  for the later grounded-generation slice.
 - Added the Phase 4 Course-database migration authority: ordered packaged SQL,
   exact-byte SHA-256 receipts, transactional postcondition and foreign-key
   checks, bounded structural drift diagnostics, and fail-closed adoption of
