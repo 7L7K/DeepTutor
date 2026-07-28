@@ -666,7 +666,7 @@ def test_restart_replays_0001_once_and_tampering_its_exact_bytes_blocks_startup(
         altered,
         checksum_sha256=runner.hashlib.sha256(altered.content).hexdigest(),
     )
-    monkeypatch.setattr(runner, "discover_migrations", lambda: (artifacts[0], altered))
+    monkeypatch.setattr(runner, "discover_migrations", lambda: (artifacts[0], altered, *artifacts[2:]))
     with pytest.raises(CourseMigrationError, match="receipt mismatch"):
         ensure_course_schema(db_path)
 
@@ -683,7 +683,7 @@ def test_0001_failure_rolls_back_its_tables_and_receipt(
         broken,
         checksum_sha256=runner.hashlib.sha256(broken.content).hexdigest(),
     )
-    monkeypatch.setattr(runner, "discover_migrations", lambda: (artifacts[0], broken))
+    monkeypatch.setattr(runner, "discover_migrations", lambda: (artifacts[0], broken, *artifacts[2:]))
     path = tmp_path / "courses.db"
 
     with pytest.raises(CourseMigrationError, match="0001_practice_authoring.sql failed"):

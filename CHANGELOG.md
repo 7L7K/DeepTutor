@@ -4,6 +4,12 @@
 
 ### Added
 
+- Added Course-owned resumable quiz-attempt persistence with immutable
+  ready-revision membership, server-authoritative question order, one active
+  attempt per Practice set, CAS answer autosave, exact durable idempotency
+  receipts, submission/abandonment freeze, and archive/successor
+  terminalization without hard deletion. Deterministic grading remains
+  reserved for P4-03.
 - Added Course-owned manual Practice authoring persistence with immutable ready
   revisions and questions, successor history, server-resolved source receipts,
   typed answer/citation contracts, archive/restore epochs, and uniform

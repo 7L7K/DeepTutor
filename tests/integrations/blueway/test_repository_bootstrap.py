@@ -29,7 +29,7 @@ def test_fresh_blueway_repository_consumes_course_migrated_schema_without_ddl(
     ]
     assert schema_statements == []
     with courses._connect() as conn:  # noqa: SLF001 - migration receipt is sole authority.
-        assert conn.execute("SELECT COUNT(*) FROM schema_migrations").fetchone()[0] == 2
+        assert conn.execute("SELECT COUNT(*) FROM schema_migrations").fetchone()[0] == 3
 
 
 def test_fresh_course_repository_delegates_schema_creation_to_migration_runner(
@@ -100,7 +100,7 @@ def test_concurrent_course_and_blueway_wrappers_share_one_path_lock_and_bootstra
     assert errors == []
     assert len(locks) == 2 and locks[0] is locks[1]
     with CourseRepository(path, "owner_race")._connect() as conn:  # noqa: SLF001
-        assert conn.execute("SELECT COUNT(*) FROM schema_migrations").fetchone()[0] == 2
+        assert conn.execute("SELECT COUNT(*) FROM schema_migrations").fetchone()[0] == 3
 
 
 def test_blueway_bootstrap_delegates_only_to_course_schema_authority(
