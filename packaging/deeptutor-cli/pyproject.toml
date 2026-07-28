@@ -60,3 +60,19 @@ version = {attr = "deeptutor.__version__.__version__"}
 where = ["../.."]
 include = ["deeptutor*", "deeptutor_cli*"]
 exclude = ["deeptutor_web*"]
+
+[tool.setuptools.package-data]
+# The CLI distribution installs the same ``deeptutor`` runtime package as the
+# full distribution. Keep its non-Python runtime artifacts in lockstep so
+# Course migrations and prompt/template loading work from a clean wheel.
+deeptutor = [
+    "**/*.yaml",
+    "**/*.yml",
+    "**/*.md",
+    "**/*.json",
+    "**/*.sql",
+    "**/*.sh",
+    "**/*.j2",
+    "**/*.jinja",
+]
+deeptutor_cli = ["**/*.md"]

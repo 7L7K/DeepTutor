@@ -6,11 +6,13 @@ from contextlib import contextmanager
 import json
 from pathlib import Path
 import sqlite3
-import threading
 import time
 from typing import Any, Iterator
 from uuid import uuid4
 
+from .database_lock import course_database_lock
+from .migrations import CourseMigrationError, ensure_course_schema
+from .migrations.runner import open_course_connection
 from .models import Course, CourseSource
 
 
@@ -48,7 +50,7 @@ class CourseRepository:
         self.db_path = Path(db_path).resolve()
         self.owner_user_id = owner_user_id
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
-        self._write_lock = threading.RLock()
+        self._write_lock = course_database_lock(self.db_path)
         self._initialize()
         self._restrict_database_permissions()
 
@@ -70,10 +72,7 @@ class CourseRepository:
 
     @contextmanager
     def _connect(self) -> Iterator[sqlite3.Connection]:
-        conn = sqlite3.connect(self.db_path, timeout=10.0)
-        conn.row_factory = sqlite3.Row
-        conn.execute("PRAGMA foreign_keys = ON")
-        conn.execute("PRAGMA busy_timeout = 10000")
+        conn = open_course_connection(self.db_path)
         try:
             yield conn
             conn.commit()
@@ -84,61 +83,15 @@ class CourseRepository:
             conn.close()
 
     def _initialize(self) -> None:
-        with self._write_lock, self._connect() as conn:
-            conn.execute("PRAGMA journal_mode = WAL")
-            conn.executescript(
-                """
-                CREATE TABLE IF NOT EXISTS courses (
-                    id TEXT PRIMARY KEY,
-                    owner_user_id TEXT NOT NULL,
-                    title TEXT NOT NULL,
-                    state TEXT NOT NULL CHECK (state IN ('active', 'archived')),
-                    revision INTEGER NOT NULL DEFAULT 1 CHECK (revision >= 1),
-                    write_epoch INTEGER NOT NULL DEFAULT 1 CHECK (write_epoch >= 1),
-                    managed_kb_ref TEXT,
-                    created_at REAL NOT NULL,
-                    updated_at REAL NOT NULL,
-                    archived_at REAL
-                );
-                CREATE INDEX IF NOT EXISTS idx_courses_owner_updated
-                    ON courses(owner_user_id, updated_at DESC);
+        self.ensure_schema()
 
-                CREATE TABLE IF NOT EXISTS course_sources (
-                    id TEXT PRIMARY KEY,
-                    course_id TEXT NOT NULL REFERENCES courses(id) ON DELETE RESTRICT,
-                    kind TEXT NOT NULL,
-                    display_name TEXT NOT NULL,
-                    state TEXT NOT NULL CHECK (state IN ('processing', 'ready', 'failed', 'archived')),
-                    manifest_json TEXT NOT NULL DEFAULT '[]',
-                    content_sha256 TEXT NOT NULL,
-                    revision INTEGER NOT NULL DEFAULT 1 CHECK (revision >= 1),
-                    operation_id TEXT UNIQUE,
-                    idempotency_key TEXT,
-                    supersedes_source_id TEXT REFERENCES course_sources(id) ON DELETE RESTRICT,
-                    created_at REAL NOT NULL,
-                    updated_at REAL NOT NULL
-                );
-                CREATE INDEX IF NOT EXISTS idx_course_sources_course_updated
-                    ON course_sources(course_id, updated_at DESC);
-                CREATE INDEX IF NOT EXISTS idx_course_sources_operation
-                    ON course_sources(operation_id);
-                CREATE UNIQUE INDEX IF NOT EXISTS idx_course_sources_live_supersedes
-                    ON course_sources(supersedes_source_id)
-                    WHERE supersedes_source_id IS NOT NULL
-                      AND state IN ('processing', 'ready');
-                """
-            )
-            columns = {
-                str(row["name"])
-                for row in conn.execute("PRAGMA table_info(course_sources)").fetchall()
-            }
-            if "idempotency_key" not in columns:
-                conn.execute("ALTER TABLE course_sources ADD COLUMN idempotency_key TEXT")
-            conn.execute(
-                """CREATE UNIQUE INDEX IF NOT EXISTS idx_course_sources_idempotency
-                   ON course_sources(course_id, idempotency_key)
-                   WHERE idempotency_key IS NOT NULL"""
-            )
+    def ensure_schema(self) -> None:
+        """Validate or migrate this private database through the sole DDL authority."""
+
+        try:
+            ensure_course_schema(self.db_path, write_lock=self._write_lock)
+        except CourseMigrationError as exc:
+            raise RuntimeError(f"Could not initialize private Course database: {exc}") from exc
 
     @staticmethod
     def _clean_title(title: str) -> str:

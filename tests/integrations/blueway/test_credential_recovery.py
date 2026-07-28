@@ -5,6 +5,7 @@ from concurrent.futures import ThreadPoolExecutor
 import json
 import os
 from pathlib import Path
+import sqlite3
 import threading
 from types import SimpleNamespace
 
@@ -12,6 +13,7 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 import pytest
 
+from deeptutor.courses.migrations.runner import discover_migrations
 from deeptutor.courses.repository import CourseConflictError, CourseRepository
 from deeptutor.integrations.blueway import config as blueway_config
 from deeptutor.integrations.blueway.config import BlueWaySettings
@@ -301,38 +303,31 @@ def test_environment_bootstrap_becomes_stable_authority_across_restart(
     assert second.secret_key_id == first.secret_key_id
 
 
-def test_existing_connection_schema_upgrades_with_healthy_overlay(
+def test_existing_phase3a_connection_schema_is_adopted_with_healthy_status(
     tmp_path: Path,
 ) -> None:
-    courses = CourseRepository(tmp_path / "courses.db", "owner-a")
-    with courses._connect() as conn:  # noqa: SLF001 - upgrade fixture.
-        conn.executescript(
+    db_path = tmp_path / "courses.db"
+    conn = sqlite3.connect(db_path, isolation_level=None)
+    try:
+        conn.executescript(discover_migrations()[0].content.decode("utf-8"))
+        conn.execute("DROP TABLE schema_migrations")
+        conn.execute(
             """
-            CREATE TABLE blueway_connections (
-                id TEXT PRIMARY KEY,
-                owner_user_id TEXT NOT NULL,
-                external_subject TEXT NOT NULL,
-                state TEXT NOT NULL,
-                scope_version TEXT NOT NULL,
-                revision INTEGER NOT NULL,
-                grant_generation INTEGER NOT NULL,
-                credential_ref TEXT,
-                created_at REAL NOT NULL,
-                updated_at REAL NOT NULL,
-                connected_at REAL,
-                last_sync_at REAL,
-                disconnected_at REAL,
-                rotation_request_id TEXT,
-                rotation_started_at REAL
-            );
-            INSERT INTO blueway_connections VALUES (
+            INSERT INTO blueway_connections (
+                id, owner_user_id, external_subject, state, scope_version,
+                revision, grant_generation, credential_ref, credential_status,
+                created_at, updated_at, connected_at
+            ) VALUES (
                 'bwc_legacy', 'owner-a', 'subject-a', 'active',
-                'academic.read.v1', 3, 4, 'blueway:bwc_legacy',
-                1.0, 2.0, 1.0, NULL, NULL, NULL, NULL
-            );
-            """
+                'academic.read.v1', 3, 4, 'blueway:bwc_legacy', 'healthy',
+                1.0, 2.0, 1.0
+            )
+            """,
         )
+    finally:
+        conn.close()
 
+    courses = CourseRepository(db_path, "owner-a")
     repository = BlueWayRepository(courses)
     connection = repository.get_connection("bwc_legacy")
 

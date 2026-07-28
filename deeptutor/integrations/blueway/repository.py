@@ -5,7 +5,6 @@ from __future__ import annotations
 from dataclasses import dataclass
 import json
 import sqlite3
-import threading
 import time
 from typing import Any
 from uuid import uuid4
@@ -16,29 +15,6 @@ from deeptutor.courses.repository import CourseConflictError, CourseRepository
 
 class BlueWayNotFoundError(LookupError):
     pass
-
-
-_initialization_lock = threading.RLock()
-_SNAPSHOT_REPLAY_INDEX_SQL = """
-    CREATE UNIQUE INDEX blueway_snapshot_replay
-    ON blueway_sync_runs(connection_id, snapshot_id)
-    WHERE snapshot_id IS NOT NULL AND state = 'completed'
-"""
-
-
-def _normalized_index_sql(value: str | None) -> str:
-    normalized = "".join(str(value or "").lower().split()).rstrip(";")
-    return normalized.replace("ifnotexists", "")
-
-
-def _snapshot_replay_index_is_current(conn: sqlite3.Connection) -> bool:
-    row = conn.execute(
-        """SELECT sql FROM sqlite_master
-           WHERE type = 'index' AND name = 'blueway_snapshot_replay'"""
-    ).fetchone()
-    return row is not None and _normalized_index_sql(
-        str(row["sql"])
-    ) == _normalized_index_sql(_SNAPSHOT_REPLAY_INDEX_SQL)
 
 
 def _id(prefix: str) -> str:
@@ -100,82 +76,10 @@ class BlueWayRepository:
         self._initialize()
 
     def _initialize(self) -> None:
-        # A route and an owner-scoped sync worker can create separate
-        # ``CourseRepository`` wrappers for the same SQLite file.  Serialize
-        # the idempotent integration schema bootstrap inside this process so
-        # neither loses to SQLite's single DDL writer.
-        with _initialization_lock, self.courses._write_lock, self.courses._connect() as conn:  # noqa: SLF001
-            conn.executescript(
-                """
-                CREATE TABLE IF NOT EXISTS blueway_connections (
-                    id TEXT PRIMARY KEY,
-                    owner_user_id TEXT NOT NULL,
-                    external_subject TEXT NOT NULL,
-                    state TEXT NOT NULL CHECK (state IN ('pending','active','revocation_pending','disconnected','error')),
-                    scope_version TEXT NOT NULL,
-                    revision INTEGER NOT NULL DEFAULT 1 CHECK (revision >= 1),
-                    grant_generation INTEGER NOT NULL DEFAULT 1 CHECK (grant_generation >= 1),
-                    credential_ref TEXT,
-                    credential_status TEXT NOT NULL DEFAULT 'healthy',
-                    created_at REAL NOT NULL, updated_at REAL NOT NULL,
-                    connected_at REAL, last_sync_at REAL, disconnected_at REAL,
-                    rotation_request_id TEXT, rotation_started_at REAL
-                );
-                DROP INDEX IF EXISTS blueway_one_active_connection;
-                CREATE UNIQUE INDEX IF NOT EXISTS blueway_one_live_connection
-                    ON blueway_connections(owner_user_id) WHERE state IN ('active', 'revocation_pending');
-                CREATE TABLE IF NOT EXISTS blueway_course_maps (
-                    connection_id TEXT NOT NULL REFERENCES blueway_connections(id) ON DELETE RESTRICT,
-                    external_course_id TEXT NOT NULL,
-                    course_id TEXT NOT NULL REFERENCES courses(id) ON DELETE RESTRICT,
-                    remote_title TEXT NOT NULL,
-                    remote_state TEXT NOT NULL CHECK (remote_state IN ('active','archived')),
-                    remote_hash TEXT NOT NULL,
-                    first_seen_snapshot_id TEXT NOT NULL, last_seen_snapshot_id TEXT NOT NULL,
-                    created_at REAL NOT NULL, updated_at REAL NOT NULL,
-                    PRIMARY KEY (connection_id, external_course_id), UNIQUE (connection_id, course_id)
-                );
-                CREATE TABLE IF NOT EXISTS blueway_records (
-                    connection_id TEXT NOT NULL REFERENCES blueway_connections(id) ON DELETE RESTRICT,
-                    record_kind TEXT NOT NULL,
-                    external_record_id TEXT NOT NULL,
-                    external_course_id TEXT, course_id TEXT REFERENCES courses(id) ON DELETE RESTRICT,
-                    state TEXT NOT NULL CHECK (state IN ('current','unlinked','archived')),
-                    remote_revision TEXT, content_sha256 TEXT NOT NULL, payload_json TEXT NOT NULL,
-                    current_source_id TEXT REFERENCES course_sources(id) ON DELETE RESTRICT,
-                    first_seen_snapshot_id TEXT NOT NULL, last_seen_snapshot_id TEXT NOT NULL,
-                    created_at REAL NOT NULL, updated_at REAL NOT NULL,
-                    PRIMARY KEY (connection_id, record_kind, external_record_id)
-                );
-                CREATE TABLE IF NOT EXISTS blueway_sync_runs (
-                    id TEXT PRIMARY KEY,
-                    connection_id TEXT NOT NULL REFERENCES blueway_connections(id) ON DELETE RESTRICT,
-                    expected_generation INTEGER NOT NULL, snapshot_id TEXT, snapshot_sha256 TEXT,
-                    state TEXT NOT NULL CHECK (state IN ('queued','fetching','validating','staging','indexing','completed','failed','cancelled')),
-                    attempt_count INTEGER NOT NULL DEFAULT 0, counts_json TEXT NOT NULL DEFAULT '{}',
-                    error_code TEXT, created_at REAL NOT NULL, updated_at REAL NOT NULL, completed_at REAL
-                );
-                CREATE INDEX IF NOT EXISTS blueway_runs_connection_updated
-                    ON blueway_sync_runs(connection_id, updated_at DESC);
-                """
-            )
-            # Preserve the live replay guard during normal initialization.  A
-            # legacy definition is replaced only while one IMMEDIATE
-            # transaction excludes competing completed-receipt writers.
-            conn.execute("BEGIN IMMEDIATE")
-            if not _snapshot_replay_index_is_current(conn):
-                conn.execute("DROP INDEX IF EXISTS blueway_snapshot_replay")
-                conn.execute(_SNAPSHOT_REPLAY_INDEX_SQL)
-            columns = {str(row["name"]) for row in conn.execute("PRAGMA table_info(blueway_connections)")}
-            if "rotation_request_id" not in columns:
-                conn.execute("ALTER TABLE blueway_connections ADD COLUMN rotation_request_id TEXT")
-            if "rotation_started_at" not in columns:
-                conn.execute("ALTER TABLE blueway_connections ADD COLUMN rotation_started_at REAL")
-            if "credential_status" not in columns:
-                conn.execute(
-                    """ALTER TABLE blueway_connections
-                       ADD COLUMN credential_status TEXT NOT NULL DEFAULT 'healthy'"""
-                )
+        # CourseRepository owns all schema creation and evolution, including
+        # BlueWay tables. This call validates receipts but performs no
+        # independent integration DDL.
+        self.courses.ensure_schema()
 
     def create_active_connection(
         self, *, external_subject: str, scope_version: str, connection_id: str | None = None

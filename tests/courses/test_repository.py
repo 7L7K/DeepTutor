@@ -395,9 +395,10 @@ def test_source_lineage_allows_only_one_live_replacement(tmp_path) -> None:
         supersedes_source_id=original.id,
     )
 
-    # A separate repository instance has a separate Python lock; the SQLite
-    # constraint remains the final authority for concurrent/direct callers.
+    # Separate wrappers share one path-keyed process lock; the SQLite constraint
+    # remains the final authority for direct and cross-process callers.
     contender = CourseRepository(db_path, "u_alice")
+    assert contender._write_lock is repo._write_lock  # noqa: SLF001
     with pytest.raises(CourseConflictError, match="active replacement"):
         contender.create_source(
             course.id,

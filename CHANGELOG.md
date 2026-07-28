@@ -4,6 +4,13 @@
 
 ### Added
 
+- Added the Phase 4 Course-database migration authority: ordered packaged SQL,
+  exact-byte SHA-256 receipts, transactional postcondition and foreign-key
+  checks, bounded structural drift diagnostics, and fail-closed adoption of
+  only the approved Phase 3A Course-only or Course-plus-BlueWay schemas.
+- Added deterministic migration proof for fresh and upgraded databases,
+  replay, rollback, concurrent threads/processes, semantic schema drift, real
+  private-database backup copies, and both full and CLI wheel packaging.
 - Added a hermetic Phase 3A BlueWay regression command that exercises the real
   authenticated TEEECHR integration and Course routes against a loopback
   synthetic BlueWay HTTP authority. It proves two-owner isolation, encrypted
@@ -43,6 +50,10 @@
 
 ### Changed
 
+- Course and BlueWay repositories now share one path-scoped schema bootstrap
+  and one packaged migration stream. The former independent DDL and replay
+  repair paths were removed while normal connections continue to enforce
+  foreign keys and SQLite WAL remains the cross-process writer authority.
 - Phase 3A is accepted as engineering-complete for the current persistent
   single-host beta boundary. The repeatable owner/revocation/reconnect harness
   and final no-P0-P2 review close the local engineering lane; a second real
