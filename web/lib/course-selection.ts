@@ -23,6 +23,13 @@ export function validatedActiveCourseId(
     : null;
 }
 
+export function shouldClearArchivedCourseSelection(
+  currentCourseId: string | null,
+  archivedCourseId: string,
+): boolean {
+  return currentCourseId === archivedCourseId;
+}
+
 export function resolveSessionCourseView(
   courses: Array<{ id: string; state: "active" | "archived" }>,
   sessionCourseId: string | null,

@@ -19,8 +19,10 @@ import {
 } from "@/lib/course-api";
 import {
   courseSelectionStorageKey,
+  getRuntimeActiveCourseId,
   isCurrentCourseRequest,
   setRuntimeActiveCourseId,
+  shouldClearArchivedCourseSelection,
   validatedActiveCourseId,
 } from "@/lib/course-selection";
 
@@ -139,34 +141,86 @@ export function CourseProvider({ children }: { children: React.ReactNode }) {
 
   const createCourse = useCallback(
     async (title: string) => {
+      const requestedIdentity = identityRef.current || (await resolveIdentity());
+      if (!requestedIdentity) {
+        throw new Error("Sign in before creating a Course");
+      }
       const created = await createCourseApi(title);
+      const responseEpoch = ++requestEpochRef.current;
+      if (
+        !isCurrentCourseRequest(
+          responseEpoch,
+          requestEpochRef.current,
+          requestedIdentity,
+          identityRef.current,
+        )
+      ) {
+        throw new Error("Authentication changed while creating the Course");
+      }
       setCourses((previous) => [created, ...previous]);
       setRuntimeActiveCourseId(created.id);
       setActiveCourseId(created.id);
-      if (identity) {
+      if (requestedIdentity) {
         window.localStorage.setItem(
-          courseSelectionStorageKey(identity),
+          courseSelectionStorageKey(requestedIdentity),
           created.id,
         );
       }
       return created;
     },
-    [identity],
+    [resolveIdentity],
   );
 
   const archiveCourse = useCallback(
     async (course: Course) => {
+      const requestedIdentity = identityRef.current;
+      if (!requestedIdentity) {
+        throw new Error("Sign in before archiving a Course");
+      }
       const updated = await archiveCourseApi(course);
+      const responseEpoch = ++requestEpochRef.current;
+      if (
+        !isCurrentCourseRequest(
+          responseEpoch,
+          requestEpochRef.current,
+          requestedIdentity,
+          identityRef.current,
+        )
+      ) {
+        throw new Error("Authentication changed while archiving the Course");
+      }
       setCourses((previous) =>
         previous.map((item) => (item.id === updated.id ? updated : item)),
       );
-      if (activeCourseId === updated.id) selectCourse(null);
+      if (
+        shouldClearArchivedCourseSelection(
+          getRuntimeActiveCourseId(),
+          updated.id,
+        )
+      ) {
+        selectCourse(null);
+      }
     },
-    [activeCourseId, selectCourse],
+    [selectCourse],
   );
 
   const restoreCourse = useCallback(async (course: Course) => {
+    const requestedIdentity = identityRef.current;
+    if (!requestedIdentity) {
+      throw new Error("Sign in before restoring a Course");
+    }
     const updated = await restoreCourseApi(course);
+    const responseEpoch = ++requestEpochRef.current;
+    if (
+      !isCurrentCourseRequest(
+        responseEpoch,
+        requestEpochRef.current,
+        requestedIdentity,
+        identityRef.current,
+      )
+    ) {
+      throw new Error("Authentication changed while restoring the Course");
+    }
     setCourses((previous) =>
       previous.map((item) => (item.id === updated.id ? updated : item)),
     );

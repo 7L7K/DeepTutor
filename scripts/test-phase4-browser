@@ -1,0 +1,148 @@
+#!/usr/bin/env bash
+# Hermetic authenticated browser proof for Phase 4 Course identity isolation.
+set -euo pipefail
+
+repo_root="$(cd "$(dirname "$0")/.." && pwd)"
+temp_parent="${TMPDIR:-/tmp}"
+temp_parent="${temp_parent%/}"
+runtime_root="$(mktemp -d "$temp_parent/teeechr-phase4-browser.XXXXXX")"
+backend_port="${P4_BACKEND_PORT:-8031}"
+frontend_port="${P4_FRONTEND_PORT:-3812}"
+backend_url="http://127.0.0.1:${backend_port}"
+frontend_url="http://localhost:${frontend_port}"
+python_bin="${PYTHON_BIN:-$repo_root/.venv/bin/python}"
+alice_password="$("$python_bin" -c 'import secrets; print(secrets.token_urlsafe(24))')"
+bob_password="$("$python_bin" -c 'import secrets; print(secrets.token_urlsafe(24))')"
+backend_log="$runtime_root/backend.log"
+frontend_log="$runtime_root/frontend.log"
+cookie_jar="$runtime_root/alice.cookies"
+proof_state="$runtime_root/phase4-browser-state.json"
+backend_pid=""
+frontend_pid=""
+
+cleanup() {
+  if [ -n "$frontend_pid" ]; then
+    kill "$frontend_pid" 2>/dev/null || true
+    wait "$frontend_pid" 2>/dev/null || true
+  fi
+  if [ -n "$backend_pid" ]; then
+    kill "$backend_pid" 2>/dev/null || true
+    wait "$backend_pid" 2>/dev/null || true
+  fi
+  case "$runtime_root" in
+    "$temp_parent"/teeechr-phase4-browser.*)
+      rm -rf -- "$runtime_root"
+      ;;
+  esac
+}
+trap cleanup EXIT INT TERM
+
+assert_port_free() {
+  local port="$1"
+  "$python_bin" - "$port" <<'PY'
+import socket
+import sys
+
+port = int(sys.argv[1])
+with socket.socket() as probe:
+    probe.settimeout(0.2)
+    if probe.connect_ex(("127.0.0.1", port)) == 0:
+        raise SystemExit(f"Refusing to use occupied port {port}")
+PY
+}
+
+wait_for_url() {
+  local url="$1"
+  local log_path="$2"
+  local process_id="$3"
+  for _attempt in $(seq 1 120); do
+    if curl --fail --silent --show-error "$url" >/dev/null 2>&1; then return 0; fi
+    if ! kill -0 "$process_id" 2>/dev/null; then
+      sed -n '1,240p' "$log_path" >&2
+      return 1
+    fi
+    sleep 0.25
+  done
+  sed -n '1,240p' "$log_path" >&2
+  return 1
+}
+
+start_backend() {
+  cd "$repo_root"
+  DEEPTUTOR_HOME="$runtime_root" \
+  AUTH_ENABLED=true \
+  BACKEND_PORT="$backend_port" \
+  FRONTEND_PORT="$frontend_port" \
+  CORS_ORIGIN="$frontend_url" \
+  CORS_ORIGINS="$frontend_url" \
+  "$python_bin" -m uvicorn deeptutor.api.main:app \
+    --host 127.0.0.1 --port "$backend_port" --no-access-log \
+    >"$backend_log" 2>&1 &
+  backend_pid=$!
+  wait_for_url "$backend_url/api/v1/auth/status" "$backend_log" "$backend_pid"
+}
+
+stop_backend() {
+  if [ -n "$backend_pid" ]; then
+    kill "$backend_pid" 2>/dev/null || true
+    wait "$backend_pid" 2>/dev/null || true
+    backend_pid=""
+  fi
+}
+
+run_browser_proof() {
+  local test_pattern="$1"
+  cd "$repo_root/web"
+  P4_ALICE_PASSWORD="$alice_password" \
+  P4_BOB_PASSWORD="$bob_password" \
+  P4_STATE_FILE="$proof_state" \
+  WEB_BASE_URL="$frontend_url" \
+  PW_SERIAL=1 \
+  PW_OUTPUT_DIR="$runtime_root/playwright-results" \
+  PW_HTML_REPORT_DIR="$runtime_root/playwright-report" \
+  npx playwright test --project=phase4-authenticated --grep "$test_pattern"
+}
+
+if [ ! -x "$python_bin" ]; then
+  echo "Python runtime is unavailable: $python_bin" >&2
+  exit 1
+fi
+assert_port_free "$backend_port"
+assert_port_free "$frontend_port"
+
+start_backend
+
+cd "$repo_root/web"
+PORT="$frontend_port" \
+HOSTNAME=127.0.0.1 \
+DEEPTUTOR_API_BASE_URL="$backend_url" \
+DEEPTUTOR_AUTH_ENABLED=true \
+npm run dev >"$frontend_log" 2>&1 &
+frontend_pid=$!
+wait_for_url "$frontend_url/login" "$frontend_log" "$frontend_pid"
+
+curl --fail --silent --show-error \
+  -X POST "$frontend_url/api/v1/auth/register" \
+  -H "Content-Type: application/json" \
+  --data "{\"username\":\"alice\",\"password\":\"$alice_password\"}" >/dev/null
+curl --fail --silent --show-error \
+  -c "$cookie_jar" \
+  -X POST "$frontend_url/api/v1/auth/login" \
+  -H "Content-Type: application/json" \
+  --data "{\"username\":\"alice\",\"password\":\"$alice_password\"}" >/dev/null
+curl --fail --silent --show-error \
+  -b "$cookie_jar" \
+  -X POST "$frontend_url/api/v1/auth/users" \
+  -H "Origin: $frontend_url" \
+  -H "Content-Type: application/json" \
+  --data "{\"username\":\"bob\",\"password\":\"$bob_password\"}" >/dev/null
+
+run_browser_proof "setup two authenticated"
+test -s "$proof_state"
+
+# Prove the persisted private Course, learning, and five-question quiz through
+# an actual backend process death and fresh application initialization.
+stop_backend
+assert_port_free "$backend_port"
+start_backend
+run_browser_proof "after server restart"
