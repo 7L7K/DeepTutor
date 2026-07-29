@@ -1,6 +1,6 @@
 # TEEECHR v1.5.2 Phase 3A and Phase 4 — Close BlueWay, Restore Learning Workflows
 
-Status: **Phase 3A accepted; Phase 4 implementation active; P4-01 through P4-04 complete.**
+Status: **Phase 3A accepted; Phase 4 implementation active; P4-01 through P4-05 complete.**
 The real two-owner Apple/device flow, hosted fixture retirement, publication,
 deployment, and release certification remain parked. They do not block Phase 4,
 and Phase 4 must not imply that those distinct surfaces passed.
@@ -107,8 +107,8 @@ The P4-01 subordinate artifacts are:
 
 They provide executable detail for this plan but do not override it. P4-01 was
 implemented on the local Phase 4 branch by `1cc75f2f`. P4-02A was implemented
-by `6bdb5179`, P4-02B by `d613b8ad`, P4-03 by `96e073ee`, and P4-04 by
-`5cf02793`; P4-05 is the next active slice.
+by `6bdb5179`, P4-02B by `d613b8ad`, P4-03 by `96e073ee`, P4-04 by
+`5cf02793`, and P4-05 by `20a604be`; P4-06 is the next active slice.
 
 ## 1. Goal and non-goals
 
@@ -906,6 +906,8 @@ Status: **completed for the local engineering boundary by `d613b8ad`.**
 
 ### P4-05 — Grounded Practice generation
 
+Status: **completed for the local engineering boundary by `20a604be`.**
+
 - **Scope:** bounded generator, validator, background operation, progress API.
 - **Inputs / outputs:** immutable generated PracticeSetRevision with citations.
 - **Acceptance criteria:**
@@ -924,6 +926,39 @@ Status: **completed for the local engineering boundary by `d613b8ad`.**
 - **Doc alignment:** Course source ingestion fences and historical Practice outcomes.
 - **Risk / unknown:** question quality requires a later labeled evaluation set;
   contract correctness comes first.
+
+#### P4-05 implementation receipt — 2026-07-28
+
+- migration `0004_practice_generation.sql` adds retained, immutable generation
+  operations with exact owner, Course, Practice revision, idempotency,
+  source-snapshot, revision, and write-epoch bindings;
+- generated questions and ready publication are database-fenced behind the
+  matching running operation and its receipt; manual repository calls cannot
+  mutate generated drafts;
+- background work rebuilds the personal repository from the persisted owner,
+  revalidates account and Course authority before final commit, reconciles
+  orphaned operations after restart, and terminates provider work through a
+  bounded server-owned deadline;
+- the production provider seam fails closed as unavailable. Automated proof
+  uses only the explicitly enabled deterministic local provider; no paid or
+  real provider call was made;
+- deterministic Course indexes carry the exact CourseSource content fingerprint,
+  and generation accepts only server-resolved text whose fingerprint matches
+  the frozen source receipt. Source text remains passive input and cannot
+  select tools, Knowledge, owners, paths, or providers;
+- malformed, partial, over-limit, uncited, stale-source, revoked-owner, archived,
+  or write-epoch-stale results terminate safely and never publish a ready
+  revision;
+- ready question responses omit both answer contracts and answer-adjacent
+  explanations until durable grading reveals them;
+- exact local proof passed Ruff and diff/secret checks, `52` focused migration,
+  API, generation, grading, and BlueWay-bootstrap tests, `255` impacted Course
+  and BlueWay tests, TypeScript, ESLint, `175` web node tests, and a Next
+  production build with `53` pages;
+- independent Terra review returned `PASS_WITH_PARKED_FOLLOWUPS` with no P0-P2
+  finding. Real-provider quality/cost, authenticated browser runtime, and a
+  hostile writer with direct access to the private SQLite file remain outside
+  this slice's proven boundary.
 
 ### P4-06 — Flashcard repository and manual workflow
 
