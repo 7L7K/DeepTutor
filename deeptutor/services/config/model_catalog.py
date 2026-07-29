@@ -9,6 +9,10 @@ from uuid import uuid4
 from deeptutor.services.path_service import get_path_service
 
 from .embedding_endpoint import normalize_embedding_endpoint_for_display
+from .provider_credentials import (
+    ProviderCredentialAuthority,
+    ProviderCredentialError,
+)
 
 # Fallback only — frozen at admin scope at import time. Production code should
 # enter through ``get_model_catalog_service()`` so the path is resolved from the
@@ -49,8 +53,15 @@ def _default_catalog() -> dict[str, Any]:
 class ModelCatalogService:
     _instances: dict[str, "ModelCatalogService"] = {}
 
-    def __init__(self, path: Path | None = None):
+    def __init__(
+        self,
+        path: Path | None = None,
+        credential_authority: ProviderCredentialAuthority | None = None,
+    ):
         self.path = path or CATALOG_PATH
+        self.credential_authority = credential_authority or ProviderCredentialAuthority(
+            self.path.parent / "provider_credentials"
+        )
 
     @classmethod
     def get_instance(cls, path: Path | None = None) -> "ModelCatalogService":
@@ -69,13 +80,24 @@ class ModelCatalogService:
             merged_defaults = catalog != loaded
             before = deepcopy(catalog)
             self._normalize(catalog)
-            if merged_defaults or catalog != before:
-                self.save(catalog)
-            return catalog
+            has_legacy_credentials = self._contains_raw_credentials(catalog)
+            if merged_defaults or catalog != before or has_legacy_credentials:
+                return self.save(catalog)
+            return self._hydrate_credentials(catalog)
 
         catalog = _default_catalog()
         self._normalize(catalog)
         self.save(catalog)
+        return self._hydrate_credentials(catalog)
+
+    def load_public(self) -> dict[str, Any]:
+        """Return browser-safe catalog metadata with no secret references."""
+        catalog = self.load()
+        for service in catalog.get("services", {}).values():
+            for profile in service.get("profiles", []):
+                profile.pop("credential_ref", None)
+                profile["api_key_set"] = bool(profile.get("api_key"))
+                profile["api_key"] = ""
         return catalog
 
     def _read_existing_catalog(self) -> dict[str, Any]:
@@ -90,14 +112,98 @@ class ModelCatalogService:
     def save(self, catalog: dict[str, Any]) -> dict[str, Any]:
         normalized = deepcopy(catalog)
         self._normalize(normalized)
+        existing = self._read_existing_catalog()
+        existing_references = self._credential_references_by_profile(existing)
+        self._externalize_credentials(normalized, existing_references)
         self.path.parent.mkdir(parents=True, exist_ok=True)
-        with open(self.path, "w", encoding="utf-8") as handle:
-            json.dump(normalized, handle, indent=2, ensure_ascii=False)
-        return normalized
+        temporary = self.path.parent / f".{self.path.name}.{uuid4().hex}.tmp"
+        try:
+            with open(temporary, "w", encoding="utf-8") as handle:
+                json.dump(normalized, handle, indent=2, ensure_ascii=False)
+                handle.flush()
+                try:
+                    import os
+
+                    os.fsync(handle.fileno())
+                except OSError:
+                    pass
+            temporary.replace(self.path)
+        finally:
+            temporary.unlink(missing_ok=True)
+        return self._hydrate_credentials(normalized)
 
     def apply(self, catalog: dict[str, Any] | None = None) -> dict[str, Any]:
         current = self.save(catalog or self.load())
         return {"catalog_path": str(self.path), "services": list(current.get("services", {}))}
+
+    @staticmethod
+    def _contains_raw_credentials(catalog: dict[str, Any]) -> bool:
+        return any(
+            bool(str(profile.get("api_key") or "").strip())
+            for service in catalog.get("services", {}).values()
+            for profile in service.get("profiles", [])
+        )
+
+    @staticmethod
+    def _credential_references_by_profile(
+        catalog: dict[str, Any],
+    ) -> dict[tuple[str, str], str]:
+        references: dict[tuple[str, str], str] = {}
+        for service_name, service in catalog.get("services", {}).items():
+            for profile in service.get("profiles", []):
+                profile_id = str(profile.get("id") or "")
+                reference = str(profile.get("credential_ref") or "")
+                if profile_id and reference:
+                    references[(service_name, profile_id)] = reference
+        return references
+
+    def _externalize_credentials(
+        self,
+        catalog: dict[str, Any],
+        existing_references: dict[tuple[str, str], str],
+    ) -> None:
+        for service_name, service in catalog.get("services", {}).items():
+            for profile in service.get("profiles", []):
+                profile_id = str(profile.get("id") or "")
+                provided = str(profile.pop("api_key", "") or "").strip()
+                # Credential references are server authority. Never honor a
+                # reference supplied through a browser catalog payload; only
+                # the already-persisted reference for this exact profile may
+                # be reused or replaced.
+                reference = (
+                    existing_references.get((service_name, profile_id), "")
+                    if profile_id
+                    else ""
+                )
+                if provided:
+                    reference = self.credential_authority.write(
+                        provided,
+                        credential_ref=reference or None,
+                    )
+                configured = False
+                if reference:
+                    configured = self.credential_authority.exists(reference)
+                    if not configured:
+                        raise ProviderCredentialError(
+                            "Configured provider credential is unavailable"
+                        )
+                    profile["credential_ref"] = reference
+                else:
+                    profile.pop("credential_ref", None)
+                profile["api_key_set"] = configured
+
+    def _hydrate_credentials(self, catalog: dict[str, Any]) -> dict[str, Any]:
+        hydrated = deepcopy(catalog)
+        for service in hydrated.get("services", {}).values():
+            for profile in service.get("profiles", []):
+                reference = str(profile.get("credential_ref") or "")
+                if reference:
+                    profile["api_key"] = self.credential_authority.read(reference)
+                    profile["api_key_set"] = True
+                else:
+                    profile["api_key"] = ""
+                    profile["api_key_set"] = False
+        return hydrated
 
     def _normalize(self, catalog: dict[str, Any]) -> bool:
         services = catalog.setdefault("services", {})
@@ -117,7 +223,7 @@ class ModelCatalogService:
                 profile.setdefault("name", "Untitled Profile")
                 profile.setdefault("api_version", "")
                 profile.setdefault("base_url", "")
-                profile.setdefault("api_key", "")
+                profile.setdefault("api_key_set", False)
                 if service_name == "search":
                     profile.setdefault("provider", "brave")
                     profile.setdefault("proxy", "")

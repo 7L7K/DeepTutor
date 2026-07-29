@@ -131,6 +131,17 @@ class CatalogPayload(BaseModel):
     catalog: dict[str, Any]
 
 
+class ProviderUsagePolicyUpdate(BaseModel):
+    enabled: bool = False
+    max_concurrent_per_user: int = Field(ge=1, le=8)
+    max_concurrent_global: int = Field(ge=1, le=32)
+    max_daily_input_tokens_per_user: int = Field(ge=1, le=100_000_000)
+    max_daily_output_tokens_per_user: int = Field(ge=1, le=20_000_000)
+    max_daily_input_tokens_global: int = Field(ge=1, le=500_000_000)
+    max_daily_output_tokens_global: int = Field(ge=1, le=100_000_000)
+    pricing_version: str = Field(min_length=1, max_length=80)
+
+
 class FetchModelsPayload(BaseModel):
     binding: str = ""
     base_url: str
@@ -478,7 +489,7 @@ async def get_settings():
         return {"ui": load_ui_settings()}
     return {
         "ui": load_ui_settings(),
-        "catalog": get_model_catalog_service().load(),
+        "catalog": get_model_catalog_service().load_public(),
         "providers": _provider_choices(),
     }
 
@@ -486,7 +497,37 @@ async def get_settings():
 @router.get("/catalog")
 async def get_catalog():
     _require_settings_admin()
-    return {"catalog": get_model_catalog_service().load()}
+    return {"catalog": get_model_catalog_service().load_public()}
+
+
+@router.get("/provider-usage")
+async def get_provider_usage_policy():
+    from dataclasses import asdict
+
+    from deeptutor.courses.provider_usage import get_provider_usage_ledger
+
+    _require_settings_admin()
+    return {"policy": asdict(get_provider_usage_ledger().load_policy())}
+
+
+@router.put("/provider-usage")
+async def update_provider_usage_policy(payload: ProviderUsagePolicyUpdate):
+    from dataclasses import asdict
+
+    from deeptutor.courses.provider_usage import (
+        ProviderUsageError,
+        ProviderUsagePolicy,
+        get_provider_usage_ledger,
+    )
+
+    _require_settings_admin()
+    try:
+        policy = get_provider_usage_ledger().configure(
+            ProviderUsagePolicy(**payload.model_dump())
+        )
+    except ProviderUsageError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    return {"policy": asdict(policy)}
 
 
 @router.get("/network")
@@ -930,9 +971,10 @@ async def get_llm_options():
 @router.put("/catalog")
 async def update_catalog(payload: CatalogPayload):
     _require_settings_admin()
-    catalog = get_model_catalog_service().save(payload.catalog)
+    service = get_model_catalog_service()
+    service.save(payload.catalog)
     _invalidate_runtime_caches()
-    return {"catalog": catalog}
+    return {"catalog": service.load_public()}
 
 
 @router.post("/apply")
@@ -943,7 +985,7 @@ async def apply_catalog(payload: CatalogPayload | None = None):
     _invalidate_runtime_caches()
     return {
         "message": "Catalog applied to runtime settings.",
-        "catalog": get_model_catalog_service().load(),
+        "catalog": get_model_catalog_service().load_public(),
         "runtime": applied,
     }
 

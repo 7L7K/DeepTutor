@@ -96,6 +96,11 @@ def test_load_does_not_sync_existing_active_profiles_from_dotenv(tmp_path: Path)
     assert emb_model["model"] == "old-embedding"
     assert emb_model["name"] == "old-embedding"
     assert emb_model["dimension"] == "3072"
+    saved = json.loads(catalog_path.read_text(encoding="utf-8"))
+    assert "api_key" not in saved["services"]["llm"]["profiles"][0]
+    assert "api_key" not in saved["services"]["embedding"]["profiles"][0]
+    assert saved["services"]["llm"]["profiles"][0]["credential_ref"].startswith("pcr_")
+    assert saved["services"]["embedding"]["profiles"][0]["credential_ref"].startswith("pcr_")
 
 
 def test_load_recovers_invalid_catalog_with_defaults(tmp_path: Path):
@@ -158,3 +163,92 @@ def test_load_persists_normalized_active_ids(tmp_path: Path):
     assert llm["active_model_id"] == "llm-model-a"
     assert saved["services"]["embedding"]["profiles"] == []
     assert saved["services"]["search"]["profiles"] == []
+
+
+def test_public_catalog_redacts_secret_and_reference(tmp_path: Path):
+    catalog_path = tmp_path / "model_catalog.json"
+    service = ModelCatalogService(path=catalog_path)
+    catalog = service.load()
+    catalog["services"]["llm"]["profiles"] = [
+        {
+            "id": "llm-profile-a",
+            "name": "A",
+            "binding": "openai",
+            "base_url": "https://api.openai.com/v1",
+            "api_key": "sk-private-value",
+            "models": [],
+        }
+    ]
+    service.save(catalog)
+
+    public = service.load_public()
+    profile = public["services"]["llm"]["profiles"][0]
+    persisted = catalog_path.read_text(encoding="utf-8")
+
+    assert profile["api_key_set"] is True
+    assert profile["api_key"] == ""
+    assert "credential_ref" not in profile
+    assert "sk-private-value" not in persisted
+    assert service.load()["services"]["llm"]["profiles"][0]["api_key"] == "sk-private-value"
+
+
+def test_public_round_trip_preserves_existing_secret(tmp_path: Path):
+    service = ModelCatalogService(path=tmp_path / "model_catalog.json")
+    catalog = service.load()
+    catalog["services"]["llm"]["profiles"] = [
+        {
+            "id": "llm-profile-a",
+            "name": "A",
+            "binding": "openai",
+            "base_url": "https://api.openai.com/v1",
+            "api_key": "sk-private-value",
+            "models": [],
+        }
+    ]
+    service.save(catalog)
+
+    public = service.load_public()
+    public["services"]["llm"]["profiles"][0]["name"] = "Renamed"
+    service.save(public)
+
+    runtime = service.load()["services"]["llm"]["profiles"][0]
+    assert runtime["name"] == "Renamed"
+    assert runtime["api_key"] == "sk-private-value"
+
+
+def test_client_supplied_credential_reference_cannot_rebind_profiles(
+    tmp_path: Path,
+) -> None:
+    service = ModelCatalogService(path=tmp_path / "model_catalog.json")
+    catalog = service.load()
+    catalog["services"]["llm"]["profiles"] = [
+        {
+            "id": "llm-profile-a",
+            "name": "A",
+            "binding": "openai",
+            "base_url": "https://api.openai.com/v1",
+            "api_key": "secret-a",
+            "models": [],
+        },
+        {
+            "id": "llm-profile-b",
+            "name": "B",
+            "binding": "openai",
+            "base_url": "https://api.openai.com/v1",
+            "api_key": "secret-b",
+            "models": [],
+        },
+    ]
+    service.save(catalog)
+    persisted = json.loads(service.path.read_text(encoding="utf-8"))
+    foreign_reference = persisted["services"]["llm"]["profiles"][1][
+        "credential_ref"
+    ]
+
+    public = service.load_public()
+    public["services"]["llm"]["profiles"][0]["credential_ref"] = foreign_reference
+    service.save(public)
+
+    runtime = service.load()["services"]["llm"]["profiles"]
+    assert runtime[0]["api_key"] == "secret-a"
+    assert runtime[1]["api_key"] == "secret-b"
