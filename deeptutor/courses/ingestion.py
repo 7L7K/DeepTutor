@@ -239,6 +239,7 @@ def prepare_source_upload(
         "kb_name": kb_name,
         "base_dir": str(base_dir),
         "uploaded_paths": uploaded_paths,
+        "source_content_sha256": source.content_sha256,
         "rag_provider": provider,
         "initialize": not had_ready_index,
     }
@@ -340,6 +341,7 @@ async def run_source_operation(task: dict[str, Any]) -> None:
             provider_succeeded = build_deterministic_index(
                 Path(str(task["base_dir"])) / str(task["kb_name"]),
                 [str(item) for item in task["uploaded_paths"]],
+                source_content_sha256=str(task["source_content_sha256"]),
             )
         elif bool(task["initialize"]):
             initializer = KnowledgeBaseInitializer(

@@ -4,6 +4,13 @@
 
 ### Added
 
+- Added durable Course-grounded Practice generation operations with frozen
+  source receipts, strict citation and output validation, idempotent new-set
+  and successor requests, bounded local-provider execution, restart
+  reconciliation, and atomic ready publication. Generated drafts are reserved
+  for the server operation, deterministic test indexes are fingerprint-bound,
+  and unavailable, timed-out, stale, malformed, or interrupted work remains
+  safely failed without publishing partial questions.
 - Added the authenticated manual Course Practice API and `/practice`
   workspace: private set/revision/question authoring, immutable ready
   revisions, resumable attempts and history, CAS/idempotent answer saves,

@@ -48,7 +48,8 @@ export interface PracticeQuestion {
   prompt: string;
   /** Present only in the draft-authoring response; never trusted by quiz UI. */
   answer_contract?: { kind: "exact"; answer: string };
-  explanation: string;
+  /** Revealed only for draft authoring or after the owned attempt is graded. */
+  explanation?: string;
   objective_ids: string[];
   citations: Array<Record<string, unknown>>;
   ordinal: number;

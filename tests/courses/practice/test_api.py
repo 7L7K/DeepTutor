@@ -260,6 +260,7 @@ def test_draft_questions_show_author_contract_but_ready_questions_are_learner_sa
     ready_questions = practice_client.get(questions_endpoint, headers=_auth("alice"))
     assert ready_questions.status_code == 200
     assert "answer_contract" not in ready_questions.text
+    assert "explanation" not in ready_questions.text
     assert "reveal-me" not in ready_questions.text
 
 

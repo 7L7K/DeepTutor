@@ -81,7 +81,11 @@ def materialize_course_bundles(
                 bundle_path = raw_dir / "blueway-course-bundle.json"
                 bundle_path.write_bytes(encoded)
                 bundle_path.chmod(0o600)
-                if not build_index(raw_dir.parent.parent, [str(bundle_path)]):
+                if not build_index(
+                    raw_dir.parent.parent,
+                    [str(bundle_path)],
+                    source_content_sha256=source.content_sha256,
+                ):
                     raise RuntimeError("Deterministic BlueWay bundle index was empty")
                 restrict_private_tree_permissions(raw_dir.parent.parent)
                 staged.append({

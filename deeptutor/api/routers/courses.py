@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+import sqlite3
+from typing import Annotated
+
 from fastapi import APIRouter, BackgroundTasks, File, Form, Header, HTTPException, Query, UploadFile
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, ConfigDict, Field
@@ -96,6 +99,41 @@ class AttemptMutationRequest(_PracticeRequest):
     expected_practice_set_write_epoch: int = Field(ge=1)
 
 
+class CreateGeneratedPracticeRequest(_PracticeRequest):
+    """The deliberately narrow public input for grounded Practice generation.
+
+    The server resolves every source receipt, provider choice, retrieval context,
+    and provenance record.  This body is intentionally not a prompt or provider
+    configuration surface.
+    """
+
+    title: str = Field(min_length=1, max_length=160)
+    source_ids: list[Annotated[str, Field(min_length=1, max_length=80)]] = Field(
+        min_length=1, max_length=32
+    )
+    objective_ids: list[Annotated[str, Field(min_length=1, max_length=160)]] = Field(
+        default_factory=list, max_length=128
+    )
+    expected_course_write_epoch: int = Field(ge=1)
+    item_limit: int = Field(default=5, ge=1, le=12)
+    context_char_limit: int = Field(default=12_000, ge=1, le=48_000)
+
+
+class GeneratePracticeRevisionRequest(_PracticeRequest):
+    """Bounded successor-generation request for an existing generated set."""
+
+    source_ids: list[Annotated[str, Field(min_length=1, max_length=80)]] = Field(
+        min_length=1, max_length=32
+    )
+    objective_ids: list[Annotated[str, Field(min_length=1, max_length=160)]] = Field(
+        default_factory=list, max_length=128
+    )
+    expected_course_write_epoch: int = Field(ge=1)
+    expected_practice_set_write_epoch: int = Field(ge=1)
+    item_limit: int = Field(default=5, ge=1, le=12)
+    context_char_limit: int = Field(default=12_000, ge=1, le=48_000)
+
+
 def _service():
     try:
         return get_current_course_service()
@@ -168,6 +206,10 @@ def _practice_call(operation):
         raise HTTPException(status_code=404, detail="Practice resource not found") from exc
     except (CourseConflictError, LearningConflictError) as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except sqlite3.IntegrityError as exc:
+        # Persistence fences are part of the Course ownership contract.  Never
+        # surface SQLite trigger text (which can reveal internal table shape).
+        raise HTTPException(status_code=409, detail="Practice resource conflict") from exc
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
 
@@ -199,10 +241,58 @@ def _practice_grading_service():
     return CourseGradingService(CourseGradingRepository(course_service.repository), adapter)
 
 
+def _practice_generation_service():
+    """Build the generation seam from the authenticated private Course root."""
+
+    from deeptutor.courses.generation_service import build_practice_generation_service
+
+    return build_practice_generation_service(_service())
+
+
+def _run_practice_generation(
+    owner_user_id: str, course_id: str, operation_id: str
+) -> None:
+    """Run exactly one persisted operation outside the request lifecycle.
+
+    Background execution rebuilds the private repository from the immutable
+    operation owner instead of relying on a request ``ContextVar`` that could
+    disappear or fall back to the local-admin workspace.  The generation service
+    still revalidates account authority before provider work and final commit.
+    """
+
+    from deeptutor.courses.generation_service import (
+        unregister_live_practice_generation,
+    )
+    from deeptutor.courses.repository import CourseRepository
+    from deeptutor.courses.service import CourseService
+    from deeptutor.multi_user.paths import get_personal_path_service
+
+    try:
+        paths = get_personal_path_service(owner_user_id)
+        service = CourseService(CourseRepository(paths.get_courses_db(), owner_user_id))
+        _practice_generation_service_for(service).run_operation(course_id, operation_id)
+    finally:
+        # ``run_operation`` normally removes the marker itself. This boundary
+        # also covers failures while rebuilding the owner path, repository, or
+        # service before ``run_operation`` can begin.
+        unregister_live_practice_generation(owner_user_id, course_id, operation_id)
+
+
+def _practice_generation_service_for(course_service):
+    """Indirection keeps the background path injectable in deterministic tests."""
+
+    from deeptutor.courses.generation_service import build_practice_generation_service
+
+    return build_practice_generation_service(course_service)
+
+
 def _practice_question_payload(question, *, include_answer_contract: bool) -> dict:
     payload = question.model_dump(mode="json")
     if not include_answer_contract:
         payload.pop("answer_contract", None)
+        # Explanations are answer-adjacent provider/author content. They are
+        # revealed with the frozen answer contract only after durable grading.
+        payload.pop("explanation", None)
     return payload
 
 
@@ -234,6 +324,110 @@ async def list_practice_sets(
             )
         ]
     }
+
+
+@router.post("/{course_id}/practice-generation", status_code=202)
+async def create_generated_practice(
+    course_id: str,
+    body: CreateGeneratedPracticeRequest,
+    background_tasks: BackgroundTasks,
+    idempotency_key: str = Header(
+        ..., alias="Idempotency-Key", min_length=8, max_length=160
+    ),
+):
+    """Queue one server-owned grounded Practice operation.
+
+    The response is the durable queued record.  It is intentionally not a
+    generated question preview, a prompt surface, or proof that generation has
+    succeeded; callers must fetch the operation for its terminal state.
+    """
+
+    async with course_operation_lock(course_id):
+        generation = _practice_generation_service()
+        request = _practice_call(
+            lambda: generation.create_generated_practice(
+                course_id,
+                title=body.title,
+                source_ids=body.source_ids,
+                objective_ids=body.objective_ids,
+                idempotency_key=idempotency_key,
+                expected_course_write_epoch=body.expected_course_write_epoch,
+                item_limit=body.item_limit,
+                context_char_limit=body.context_char_limit,
+            )
+        )
+    from deeptutor.courses.generation_service import register_live_practice_generation
+
+    register_live_practice_generation(
+        request.operation.owner_user_id, course_id, request.operation.id
+    )
+    background_tasks.add_task(
+        _run_practice_generation,
+        request.operation.owner_user_id,
+        course_id,
+        request.operation.id,
+    )
+    return request.model_dump(mode="json")
+
+
+@router.get("/{course_id}/practice-generation")
+async def list_practice_generation_operations(course_id: str):
+    generation = _practice_generation_service()
+    return {
+        "operations": [
+            item.model_dump(mode="json")
+            for item in _practice_call(lambda: generation.list_operations(course_id))
+        ]
+    }
+
+
+@router.get("/{course_id}/practice-generation/{operation_id}")
+async def get_practice_generation_operation(course_id: str, operation_id: str):
+    generation = _practice_generation_service()
+    return _practice_call(
+        lambda: generation.get_operation(course_id, operation_id)
+    ).model_dump(mode="json")
+
+
+@router.post("/{course_id}/practice/{practice_set_id}/generation", status_code=202)
+async def request_practice_generation_successor(
+    course_id: str,
+    practice_set_id: str,
+    body: GeneratePracticeRevisionRequest,
+    background_tasks: BackgroundTasks,
+    idempotency_key: str = Header(
+        ..., alias="Idempotency-Key", min_length=8, max_length=160
+    ),
+):
+    """Queue a new immutable generated revision for an owned generated set."""
+
+    async with course_operation_lock(course_id):
+        generation = _practice_generation_service()
+        request = _practice_call(
+            lambda: generation.request_generation(
+                course_id,
+                practice_set_id,
+                source_ids=body.source_ids,
+                objective_ids=body.objective_ids,
+                idempotency_key=idempotency_key,
+                expected_course_write_epoch=body.expected_course_write_epoch,
+                expected_practice_set_write_epoch=body.expected_practice_set_write_epoch,
+                item_limit=body.item_limit,
+                context_char_limit=body.context_char_limit,
+            )
+        )
+    from deeptutor.courses.generation_service import register_live_practice_generation
+
+    register_live_practice_generation(
+        request.operation.owner_user_id, course_id, request.operation.id
+    )
+    background_tasks.add_task(
+        _run_practice_generation,
+        request.operation.owner_user_id,
+        course_id,
+        request.operation.id,
+    )
+    return request.model_dump(mode="json")
 
 
 @router.get("/{course_id}/practice/{practice_set_id}")

@@ -242,6 +242,8 @@ class CoursePracticeRepository:
             practice_set = self._set_from_row(self._owned_set_row(conn, course_id, practice_set_id))
             if practice_set.state != "draft":
                 raise CourseConflictError("archived Practice sets cannot be edited")
+            if practice_set.mode == "generated":
+                raise CourseConflictError("Generated Practice revisions are reserved for generation operations")
             snapshots, snapshot_json = self._source_snapshot(conn, course_id, source_ids)
             has_draft = conn.execute(
                 "SELECT 1 FROM practice_set_revisions WHERE practice_set_id = ? AND state = 'draft'",
@@ -324,6 +326,8 @@ class CoursePracticeRepository:
             practice_set = self._set_from_row(self._owned_set_row(conn, course_id, practice_set_id))
             if practice_set.state != "draft":
                 raise CourseConflictError("archived Practice sets cannot be edited")
+            if practice_set.mode == "generated":
+                raise CourseConflictError("Generated Practice questions are reserved for generation operations")
             revision = self._revision_from_row(self._owned_revision_row(conn, course_id, practice_set_id, revision_id))
             if revision.state != "draft":
                 raise CourseConflictError("ready Practice revisions are immutable")
@@ -361,6 +365,8 @@ class CoursePracticeRepository:
             practice_set = self._set_from_row(self._owned_set_row(conn, course_id, practice_set_id))
             if practice_set.state != "draft":
                 raise CourseConflictError("Archived Practice sets cannot be edited")
+            if practice_set.mode == "generated":
+                raise CourseConflictError("Generated Practice publication is reserved for generation operations")
             revision = self._revision_from_row(self._owned_revision_row(conn, course_id, practice_set_id, revision_id))
             if revision.state != "draft":
                 raise CourseConflictError("ready Practice revisions are immutable")

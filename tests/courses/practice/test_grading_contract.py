@@ -428,24 +428,25 @@ def test_sqlite_evidence_blocks_reset_even_before_learning_projection(
     )
 
 
-def test_0002_upgrade_applies_only_0003_preserves_rows_and_tamper_or_rollback_fail_closed(
+def test_0002_upgrade_applies_grading_and_generation_migrations_preserves_rows_and_tamper_or_rollback_fail_closed(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    path = tmp_path / "courses.db"
+    root = tmp_path / "p4_03"
+    path = root / "courses.db"
     artifacts = runner.discover_migrations()
     monkeypatch.setattr(runner, "discover_migrations", lambda: artifacts[:3])
     assert ensure_course_schema(path) == (0, 1, 2)
     with sqlite3.connect(path) as conn:
         conn.execute("INSERT INTO courses (id, owner_user_id, title, state, revision, write_epoch, managed_kb_ref, created_at, updated_at, archived_at) VALUES ('crs_keep', 'u_alice', 'Keep', 'active', 1, 1, NULL, 1, 1, NULL)")
     monkeypatch.setattr(runner, "discover_migrations", lambda: artifacts)
-    assert ensure_course_schema(path) == (3,)
+    assert ensure_course_schema(path) == (3, 4)
     with sqlite3.connect(path) as conn:
         assert conn.execute("SELECT title FROM courses WHERE id = 'crs_keep'").fetchone()[0] == "Keep"
 
     tampered = runner.MigrationArtifact.from_resource(
         artifacts[3].filename, artifacts[3].content + b"\n-- changed bytes\n"
     )
-    monkeypatch.setattr(runner, "discover_migrations", lambda: (*artifacts[:3], tampered))
+    monkeypatch.setattr(runner, "discover_migrations", lambda: (*artifacts[:3], tampered, *artifacts[4:]))
     with pytest.raises(CourseMigrationError, match="receipt mismatch"):
         ensure_course_schema(path)
 
@@ -458,6 +459,65 @@ def test_0002_upgrade_applies_only_0003_preserves_rows_and_tamper_or_rollback_fa
         ensure_course_schema(fresh)
     with sqlite3.connect(fresh) as conn:
         assert conn.execute("SELECT COUNT(*) FROM sqlite_master WHERE name = 'should_rollback'").fetchone()[0] == 0
+
+
+def test_exact_p4_03_upgrade_applies_only_generation_migration_and_preserves_learning_rows(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """P4-05 must be a no-rewrite upgrade from the accepted P4-03 ledger."""
+    root = tmp_path / "p4_03_upgrade"
+    path = root / "courses.db"
+    artifacts = runner.discover_migrations()
+    monkeypatch.setattr(runner, "discover_migrations", lambda: artifacts[:4])
+    courses, practice, attempts, adapter, grading = _services(root, "u_alice")
+    course = courses.create_course("Biology")
+    _init_objectives(adapter, course.id, "kp_one")
+    practice_set, revision, _questions = _practice(courses, practice, course.id)
+    attempt_id, _item_id = _submitted(
+        courses, attempts, course.id, practice_set, revision, {"answer": "yes"}
+    )
+    _grade(grading, courses, course.id, practice_set.id, attempt_id)
+    with courses._connect() as conn:
+        before = {
+            table: conn.execute(f'SELECT * FROM "{table}" ORDER BY rowid').fetchall()
+            for table in (
+                "courses",
+                "practice_sets",
+                "practice_set_revisions",
+                "practice_questions",
+                "quiz_attempts",
+                "quiz_attempt_items",
+                "quiz_attempt_answers",
+                "quiz_item_grading_evidence",
+            )
+        }
+
+    monkeypatch.setattr(runner, "discover_migrations", lambda: artifacts)
+    assert ensure_course_schema(path) == (4,)
+    assert ensure_course_schema(path) == ()
+    with courses._connect() as conn:
+        after = {
+            table: conn.execute(f'SELECT * FROM "{table}" ORDER BY rowid').fetchall()
+            for table in before
+        }
+        assert conn.execute("SELECT COUNT(*) FROM practice_generation_operations").fetchone()[0] == 0
+        effective_triggers = {
+            str(row[0])
+            for row in conn.execute(
+                """SELECT name FROM sqlite_master
+                   WHERE type = 'trigger' AND name LIKE 'practice_generation_%'"""
+            )
+        }
+        assert {
+            "practice_generation_operations_terminal_immutable",
+            "practice_generation_generated_revision_question_fence",
+            "practice_generation_generated_revision_ready_fence",
+            "practice_generation_practice_set_mode_immutable",
+        } <= effective_triggers
+        assert tuple(
+            row[0] for row in conn.execute("SELECT version FROM schema_migrations ORDER BY version")
+        ) == (0, 1, 2, 3, 4)
+    assert after == before
 
 
 def test_raw_sql_cannot_forge_a_self_consistent_wrong_exact_grade(tmp_path: Path) -> None:

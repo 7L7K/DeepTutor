@@ -30,11 +30,11 @@ def test_exact_legacy_profiles_adopt_without_rewriting_domain_rows(
         seed_phase3a_rows(conn, include_blueway=include_blueway)
         before = domain_digest(conn)
 
-    assert ensure_course_schema(path) == (0, 1, 2, 3)
+    assert ensure_course_schema(path) == (0, 1, 2, 3, 4)
     with sqlite3.connect(path) as conn:
         conn.row_factory = sqlite3.Row
         assert domain_digest(conn) == before
-        assert conn.execute("SELECT COUNT(*) FROM schema_migrations").fetchone()[0] == 4
+        assert conn.execute("SELECT COUNT(*) FROM schema_migrations").fetchone()[0] == 5
         assert tuple(conn.execute(
             "SELECT id, revision, write_epoch, managed_kb_ref FROM courses"
         ).fetchone()) == ("crs_fixture", 3, 2, "personal:kb:fixture")

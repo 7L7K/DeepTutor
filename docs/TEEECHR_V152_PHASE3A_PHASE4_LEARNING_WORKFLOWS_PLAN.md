@@ -912,7 +912,13 @@ Status: **completed for the local engineering boundary by `d613b8ad`.**
   - only server-resolved active sources enter retrieval;
   - item/text/context/time limits are enforced;
   - malformed or incomplete generation never becomes ready;
-  - archive, logout, revision, or source changes fence the final commit;
+  - account disable/revocation, Course or Practice write-epoch changes,
+    generated-draft replacement, archive, or source receipt changes fence the
+    final commit;
+  - browser logout or identity change immediately fences browser progress and
+    result application, but does not revoke the account or silently cancel an
+    already accepted server-owned operation; display-title-only Course
+    revisions are likewise non-authoritative;
   - deterministic fake provider covers automated tests;
   - real provider proof requires separate approval.
 - **Doc alignment:** Course source ingestion fences and historical Practice outcomes.
