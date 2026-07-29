@@ -4,6 +4,13 @@
 
 ### Added
 
+- Added the authenticated manual Course Practice API and `/practice`
+  workspace: private set/revision/question authoring, immutable ready
+  revisions, resumable attempts and history, CAS/idempotent answer saves,
+  deterministic submit/grade/results, and archive/restore without deletion.
+  Ready questions hide answer contracts until an owned attempt is durably
+  graded; browser responses are fenced by identity, Course, and view epoch,
+  and no answer or quiz snapshot is persisted in browser storage.
 - Added SQLite-authoritative deterministic exact-answer grading for submitted
   Course quiz attempts. Immutable per-item/per-objective evidence binds the
   frozen answer contract, response, objective, result, error classification,

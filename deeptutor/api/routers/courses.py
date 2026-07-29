@@ -4,8 +4,9 @@ from __future__ import annotations
 
 from fastapi import APIRouter, BackgroundTasks, File, Form, Header, HTTPException, Query, UploadFile
 from fastapi.responses import StreamingResponse
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
+from deeptutor.courses.practice_models import ExactAnswerContract
 from deeptutor.courses.repository import CourseConflictError, CourseNotFoundError
 from deeptutor.courses.service import (
     CourseUnavailableError,
@@ -37,6 +38,62 @@ class InitCourseLearningRequest(BaseModel):
 
 class ResetCourseLearningRequest(BaseModel):
     session_id: str | None = None
+
+
+class _PracticeRequest(BaseModel):
+    """Reject UI-only and authority-bearing fields at the API boundary."""
+
+    model_config = ConfigDict(extra="forbid")
+
+
+class CreatePracticeSetRequest(_PracticeRequest):
+    title: str = Field(min_length=1, max_length=160)
+    expected_course_write_epoch: int = Field(ge=1)
+
+
+class CreatePracticeRevisionRequest(_PracticeRequest):
+    expected_course_write_epoch: int = Field(ge=1)
+
+
+class PracticeSetMutationRequest(_PracticeRequest):
+    expected_revision: int = Field(ge=1)
+    expected_course_write_epoch: int = Field(ge=1)
+
+
+class ReadyPracticeRevisionRequest(_PracticeRequest):
+    expected_course_write_epoch: int = Field(ge=1)
+
+
+class ExactAnswerResponse(_PracticeRequest):
+    answer: str = Field(max_length=4_000)
+
+
+class AddPracticeQuestionRequest(_PracticeRequest):
+    question_type: str = Field(min_length=1, max_length=80)
+    prompt: str = Field(min_length=1, max_length=12_000)
+    answer_contract: ExactAnswerContract
+    explanation: str = Field(default="", max_length=12_000)
+    objective_ids: list[str] = Field(default_factory=list, max_length=128)
+    expected_course_write_epoch: int = Field(ge=1)
+
+
+class StartPracticeAttemptRequest(_PracticeRequest):
+    practice_set_revision_id: str = Field(min_length=1, max_length=80)
+    expected_course_write_epoch: int = Field(ge=1)
+    expected_practice_set_write_epoch: int = Field(ge=1)
+
+
+class AutosavePracticeAnswerRequest(_PracticeRequest):
+    attempt_item_id: str = Field(min_length=1, max_length=80)
+    response: ExactAnswerResponse
+    expected_answer_revision: int = Field(ge=1)
+    expected_course_write_epoch: int = Field(ge=1)
+    expected_practice_set_write_epoch: int = Field(ge=1)
+
+
+class AttemptMutationRequest(_PracticeRequest):
+    expected_course_write_epoch: int = Field(ge=1)
+    expected_practice_set_write_epoch: int = Field(ge=1)
 
 
 def _service():
@@ -100,6 +157,389 @@ async def archive_course(course_id: str, body: RevisionRequest):
 async def restore_course(course_id: str, body: RevisionRequest):
     async with course_operation_lock(course_id):
         return _call(lambda: _service().restore(course_id, body.expected_revision)).model_dump()
+
+
+def _practice_call(operation):
+    """Translate Course-owned Practice failures without leaking foreign IDs."""
+
+    try:
+        return operation()
+    except CourseNotFoundError as exc:
+        raise HTTPException(status_code=404, detail="Practice resource not found") from exc
+    except (CourseConflictError, LearningConflictError) as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+
+def _practice_services():
+    from deeptutor.courses.attempt_repository import CourseAssessmentRepository
+    from deeptutor.courses.attempt_service import CourseAssessmentService
+    from deeptutor.courses.practice_repository import CoursePracticeRepository
+    from deeptutor.courses.practice_service import CoursePracticeService
+
+    course_service = _service()
+    repository = course_service.repository
+    return (
+        CoursePracticeService(CoursePracticeRepository(repository)),
+        CourseAssessmentService(CourseAssessmentRepository(repository)),
+    )
+
+
+def _practice_grading_service():
+    from deeptutor.courses.grading_repository import CourseGradingRepository
+    from deeptutor.courses.grading_service import CourseGradingService
+    from deeptutor.courses.mastery_adapter import CourseMasteryAdapter
+    from deeptutor.learning.storage import LearningStore
+    from deeptutor.multi_user.paths import get_personal_path_service
+
+    course_service = _service()
+    paths = get_personal_path_service(course_service.owner_user_id)
+    adapter = CourseMasteryAdapter(LearningStore(root=paths.get_workspace_dir() / "learning"))
+    return CourseGradingService(CourseGradingRepository(course_service.repository), adapter)
+
+
+def _practice_question_payload(question, *, include_answer_contract: bool) -> dict:
+    payload = question.model_dump(mode="json")
+    if not include_answer_contract:
+        payload.pop("answer_contract", None)
+    return payload
+
+
+@router.post("/{course_id}/practice")
+async def create_practice_set(course_id: str, body: CreatePracticeSetRequest):
+    async with course_operation_lock(course_id):
+        practice, _attempts = _practice_services()
+        return _practice_call(
+            lambda: practice.create_practice_set(
+                course_id,
+                title=body.title,
+                expected_course_write_epoch=body.expected_course_write_epoch,
+            )
+        ).model_dump(mode="json")
+
+
+@router.get("/{course_id}/practice")
+async def list_practice_sets(
+    course_id: str, include_archived: bool = Query(default=True)
+):
+    practice, _attempts = _practice_services()
+    return {
+        "practice_sets": [
+            item.model_dump(mode="json")
+            for item in _practice_call(
+                lambda: practice.list_practice_sets(
+                    course_id, include_archived=include_archived
+                )
+            )
+        ]
+    }
+
+
+@router.get("/{course_id}/practice/{practice_set_id}")
+async def get_practice_set(course_id: str, practice_set_id: str):
+    practice, _attempts = _practice_services()
+    return _practice_call(
+        lambda: practice.get_practice_set(course_id, practice_set_id)
+    ).model_dump(mode="json")
+
+
+@router.post("/{course_id}/practice/{practice_set_id}/archive")
+async def archive_practice_set(
+    course_id: str, practice_set_id: str, body: PracticeSetMutationRequest
+):
+    async with course_operation_lock(course_id):
+        practice, _attempts = _practice_services()
+        return _practice_call(
+            lambda: practice.archive_practice_set(
+                course_id,
+                practice_set_id,
+                expected_revision=body.expected_revision,
+                expected_course_write_epoch=body.expected_course_write_epoch,
+            )
+        ).model_dump(mode="json")
+
+
+@router.post("/{course_id}/practice/{practice_set_id}/restore")
+async def restore_practice_set(
+    course_id: str, practice_set_id: str, body: PracticeSetMutationRequest
+):
+    async with course_operation_lock(course_id):
+        practice, _attempts = _practice_services()
+        return _practice_call(
+            lambda: practice.restore_practice_set(
+                course_id,
+                practice_set_id,
+                expected_revision=body.expected_revision,
+                expected_course_write_epoch=body.expected_course_write_epoch,
+            )
+        ).model_dump(mode="json")
+
+
+@router.post("/{course_id}/practice/{practice_set_id}/revisions")
+async def create_practice_revision(
+    course_id: str, practice_set_id: str, body: CreatePracticeRevisionRequest
+):
+    async with course_operation_lock(course_id):
+        practice, _attempts = _practice_services()
+        return _practice_call(
+            lambda: practice.create_draft_revision(
+                course_id,
+                practice_set_id,
+                expected_course_write_epoch=body.expected_course_write_epoch,
+            )
+        ).model_dump(mode="json")
+
+
+@router.post("/{course_id}/practice/{practice_set_id}/revisions/successor")
+async def create_practice_successor_revision(
+    course_id: str, practice_set_id: str, body: CreatePracticeRevisionRequest
+):
+    async with course_operation_lock(course_id):
+        practice, _attempts = _practice_services()
+        return _practice_call(
+            lambda: practice.create_successor_revision(
+                course_id,
+                practice_set_id,
+                expected_course_write_epoch=body.expected_course_write_epoch,
+            )
+        ).model_dump(mode="json")
+
+
+@router.get("/{course_id}/practice/{practice_set_id}/revisions/{revision_id}")
+async def get_practice_revision(
+    course_id: str, practice_set_id: str, revision_id: str
+):
+    practice, _attempts = _practice_services()
+    return _practice_call(
+        lambda: practice.get_revision(course_id, practice_set_id, revision_id)
+    ).model_dump(mode="json")
+
+
+@router.post(
+    "/{course_id}/practice/{practice_set_id}/revisions/{revision_id}/questions"
+)
+async def add_practice_question(
+    course_id: str,
+    practice_set_id: str,
+    revision_id: str,
+    body: AddPracticeQuestionRequest,
+):
+    async with course_operation_lock(course_id):
+        practice, _attempts = _practice_services()
+        return _practice_call(
+            lambda: practice.add_question(
+                course_id,
+                practice_set_id,
+                revision_id,
+                question_type=body.question_type,
+                prompt=body.prompt,
+                answer_contract=body.answer_contract,
+                explanation=body.explanation,
+                objective_ids=body.objective_ids,
+                expected_course_write_epoch=body.expected_course_write_epoch,
+            )
+        ).model_dump(mode="json")
+
+
+@router.get(
+    "/{course_id}/practice/{practice_set_id}/revisions/{revision_id}/questions"
+)
+async def list_practice_questions(
+    course_id: str, practice_set_id: str, revision_id: str
+):
+    practice, _attempts = _practice_services()
+    revision = _practice_call(
+        lambda: practice.get_revision(course_id, practice_set_id, revision_id)
+    )
+    return {
+        "questions": [
+            _practice_question_payload(
+                item, include_answer_contract=revision.state == "draft"
+            )
+            for item in _practice_call(
+                lambda: practice.list_questions(course_id, practice_set_id, revision_id)
+            )
+        ]
+    }
+
+
+@router.post("/{course_id}/practice/{practice_set_id}/revisions/{revision_id}/ready")
+async def ready_practice_revision(
+    course_id: str,
+    practice_set_id: str,
+    revision_id: str,
+    body: ReadyPracticeRevisionRequest,
+):
+    async with course_operation_lock(course_id):
+        practice, _attempts = _practice_services()
+        return _practice_call(
+            lambda: practice.ready_revision(
+                course_id,
+                practice_set_id,
+                revision_id,
+                expected_course_write_epoch=body.expected_course_write_epoch,
+            )
+        ).model_dump(mode="json")
+
+
+@router.post("/{course_id}/practice/{practice_set_id}/attempts")
+async def start_or_resume_practice_attempt(
+    course_id: str, practice_set_id: str, body: StartPracticeAttemptRequest
+):
+    async with course_operation_lock(course_id):
+        _practice, attempts = _practice_services()
+        return _practice_call(
+            lambda: attempts.start_or_resume_attempt(
+                course_id,
+                practice_set_id,
+                body.practice_set_revision_id,
+                expected_course_write_epoch=body.expected_course_write_epoch,
+                expected_practice_set_write_epoch=body.expected_practice_set_write_epoch,
+            )
+        ).model_dump(mode="json")
+
+
+@router.get("/{course_id}/practice/{practice_set_id}/attempts")
+async def list_practice_attempts(
+    course_id: str,
+    practice_set_id: str,
+    include_archived: bool = Query(default=True),
+):
+    _practice, attempts = _practice_services()
+    return {
+        "attempts": [
+            item.model_dump(mode="json")
+            for item in _practice_call(
+                lambda: attempts.list_attempts(
+                    course_id, practice_set_id, include_archived=include_archived
+                )
+            )
+        ]
+    }
+
+
+@router.get("/{course_id}/practice/{practice_set_id}/attempts/{attempt_id}")
+async def get_practice_attempt(
+    course_id: str, practice_set_id: str, attempt_id: str
+):
+    _practice, attempts = _practice_services()
+    return _practice_call(
+        lambda: attempts.get_attempt(course_id, practice_set_id, attempt_id)
+    ).model_dump(mode="json")
+
+
+@router.patch("/{course_id}/practice/{practice_set_id}/attempts/{attempt_id}")
+async def autosave_practice_answer(
+    course_id: str,
+    practice_set_id: str,
+    attempt_id: str,
+    body: AutosavePracticeAnswerRequest,
+    idempotency_key: str = Header(
+        ..., alias="Idempotency-Key", min_length=8, max_length=160
+    ),
+):
+    async with course_operation_lock(course_id):
+        _practice, attempts = _practice_services()
+        return _practice_call(
+            lambda: attempts.autosave_answer(
+                course_id,
+                practice_set_id,
+                attempt_id,
+                body.attempt_item_id,
+                response=body.response.model_dump(mode="json"),
+                expected_answer_revision=body.expected_answer_revision,
+                idempotency_token=idempotency_key,
+                expected_course_write_epoch=body.expected_course_write_epoch,
+                expected_practice_set_write_epoch=body.expected_practice_set_write_epoch,
+            )
+        ).model_dump(mode="json")
+
+
+@router.post("/{course_id}/practice/{practice_set_id}/attempts/{attempt_id}/submit")
+async def submit_practice_attempt(
+    course_id: str,
+    practice_set_id: str,
+    attempt_id: str,
+    body: AttemptMutationRequest,
+):
+    async with course_operation_lock(course_id):
+        _practice, attempts = _practice_services()
+        return _practice_call(
+            lambda: attempts.submit_attempt(
+                course_id,
+                practice_set_id,
+                attempt_id,
+                expected_course_write_epoch=body.expected_course_write_epoch,
+                expected_practice_set_write_epoch=body.expected_practice_set_write_epoch,
+            )
+        ).model_dump(mode="json")
+
+
+@router.post("/{course_id}/practice/{practice_set_id}/attempts/{attempt_id}/abandon")
+async def abandon_practice_attempt(
+    course_id: str,
+    practice_set_id: str,
+    attempt_id: str,
+    body: AttemptMutationRequest,
+):
+    async with course_operation_lock(course_id):
+        _practice, attempts = _practice_services()
+        return _practice_call(
+            lambda: attempts.abandon_attempt(
+                course_id,
+                practice_set_id,
+                attempt_id,
+                expected_course_write_epoch=body.expected_course_write_epoch,
+                expected_practice_set_write_epoch=body.expected_practice_set_write_epoch,
+            )
+        ).model_dump(mode="json")
+
+
+@router.post("/{course_id}/practice/{practice_set_id}/attempts/{attempt_id}/grade")
+async def grade_practice_attempt(
+    course_id: str,
+    practice_set_id: str,
+    attempt_id: str,
+    body: AttemptMutationRequest,
+):
+    async with course_operation_lock(course_id):
+        grading = _practice_grading_service()
+        return _practice_call(
+            lambda: grading.grade_attempt(
+                course_id,
+                practice_set_id,
+                attempt_id,
+                expected_course_write_epoch=body.expected_course_write_epoch,
+                expected_practice_set_write_epoch=body.expected_practice_set_write_epoch,
+            )
+        ).model_dump(mode="json")
+
+
+@router.get("/{course_id}/practice/{practice_set_id}/attempts/{attempt_id}/results")
+async def get_practice_attempt_results(
+    course_id: str, practice_set_id: str, attempt_id: str
+):
+    practice, attempts = _practice_services()
+    view = _practice_call(
+        lambda: attempts.get_attempt(course_id, practice_set_id, attempt_id)
+    )
+    if view.attempt.state != "graded":
+        raise HTTPException(status_code=409, detail="Quiz attempt has not been graded")
+    questions = _practice_call(
+        lambda: practice.list_questions(
+            course_id,
+            practice_set_id,
+            view.attempt.practice_set_revision_id,
+        )
+    )
+    return {
+        **view.model_dump(mode="json"),
+        "questions": [
+            _practice_question_payload(item, include_answer_contract=True)
+            for item in questions
+        ],
+    }
 
 
 def _course_learning_store(course_id: str, *, require_active: bool):

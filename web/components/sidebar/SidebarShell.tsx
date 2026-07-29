@@ -10,6 +10,7 @@ import {
   BookText,
   Bot,
   Brain,
+  ClipboardCheck,
   ChevronDown,
   Github,
   HeartHandshake,
@@ -83,6 +84,12 @@ const PRIMARY_NAV: NavEntry[] = [
     label: "Learning Space",
     icon: LayoutGrid,
     tooltipKey: "Space tooltip",
+  },
+  {
+    href: "/practice",
+    label: "Practice",
+    icon: ClipboardCheck,
+    tooltipKey: "Practice",
   },
 ];
 
