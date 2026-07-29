@@ -13,7 +13,9 @@ from pydantic import TypeAdapter, ValidationError
 from deeptutor.courses.deterministic_provider import enabled as deterministic_enabled
 from deeptutor.courses.service import source_kb_name
 from deeptutor.multi_user.paths import get_personal_path_service
-from deeptutor.services.config.provider_runtime import resolve_llm_runtime_config
+from deeptutor.services.config.flashcard_provider import (
+    get_flashcard_provider_config_service,
+)
 
 from .flashcard_generation_models import (
     FlashcardCitation,
@@ -150,6 +152,12 @@ _OPENAI_CARD_SCHEMA: dict[str, Any] = {
 class OpenAIFlashcardGenerationProvider:
     """Bounded Responses API adapter with durable cost admission."""
 
+    PRICING_VERSION = "openai-gpt-5-mini-pricing-2026-07-29"
+    MAX_OUTPUT_TOKENS = 14_400
+    _INPUT_MICROUSD_PER_MILLION = 250_000
+    _CACHED_INPUT_MICROUSD_PER_MILLION = 25_000
+    _OUTPUT_MICROUSD_PER_MILLION = 2_000_000
+
     def __init__(
         self,
         *,
@@ -158,6 +166,7 @@ class OpenAIFlashcardGenerationProvider:
         ledger: ProviderUsageLedger,
         base_url: str | None = None,
         client_factory: Callable[..., Any] | None = None,
+        request_timeout_seconds: float = 25.0,
     ) -> None:
         if not api_key or model != "gpt-5-mini":
             raise FlashcardGenerationProviderUnavailable("provider unavailable")
@@ -169,9 +178,16 @@ class OpenAIFlashcardGenerationProvider:
         self.base_url = base_url or "https://api.openai.com/v1"
         self.ledger = ledger
         self._client_factory = client_factory
+        if not 0.01 <= request_timeout_seconds <= 25.0:
+            raise FlashcardGenerationProviderUnavailable("provider unavailable")
+        self.request_timeout_seconds = request_timeout_seconds
 
     def available(self) -> bool:
-        return self.ledger.load_policy().enabled
+        policy = self.ledger.load_policy()
+        return (
+            policy.enabled
+            and policy.pricing_version == self.PRICING_VERSION
+        )
 
     @staticmethod
     def _instructions() -> str:
@@ -262,10 +278,44 @@ class OpenAIFlashcardGenerationProvider:
                 "provider output is invalid"
             ) from exc
 
+    @classmethod
+    def _estimate_cost_microusd(
+        cls,
+        *,
+        input_tokens: int,
+        output_tokens: int,
+        cached_input_tokens: int = 0,
+    ) -> int:
+        cached = min(max(0, cached_input_tokens), max(0, input_tokens))
+        uncached = max(0, input_tokens) - cached
+        numerator = (
+            uncached * cls._INPUT_MICROUSD_PER_MILLION
+            + cached * cls._CACHED_INPUT_MICROUSD_PER_MILLION
+            + max(0, output_tokens) * cls._OUTPUT_MICROUSD_PER_MILLION
+        )
+        return max(1, (numerator + 999_999) // 1_000_000)
+
+    @classmethod
+    def _max_output_tokens(cls, item_limit: int) -> int:
+        return min(cls.MAX_OUTPUT_TOKENS, max(1200, item_limit * 300))
+
+    @staticmethod
+    def _usage_token_count(usage: object, field: str) -> int:
+        value = getattr(usage, field, None)
+        if not isinstance(value, int) or isinstance(value, bool) or value < 0:
+            raise FlashcardGenerationProviderError(
+                "provider usage metadata is unavailable"
+            )
+        return value
+
     def generate(self, request: FlashcardGenerationInput) -> GeneratedFlashcardOutput:
+        if not self.available():
+            raise FlashcardGenerationProviderQuotaExceeded(
+                "provider usage admission denied"
+            )
         instructions = self._instructions()
         input_payload = self._input_payload(request)
-        max_output_tokens = max(1200, request.item_limit * 300)
+        max_output_tokens = self._max_output_tokens(request.item_limit)
         # OpenAI tokenization is byte-backed. Reserve the full UTF-8 request
         # surface (including the structured-output schema) plus bounded framing
         # overhead, rather than a chars/3 average that can undercount Unicode or
@@ -284,14 +334,20 @@ class OpenAIFlashcardGenerationProvider:
         estimated_input_tokens = max(
             1, len(request_surface) + 4096
         )
+        reserved_cost_microusd = self._estimate_cost_microusd(
+            input_tokens=estimated_input_tokens,
+            output_tokens=max_output_tokens,
+        )
         try:
             self.ledger.reserve(
                 operation_id=request.operation_id,
                 owner_user_id=request.owner_user_id,
                 provider="openai",
                 requested_model=self.model,
+                pricing_version=self.PRICING_VERSION,
                 input_tokens=estimated_input_tokens,
                 output_tokens=max_output_tokens,
+                estimated_cost_microusd=reserved_cost_microusd,
             )
         except ProviderUsageError as exc:
             raise FlashcardGenerationProviderQuotaExceeded(
@@ -301,9 +357,19 @@ class OpenAIFlashcardGenerationProvider:
             if self._client_factory is None:
                 from openai import OpenAI
 
-                client = OpenAI(api_key=self.api_key, base_url=self.base_url)
+                client = OpenAI(
+                    api_key=self.api_key,
+                    base_url=self.base_url,
+                    max_retries=0,
+                    timeout=self.request_timeout_seconds,
+                )
             else:
-                client = self._client_factory(api_key=self.api_key, base_url=self.base_url)
+                client = self._client_factory(
+                    api_key=self.api_key,
+                    base_url=self.base_url,
+                    max_retries=0,
+                    timeout=self.request_timeout_seconds,
+                )
         except Exception as exc:
             self.ledger.release(request.operation_id)
             raise FlashcardGenerationProviderError(
@@ -316,6 +382,10 @@ class OpenAIFlashcardGenerationProvider:
                 instructions=instructions,
                 input=input_payload,
                 max_output_tokens=max_output_tokens,
+                reasoning={"effort": "minimal"},
+                safety_identifier=hashlib.sha256(
+                    request.owner_user_id.encode("utf-8")
+                ).hexdigest(),
                 store=False,
                 tools=[],
                 text={
@@ -331,16 +401,43 @@ class OpenAIFlashcardGenerationProvider:
             self.ledger.mark_uncertain(request.operation_id)
             raise FlashcardGenerationProviderError("provider request failed") from exc
         usage = getattr(response, "usage", None)
-        input_tokens = int(getattr(usage, "input_tokens", 0) or 0)
-        output_tokens = int(getattr(usage, "output_tokens", 0) or 0)
+        try:
+            input_tokens = self._usage_token_count(usage, "input_tokens")
+            output_tokens = self._usage_token_count(usage, "output_tokens")
+        except FlashcardGenerationProviderError:
+            self.ledger.mark_uncertain(request.operation_id)
+            raise
+        input_details = getattr(usage, "input_tokens_details", None)
+        output_details = getattr(usage, "output_tokens_details", None)
+        cached_input_tokens = int(
+            getattr(input_details, "cached_tokens", 0) or 0
+        )
+        reasoning_output_tokens = int(
+            getattr(output_details, "reasoning_tokens", 0) or 0
+        )
+        estimated_cost_microusd = self._estimate_cost_microusd(
+            input_tokens=input_tokens,
+            cached_input_tokens=cached_input_tokens,
+            output_tokens=output_tokens,
+        )
         self.ledger.settle(
             request.operation_id,
             input_tokens=input_tokens,
             output_tokens=output_tokens,
-            estimated_cost_microusd=0,
+            estimated_cost_microusd=estimated_cost_microusd,
         )
+        response_status = str(getattr(response, "status", "completed") or "")
+        if response_status != "completed":
+            raise FlashcardGenerationProviderError(
+                "provider response did not complete"
+            )
+        output_text = str(getattr(response, "output_text", "") or "")
+        if not output_text.strip():
+            raise FlashcardGenerationProviderError(
+                "provider returned no structured output"
+            )
         try:
-            payload = json.loads(str(getattr(response, "output_text", "")))
+            payload = json.loads(output_text)
         except json.JSONDecodeError as exc:
             raise FlashcardGenerationProviderError("provider output is invalid") from exc
         cards = self._normalize_cards(payload, request)
@@ -350,7 +447,14 @@ class OpenAIFlashcardGenerationProvider:
             actual_model=str(getattr(response, "model", self.model) or self.model),
             request_id=str(getattr(response, "id", "") or "") or None,
             input_tokens=input_tokens,
+            cached_input_tokens=cached_input_tokens,
             output_tokens=output_tokens,
+            reasoning_output_tokens=reasoning_output_tokens,
+            estimated_cost_microusd=estimated_cost_microusd,
+            response_status=response_status,
+            service_tier=(
+                str(getattr(response, "service_tier", "") or "")[:80] or None
+            ),
             latency_ms=max(
                 0, round((time.perf_counter() - started_at) * 1000)
             ),
@@ -445,9 +549,10 @@ def default_flashcard_generation_provider() -> FlashcardGenerationProvider:
     if deterministic_enabled():
         return DeterministicFlashcardGenerationProvider()
     try:
-        config = resolve_llm_runtime_config()
+        config = get_flashcard_provider_config_service().load()
         if (
-            config.provider_name != "openai"
+            not config.enabled
+            or config.provider != "openai"
             or config.model != "gpt-5-mini"
             or not config.api_key
         ):

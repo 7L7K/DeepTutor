@@ -72,7 +72,12 @@ class FlashcardProviderReceipt(BaseModel):
     actual_model: str = Field(min_length=1, max_length=160)
     request_id: str | None = Field(default=None, max_length=200)
     input_tokens: int | None = Field(default=None, ge=0)
+    cached_input_tokens: int | None = Field(default=None, ge=0)
     output_tokens: int | None = Field(default=None, ge=0)
+    reasoning_output_tokens: int | None = Field(default=None, ge=0)
+    estimated_cost_microusd: int | None = Field(default=None, ge=0)
+    response_status: str | None = Field(default=None, max_length=80)
+    service_tier: str | None = Field(default=None, max_length=80)
     prompt_version: str = Field(
         default="course-flashcards-v1", min_length=1, max_length=80
     )
@@ -197,7 +202,12 @@ class GeneratedFlashcardOutput(BaseModel):
     actual_model: str = Field(default="deterministic-local", min_length=1, max_length=160)
     request_id: str | None = Field(default=None, max_length=200)
     input_tokens: int | None = Field(default=None, ge=0)
+    cached_input_tokens: int | None = Field(default=None, ge=0)
     output_tokens: int | None = Field(default=None, ge=0)
+    reasoning_output_tokens: int | None = Field(default=None, ge=0)
+    estimated_cost_microusd: int | None = Field(default=None, ge=0)
+    response_status: str | None = Field(default=None, max_length=80)
+    service_tier: str | None = Field(default=None, max_length=80)
     prompt_version: str = Field(
         default="course-flashcards-v1", min_length=1, max_length=80
     )

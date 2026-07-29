@@ -22,7 +22,9 @@ logger = logging.getLogger(__name__)
 from deeptutor.multi_user.context import get_current_user
 from deeptutor.multi_user.model_access import allowed_llm_options
 from deeptutor.services.config import (
+    FlashcardProviderConfigError,
     get_config_test_runner,
+    get_flashcard_provider_config_service,
     get_model_catalog_service,
     get_runtime_settings_service,
 )
@@ -135,11 +137,17 @@ class ProviderUsagePolicyUpdate(BaseModel):
     enabled: bool = False
     max_concurrent_per_user: int = Field(ge=1, le=8)
     max_concurrent_global: int = Field(ge=1, le=32)
+    max_lifetime_cost_microusd: int = Field(ge=1, le=1_000_000_000)
     max_daily_input_tokens_per_user: int = Field(ge=1, le=100_000_000)
     max_daily_output_tokens_per_user: int = Field(ge=1, le=20_000_000)
     max_daily_input_tokens_global: int = Field(ge=1, le=500_000_000)
     max_daily_output_tokens_global: int = Field(ge=1, le=100_000_000)
     pricing_version: str = Field(min_length=1, max_length=80)
+
+
+class FlashcardProviderSettingsUpdate(BaseModel):
+    enabled: bool = False
+    api_key: str | None = Field(default=None, max_length=16384)
 
 
 class FetchModelsPayload(BaseModel):
@@ -507,7 +515,11 @@ async def get_provider_usage_policy():
     from deeptutor.courses.provider_usage import get_provider_usage_ledger
 
     _require_settings_admin()
-    return {"policy": asdict(get_provider_usage_ledger().load_policy())}
+    ledger = get_provider_usage_ledger()
+    return {
+        "policy": asdict(ledger.load_policy()),
+        "usage": ledger.usage_summary(),
+    }
 
 
 @router.put("/provider-usage")
@@ -527,7 +539,34 @@ async def update_provider_usage_policy(payload: ProviderUsagePolicyUpdate):
         )
     except ProviderUsageError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
-    return {"policy": asdict(policy)}
+    return {
+        "policy": asdict(policy),
+        "usage": get_provider_usage_ledger().usage_summary(),
+    }
+
+
+@router.get("/flashcard-provider")
+async def get_flashcard_provider_settings():
+    _require_settings_admin()
+    try:
+        return {
+            "provider": get_flashcard_provider_config_service().load_public()
+        }
+    except FlashcardProviderConfigError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+
+
+@router.put("/flashcard-provider")
+async def update_flashcard_provider_settings(
+    payload: FlashcardProviderSettingsUpdate,
+):
+    _require_settings_admin()
+    try:
+        service = get_flashcard_provider_config_service()
+        service.configure(enabled=payload.enabled, api_key=payload.api_key)
+        return {"provider": service.load_public()}
+    except FlashcardProviderConfigError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
 
 
 @router.get("/network")

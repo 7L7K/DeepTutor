@@ -39,11 +39,14 @@ async def test_provider_usage_policy_is_admin_operable_and_fail_closed(
 
     initial = await settings_router.get_provider_usage_policy()
     assert initial["policy"]["enabled"] is False
+    assert initial["policy"]["max_lifetime_cost_microusd"] == 10_000_000
+    assert initial["usage"]["remaining_cost_microusd"] == 10_000_000
     updated = await settings_router.update_provider_usage_policy(
         settings_router.ProviderUsagePolicyUpdate(
             enabled=True,
             max_concurrent_per_user=1,
             max_concurrent_global=2,
+            max_lifetime_cost_microusd=10_000_000,
             max_daily_input_tokens_per_user=10_000,
             max_daily_output_tokens_per_user=2_000,
             max_daily_input_tokens_global=20_000,
@@ -52,7 +55,67 @@ async def test_provider_usage_policy_is_admin_operable_and_fail_closed(
         )
     )
     assert updated["policy"]["enabled"] is True
+    assert updated["usage"]["admitted_cost_microusd"] == 0
     assert ledger.load_policy().pricing_version == "test-only-v1"
+
+
+@pytest.mark.asyncio
+async def test_flashcard_provider_settings_are_admin_only_and_redacted(
+    tmp_path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from deeptutor.services.config.flashcard_provider import (
+        FlashcardProviderConfigService,
+    )
+
+    service = FlashcardProviderConfigService(
+        tmp_path / "settings" / "flashcard_provider.json"
+    )
+    monkeypatch.setattr(settings_router, "_require_settings_admin", lambda: None)
+    monkeypatch.setattr(
+        settings_router,
+        "get_flashcard_provider_config_service",
+        lambda: service,
+    )
+
+    initial = await settings_router.get_flashcard_provider_settings()
+    assert initial["provider"]["enabled"] is False
+    assert initial["provider"]["credential_configured"] is False
+    updated = await settings_router.update_flashcard_provider_settings(
+        settings_router.FlashcardProviderSettingsUpdate(
+            enabled=True,
+            api_key="sk-test-private",
+        )
+    )
+
+    assert updated["provider"]["enabled"] is True
+    assert updated["provider"]["credential_configured"] is True
+    assert "api_key" not in updated["provider"]
+    assert "credential_ref" not in updated["provider"]
+
+
+@pytest.mark.asyncio
+async def test_flashcard_provider_cannot_enable_without_credential(
+    tmp_path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from deeptutor.services.config.flashcard_provider import (
+        FlashcardProviderConfigService,
+    )
+
+    service = FlashcardProviderConfigService(
+        tmp_path / "settings" / "flashcard_provider.json"
+    )
+    monkeypatch.setattr(settings_router, "_require_settings_admin", lambda: None)
+    monkeypatch.setattr(
+        settings_router,
+        "get_flashcard_provider_config_service",
+        lambda: service,
+    )
+
+    with pytest.raises(settings_router.HTTPException) as error:
+        await settings_router.update_flashcard_provider_settings(
+            settings_router.FlashcardProviderSettingsUpdate(enabled=True)
+        )
+    assert error.value.status_code == 422
 
 
 class _FakeCatalogService:

@@ -16,6 +16,8 @@ from deeptutor.courses.flashcard_generation_provider import (
     FlashcardGenerationProviderError,
     FlashcardGenerationProviderQuotaExceeded,
     OpenAIFlashcardGenerationProvider,
+    UnavailableFlashcardGenerationProvider,
+    default_flashcard_generation_provider,
 )
 from deeptutor.courses.provider_usage import (
     ProviderUsageLedger,
@@ -84,8 +86,15 @@ class _FakeResponses:
         return SimpleNamespace(
             id="resp_test",
             model="gpt-5-mini-2026-07-01",
+            status="completed",
+            service_tier="default",
             output_text=json.dumps(self.payload),
-            usage=SimpleNamespace(input_tokens=120, output_tokens=80),
+            usage=SimpleNamespace(
+                input_tokens=120,
+                input_tokens_details=SimpleNamespace(cached_tokens=20),
+                output_tokens=80,
+                output_tokens_details=SimpleNamespace(reasoning_tokens=10),
+            ),
         )
 
 
@@ -98,7 +107,10 @@ def _provider(
 ) -> OpenAIFlashcardGenerationProvider:
     ledger = ProviderUsageLedger(tmp_path / "usage" / "provider_usage.db")
     ledger.configure(
-        ProviderUsagePolicy(enabled=enabled, pricing_version="test-v1")
+        ProviderUsagePolicy(
+            enabled=enabled,
+            pricing_version=OpenAIFlashcardGenerationProvider.PRICING_VERSION,
+        )
     )
 
     def client_factory(**kwargs):
@@ -113,6 +125,37 @@ def _provider(
     )
 
 
+def test_default_provider_uses_dedicated_binding_not_chat_catalog(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from deeptutor.courses import flashcard_generation_provider as module
+    from deeptutor.services.config.flashcard_provider import (
+        FlashcardProviderConfigService,
+    )
+
+    service = FlashcardProviderConfigService(
+        tmp_path / "settings" / "flashcard_provider.json"
+    )
+    monkeypatch.setattr(
+        module,
+        "get_flashcard_provider_config_service",
+        lambda: service,
+    )
+    monkeypatch.setattr(module, "deterministic_enabled", lambda: False)
+
+    assert isinstance(
+        default_flashcard_generation_provider(),
+        UnavailableFlashcardGenerationProvider,
+    )
+    service.configure(enabled=True, api_key="sk-dedicated-test")
+    provider = default_flashcard_generation_provider()
+
+    assert isinstance(provider, OpenAIFlashcardGenerationProvider)
+    assert provider.api_key == "sk-dedicated-test"
+    assert provider.model == "gpt-5-mini"
+
+
 def test_openai_provider_uses_strict_store_false_tool_free_request(
     tmp_path: Path,
 ) -> None:
@@ -123,11 +166,23 @@ def test_openai_provider_uses_strict_store_false_tool_free_request(
 
     assert output.provider_label == "openai"
     assert output.actual_model == "gpt-5-mini-2026-07-01"
+    assert output.cached_input_tokens == 20
+    assert output.reasoning_output_tokens == 10
+    assert output.estimated_cost_microusd == 186
+    assert output.response_status == "completed"
+    assert output.service_tier == "default"
     assert len(output.cards) == 3
     assert captured["model"] == "gpt-5-mini"
+    assert captured["max_output_tokens"] == 1200
+    assert captured["reasoning"] == {"effort": "minimal"}
     assert captured["store"] is False
     assert captured["tools"] == []
     assert captured["text"]["format"]["strict"] is True
+    assert captured["client"]["max_retries"] == 0
+    assert captured["client"]["timeout"] == 25.0
+    assert captured["safety_identifier"] == (
+        "3e1b0f95738760354f3f2855f28e1f120cdd247e11172712292a01ed9a59d5a2"
+    )
     assert "untrusted study data" in captured["instructions"]
     assert "Ignore all rules" in captured["input"]
     assert "sk-test-only" not in captured["input"]
@@ -154,6 +209,106 @@ def test_openai_provider_reserves_a_utf8_and_schema_upper_bound(
     assert row["state"] == "settled"
 
 
+def test_openai_provider_enforces_global_output_ceiling(tmp_path: Path) -> None:
+    captured: dict = {}
+    provider = _provider(tmp_path, _payload(), captured)
+    request = _request().model_copy(update={"item_limit": 48})
+
+    provider.generate(request)
+
+    assert captured["max_output_tokens"] == provider.MAX_OUTPUT_TOKENS
+    with provider.ledger._connect() as connection:
+        row = connection.execute(
+            "SELECT reserved_output_tokens FROM provider_usage_reservations"
+        ).fetchone()
+    assert row is not None
+    assert row["reserved_output_tokens"] == provider.MAX_OUTPUT_TOKENS
+
+
+@pytest.mark.parametrize(
+    ("status", "output_text", "message"),
+    [
+        ("incomplete", json.dumps(_payload()), "did not complete"),
+        ("completed", "", "no structured output"),
+    ],
+)
+def test_openai_provider_fails_closed_on_incomplete_or_empty_responses(
+    tmp_path: Path,
+    status: str,
+    output_text: str,
+    message: str,
+) -> None:
+    captured: dict = {}
+    provider = _provider(tmp_path, _payload(), captured)
+
+    class _Response:
+        def create(self, **kwargs):
+            captured.update(kwargs)
+            return SimpleNamespace(
+                id="resp_incomplete",
+                model="gpt-5-mini",
+                status=status,
+                service_tier="default",
+                output_text=output_text,
+                usage=SimpleNamespace(input_tokens=10, output_tokens=5),
+            )
+
+    provider._client_factory = lambda **kwargs: SimpleNamespace(responses=_Response())
+    with pytest.raises(FlashcardGenerationProviderError, match=message):
+        provider.generate(_request())
+
+    with provider.ledger._connect() as connection:
+        row = connection.execute(
+            "SELECT state,estimated_cost_microusd FROM provider_usage_reservations"
+        ).fetchone()
+    assert row is not None
+    assert row["state"] == "settled"
+    assert row["estimated_cost_microusd"] > 0
+
+
+@pytest.mark.parametrize(
+    "usage",
+    [
+        None,
+        SimpleNamespace(input_tokens=10),
+        SimpleNamespace(input_tokens=10, output_tokens=-1),
+    ],
+)
+def test_openai_provider_keeps_reservation_uncertain_without_valid_usage(
+    tmp_path: Path,
+    usage: object,
+) -> None:
+    provider = _provider(tmp_path, _payload(), {})
+
+    class _Response:
+        def create(self, **kwargs):
+            return SimpleNamespace(
+                id="resp_missing_usage",
+                model="gpt-5-mini",
+                status="completed",
+                service_tier="default",
+                output_text=json.dumps(_payload()),
+                usage=usage,
+            )
+
+    provider._client_factory = lambda **kwargs: SimpleNamespace(responses=_Response())
+    with pytest.raises(
+        FlashcardGenerationProviderError,
+        match="usage metadata is unavailable",
+    ):
+        provider.generate(_request())
+
+    with provider.ledger._connect() as connection:
+        row = connection.execute(
+            """SELECT state,reserved_cost_microusd,estimated_cost_microusd
+               FROM provider_usage_reservations"""
+        ).fetchone()
+    assert row is not None
+    assert row["state"] == "uncertain"
+    assert row["reserved_cost_microusd"] > 0
+    assert row["estimated_cost_microusd"] is None
+
+
 def test_openai_provider_rejects_unverifiable_evidence_quote(tmp_path: Path) -> None:
     provider = _provider(tmp_path, _payload("A quote not in the source"), {})
 
@@ -164,6 +319,21 @@ def test_openai_provider_rejects_unverifiable_evidence_quote(tmp_path: Path) -> 
 def test_openai_provider_kill_switch_causes_zero_client_calls(tmp_path: Path) -> None:
     captured: dict = {}
     provider = _provider(tmp_path, _payload(), captured, enabled=False)
+
+    with pytest.raises(FlashcardGenerationProviderQuotaExceeded):
+        provider.generate(_request())
+
+    assert captured == {}
+
+
+def test_openai_provider_rejects_unqualified_pricing_without_client_call(
+    tmp_path: Path,
+) -> None:
+    captured: dict = {}
+    provider = _provider(tmp_path, _payload(), captured)
+    provider.ledger.configure(
+        ProviderUsagePolicy(enabled=True, pricing_version="stale-pricing")
+    )
 
     with pytest.raises(FlashcardGenerationProviderQuotaExceeded):
         provider.generate(_request())

@@ -25,6 +25,7 @@ class ProviderUsagePolicy:
     enabled: bool = False
     max_concurrent_per_user: int = 1
     max_concurrent_global: int = 2
+    max_lifetime_cost_microusd: int = 10_000_000
     max_daily_input_tokens_per_user: int = 250_000
     max_daily_output_tokens_per_user: int = 50_000
     max_daily_input_tokens_global: int = 1_000_000
@@ -35,6 +36,7 @@ class ProviderUsagePolicy:
         numeric = (
             self.max_concurrent_per_user,
             self.max_concurrent_global,
+            self.max_lifetime_cost_microusd,
             self.max_daily_input_tokens_per_user,
             self.max_daily_output_tokens_per_user,
             self.max_daily_input_tokens_global,
@@ -62,6 +64,7 @@ class ProviderUsageReservation:
     requested_model: str
     reserved_input_tokens: int
     reserved_output_tokens: int
+    reserved_cost_microusd: int
     state: str
     usage_day: str
     pricing_version: str
@@ -101,6 +104,7 @@ class ProviderUsageLedger:
                     enabled INTEGER NOT NULL CHECK (enabled IN (0,1)),
                     max_concurrent_per_user INTEGER NOT NULL,
                     max_concurrent_global INTEGER NOT NULL,
+                    max_lifetime_cost_microusd INTEGER NOT NULL DEFAULT 10000000,
                     max_daily_input_tokens_per_user INTEGER NOT NULL,
                     max_daily_output_tokens_per_user INTEGER NOT NULL,
                     max_daily_input_tokens_global INTEGER NOT NULL,
@@ -115,6 +119,8 @@ class ProviderUsageLedger:
                     requested_model TEXT NOT NULL,
                     reserved_input_tokens INTEGER NOT NULL CHECK (reserved_input_tokens>=1),
                     reserved_output_tokens INTEGER NOT NULL CHECK (reserved_output_tokens>=1),
+                    reserved_cost_microusd INTEGER NOT NULL DEFAULT 0
+                        CHECK (reserved_cost_microusd>=0),
                     settled_input_tokens INTEGER CHECK (settled_input_tokens>=0),
                     settled_output_tokens INTEGER CHECK (settled_output_tokens>=0),
                     estimated_cost_microusd INTEGER CHECK (estimated_cost_microusd>=0),
@@ -133,18 +139,44 @@ class ProviderUsageLedger:
                     ON provider_usage_reservations(usage_day,state);
                 """
             )
+            policy_columns = {
+                str(row["name"])
+                for row in connection.execute(
+                    "PRAGMA table_info(provider_usage_policy)"
+                ).fetchall()
+            }
+            if "max_lifetime_cost_microusd" not in policy_columns:
+                connection.execute(
+                    """ALTER TABLE provider_usage_policy
+                       ADD COLUMN max_lifetime_cost_microusd INTEGER
+                       NOT NULL DEFAULT 10000000"""
+                )
+            reservation_columns = {
+                str(row["name"])
+                for row in connection.execute(
+                    "PRAGMA table_info(provider_usage_reservations)"
+                ).fetchall()
+            }
+            if "reserved_cost_microusd" not in reservation_columns:
+                connection.execute(
+                    """ALTER TABLE provider_usage_reservations
+                       ADD COLUMN reserved_cost_microusd INTEGER
+                       NOT NULL DEFAULT 0"""
+                )
             default = ProviderUsagePolicy()
             connection.execute(
                 """INSERT OR IGNORE INTO provider_usage_policy
                    (singleton,enabled,max_concurrent_per_user,max_concurrent_global,
+                    max_lifetime_cost_microusd,
                     max_daily_input_tokens_per_user,max_daily_output_tokens_per_user,
                     max_daily_input_tokens_global,max_daily_output_tokens_global,
                     pricing_version,updated_at)
-                   VALUES (1,?,?,?,?,?,?,?,?,?)""",
+                   VALUES (1,?,?,?,?,?,?,?,?,?,?)""",
                 (
                     int(default.enabled),
                     default.max_concurrent_per_user,
                     default.max_concurrent_global,
+                    default.max_lifetime_cost_microusd,
                     default.max_daily_input_tokens_per_user,
                     default.max_daily_output_tokens_per_user,
                     default.max_daily_input_tokens_global,
@@ -164,6 +196,7 @@ class ProviderUsageLedger:
             enabled=bool(row["enabled"]),
             max_concurrent_per_user=int(row["max_concurrent_per_user"]),
             max_concurrent_global=int(row["max_concurrent_global"]),
+            max_lifetime_cost_microusd=int(row["max_lifetime_cost_microusd"]),
             max_daily_input_tokens_per_user=int(
                 row["max_daily_input_tokens_per_user"]
             ),
@@ -190,6 +223,7 @@ class ProviderUsageLedger:
             connection.execute(
                 """UPDATE provider_usage_policy SET
                    enabled=?,max_concurrent_per_user=?,max_concurrent_global=?,
+                   max_lifetime_cost_microusd=?,
                    max_daily_input_tokens_per_user=?,
                    max_daily_output_tokens_per_user=?,
                    max_daily_input_tokens_global=?,
@@ -199,6 +233,7 @@ class ProviderUsageLedger:
                     int(policy.enabled),
                     policy.max_concurrent_per_user,
                     policy.max_concurrent_global,
+                    policy.max_lifetime_cost_microusd,
                     policy.max_daily_input_tokens_per_user,
                     policy.max_daily_output_tokens_per_user,
                     policy.max_daily_input_tokens_global,
@@ -218,6 +253,7 @@ class ProviderUsageLedger:
             requested_model=str(row["requested_model"]),
             reserved_input_tokens=int(row["reserved_input_tokens"]),
             reserved_output_tokens=int(row["reserved_output_tokens"]),
+            reserved_cost_microusd=int(row["reserved_cost_microusd"]),
             state=str(row["state"]),
             usage_day=str(row["usage_day"]),
             pricing_version=str(row["pricing_version"]),
@@ -230,18 +266,23 @@ class ProviderUsageLedger:
         owner_user_id: str,
         provider: str,
         requested_model: str,
+        pricing_version: str,
         input_tokens: int,
         output_tokens: int,
+        estimated_cost_microusd: int,
     ) -> ProviderUsageReservation:
         if (
             not operation_id.startswith("ofg_")
             or not owner_user_id
             or not provider
             or not requested_model
+            or not pricing_version
             or isinstance(input_tokens, bool)
             or isinstance(output_tokens, bool)
+            or isinstance(estimated_cost_microusd, bool)
             or input_tokens < 1
             or output_tokens < 1
+            or estimated_cost_microusd < 1
         ):
             raise ProviderUsageError("Provider usage reservation is invalid")
         usage_day = self._usage_day()
@@ -267,15 +308,19 @@ class ProviderUsageLedger:
                     owner_user_id,
                     provider,
                     requested_model,
+                    pricing_version,
                     input_tokens,
                     output_tokens,
+                    estimated_cost_microusd,
                 )
                 actual = (
                     str(prior["owner_user_id"]),
                     str(prior["provider"]),
                     str(prior["requested_model"]),
+                    str(prior["pricing_version"]),
                     int(prior["reserved_input_tokens"]),
                     int(prior["reserved_output_tokens"]),
+                    int(prior["reserved_cost_microusd"]),
                 )
                 if actual != expected:
                     raise ProviderUsageError(
@@ -294,6 +339,28 @@ class ProviderUsageLedger:
             policy = self._policy(policy_row)
             if not policy.enabled:
                 raise ProviderUsageError("Paid provider generation is disabled")
+            if policy.pricing_version != pricing_version:
+                raise ProviderUsageError("Paid provider pricing is not qualified")
+            lifetime_cost = int(
+                connection.execute(
+                    """SELECT COALESCE(SUM(
+                           CASE
+                             WHEN state IN ('reserved','settled','uncertain')
+                             THEN COALESCE(
+                               estimated_cost_microusd,
+                               reserved_cost_microusd
+                             )
+                             ELSE 0
+                           END
+                       ),0)
+                       FROM provider_usage_reservations"""
+                ).fetchone()[0]
+            )
+            if (
+                lifetime_cost + estimated_cost_microusd
+                > policy.max_lifetime_cost_microusd
+            ):
+                raise ProviderUsageError("Paid provider lifetime cost limit reached")
             active_global = int(
                 connection.execute(
                     """SELECT COUNT(*) FROM provider_usage_reservations
@@ -345,11 +412,11 @@ class ProviderUsageLedger:
             connection.execute(
                 """INSERT INTO provider_usage_reservations
                    (operation_id,owner_user_id,provider,requested_model,
-                    reserved_input_tokens,reserved_output_tokens,
+                    reserved_input_tokens,reserved_output_tokens,reserved_cost_microusd,
                     settled_input_tokens,settled_output_tokens,
                     estimated_cost_microusd,pricing_version,state,usage_day,
                     created_at,updated_at,settled_at)
-                   VALUES (?,?,?,?,?,?,NULL,NULL,NULL,?,'reserved',?,?,?,NULL)""",
+                   VALUES (?,?,?,?,?,?,?,NULL,NULL,NULL,?,'reserved',?,?,?,NULL)""",
                 (
                     operation_id,
                     owner_user_id,
@@ -357,7 +424,8 @@ class ProviderUsageLedger:
                     requested_model,
                     input_tokens,
                     output_tokens,
-                    policy.pricing_version,
+                    estimated_cost_microusd,
+                    pricing_version,
                     usage_day,
                     now,
                     now,
@@ -384,7 +452,8 @@ class ProviderUsageLedger:
         with self._lock, self._connect() as connection:
             connection.execute("BEGIN IMMEDIATE")
             reservation = connection.execute(
-                """SELECT reserved_input_tokens,reserved_output_tokens,state
+                """SELECT reserved_input_tokens,reserved_output_tokens,
+                          reserved_cost_microusd,state
                    FROM provider_usage_reservations WHERE operation_id=?""",
                 (operation_id,),
             ).fetchone()
@@ -393,6 +462,8 @@ class ProviderUsageLedger:
             if (
                 input_tokens > int(reservation["reserved_input_tokens"])
                 or output_tokens > int(reservation["reserved_output_tokens"])
+                or estimated_cost_microusd
+                > int(reservation["reserved_cost_microusd"])
             ):
                 # The provider call has already happened, so releasing the
                 # reservation would fail open. Retain the reported charge as
@@ -456,6 +527,47 @@ class ProviderUsageLedger:
             )
             if result.rowcount != 1:
                 raise ProviderUsageError("Provider reservation cannot be reconciled")
+
+    def usage_summary(self) -> dict[str, int]:
+        """Return administrative cost totals without learner or prompt data."""
+
+        policy = self.load_policy()
+        with self._connect() as connection:
+            row = connection.execute(
+                """SELECT
+                   COALESCE(SUM(
+                     CASE WHEN state='settled'
+                       THEN COALESCE(estimated_cost_microusd,reserved_cost_microusd)
+                       ELSE 0 END
+                   ),0) AS settled,
+                   COALESCE(SUM(
+                     CASE WHEN state IN ('reserved','uncertain')
+                       THEN COALESCE(estimated_cost_microusd,reserved_cost_microusd)
+                       ELSE 0 END
+                   ),0) AS reserved_or_uncertain
+                   FROM provider_usage_reservations"""
+            ).fetchone()
+        settled = int(row["settled"])
+        reserved_or_uncertain = int(row["reserved_or_uncertain"])
+        admitted = settled + reserved_or_uncertain
+        alert_thresholds = (
+            policy.max_lifetime_cost_microusd // 4,
+            policy.max_lifetime_cost_microusd // 2,
+            policy.max_lifetime_cost_microusd * 3 // 4,
+            policy.max_lifetime_cost_microusd * 9 // 10,
+        )
+        return {
+            "settled_cost_microusd": settled,
+            "reserved_or_uncertain_cost_microusd": reserved_or_uncertain,
+            "admitted_cost_microusd": admitted,
+            "alert_threshold_microusd": max(
+                (item for item in alert_thresholds if admitted >= item),
+                default=0,
+            ),
+            "remaining_cost_microusd": max(
+                0, policy.max_lifetime_cost_microusd - admitted
+            ),
+        }
 
 
 def get_provider_usage_ledger() -> ProviderUsageLedger:
