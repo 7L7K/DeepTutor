@@ -116,13 +116,24 @@
 
 ### Changed
 
-- Closed Phase 4 for the local provider-free single-host engineering boundary.
-  The final affected campaign passes 399 Python tests, 185 web node tests,
-  TypeScript, full lint with no errors, a 54-page production build, and a
-  disposable two-user browser flow across an actual backend restart. Real or
-  paid providers, native Apple/device certification, hosted fixture retirement,
-  deployment, historical-data import, and upstream integration remain separate
-  release gates.
+- Hardened the Phase 4 beta boundary with transactional owner-wide Practice and
+  Flashcard generation admission, truthful provider capability reporting before
+  durable allocation, additive SQLite retained-history guards, bounded attempt
+  and deck pagination, batch mastery projection, retained-evidence protection
+  for Course learning reinitialization, and a visible immutable Course-source
+  failure/archive/replacement lifecycle. Existing learning evidence is retained;
+  reaching a ceiling rejects the new write rather than deleting history.
+  Isolated wheels prove migration `0007` is packaged, and the exact-tree
+  authenticated browser campaign now passes two-owner restart isolation,
+  provider-free Practice grading, provider-unavailable UI, and Flashcard review.
+- Recorded the earlier provider-free Phase 4 engineering campaign: its then-tested
+  tree passed 399 Python tests, 185 web node tests, TypeScript, full lint with no
+  errors, a 54-page production build, and a disposable two-user browser flow
+  across an actual backend restart. The later hardening work above reopens only
+  its affected exact-tree qualification gates. Real or paid providers, native
+  Apple/device certification, hosted fixture retirement, deployment,
+  historical-data import, and upstream integration remain separate release
+  gates.
 - Hardened macOS private-workspace ACL repair against SQLite WAL/SHM
   disappearance-and-recreation races. Volatile sidecars receive a bounded
   retry with repeated owner, regular-file, link-count, symlink, mode `0600`,

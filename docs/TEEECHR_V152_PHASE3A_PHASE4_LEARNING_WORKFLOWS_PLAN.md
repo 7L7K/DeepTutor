@@ -110,7 +110,9 @@ implemented on the local Phase 4 branch by `1cc75f2f`. P4-02A was implemented
 by `6bdb5179`, P4-02B by `d613b8ad`, P4-03 by `96e073ee`, P4-04 by
 `5cf02793`, P4-05 by `20a604be`, and P4-06 by `c55d2dc0`; P4-07 is the
 local implementation commit `712769b3`, P4-08 by `0b88ca61`, and P4-09 by
-`b4e68369`. P4-10 closeout is the next active slice.
+`b4e68369`. P4-10 hardening and closeout is the active slice. Its reviewed
+implementation contract is recorded in
+`docs/TEEECHR_V152_PHASE4_HARDENING_CLOSEOUT.md`.
 
 ## 1. Goal and non-goals
 

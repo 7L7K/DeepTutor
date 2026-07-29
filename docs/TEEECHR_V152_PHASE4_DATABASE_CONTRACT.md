@@ -1,6 +1,6 @@
 # TEEECHR v1.5.2 Phase 4 Database Contract
 
-Status: **implemented and locally qualified through migration `0006`; Phase 4 provider-free closeout complete**
+Status: **implemented through migration `0007`; Phase 4 hardening qualification in progress**
 
 Canonical parent:
 `docs/TEEECHR_V152_PHASE3A_PHASE4_LEARNING_WORKFLOWS_PLAN.md`
@@ -164,6 +164,8 @@ retention guarantees the referenced revision remains reviewable.
 - P4-02B: QuizAttempt, QuizAttemptItem, and QuizAttemptAnswer.
 - P4-03: immutable grading and mastery-evidence receipts.
 - P4-06: FlashcardDeck, Flashcard, and FlashcardReview.
+- P4-10 hardening: additive retained-history admission guards in
+  `0007_assessment_resource_governance.sql`.
 
 No future table is introduced before the repository behavior that uses it.
 
@@ -181,6 +183,38 @@ No future table is introduced before the repository behavior that uses it.
 | Foreign and missing IDs look identical | One service-level non-enumerating `404` mapping |
 | Flashcard rating does not claim mastery | No mastery adapter call from review persistence |
 | Migration files cannot be rewritten | Stored artifact-byte checksum comparison |
+| Retained attempts cannot grow without bound | Repository check plus the `0007` SQLite trigger caps each Practice set at 100 attempts |
+| Autosave receipts cannot exhaust a profile database | Repository check plus the `0007` SQLite trigger caps each attempt at 2,048 receipts and 2 MiB of retained response JSON |
+| Grading evidence cannot grow without bound | The complete evidence plan is bounded before insertion; the `0007` SQLite trigger independently caps each attempt at 4,096 rows and 2 MiB |
+| Flashcard reviews cannot grow without bound | Repository check plus the `0007` SQLite trigger caps each deck at 10,000 retained reviews |
+
+## Phase 4 beta resource-governance contract
+
+The Phase 4 single-host beta preserves learner evidence instead of deleting it
+silently. When a retained-history ceiling is reached, the new write returns a
+conflict and all existing attempts, receipts, evidence, and reviews remain
+readable.
+
+Generated learning assets use one owner-wide transactional admission decision
+across Practice and Flashcards:
+
+- at most 4 queued or running generation operations;
+- at most 64 retained generation operations;
+- at most 16 retained generated drafts.
+
+The exact idempotency replay is resolved before those ceilings, so retrying the
+same accepted request never purchases or allocates duplicate work, including
+after provider availability changes. Provider availability is checked before
+allocating a new draft. Practice and Flashcards share four process-wide provider
+execution permits; a timed-out call holds its permit until it actually exits, so
+repeated timeouts cannot grow live provider threads without bound. The
+deterministic local provider remains test-only; an unconfigured real provider is
+represented to the browser as unavailable and fails before durable generation
+allocation.
+
+Attempt and deck history APIs use bounded pages: 50 rows by default and 100
+rows maximum. These are admission and presentation bounds, not retention or
+deletion jobs.
 
 ## Explicit exclusions
 
