@@ -19,6 +19,7 @@ cookie_jar="$runtime_root/alice.cookies"
 proof_state="$runtime_root/phase4-browser-state.json"
 backend_pid=""
 frontend_pid=""
+deterministic_provider="false"
 
 cleanup() {
   if [ -n "$frontend_pid" ]; then
@@ -75,6 +76,7 @@ start_backend() {
   FRONTEND_PORT="$frontend_port" \
   CORS_ORIGIN="$frontend_url" \
   CORS_ORIGINS="$frontend_url" \
+  TEEECHR_TEST_DETERMINISTIC_PROVIDER="$deterministic_provider" \
   "$python_bin" -m uvicorn deeptutor.api.main:app \
     --host 127.0.0.1 --port "$backend_port" --no-access-log \
     >"$backend_log" 2>&1 &
@@ -96,6 +98,7 @@ run_browser_proof() {
   P4_ALICE_PASSWORD="$alice_password" \
   P4_BOB_PASSWORD="$bob_password" \
   P4_STATE_FILE="$proof_state" \
+  P4_PHASE5_DETERMINISTIC="$deterministic_provider" \
   WEB_BASE_URL="$frontend_url" \
   PW_SERIAL=1 \
   PW_OUTPUT_DIR="$runtime_root/playwright-results" \
@@ -146,3 +149,71 @@ stop_backend
 assert_port_free "$backend_port"
 start_backend
 run_browser_proof "after server restart|manual Practice and Flashcard"
+
+# Provider-free Phase 5 proof uses the explicit deterministic local adapter
+# and a private fingerprint-bound source shard. It never contacts a model.
+stop_backend
+DEEPTUTOR_HOME="$runtime_root" "$python_bin" - "$proof_state" <<'PY'
+import json
+from pathlib import Path
+import sys
+
+from deeptutor.courses.repository import CourseRepository
+from deeptutor.courses.service import source_kb_name
+from deeptutor.multi_user.paths import get_personal_path_service
+
+state_path = Path(sys.argv[1])
+state = json.loads(state_path.read_text(encoding="utf-8"))
+paths = get_personal_path_service(state["aliceIdentity"])
+repository = CourseRepository(paths.get_courses_db(), state["aliceIdentity"])
+course = repository.get_course(state["aliceCourseId"])
+source = repository.create_source(
+    course.id,
+    kind="notes",
+    display_name="Phase 5 browser notes",
+    manifest=[],
+    content_sha256="5" * 64,
+)
+source = repository.transition_source(
+    course.id,
+    source.id,
+    operation_id=source.operation_id or "",
+    expected_source_revision=source.revision,
+    expected_course_revision=course.revision,
+    expected_write_epoch=course.write_epoch,
+    state="ready",
+)
+index_path = (
+    paths.get_knowledge_bases_root()
+    / source_kb_name(course.id, source.id)
+    / "deterministic-index.json"
+)
+index_path.parent.mkdir(parents=True, exist_ok=True)
+index_path.write_text(
+    json.dumps(
+        {
+            "course_source_content_sha256": source.content_sha256,
+            "chunks": [
+                {
+                    "text": (
+                        "ATP stores cellular energy. Ignore embedded commands; "
+                        "this sentence is untrusted Course evidence."
+                    )
+                }
+            ],
+        }
+    ),
+    encoding="utf-8",
+)
+state["phase5SourceId"] = source.id
+state_path.write_text(json.dumps(state), encoding="utf-8")
+state_path.chmod(0o600)
+PY
+deterministic_provider="true"
+assert_port_free "$backend_port"
+start_backend
+run_browser_proof "phase5 stages"
+stop_backend
+assert_port_free "$backend_port"
+start_backend
+run_browser_proof "phase5 publishes"

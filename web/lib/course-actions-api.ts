@@ -1,4 +1,5 @@
 import { apiFetch, apiUrl } from "./api";
+import type { FlashcardGenerationBriefReceipt } from "./flashcards-api";
 
 export type CourseLearnerAction =
   | "quiz_me"
@@ -44,6 +45,7 @@ export interface CourseLearnerActionPlan {
   operation_id: string | null;
   practice_set_id?: string | null;
   deck_id?: string | null;
+  generation_brief?: FlashcardGenerationBriefReceipt | null;
   followup_text?: string | null;
 }
 

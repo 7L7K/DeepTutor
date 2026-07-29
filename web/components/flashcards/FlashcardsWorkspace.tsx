@@ -25,6 +25,9 @@ import {
   addFlashcard,
   advanceFlashcardViewScope,
   archiveOrRestoreFlashcardDeck,
+  cancelFlashcardGeneration,
+  clearFlashcardProposal,
+  consumeFlashcardProposal,
   createFlashcardDeck,
   createGeneratedFlashcardDeck,
   createGeneratedFlashcardSuccessor,
@@ -34,6 +37,8 @@ import {
   isCurrentFlashcardResponse,
   listFlashcardDecks,
   listFlashcardGenerationOperations,
+  prepareFlashcardGenerationBrief,
+  publishFlashcardCandidates,
   readyFlashcardDeck,
   requeueAgainCard,
   reviewFlashcard,
@@ -41,6 +46,8 @@ import {
   type FlashcardDeck,
   type FlashcardDeckView,
   type FlashcardGenerationOperation,
+  type FlashcardGenerationBriefReceipt,
+  type FlashcardGenerationOptions,
   type FlashcardRating,
   type FlashcardRequestScope,
 } from "@/lib/flashcards-api";
@@ -68,6 +75,22 @@ export default function FlashcardsWorkspace() {
   const [view, setView] = useState<FlashcardDeckView | null>(null);
   const [deckTitle, setDeckTitle] = useState("");
   const [generatedTitle, setGeneratedTitle] = useState("");
+  const [generationFocus, setGenerationFocus] = useState("");
+  const [generationCount, setGenerationCount] = useState(8);
+  const [generationDifficulty, setGenerationDifficulty] =
+    useState<FlashcardGenerationOptions["difficulty"]>("mixed");
+  const [generationAnswerLength, setGenerationAnswerLength] =
+    useState<FlashcardGenerationOptions["answer_length"]>("short");
+  const [generationHints, setGenerationHints] = useState(true);
+  const [generationCardTypes, setGenerationCardTypes] = useState<
+    FlashcardGenerationOptions["card_type_mix"]
+  >(["definition", "concept", "application"]);
+  const [preparedBrief, setPreparedBrief] =
+    useState<FlashcardGenerationBriefReceipt | null>(null);
+  const [preparedSuccessor, setPreparedSuccessor] = useState(false);
+  const [candidateOrder, setCandidateOrder] = useState<
+    Record<string, string[]>
+  >({});
   const [generationObjectives, setGenerationObjectives] = useState("");
   const [readySources, setReadySources] = useState<CourseSource[]>([]);
   const [selectedSourceIds, setSelectedSourceIds] = useState<string[]>([]);
@@ -109,6 +132,15 @@ export default function FlashcardsWorkspace() {
 
   const invalidate = useCallback(
     (nextIdentity: string | null, nextCourseId: string | null) => {
+      if (
+        scopeRef.current.identity !== nextIdentity ||
+        scopeRef.current.courseId !== nextCourseId
+      ) {
+        clearFlashcardProposal(
+          scopeRef.current.identity,
+          scopeRef.current.courseId,
+        );
+      }
       const scope = {
         identity: nextIdentity,
         courseId: nextCourseId,
@@ -122,6 +154,15 @@ export default function FlashcardsWorkspace() {
       setView(null);
       setDeckTitle("");
       setGeneratedTitle("");
+      setGenerationFocus("");
+      setGenerationCount(8);
+      setGenerationDifficulty("mixed");
+      setGenerationAnswerLength("short");
+      setGenerationHints(true);
+      setGenerationCardTypes(["definition", "concept", "application"]);
+      setPreparedBrief(null);
+      setPreparedSuccessor(false);
+      setCandidateOrder({});
       setGenerationObjectives("");
       setReadySources([]);
       setSelectedSourceIds([]);
@@ -180,10 +221,45 @@ export default function FlashcardsWorkspace() {
         selected.filter((id) => ready.some((source) => source.id === id)),
       );
       setGenerationOperations(operations);
+      setCandidateOrder(
+        Object.fromEntries(
+          operations
+            .filter((operation) => operation.candidates?.length)
+            .map((operation) => [
+              operation.id,
+              operation.candidates?.map((candidate) => candidate.candidate_id) ??
+                [],
+            ]),
+        ),
+      );
       setGenerationAvailable(capabilities.flashcard_generation);
       setGenerationUnavailableReason(
         capabilities.grounded_generation_reason,
       );
+      if (scope.identity) {
+        const proposal = consumeFlashcardProposal(
+          scope.identity,
+          scope.courseId,
+        );
+        if (proposal) {
+          setGeneratedTitle("Course flashcards");
+          setGenerationFocus(proposal.brief.focus);
+          setGenerationCount(proposal.brief.desired_count);
+          setGenerationDifficulty(proposal.brief.difficulty);
+          setGenerationAnswerLength(proposal.brief.answer_length);
+          setGenerationHints(proposal.brief.include_hints);
+          setGenerationCardTypes(proposal.brief.card_type_mix);
+          setGenerationObjectives(proposal.objective_ids.join(", "));
+          setSelectedSourceIds(
+            proposal.source_snapshot
+              .map((receipt) => receipt.source_id)
+              .filter((id) => ready.some((source) => source.id === id)),
+          );
+          setPreparedBrief(proposal);
+          setPreparedSuccessor(false);
+          setStatus("Review the Chat generation brief before confirming provider use.");
+        }
+      }
       const first = listed.find((deck) => deck.state !== "archived") ?? null;
       setSelectedDeckId(first?.id ?? null);
       if (first) await loadDeck(scope, first);
@@ -299,7 +375,28 @@ export default function FlashcardsWorkspace() {
     }
   }, [activeCourse, busy, current, decks.length, decksHaveMore]);
 
-  const requestGeneration = useCallback(
+  const generationOptions = useCallback(
+    (): FlashcardGenerationOptions => ({
+      focus: generationFocus.trim() || generatedTitle.trim(),
+      desired_count: generationCount,
+      card_type_mix: generationCardTypes,
+      difficulty: generationDifficulty,
+      answer_length: generationAnswerLength,
+      include_hints: generationHints,
+      context_char_limit: 12_000,
+    }),
+    [
+      generatedTitle,
+      generationAnswerLength,
+      generationCardTypes,
+      generationCount,
+      generationDifficulty,
+      generationFocus,
+      generationHints,
+    ],
+  );
+
+  const prepareGeneration = useCallback(
     async (successor: boolean) => {
       if (
         !activeCourse ||
@@ -313,7 +410,7 @@ export default function FlashcardsWorkspace() {
             selectedDeck.state !== "ready"))
       )
         return;
-      const scope = advanceView();
+      const scope = scopeRef.current;
       setBusy(true);
       setError(null);
       try {
@@ -321,37 +418,18 @@ export default function FlashcardsWorkspace() {
           .split(",")
           .map((value) => value.trim())
           .filter(Boolean);
-        const requested =
-          successor && selectedDeck
-            ? await createGeneratedFlashcardSuccessor(
-                activeCourse.id,
-                selectedDeck.id,
-                generatedTitle.trim(),
-                selectedSourceIds,
-                objectiveIds,
-                activeCourse.write_epoch,
-                idempotencyKey(),
-              )
-            : await createGeneratedFlashcardDeck(
-                activeCourse.id,
-                generatedTitle.trim(),
-                selectedSourceIds,
-                objectiveIds,
-                activeCourse.write_epoch,
-                idempotencyKey(),
-              );
-        if (!current(scope)) return;
-        setGenerationOperations((operations) => [
-          requested.operation,
-          ...operations.filter((item) => item.id !== requested.operation.id),
-        ]);
-        setGeneratedTitle("");
-        setGenerationObjectives("");
-        setStatus(
-          successor
-            ? "Grounded successor generation queued."
-            : "Grounded Flashcard generation queued.",
+        const brief = await prepareFlashcardGenerationBrief(
+          activeCourse.id,
+          generatedTitle.trim(),
+          selectedSourceIds,
+          objectiveIds,
+          activeCourse.write_epoch,
+          generationOptions(),
         );
+        if (!current(scope)) return;
+        setPreparedBrief(brief);
+        setPreparedSuccessor(successor);
+        setStatus("Review the generation brief before confirming provider use.");
       } catch (cause) {
         if (current(scope)) setError(errorText(cause));
       } finally {
@@ -360,15 +438,139 @@ export default function FlashcardsWorkspace() {
     },
     [
       activeCourse,
-      advanceView,
       courseWritable,
       current,
       generatedTitle,
       generationObjectives,
       generationAvailable,
+      generationOptions,
       selectedDeck,
       selectedSourceIds,
     ],
+  );
+
+  const confirmGeneration = useCallback(async () => {
+    if (!activeCourse || !preparedBrief || !courseWritable) return;
+    const scope = advanceView();
+    setBusy(true);
+    setError(null);
+    try {
+      const requested =
+        preparedSuccessor && selectedDeck
+          ? await createGeneratedFlashcardSuccessor(
+              activeCourse.id,
+              selectedDeck.id,
+              generatedTitle.trim(),
+              preparedBrief.source_snapshot.map((item) => item.source_id),
+              preparedBrief.objective_ids,
+              preparedBrief.course_write_epoch,
+              idempotencyKey(),
+              { ...preparedBrief.brief, origin: preparedBrief.origin },
+            )
+          : await createGeneratedFlashcardDeck(
+              activeCourse.id,
+              generatedTitle.trim(),
+              preparedBrief.source_snapshot.map((item) => item.source_id),
+              preparedBrief.objective_ids,
+              preparedBrief.course_write_epoch,
+              idempotencyKey(),
+              { ...preparedBrief.brief, origin: preparedBrief.origin },
+            );
+      if (!current(scope)) return;
+        setGenerationOperations((operations) => [
+          requested.operation,
+          ...operations.filter((item) => item.id !== requested.operation.id),
+        ]);
+        setGeneratedTitle("");
+        setGenerationFocus("");
+        setGenerationObjectives("");
+        setPreparedBrief(null);
+        setStatus(
+          preparedSuccessor
+            ? "Grounded successor generation queued."
+            : "Grounded Flashcard generation queued.",
+        );
+      } catch (cause) {
+        if (current(scope)) setError(errorText(cause));
+      } finally {
+        if (current(scope)) setBusy(false);
+      }
+  }, [
+    activeCourse,
+    advanceView,
+    courseWritable,
+    current,
+    generatedTitle,
+    preparedBrief,
+    preparedSuccessor,
+    selectedDeck,
+  ]);
+
+  const publishCandidates = useCallback(
+    async (operation: FlashcardGenerationOperation) => {
+      if (!activeCourse || operation.state !== "awaiting_review") return;
+      const selected = candidateOrder[operation.id] ?? [];
+      if (!selected.length) return;
+      const scope = scopeRef.current;
+      setBusy(true);
+      setError(null);
+      try {
+        const completed = await publishFlashcardCandidates(
+          activeCourse.id,
+          operation.id,
+          selected,
+          operation.candidate_revision,
+        );
+        if (!current(scope)) return;
+        setGenerationOperations((operations) =>
+          operations.map((item) => (item.id === completed.id ? completed : item)),
+        );
+        const listed = await listFlashcardDecks(activeCourse.id);
+        if (!current(scope)) return;
+        setDecks(listed);
+        setDecksHaveMore(listed.length === 50);
+        const published = listed.find((deck) => deck.id === completed.deck_id);
+        if (published) {
+          setSelectedDeckId(published.id);
+          await loadDeck(scope, published);
+        }
+        if (current(scope)) setStatus("Selected candidates published as an immutable deck.");
+      } catch (cause) {
+        if (current(scope)) setError(errorText(cause));
+      } finally {
+        if (current(scope)) setBusy(false);
+      }
+    },
+    [activeCourse, candidateOrder, current, loadDeck],
+  );
+
+  const cancelGeneration = useCallback(
+    async (operation: FlashcardGenerationOperation) => {
+      if (!activeCourse) return;
+      const scope = scopeRef.current;
+      setBusy(true);
+      setError(null);
+      try {
+        const cancelled = await cancelFlashcardGeneration(
+          activeCourse.id,
+          operation.id,
+        );
+        if (!current(scope)) return;
+        setGenerationOperations((operations) =>
+          operations.map((item) => (item.id === cancelled.id ? cancelled : item)),
+        );
+        setStatus(
+          cancelled.state === "cancelling"
+            ? "Cancellation requested. Provider work may still be finishing; its output cannot publish."
+            : "Generation cancelled. The retained record cannot publish.",
+        );
+      } catch (cause) {
+        if (current(scope)) setError(errorText(cause));
+      } finally {
+        if (current(scope)) setBusy(false);
+      }
+    },
+    [activeCourse, current],
   );
 
   const refreshGeneration = useCallback(async () => {
@@ -383,6 +585,18 @@ export default function FlashcardsWorkspace() {
       ]);
       if (!current(scope)) return;
       setGenerationOperations(operations);
+      setCandidateOrder(
+        Object.fromEntries(
+          operations
+            .filter((operation) => operation.candidates?.length)
+            .map((operation) => [
+              operation.id,
+              operation.candidates?.map(
+                (candidate) => candidate.candidate_id,
+              ) ?? [],
+            ]),
+        ),
+      );
       setDecks(listed);
       setDecksHaveMore(listed.length === 50);
       if (selectedDeckId) {
@@ -647,7 +861,10 @@ export default function FlashcardsWorkspace() {
                 <input
                   aria-label={t("Generated deck title")}
                   value={generatedTitle}
-                  onChange={(event) => setGeneratedTitle(event.target.value)}
+                  onChange={(event) => {
+                    setGeneratedTitle(event.target.value);
+                    setPreparedBrief(null);
+                  }}
                   placeholder={t("Generated deck title")}
                   disabled={!generationAvailable || !courseWritable || busy}
                   className="rounded-lg border border-[var(--border)] bg-[var(--background)] px-3 py-2 text-sm"
@@ -655,12 +872,146 @@ export default function FlashcardsWorkspace() {
                 <input
                   aria-label={t("Generation objective IDs")}
                   value={generationObjectives}
-                  onChange={(event) => setGenerationObjectives(event.target.value)}
+                  onChange={(event) => {
+                    setGenerationObjectives(event.target.value);
+                    setPreparedBrief(null);
+                  }}
                   placeholder={t("Objective IDs, comma-separated (optional)")}
                   disabled={!generationAvailable || !courseWritable || busy}
                   className="rounded-lg border border-[var(--border)] bg-[var(--background)] px-3 py-2 text-sm"
                 />
               </div>
+              <textarea
+                aria-label={t("Flashcard generation focus")}
+                value={generationFocus}
+                onChange={(event) => {
+                  setGenerationFocus(event.target.value);
+                  setPreparedBrief(null);
+                }}
+                placeholder={t(
+                  "What should these cards help you learn or compare?",
+                )}
+                disabled={!generationAvailable || !courseWritable || busy}
+                className="min-h-20 w-full rounded-lg border border-[var(--border)] bg-[var(--background)] p-3 text-sm"
+              />
+              <div className="grid gap-3 sm:grid-cols-3">
+                <label className="grid gap-1 text-sm">
+                  <span>{t("Card count")}</span>
+                  <input
+                    aria-label={t("Generated card count")}
+                    type="number"
+                    min={3}
+                    max={48}
+                    value={generationCount}
+                    onChange={(event) => {
+                      setGenerationCount(
+                        Math.max(3, Math.min(48, Number(event.target.value) || 3)),
+                      );
+                      setPreparedBrief(null);
+                    }}
+                    disabled={!generationAvailable || !courseWritable || busy}
+                    className="rounded-lg border border-[var(--border)] bg-[var(--background)] px-3 py-2"
+                  />
+                </label>
+                <label className="grid gap-1 text-sm">
+                  <span>{t("Difficulty")}</span>
+                  <select
+                    aria-label={t("Flashcard difficulty")}
+                    value={generationDifficulty}
+                    onChange={(event) => {
+                      setGenerationDifficulty(
+                        event.target
+                          .value as FlashcardGenerationOptions["difficulty"],
+                      );
+                      setPreparedBrief(null);
+                    }}
+                    disabled={!generationAvailable || !courseWritable || busy}
+                    className="rounded-lg border border-[var(--border)] bg-[var(--background)] px-3 py-2"
+                  >
+                    {["introductory", "intermediate", "advanced", "mixed"].map(
+                      (value) => (
+                        <option key={value} value={value}>
+                          {t(value)}
+                        </option>
+                      ),
+                    )}
+                  </select>
+                </label>
+                <label className="grid gap-1 text-sm">
+                  <span>{t("Answer length")}</span>
+                  <select
+                    aria-label={t("Flashcard answer length")}
+                    value={generationAnswerLength}
+                    onChange={(event) => {
+                      setGenerationAnswerLength(
+                        event.target
+                          .value as FlashcardGenerationOptions["answer_length"],
+                      );
+                      setPreparedBrief(null);
+                    }}
+                    disabled={!generationAvailable || !courseWritable || busy}
+                    className="rounded-lg border border-[var(--border)] bg-[var(--background)] px-3 py-2"
+                  >
+                    <option value="short">{t("short")}</option>
+                    <option value="medium">{t("medium")}</option>
+                  </select>
+                </label>
+              </div>
+              <fieldset className="space-y-2">
+                <legend className="text-sm font-medium">{t("Card mix")}</legend>
+                <div className="flex flex-wrap gap-2">
+                  {(
+                    [
+                      "definition",
+                      "concept",
+                      "comparison",
+                      "application",
+                      "process",
+                      "recall",
+                    ] as const
+                  ).map((cardType) => {
+                    const checked = generationCardTypes.includes(cardType);
+                    return (
+                      <label
+                        key={cardType}
+                        className="flex items-center gap-2 rounded-lg border border-[var(--border)] px-3 py-2 text-sm"
+                      >
+                        <input
+                          type="checkbox"
+                          checked={checked}
+                          disabled={
+                            !generationAvailable ||
+                            !courseWritable ||
+                            busy ||
+                            (checked && generationCardTypes.length === 1)
+                          }
+                          onChange={() => {
+                            setGenerationCardTypes((types) =>
+                              checked
+                                ? types.filter((item) => item !== cardType)
+                                : [...types, cardType],
+                            );
+                            setPreparedBrief(null);
+                          }}
+                        />
+                        {t(cardType)}
+                      </label>
+                    );
+                  })}
+                  <label className="flex items-center gap-2 rounded-lg border border-[var(--border)] px-3 py-2 text-sm">
+                    <input
+                      type="checkbox"
+                      checked={generationHints}
+                      onChange={(event) => {
+                        setGenerationHints(event.target.checked);
+                        setPreparedBrief(null);
+                      }}
+                      disabled={!generationAvailable || !courseWritable || busy}
+                    />
+                    {t("Include hints")}
+                  </label>
+                </div>
+              </fieldset>
               <div className="flex flex-wrap gap-2">
                 {readySources.map((source) => {
                   const checked = selectedSourceIds.includes(source.id);
@@ -674,11 +1025,14 @@ export default function FlashcardsWorkspace() {
                         checked={checked}
                         disabled={!generationAvailable || !courseWritable || busy}
                         onChange={() =>
-                          setSelectedSourceIds((ids) =>
-                            checked
-                              ? ids.filter((id) => id !== source.id)
-                              : [...ids, source.id],
-                          )
+                          {
+                            setSelectedSourceIds((ids) =>
+                              checked
+                                ? ids.filter((id) => id !== source.id)
+                                : [...ids, source.id],
+                            );
+                            setPreparedBrief(null);
+                          }
                         }
                       />
                       {source.display_name}
@@ -693,7 +1047,7 @@ export default function FlashcardsWorkspace() {
               </div>
               <div className="flex flex-wrap gap-2">
                 <button
-                  onClick={() => void requestGeneration(false)}
+                  onClick={() => void prepareGeneration(false)}
                   disabled={
                     !courseWritable ||
                     !generationAvailable ||
@@ -703,10 +1057,10 @@ export default function FlashcardsWorkspace() {
                   }
                   className="rounded-lg bg-[var(--primary)] px-3 py-2 text-sm text-[var(--primary-foreground)] disabled:opacity-50"
                 >
-                  {t("Generate grounded deck")}
+                  {t("Review grounded deck request")}
                 </button>
                 <button
-                  onClick={() => void requestGeneration(true)}
+                  onClick={() => void prepareGeneration(true)}
                   disabled={
                     !courseWritable ||
                     !generationAvailable ||
@@ -718,15 +1072,69 @@ export default function FlashcardsWorkspace() {
                   }
                   className="rounded-lg border border-[var(--border)] px-3 py-2 text-sm disabled:opacity-50"
                 >
-                  {t("Generate successor")}
+                  {t("Review successor request")}
                 </button>
               </div>
+              {preparedBrief ? (
+                <div className="space-y-3 rounded-xl border border-amber-500/50 bg-amber-500/5 p-4">
+                  <div>
+                    <h3 className="font-medium">{t("Confirm provider use")}</h3>
+                    <p className="text-sm text-[var(--muted-foreground)]">
+                      {t(
+                        "This sends only the bounded brief and selected Course source excerpts to the configured provider. Nothing publishes until you review the candidates.",
+                      )}
+                    </p>
+                  </div>
+                  <dl className="grid gap-2 text-sm sm:grid-cols-2">
+                    <div>
+                      <dt className="text-[var(--muted-foreground)]">{t("Focus")}</dt>
+                      <dd>{preparedBrief.brief.focus}</dd>
+                    </div>
+                    <div>
+                      <dt className="text-[var(--muted-foreground)]">{t("Plan")}</dt>
+                      <dd>
+                        {preparedBrief.brief.desired_count} {t("cards")} ·{" "}
+                        {preparedBrief.brief.difficulty} ·{" "}
+                        {preparedBrief.brief.card_type_mix.join(", ")}
+                      </dd>
+                    </div>
+                    <div>
+                      <dt className="text-[var(--muted-foreground)]">{t("Sources")}</dt>
+                      <dd>{preparedBrief.source_snapshot.length}</dd>
+                    </div>
+                    <div>
+                      <dt className="text-[var(--muted-foreground)]">{t("Provider")}</dt>
+                      <dd>
+                        {preparedBrief.provider_available
+                          ? t("Available")
+                          : t("Unavailable")}
+                      </dd>
+                    </div>
+                  </dl>
+                  <div className="flex flex-wrap gap-2">
+                    <button
+                      onClick={() => void confirmGeneration()}
+                      disabled={busy || !preparedBrief.provider_available}
+                      className="rounded-lg bg-[var(--primary)] px-3 py-2 text-sm text-[var(--primary-foreground)] disabled:opacity-50"
+                    >
+                      {t("Confirm and generate candidates")}
+                    </button>
+                    <button
+                      onClick={() => setPreparedBrief(null)}
+                      disabled={busy}
+                      className="rounded-lg border border-[var(--border)] px-3 py-2 text-sm"
+                    >
+                      {t("Change brief")}
+                    </button>
+                  </div>
+                </div>
+              ) : null}
               {generationOperations.length ? (
                 <div className="grid gap-2 md:grid-cols-2">
                   {generationOperations.slice(0, 6).map((operation) => (
                     <div
                       key={operation.id}
-                      className="rounded-lg border border-[var(--border)] px-3 py-2 text-sm"
+                      className="space-y-3 rounded-lg border border-[var(--border)] px-3 py-3 text-sm"
                     >
                       <span className="font-medium">{operation.state}</span>
                       <span className="ml-2 text-[var(--muted-foreground)]">
@@ -734,6 +1142,195 @@ export default function FlashcardsWorkspace() {
                       </span>
                       {operation.error_code ? (
                         <p className="text-xs text-red-600">{operation.error_code}</p>
+                      ) : null}
+                      {operation.state === "awaiting_review" &&
+                      operation.candidates ? (
+                        <div className="space-y-2">
+                          <p className="text-xs text-[var(--muted-foreground)]">
+                            {t(
+                              "Choose and order candidates. Generated facts cannot be edited here.",
+                            )}
+                          </p>
+                          {(candidateOrder[operation.id] ?? []).map(
+                            (candidateId, index) => {
+                              const candidate = operation.candidates?.find(
+                                (item) => item.candidate_id === candidateId,
+                              );
+                              if (!candidate) return null;
+                              return (
+                                <article
+                                  key={candidateId}
+                                  className="rounded-lg bg-[var(--secondary)]/50 p-3"
+                                >
+                                  <div className="flex items-start justify-between gap-2">
+                                    <div>
+                                      <p className="font-medium">
+                                        {candidate.prompt}
+                                      </p>
+                                      <p className="mt-1 text-xs">
+                                        {candidate.answer}
+                                      </p>
+                                      <p className="mt-1 text-xs text-[var(--muted-foreground)]">
+                                        {candidate.card_type} ·{" "}
+                                        {candidate.citations.length} {t("citations")}
+                                      </p>
+                                      <ul className="mt-2 space-y-1 text-xs text-[var(--muted-foreground)]">
+                                        {candidate.citations.map(
+                                          (citation, citationIndex) => {
+                                            const locator =
+                                              typeof citation.locator ===
+                                                "object" &&
+                                              citation.locator !== null
+                                                ? (citation.locator as Record<
+                                                    string,
+                                                    unknown
+                                                  >)
+                                                : {};
+                                            const evidence =
+                                              typeof locator.evidence_quote ===
+                                              "string"
+                                                ? locator.evidence_quote
+                                                : null;
+                                            return (
+                                              <li
+                                                key={`${String(citation.source_id ?? "source")}-${citationIndex}`}
+                                              >
+                                                {t("Source")}{" "}
+                                                {String(
+                                                  citation.source_id ??
+                                                    citationIndex + 1,
+                                                )}
+                                                {evidence
+                                                  ? ` — “${evidence}”`
+                                                  : ""}
+                                              </li>
+                                            );
+                                          },
+                                        )}
+                                      </ul>
+                                    </div>
+                                    <button
+                                      aria-label={t("Exclude candidate")}
+                                      onClick={() =>
+                                        setCandidateOrder((orders) => ({
+                                          ...orders,
+                                          [operation.id]: (
+                                            orders[operation.id] ?? []
+                                          ).filter((id) => id !== candidateId),
+                                        }))
+                                      }
+                                      className="rounded border border-[var(--border)] px-2 py-1 text-xs"
+                                    >
+                                      {t("Exclude")}
+                                    </button>
+                                  </div>
+                                  <div className="mt-2 flex gap-2">
+                                    <button
+                                      disabled={index === 0}
+                                      onClick={() =>
+                                        setCandidateOrder((orders) => {
+                                          const next = [
+                                            ...(orders[operation.id] ?? []),
+                                          ];
+                                          [next[index - 1], next[index]] = [
+                                            next[index],
+                                            next[index - 1],
+                                          ];
+                                          return {
+                                            ...orders,
+                                            [operation.id]: next,
+                                          };
+                                        })
+                                      }
+                                      className="text-xs disabled:opacity-40"
+                                    >
+                                      {t("Move up")}
+                                    </button>
+                                    <button
+                                      disabled={
+                                        index ===
+                                        (candidateOrder[operation.id]?.length ?? 0) -
+                                          1
+                                      }
+                                      onClick={() =>
+                                        setCandidateOrder((orders) => {
+                                          const next = [
+                                            ...(orders[operation.id] ?? []),
+                                          ];
+                                          [next[index], next[index + 1]] = [
+                                            next[index + 1],
+                                            next[index],
+                                          ];
+                                          return {
+                                            ...orders,
+                                            [operation.id]: next,
+                                          };
+                                        })
+                                      }
+                                      className="text-xs disabled:opacity-40"
+                                    >
+                                      {t("Move down")}
+                                    </button>
+                                  </div>
+                                </article>
+                              );
+                            },
+                          )}
+                          {operation.candidates
+                            .filter(
+                              (candidate) =>
+                                !(candidateOrder[operation.id] ?? []).includes(
+                                  candidate.candidate_id,
+                                ),
+                            )
+                            .map((candidate) => (
+                              <button
+                                key={candidate.candidate_id}
+                                onClick={() =>
+                                  setCandidateOrder((orders) => ({
+                                    ...orders,
+                                    [operation.id]: [
+                                      ...(orders[operation.id] ?? []),
+                                      candidate.candidate_id,
+                                    ],
+                                  }))
+                                }
+                                className="w-full rounded-lg border border-dashed border-[var(--border)] px-3 py-2 text-left text-xs text-[var(--muted-foreground)]"
+                              >
+                                {t("Include again")}: {candidate.prompt}
+                              </button>
+                            ))}
+                          <div className="flex gap-2">
+                            <button
+                              onClick={() => void publishCandidates(operation)}
+                              disabled={
+                                busy ||
+                                !(candidateOrder[operation.id] ?? []).length
+                              }
+                              className="rounded-lg bg-[var(--primary)] px-3 py-2 text-xs text-[var(--primary-foreground)] disabled:opacity-50"
+                            >
+                              {t("Publish selected cards")}
+                            </button>
+                            <button
+                              onClick={() => void cancelGeneration(operation)}
+                              disabled={busy}
+                              className="rounded-lg border border-[var(--border)] px-3 py-2 text-xs"
+                            >
+                              {t("Cancel draft")}
+                            </button>
+                          </div>
+                        </div>
+                      ) : null}
+                      {["queued", "running", "cancelling"].includes(
+                        operation.state,
+                      ) ? (
+                        <button
+                          onClick={() => void cancelGeneration(operation)}
+                          disabled={busy}
+                          className="rounded-lg border border-[var(--border)] px-3 py-1 text-xs"
+                        >
+                          {t("Cancel generation")}
+                        </button>
                       ) : null}
                     </div>
                   ))}

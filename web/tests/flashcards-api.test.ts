@@ -2,13 +2,19 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import {
   advanceFlashcardViewScope,
+  cancelFlashcardGeneration,
+  consumeFlashcardProposal,
   createGeneratedFlashcardDeck,
   createGeneratedFlashcardSuccessor,
+  flashcardProposalStorageKey,
   isCurrentFlashcardResponse,
   isFlashcardCourseWritable,
   listFlashcardDecks,
   listFlashcardGenerationOperations,
+  prepareFlashcardGenerationBrief,
+  publishFlashcardCandidates,
   requeueAgainCard,
+  storeFlashcardProposal,
   type FlashcardRequestScope,
 } from "../lib/flashcards-api";
 
@@ -132,9 +138,104 @@ test("grounded Flashcard requests use the Course authority routes and idempotenc
     source_ids: ["src_notes"],
     objective_ids: ["obj_energy"],
     expected_course_write_epoch: 4,
+    focus: "Core terms",
     item_limit: 8,
+    card_type_mix: ["recall"],
+    difficulty: "mixed",
+    answer_length: "short",
+    include_hints: true,
     context_char_limit: 12000,
   });
+});
+
+test("brief, publish, and cancel use separate Course authority routes", async (t) => {
+  const calls: Array<{ input: RequestInfo | URL; init?: RequestInit }> = [];
+  const originalFetch = globalThis.fetch;
+  t.after(() => {
+    globalThis.fetch = originalFetch;
+  });
+  globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+    calls.push({ input, init });
+    return new Response(JSON.stringify({}), {
+      status: 200,
+      headers: { "Content-Type": "application/json" },
+    });
+  }) as typeof fetch;
+
+  await prepareFlashcardGenerationBrief(
+    "crs/bio",
+    "Terms",
+    ["src_1"],
+    [],
+    3,
+  );
+  await publishFlashcardCandidates("crs/bio", "ofg/1", ["cand_1"], 2);
+  await cancelFlashcardGeneration("crs/bio", "ofg/1");
+
+  assert.deepEqual(
+    calls.map((call) => String(call.input)),
+    [
+      "/api/v1/courses/crs%2Fbio/flashcard-generation/brief",
+      "/api/v1/courses/crs%2Fbio/flashcard-generation/ofg%2F1/publish",
+      "/api/v1/courses/crs%2Fbio/flashcard-generation/ofg%2F1/cancel",
+    ],
+  );
+  assert.deepEqual(JSON.parse(String(calls[1].init?.body)), {
+    candidate_ids: ["cand_1"],
+    expected_candidate_revision: 2,
+  });
+});
+
+test("flashcard proposals are isolated by identity and Course and consumed once", () => {
+  const values = new Map<string, string>();
+  const prior = globalThis.sessionStorage;
+  Object.defineProperty(globalThis, "sessionStorage", {
+    configurable: true,
+    value: {
+      getItem: (key: string) => values.get(key) ?? null,
+      setItem: (key: string, value: string) => values.set(key, value),
+      removeItem: (key: string) => values.delete(key),
+    },
+  });
+  try {
+    const proposal = {
+      course_id: "crs_bio",
+      course_write_epoch: 2,
+      brief: {
+        focus: "Review cells",
+        desired_count: 8,
+        card_type_mix: ["recall" as const],
+        difficulty: "mixed" as const,
+        answer_length: "short" as const,
+        include_hints: true,
+      },
+      source_snapshot: [],
+      objective_ids: [],
+      origin: {
+        kind: "chat" as const,
+        session_id: "ses_1",
+        message_id: 4,
+        practice_attempt_id: null,
+      },
+      provider_available: true,
+      warnings: [],
+    };
+    storeFlashcardProposal("usr_alice", "crs_bio", proposal);
+    assert.equal(
+      values.has(flashcardProposalStorageKey("usr_bob", "crs_bio")),
+      false,
+    );
+    assert.deepEqual(
+      consumeFlashcardProposal("usr_alice", "crs_bio"),
+      proposal,
+    );
+    assert.equal(consumeFlashcardProposal("usr_alice", "crs_bio"), null);
+  } finally {
+    Object.defineProperty(globalThis, "sessionStorage", {
+      configurable: true,
+      value: prior,
+    });
+  }
 });
 
 test("grounded Flashcard operation listing is Course scoped", async (t) => {

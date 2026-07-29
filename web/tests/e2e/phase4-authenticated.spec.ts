@@ -12,6 +12,7 @@ interface Phase4BrowserState {
   aliceRevisionId: string;
   bobCourseId: string;
   bobIdentity: string;
+  phase5SourceId?: string;
 }
 
 async function signIn(page: Page, username: string, password: string) {
@@ -339,7 +340,7 @@ test("manual Practice and Flashcard learner flows remain usable without a provid
   ).toBeVisible();
   await expect(page.getByLabel("Generated deck title")).toBeDisabled();
   await expect(
-    page.getByRole("button", { name: "Generate grounded deck" }),
+    page.getByRole("button", { name: "Review grounded deck request" }),
   ).toBeDisabled();
   await page.getByLabel("New Flashcard deck title").fill("Visible manual deck");
   await page
@@ -362,5 +363,84 @@ test("manual Practice and Flashcard learner flows remain usable without a provid
     page.getByText("Review complete. Your schedule is saved.", {
       exact: true,
     }),
+  ).toBeVisible();
+});
+
+test("phase5 stages grounded candidates behind review", async ({ page }) => {
+  test.skip(
+    !alicePassword ||
+      !stateFile ||
+      process.env.P4_PHASE5_DETERMINISTIC !== "true",
+    "Run through scripts/test-phase4-browser deterministic Phase 5 lane.",
+  );
+  const state = JSON.parse(
+    readFileSync(stateFile!, "utf8"),
+  ) as Phase4BrowserState;
+  expect(state.phase5SourceId).toBeTruthy();
+  await signIn(page, "alice", alicePassword!);
+  await page.goto("/flashcards");
+  await page.getByLabel("Active course").selectOption(state.aliceCourseId);
+  await expect(page.getByLabel("Generated deck title")).toBeEnabled();
+  await page.getByLabel("Generated deck title").fill("Phase 5 grounded deck");
+  await page
+    .getByLabel("Flashcard generation focus")
+    .fill("Review cellular energy from the selected notes");
+  await page.getByLabel("Generated card count").fill("3");
+  await page.getByText("Phase 5 browser notes", { exact: true }).click();
+  await page
+    .getByRole("button", { name: "Review grounded deck request" })
+    .click();
+  await expect(
+    page.getByRole("heading", { name: "Confirm provider use" }),
+  ).toBeVisible();
+  await page
+    .getByRole("button", { name: "Confirm and generate candidates" })
+    .click();
+  await expect(page.getByRole("status")).toContainText(
+    "Grounded Flashcard generation queued.",
+  );
+  await expect
+    .poll(async () => {
+      await page.getByRole("button", { name: "Refresh status" }).click();
+      return page.getByText("awaiting_review", { exact: true }).count();
+    })
+    .toBe(1);
+  await expect(
+    page.getByText(/What bounded fact 1 is represented by source/),
+  ).toBeVisible();
+  await expect(page.getByText(/Source src_/).first()).toBeVisible();
+});
+
+test("phase5 publishes persisted reviewed candidates after restart", async ({
+  page,
+}) => {
+  test.skip(
+    !alicePassword ||
+      !stateFile ||
+      process.env.P4_PHASE5_DETERMINISTIC !== "true",
+    "Run through scripts/test-phase4-browser deterministic Phase 5 lane.",
+  );
+  const state = JSON.parse(
+    readFileSync(stateFile!, "utf8"),
+  ) as Phase4BrowserState;
+  await signIn(page, "alice", alicePassword!);
+  await page.goto("/flashcards");
+  await page.getByLabel("Active course").selectOption(state.aliceCourseId);
+  await expect(page.getByText("awaiting_review", { exact: true })).toBeVisible();
+  await page.getByRole("button", { name: "Exclude candidate" }).first().click();
+  await expect(page.getByRole("button", { name: /Include again/ })).toHaveCount(
+    1,
+  );
+  await page.getByRole("button", { name: /Include again/ }).click();
+  await page.getByRole("button", { name: "Publish selected" }).click();
+  await expect(page.getByRole("status")).toContainText(
+    "Selected candidates published",
+  );
+  await expect(
+    page.getByRole("heading", { name: "Phase 5 grounded deck" }),
+  ).toBeVisible();
+  await page.getByRole("button", { name: "Review due" }).click();
+  await expect(
+    page.getByText(/What bounded fact 1 is represented by source/),
   ).toBeVisible();
 });

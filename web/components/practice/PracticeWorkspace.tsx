@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Archive, CheckCircle2, ClipboardCheck, Loader2, Play, RotateCcw, Save, Send, XCircle } from "lucide-react";
+import { useRouter } from "next/navigation";
 import { CourseBar } from "@/components/courses/CourseBar";
 import { useCourses } from "@/context/CourseContext";
 import { fetchAuthStatus } from "@/lib/auth";
@@ -25,6 +26,7 @@ import {
   listPracticeAttempts,
   listPracticeQuestions,
   listPracticeSets,
+  preparePracticeRemediationFlashcards,
   readyPracticeRevision,
   restorePracticeSet,
   startPracticeAttempt,
@@ -38,6 +40,7 @@ import {
   type QuizAttemptView,
   type QuizResult,
 } from "@/lib/practice-api";
+import { storeFlashcardProposal } from "@/lib/flashcards-api";
 
 function newIdempotencyKey(): string {
   return globalThis.crypto?.randomUUID?.() ?? `practice-${Date.now()}-${Math.random().toString(36).slice(2)}`;
@@ -63,6 +66,7 @@ const emptyQuestion: QuestionDraft = {
 
 /** Minimal manual Course Practice workspace. No generated content or local quiz cache. */
 export default function PracticeWorkspace() {
+  const router = useRouter();
   const { activeCourse, refresh: refreshCourses } = useCourses();
   const [identity, setIdentity] = useState<string | null>(null);
   const [sets, setSets] = useState<PracticeSet[]>([]);
@@ -397,6 +401,32 @@ export default function PracticeWorkspace() {
     finally { if (current(scope)) setBusy(false); }
   }, [activeCourse, attemptView, current, readOnly, selectedSet]);
 
+  const reviewMissesAsFlashcards = useCallback(async () => {
+    if (
+      !identity ||
+      !activeCourse ||
+      !selectedSet ||
+      !attemptView ||
+      attemptView.attempt.state !== "graded"
+    ) return;
+    const scope = scopeRef.current;
+    setBusy(true); setError(null);
+    try {
+      const proposal = await preparePracticeRemediationFlashcards(
+        activeCourse.id,
+        selectedSet.id,
+        attemptView.attempt.id,
+      );
+      if (!current(scope)) return;
+      storeFlashcardProposal(identity, activeCourse.id, proposal);
+      router.push("/flashcards");
+    } catch (cause) {
+      if (current(scope)) setError(errorText(cause));
+    } finally {
+      if (current(scope)) setBusy(false);
+    }
+  }, [activeCourse, attemptView, current, identity, router, selectedSet]);
+
   const archiveOrRestore = useCallback(async () => {
     if (!activeCourse || !selectedSet) return;
     const scope = scopeRef.current;
@@ -493,7 +523,7 @@ export default function PracticeWorkspace() {
               </div> : null}
               {revision?.state === "ready" && !readOnly ? <div className="mb-5 flex flex-wrap gap-2">{revision.id === selectedSet.current_revision_id ? <button disabled={busy} onClick={() => void startOrResume()} className="inline-flex items-center gap-1 rounded-lg bg-[var(--primary)] px-3 py-2 text-sm text-[var(--primary-foreground)]"><Play size={15} />Start or resume quiz</button> : <span className="self-center text-sm text-[var(--muted-foreground)]">Historical revision — attempts are read-only.</span>}<button disabled={busy} onClick={() => void createSuccessor()} className="rounded-lg border border-[var(--border)] px-3 py-2 text-sm">Create successor revision</button></div> : null}
               {questions.length ? <ol className="mb-6 space-y-3">{questions.map((question) => <li key={question.id} className="rounded-lg border border-[var(--border)] p-3"><span className="mr-2 text-xs text-[var(--muted-foreground)]">{question.ordinal}.</span>{question.prompt}{revision?.state === "ready" ? null : <p className="mt-2 text-xs text-[var(--muted-foreground)]">Answer: {question.answer_contract?.answer ?? "Stored server-side"}</p>}</li>)}</ol> : null}
-              {attemptView ? <AttemptRunner key={attemptView.attempt.id} view={attemptView} questions={questions} readOnly={readOnly || busy} answerFor={answerFor} onSave={(item, value) => void saveAnswer(item, value)} onTransition={(action) => void transitionAttempt(action)} resultView={resultView} /> : null}
+              {attemptView ? <AttemptRunner key={attemptView.attempt.id} view={attemptView} questions={questions} readOnly={readOnly || busy} answerFor={answerFor} onSave={(item, value) => void saveAnswer(item, value)} onTransition={(action) => void transitionAttempt(action)} onReviewMisses={() => void reviewMissesAsFlashcards()} resultView={resultView} /> : null}
               <AttemptHistory attempts={attempts} onOpen={(item) => void openAttempt(item)} busy={busy} hasMore={attemptsHaveMore} onLoadMore={() => void loadMoreAttempts()} />
             </> : <p className="text-sm text-[var(--muted-foreground)]">Choose a Practice set or create one.</p>}
           </section>
@@ -505,8 +535,8 @@ export default function PracticeWorkspace() {
   );
 }
 
-function AttemptRunner({ view, questions, readOnly, answerFor, onSave, onTransition, resultView }: {
-  view: QuizAttemptView; questions: PracticeQuestion[]; readOnly: boolean; answerFor: (itemId: string) => QuizAttemptAnswer | null; onSave: (itemId: string, value: string) => void; onTransition: (action: "submit" | "abandon" | "grade") => void; resultView: QuizResult | null;
+function AttemptRunner({ view, questions, readOnly, answerFor, onSave, onTransition, onReviewMisses, resultView }: {
+  view: QuizAttemptView; questions: PracticeQuestion[]; readOnly: boolean; answerFor: (itemId: string) => QuizAttemptAnswer | null; onSave: (itemId: string, value: string) => void; onTransition: (action: "submit" | "abandon" | "grade") => void; onReviewMisses: () => void; resultView: QuizResult | null;
 }) {
   const byId = useMemo(() => new Map((resultView?.questions ?? questions).map((question) => [question.id, question])), [questions, resultView?.questions]);
   const [values, setValues] = useState<Record<string, string>>(() =>
@@ -514,10 +544,15 @@ function AttemptRunner({ view, questions, readOnly, answerFor, onSave, onTransit
   );
   const active = view.attempt.state === "in_progress";
   const hasUnsaved = hasUnsavedPracticeAnswers(values, view.answers);
+  const score = resultView?.attempt.score;
+  const hasMisses =
+    typeof score?.correct === "number" &&
+    typeof score?.total === "number" &&
+    score.correct < score.total;
   return <div className="mb-6 rounded-xl border border-[var(--border)] p-4"><div className="mb-4 flex flex-wrap items-center justify-between gap-2"><h3 className="font-semibold">Quiz attempt</h3><span className="rounded-full bg-[var(--muted)] px-2 py-1 text-xs">{view.attempt.state}{formatPracticeScore(view.attempt.score) ? ` · ${formatPracticeScore(view.attempt.score)}` : ""}</span></div>
     <div className="space-y-4">{view.items.map((item) => { const question = byId.get(item.question_id); const answer = answerFor(item.id); const dirty = (values[item.id] ?? "") !== (answer?.response?.answer ?? ""); return <article key={item.id} className="rounded-lg border border-[var(--border)] p-3"><p className="font-medium">{item.display_ordinal}. {question?.prompt ?? "Question unavailable"}</p><div className="mt-3 flex gap-2"><input aria-label={`Answer for question ${item.display_ordinal}`} value={values[item.id] ?? ""} disabled={!active || readOnly} onChange={(event) => setValues((previous) => ({ ...previous, [item.id]: event.target.value }))} className="min-w-0 flex-1 rounded-lg border border-[var(--border)] bg-[var(--background)] px-2 py-2 text-sm disabled:opacity-60" placeholder="Your answer" /><button disabled={!active || readOnly || !dirty} onClick={() => onSave(item.id, values[item.id] ?? "")} className="rounded-lg border border-[var(--border)] px-3 text-sm disabled:opacity-50">Save</button></div>{answer ? <p className="mt-1 text-xs text-[var(--muted-foreground)]">Saved revision {answer.revision}{dirty ? " · unsaved changes" : ""}</p> : null}{item.grading ? <p className="mt-2 text-sm">{String(item.grading.is_correct) === "true" ? "Correct" : "Review this answer"}{question?.explanation ? ` — ${question.explanation}` : ""}{resultView?.attempt.state === "graded" && question?.answer_contract ? ` Expected answer: ${question.answer_contract.answer}` : ""}</p> : null}</article>; })}</div>
     <div className="mt-4 flex flex-wrap gap-2">{active ? <><button disabled={readOnly || hasUnsaved} onClick={() => onTransition("submit")} className="inline-flex items-center gap-1 rounded-lg bg-[var(--primary)] px-3 py-2 text-sm text-[var(--primary-foreground)] disabled:opacity-50"><Send size={15} />Submit</button><button disabled={readOnly} onClick={() => onTransition("abandon")} className="inline-flex items-center gap-1 rounded-lg border border-[var(--border)] px-3 py-2 text-sm"><XCircle size={15} />Abandon</button>{hasUnsaved ? <span className="self-center text-xs text-[var(--muted-foreground)]">Save every changed answer before submitting.</span> : null}</> : null}{view.attempt.state === "submitted" ? <button disabled={readOnly} onClick={() => onTransition("grade")} className="inline-flex items-center gap-1 rounded-lg bg-[var(--primary)] px-3 py-2 text-sm text-[var(--primary-foreground)]"><ClipboardCheck size={15} />Grade</button> : null}</div>
-    {resultView?.attempt.state === "graded" ? <p className="mt-4 rounded-lg bg-[var(--muted)] p-3 text-sm">Results are server-authoritative. Score: {formatPracticeScore(resultView.attempt.score) ?? "available"}.</p> : null}
+    {resultView?.attempt.state === "graded" ? <div className="mt-4 rounded-lg bg-[var(--muted)] p-3 text-sm"><p>Results are server-authoritative. Score: {formatPracticeScore(resultView.attempt.score) ?? "available"}.</p>{hasMisses ? <button type="button" disabled={readOnly} onClick={onReviewMisses} className="mt-3 rounded-lg border border-[var(--border)] bg-[var(--background)] px-3 py-2 text-sm disabled:opacity-50">Review misses as Flashcards</button> : <p className="mt-2 text-[var(--muted-foreground)]">No missed answers need a remediation deck.</p>}</div> : null}
   </div>;
 }
 

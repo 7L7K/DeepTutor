@@ -1,4 +1,5 @@
 import { apiFetch, apiUrl } from "./api";
+import type { FlashcardGenerationBriefReceipt } from "./flashcards-api";
 
 /**
  * Course-owned Practice transport.  The browser only keeps transient editor
@@ -361,4 +362,15 @@ export function getPracticeResults(courseId: string, practiceSetId: string, atte
     courseId,
     `/${encodeURIComponent(practiceSetId)}/attempts/${encodeURIComponent(attemptId)}/results`,
   )), { cache: "no-store" }));
+}
+
+export function preparePracticeRemediationFlashcards(
+  courseId: string,
+  practiceSetId: string,
+  attemptId: string,
+) {
+  return json<FlashcardGenerationBriefReceipt>(apiFetch(apiUrl(path(
+    courseId,
+    `/${encodeURIComponent(practiceSetId)}/attempts/${encodeURIComponent(attemptId)}/flashcard-brief`,
+  )), mutation({})));
 }

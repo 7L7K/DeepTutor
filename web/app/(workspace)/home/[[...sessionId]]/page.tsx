@@ -50,6 +50,7 @@ import {
   type CourseLearnerAction,
   type CourseLearnerActionScope,
 } from "@/lib/course-actions-api";
+import { storeFlashcardProposal } from "@/lib/flashcards-api";
 // Imported eagerly so the drawer shell is always mounted off-screen —
 // clicking a chip becomes a single CSS class flip, no chunk fetch + double
 // render. The heavy renderers inside still load lazily.
@@ -1726,7 +1727,17 @@ export default function ChatPage() {
         }
         selectCourse(plan.course_id);
         if (plan.destination === "practice") router.push("/practice");
-        else if (plan.destination === "flashcards") router.push("/flashcards");
+        else if (plan.destination === "flashcards") {
+          if (!plan.generation_brief) {
+            throw new Error("The Course action did not return a generation brief.");
+          }
+          storeFlashcardProposal(
+            courseIdentity,
+            plan.course_id,
+            plan.generation_brief,
+          );
+          router.push("/flashcards");
+        }
         else if (plan.destination === "learning") router.push("/space/learning");
       } catch (cause) {
         if (isCurrentCourseLearnerAction(requested, learnerActionScopeRef.current)) {

@@ -8,6 +8,7 @@ import {
   isCurrentPracticeResponse,
   learnerSafePracticeQuestions,
   listPracticeAttempts,
+  preparePracticeRemediationFlashcards,
   type PracticeRequestScope,
 } from "../lib/practice-api";
 
@@ -16,6 +17,38 @@ const scope = (identity: string | null, courseId: string | null, epoch: number):
   courseId,
   epoch,
   viewEpoch: 0,
+});
+
+test("Practice remediation asks the server for an owned flashcard brief", async (t) => {
+  const originalFetch = globalThis.fetch;
+  let requested = "";
+  let requestedInit: RequestInit | undefined;
+  t.after(() => {
+    globalThis.fetch = originalFetch;
+  });
+  globalThis.fetch = (async (
+    input: RequestInfo | URL,
+    init?: RequestInit,
+  ) => {
+    requested = String(input);
+    requestedInit = init;
+    return new Response(JSON.stringify({}), {
+      status: 200,
+      headers: { "Content-Type": "application/json" },
+    });
+  }) as typeof fetch;
+
+  await preparePracticeRemediationFlashcards(
+    "crs/bio",
+    "pst/one",
+    "att/one",
+  );
+  assert.equal(
+    requested,
+    "/api/v1/courses/crs%2Fbio/practice/pst%2Fone/attempts/att%2Fone/flashcard-brief",
+  );
+  assert.equal(requestedInit?.method, "POST");
+  assert.deepEqual(JSON.parse(String(requestedInit?.body)), {});
 });
 
 test("Practice responses require the same immutable identity, Course, and request epoch", () => {

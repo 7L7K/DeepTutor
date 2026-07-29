@@ -25,6 +25,14 @@ export interface Flashcard {
   deck_id: string;
   prompt: string;
   answer: string;
+  hint: string | null;
+  card_type:
+    | "definition"
+    | "concept"
+    | "comparison"
+    | "application"
+    | "process"
+    | "recall";
   objective_ids: string[];
   citations: Array<Record<string, unknown>>;
   ordinal: number;
@@ -79,8 +87,11 @@ export interface FlashcardDeckView {
 export type FlashcardGenerationState =
   | "queued"
   | "running"
+  | "awaiting_review"
   | "completed"
-  | "failed";
+  | "failed"
+  | "cancelling"
+  | "cancelled";
 
 export interface FlashcardSourceReceipt {
   source_id: string;
@@ -98,6 +109,13 @@ export interface FlashcardGenerationOperation {
   request_fingerprint: string;
   source_snapshot: FlashcardSourceReceipt[];
   objective_ids: string[];
+  generation_brief: FlashcardGenerationBrief;
+  origin: FlashcardGenerationOrigin;
+  candidates: FlashcardCandidate[] | null;
+  candidate_revision: number;
+  provider_receipt: FlashcardProviderReceipt | null;
+  cancel_requested_at: number | null;
+  review_expires_at: number | null;
   course_write_epoch: number;
   deck_write_epoch: number;
   item_limit: number;
@@ -108,6 +126,65 @@ export interface FlashcardGenerationOperation {
   started_at: number | null;
   completed_at: number | null;
   updated_at: number;
+}
+
+export type FlashcardCardType =
+  | "definition"
+  | "concept"
+  | "comparison"
+  | "application"
+  | "process"
+  | "recall";
+
+export interface FlashcardGenerationBrief {
+  focus: string;
+  desired_count: number;
+  card_type_mix: FlashcardCardType[];
+  difficulty: "introductory" | "intermediate" | "advanced" | "mixed";
+  answer_length: "short" | "medium";
+  include_hints: boolean;
+}
+
+export interface FlashcardGenerationOrigin {
+  kind: "workspace" | "chat" | "practice_remediation";
+  session_id: string | null;
+  message_id: number | null;
+  practice_attempt_id: string | null;
+}
+
+export interface FlashcardProviderReceipt {
+  provider: "deterministic-local" | "openai";
+  requested_model: string;
+  actual_model: string;
+  request_id: string | null;
+  input_tokens: number | null;
+  output_tokens: number | null;
+}
+
+export interface FlashcardCandidate {
+  candidate_id: string;
+  prompt: string;
+  answer: string;
+  hint: string | null;
+  card_type: FlashcardCardType;
+  objective_ids: string[];
+  citations: Array<Record<string, unknown>>;
+}
+
+export interface FlashcardGenerationBriefReceipt {
+  course_id: string;
+  course_write_epoch: number;
+  brief: FlashcardGenerationBrief;
+  source_snapshot: FlashcardSourceReceipt[];
+  objective_ids: string[];
+  origin: FlashcardGenerationOrigin;
+  provider_available: boolean;
+  warnings: string[];
+}
+
+export interface FlashcardGenerationOptions extends FlashcardGenerationBrief {
+  context_char_limit?: number;
+  origin?: FlashcardGenerationOrigin;
 }
 
 export interface FlashcardGenerationRequest {
@@ -138,6 +215,51 @@ export function advanceFlashcardViewScope(
   scope: FlashcardRequestScope,
 ): FlashcardRequestScope {
   return { ...scope, viewEpoch: scope.viewEpoch + 1 };
+}
+
+export function flashcardProposalStorageKey(
+  identity: string,
+  courseId: string,
+): string {
+  return `teeechr:flashcard-proposal:${encodeURIComponent(identity)}:${encodeURIComponent(courseId)}`;
+}
+
+export function storeFlashcardProposal(
+  identity: string,
+  courseId: string,
+  proposal: FlashcardGenerationBriefReceipt,
+): void {
+  globalThis.sessionStorage?.setItem(
+    flashcardProposalStorageKey(identity, courseId),
+    JSON.stringify(proposal),
+  );
+}
+
+export function consumeFlashcardProposal(
+  identity: string,
+  courseId: string,
+): FlashcardGenerationBriefReceipt | null {
+  const key = flashcardProposalStorageKey(identity, courseId);
+  const raw = globalThis.sessionStorage?.getItem(key);
+  globalThis.sessionStorage?.removeItem(key);
+  if (!raw) return null;
+  try {
+    const parsed = JSON.parse(raw) as FlashcardGenerationBriefReceipt;
+    return parsed.course_id === courseId ? parsed : null;
+  } catch {
+    return null;
+  }
+}
+
+export function clearFlashcardProposal(
+  identity: string | null,
+  courseId: string | null,
+): void {
+  if (identity && courseId) {
+    globalThis.sessionStorage?.removeItem(
+      flashcardProposalStorageKey(identity, courseId),
+    );
+  }
 }
 
 /** Again keeps a missed card in the current pass; all other ratings advance. */
@@ -310,14 +432,22 @@ function generationInput(
   sourceIds: string[],
   objectiveIds: string[],
   courseWriteEpoch: number,
+  options?: Partial<FlashcardGenerationOptions>,
 ) {
+  const desiredCount = options?.desired_count ?? 8;
   return {
     title,
     source_ids: sourceIds,
     objective_ids: objectiveIds,
     expected_course_write_epoch: courseWriteEpoch,
-    item_limit: 8,
-    context_char_limit: 12_000,
+    focus: options?.focus ?? title,
+    item_limit: desiredCount,
+    card_type_mix: options?.card_type_mix ?? ["recall"],
+    difficulty: options?.difficulty ?? "mixed",
+    answer_length: options?.answer_length ?? "short",
+    include_hints: options?.include_hints ?? true,
+    origin: options?.origin,
+    context_char_limit: options?.context_char_limit ?? 12_000,
   };
 }
 
@@ -328,6 +458,7 @@ export function createGeneratedFlashcardDeck(
   objectiveIds: string[],
   courseWriteEpoch: number,
   idempotencyKey: string,
+  options?: Partial<FlashcardGenerationOptions>,
 ) {
   return json<FlashcardGenerationRequest>(
     apiFetch(
@@ -339,6 +470,7 @@ export function createGeneratedFlashcardDeck(
             sourceIds,
             objectiveIds,
             courseWriteEpoch,
+            options,
           ),
         ),
         headers: {
@@ -358,6 +490,7 @@ export function createGeneratedFlashcardSuccessor(
   objectiveIds: string[],
   courseWriteEpoch: number,
   idempotencyKey: string,
+  options?: Partial<FlashcardGenerationOptions>,
 ) {
   return json<FlashcardGenerationRequest>(
     apiFetch(
@@ -371,6 +504,7 @@ export function createGeneratedFlashcardSuccessor(
             sourceIds,
             objectiveIds,
             courseWriteEpoch,
+            options,
           ),
         ),
         headers: {
@@ -378,6 +512,65 @@ export function createGeneratedFlashcardSuccessor(
           "Idempotency-Key": idempotencyKey,
         },
       },
+    ),
+  );
+}
+
+export function prepareFlashcardGenerationBrief(
+  courseId: string,
+  title: string,
+  sourceIds: string[],
+  objectiveIds: string[],
+  courseWriteEpoch: number,
+  options?: Partial<FlashcardGenerationOptions>,
+) {
+  return json<FlashcardGenerationBriefReceipt>(
+    apiFetch(
+      apiUrl(
+        `/api/v1/courses/${encodeURIComponent(courseId)}/flashcard-generation/brief`,
+      ),
+      mutation(
+        generationInput(
+          title,
+          sourceIds,
+          objectiveIds,
+          courseWriteEpoch,
+          options,
+        ),
+      ),
+    ),
+  );
+}
+
+export function publishFlashcardCandidates(
+  courseId: string,
+  operationId: string,
+  candidateIds: string[],
+  expectedCandidateRevision: number,
+) {
+  return json<FlashcardGenerationOperation>(
+    apiFetch(
+      apiUrl(
+        `/api/v1/courses/${encodeURIComponent(courseId)}/flashcard-generation/${encodeURIComponent(operationId)}/publish`,
+      ),
+      mutation({
+        candidate_ids: candidateIds,
+        expected_candidate_revision: expectedCandidateRevision,
+      }),
+    ),
+  );
+}
+
+export function cancelFlashcardGeneration(
+  courseId: string,
+  operationId: string,
+) {
+  return json<FlashcardGenerationOperation>(
+    apiFetch(
+      apiUrl(
+        `/api/v1/courses/${encodeURIComponent(courseId)}/flashcard-generation/${encodeURIComponent(operationId)}/cancel`,
+      ),
+      mutation({}),
     ),
   );
 }
