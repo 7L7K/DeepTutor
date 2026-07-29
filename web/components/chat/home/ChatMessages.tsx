@@ -52,6 +52,10 @@ import { hasVisibleMarkdownContent } from "@/lib/markdown-display";
 import type { SelectedBookReference } from "@/lib/book-references";
 import { buildVisiblePath, type SiblingInfo } from "@/lib/message-branches";
 import { shouldSubmitOnEnter } from "@/lib/composer-keyboard";
+import {
+  canShowCourseLearnerActions,
+  type CourseLearnerAction,
+} from "@/lib/course-actions-api";
 import { useImeComposing } from "@/lib/use-ime-composing";
 import type { SpaceMemoryFile } from "@/lib/space-items";
 import {
@@ -1131,6 +1135,9 @@ export const ChatMessageList = memo(function ChatMessageList({
   onSwitchBranch,
   onSubmitUserReply,
   modelActionsEnabled = true,
+  courseActionsEnabled = false,
+  learnerActionBusy = null,
+  onLearnerAction,
 }: {
   messages: ChatMessageItem[];
   isStreaming: boolean;
@@ -1139,6 +1146,12 @@ export const ChatMessageList = memo(function ChatMessageList({
   onCopyAssistantMessage: (content: string) => void | Promise<void>;
   onRegenerateMessage: () => void;
   modelActionsEnabled?: boolean;
+  courseActionsEnabled?: boolean;
+  learnerActionBusy?: CourseLearnerAction | null;
+  onLearnerAction?: (
+    action: CourseLearnerAction,
+    assistantMessageId: number,
+  ) => void | Promise<void>;
   onConfirmOutline?: (
     outline: Array<{ title: string; overview: string }>,
     topic: string,
@@ -1369,6 +1382,16 @@ export const ChatMessageList = memo(function ChatMessageList({
             ? pairedUserMessage.id
             : null;
         const showDelete = deletableTurnUserId != null;
+        const showLearnerActions =
+          Boolean(onLearnerAction) &&
+          canShowCourseLearnerActions({
+            courseActionsEnabled,
+            isStreaming,
+            isLastAssistant,
+            role: msg.role,
+            messageId: msg.id,
+            hasVisibleContent: showActions,
+          });
 
         const costSummary = (() => {
           if (!msgDone) return null;
@@ -1445,6 +1468,33 @@ export const ChatMessageList = memo(function ChatMessageList({
                 </div>
               );
             })()}
+            {showLearnerActions ? (
+              <div className="mt-3 flex flex-wrap gap-2">
+                {(
+                  [
+                    ["quiz_me", ClipboardList, t("Quiz me")],
+                    ["explain_simpler", MessageSquare, t("Explain simpler")],
+                    ["make_flashcards", BookOpen, t("Make flashcards")],
+                    ["review_weak_topics", Brain, t("Review weak topics")],
+                  ] as const
+                ).map(([action, Icon, label]) => (
+                  <button
+                    key={action}
+                    type="button"
+                    onClick={() => void onLearnerAction?.(action, msg.id as number)}
+                    disabled={learnerActionBusy != null}
+                    className="inline-flex items-center gap-1.5 rounded-full border border-[var(--border)] bg-[var(--card)] px-3 py-1.5 text-xs font-medium text-[var(--foreground)] transition hover:bg-[var(--muted)]/40 disabled:cursor-not-allowed disabled:opacity-50"
+                  >
+                    {learnerActionBusy === action ? (
+                      <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                    ) : (
+                      <Icon className="h-3.5 w-3.5" />
+                    )}
+                    {label}
+                  </button>
+                ))}
+              </div>
+            ) : null}
             {(showActions || costSummary || showDelete) && (
               <div className="mt-3 flex items-center">
                 {(showActions || showDelete) && (

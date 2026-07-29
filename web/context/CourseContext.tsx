@@ -25,6 +25,7 @@ import {
 } from "@/lib/course-selection";
 
 interface CourseContextValue {
+  identity: string | null;
   courses: Course[];
   activeCourse: Course | null;
   loading: boolean;
@@ -173,6 +174,7 @@ export function CourseProvider({ children }: { children: React.ReactNode }) {
 
   const value = useMemo<CourseContextValue>(
     () => ({
+      identity,
       courses,
       activeCourse:
         courses.find((course) => course.id === activeCourseId) || null,
@@ -186,6 +188,7 @@ export function CourseProvider({ children }: { children: React.ReactNode }) {
     }),
     [
       courses,
+      identity,
       activeCourseId,
       loading,
       error,

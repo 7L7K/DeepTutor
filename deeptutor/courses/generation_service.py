@@ -34,7 +34,7 @@ _MAX_PROVIDER_TIMEOUT_SECONDS = 120.0
 
 def register_live_practice_generation(
     owner_user_id: str, course_id: str, operation_id: str
-) -> None:
+) -> bool:
     """Mark a just-scheduled local operation live until its worker returns.
 
     This is deliberately process-local.  A process restart loses this marker,
@@ -42,7 +42,13 @@ def register_live_practice_generation(
     orphaned durable queued/running row.
     """
     with _live_generation_lock:
-        _live_generation_operations.setdefault((owner_user_id, course_id), set()).add(operation_id)
+        operations = _live_generation_operations.setdefault(
+            (owner_user_id, course_id), set()
+        )
+        if operation_id in operations:
+            return False
+        operations.add(operation_id)
+        return True
 
 
 def unregister_live_practice_generation(

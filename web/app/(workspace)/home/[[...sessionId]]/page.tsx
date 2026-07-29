@@ -43,6 +43,12 @@ import {
   courseIdForChatSession,
   resolveSessionCourseView,
 } from "@/lib/course-selection";
+import {
+  isCurrentCourseLearnerAction,
+  requestCourseLearnerAction,
+  type CourseLearnerAction,
+  type CourseLearnerActionScope,
+} from "@/lib/course-actions-api";
 // Imported eagerly so the drawer shell is always mounted off-screen —
 // clicking a chip becomes a single CSS class flip, no chunk fetch + double
 // render. The heavy renderers inside still load lazily.
@@ -329,10 +335,12 @@ export default function ChatPage() {
   const sessionIdParam = params.sessionId?.[0] ?? null;
   const { setActiveSessionId, language: appLanguage } = useAppShell();
   const {
+    identity: courseIdentity,
     activeCourse,
     courses,
     loading: coursesLoading,
     restoreCourse,
+    selectCourse,
   } = useCourses();
 
   const {
@@ -370,6 +378,35 @@ export default function ChatPage() {
   );
   const courseMode = Boolean(effectiveCourseId);
   const courseSessionReadOnly = sessionCourseView.readOnly;
+  const actionCourse = useMemo(
+    () => courses.find((course) => course.id === effectiveCourseId) ?? null,
+    [courses, effectiveCourseId],
+  );
+  const [learnerActionBusy, setLearnerActionBusy] =
+    useState<CourseLearnerAction | null>(null);
+  const [learnerActionError, setLearnerActionError] = useState<string | null>(
+    null,
+  );
+  const learnerActionEpochRef = useRef(0);
+  const learnerActionScopeRef = useRef<CourseLearnerActionScope>({
+    userId: courseIdentity,
+    courseId: effectiveCourseId,
+    sessionId: state.sessionId,
+    messageId: null,
+    epoch: 0,
+  });
+
+  useEffect(() => {
+    learnerActionScopeRef.current = {
+      userId: courseIdentity,
+      courseId: effectiveCourseId,
+      sessionId: state.sessionId,
+      messageId: null,
+      epoch: ++learnerActionEpochRef.current,
+    };
+    setLearnerActionBusy(null);
+    setLearnerActionError(null);
+  }, [courseIdentity, effectiveCourseId, state.sessionId]);
 
   const [knowledgeBases, setKnowledgeBases] = useState<KnowledgeBase[]>([]);
   // A connected agent to preselect once it loads, from `?agent=<name>` on the
@@ -1603,6 +1640,90 @@ export default function ChatPage() {
     ],
   );
 
+  const handleLearnerAction = useCallback(
+    async (action: CourseLearnerAction, assistantMessageId: number) => {
+      if (
+        learnerActionBusy ||
+        !actionCourse ||
+        !courseIdentity ||
+        actionCourse.state !== "active" ||
+        !state.sessionId ||
+        state.isStreaming
+      ) {
+        return;
+      }
+      const requested: CourseLearnerActionScope = {
+        userId: courseIdentity,
+        courseId: actionCourse.id,
+        sessionId: state.sessionId,
+        messageId: assistantMessageId,
+        epoch: ++learnerActionEpochRef.current,
+      };
+      learnerActionScopeRef.current = requested;
+      setLearnerActionBusy(action);
+      setLearnerActionError(null);
+      try {
+        const plan = await requestCourseLearnerAction(actionCourse.id, {
+          action,
+          sessionId: state.sessionId,
+          assistantMessageId,
+          idempotencyKey: [
+            "learner-action",
+            state.sessionId,
+            assistantMessageId,
+            action,
+          ].join(":"),
+          expectedCourseRevision: actionCourse.revision,
+          expectedCourseWriteEpoch: actionCourse.write_epoch,
+        });
+        if (
+          !isCurrentCourseLearnerAction(
+            requested,
+            learnerActionScopeRef.current,
+          ) ||
+          plan.course_id !== requested.courseId ||
+          plan.session_id !== requested.sessionId ||
+          plan.parent_message_id !== requested.messageId
+        ) {
+          return;
+        }
+        if (plan.destination === "chat_followup") {
+          if (!plan.followup_text?.trim()) {
+            throw new Error("The Course action did not return a safe follow-up.");
+          }
+          await handleSend(plan.followup_text);
+          return;
+        }
+        selectCourse(plan.course_id);
+        if (plan.destination === "practice") router.push("/practice");
+        else if (plan.destination === "flashcards") router.push("/flashcards");
+        else if (plan.destination === "learning") router.push("/space/learning");
+      } catch (cause) {
+        if (isCurrentCourseLearnerAction(requested, learnerActionScopeRef.current)) {
+          setLearnerActionError(
+            cause instanceof Error
+              ? cause.message
+              : "Could not start the Course learning action.",
+          );
+        }
+      } finally {
+        if (isCurrentCourseLearnerAction(requested, learnerActionScopeRef.current)) {
+          setLearnerActionBusy(null);
+        }
+      }
+    },
+    [
+      actionCourse,
+      courseIdentity,
+      handleSend,
+      learnerActionBusy,
+      router,
+      selectCourse,
+      state.isStreaming,
+      state.sessionId,
+    ],
+  );
+
   const handleConfirmOutline = useCallback(
     (
       outline: OutlineItem[],
@@ -1989,7 +2110,20 @@ export default function ChatPage() {
                     onSwitchBranch={switchBranch}
                     onSubmitUserReply={submitUserReply}
                     modelActionsEnabled={hasLlm}
+                    courseActionsEnabled={
+                      courseMode &&
+                      !courseSessionReadOnly &&
+                      Boolean(actionCourse) &&
+                      hasLlm
+                    }
+                    learnerActionBusy={learnerActionBusy}
+                    onLearnerAction={handleLearnerAction}
                   />
+                  {learnerActionError ? (
+                    <p className="rounded-lg border border-[var(--destructive)]/30 bg-[var(--destructive)]/5 px-3 py-2 text-sm text-[var(--destructive)]">
+                      {learnerActionError}
+                    </p>
+                  ) : null}
                   <div ref={messagesEndRef} className="h-px w-full shrink-0" />
                 </div>
               </div>

@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import sqlite3
-from typing import Annotated
+from typing import Annotated, Literal
 
 from fastapi import APIRouter, BackgroundTasks, File, Form, Header, HTTPException, Query, UploadFile
 from fastapi.responses import StreamingResponse
@@ -185,6 +185,48 @@ class CreateGeneratedFlashcardDeckRequest(_PracticeRequest):
     expected_course_write_epoch: int = Field(ge=1)
     item_limit: int = Field(default=8, ge=1, le=48)
     context_char_limit: int = Field(default=12_000, ge=1, le=48_000)
+
+
+class LearnerActionRequest(_PracticeRequest):
+    """A deliberately non-authoritative learner shortcut.
+
+    There is no prompt, source, provider, tool, ownership, or path authority in
+    this body.  The authenticated Course aggregate resolves all of that state.
+    """
+
+    action: Literal[
+        "quiz_me", "explain_simpler", "make_flashcards", "review_weak_topics"
+    ]
+    session_id: str = Field(min_length=1, max_length=160)
+    assistant_message_id: int = Field(ge=1)
+    idempotency_key: str = Field(min_length=8, max_length=160)
+    expected_course_revision: int = Field(ge=1)
+    expected_course_write_epoch: int = Field(ge=1)
+
+
+class LearnerActionResponse(_PracticeRequest):
+    """Redacted, fixed-shape receipt for a server-owned learner action."""
+
+    action: Literal[
+        "quiz_me", "explain_simpler", "make_flashcards", "review_weak_topics"
+    ]
+    destination: Literal["practice", "flashcards", "chat_followup", "learning"]
+    course_id: str
+    course_revision: int = Field(ge=1)
+    course_write_epoch: int = Field(ge=1)
+    session_id: str
+    parent_message_id: int
+    objective_ids: list[str] = Field(default_factory=list, max_length=16)
+    source_ids: list[str] = Field(default_factory=list, max_length=32)
+    reason_code: Literal[
+        "course_sources", "active_error", "low_mastery", "due_review", "no_targets", "message_context"
+    ]
+    operation_id: str | None = None
+    operation_state: Literal["queued", "running", "completed", "failed"] | None = None
+    practice_set_id: str | None = None
+    practice_set_revision_id: str | None = None
+    deck_id: str | None = None
+    followup_text: str | None = Field(default=None, max_length=280)
 
 
 def _service():
@@ -441,15 +483,18 @@ async def create_generated_practice(
         )
     from deeptutor.courses.generation_service import register_live_practice_generation
 
-    register_live_practice_generation(
-        request.operation.owner_user_id, course_id, request.operation.id
-    )
-    background_tasks.add_task(
-        _run_practice_generation,
-        request.operation.owner_user_id,
-        course_id,
-        request.operation.id,
-    )
+    if (
+        request.operation.state == "queued"
+        and register_live_practice_generation(
+            request.operation.owner_user_id, course_id, request.operation.id
+        )
+    ):
+        background_tasks.add_task(
+            _run_practice_generation,
+            request.operation.owner_user_id,
+            course_id,
+            request.operation.id,
+        )
     return request.model_dump(mode="json")
 
 
@@ -501,15 +546,18 @@ async def request_practice_generation_successor(
         )
     from deeptutor.courses.generation_service import register_live_practice_generation
 
-    register_live_practice_generation(
-        request.operation.owner_user_id, course_id, request.operation.id
-    )
-    background_tasks.add_task(
-        _run_practice_generation,
-        request.operation.owner_user_id,
-        course_id,
-        request.operation.id,
-    )
+    if (
+        request.operation.state == "queued"
+        and register_live_practice_generation(
+            request.operation.owner_user_id, course_id, request.operation.id
+        )
+    ):
+        background_tasks.add_task(
+            _run_practice_generation,
+            request.operation.owner_user_id,
+            course_id,
+            request.operation.id,
+        )
     return request.model_dump(mode="json")
 
 
@@ -840,8 +888,18 @@ async def create_generated_flashcard_deck(course_id: str, body: CreateGeneratedF
             item_limit=body.item_limit, context_char_limit=body.context_char_limit,
         ))
     from deeptutor.courses.flashcard_generation_service import register_live_flashcard_generation
-    register_live_flashcard_generation(request.operation.owner_user_id, course_id, request.operation.id)
-    background_tasks.add_task(_run_flashcard_generation, request.operation.owner_user_id, course_id, request.operation.id)
+    if (
+        request.operation.state == "queued"
+        and register_live_flashcard_generation(
+            request.operation.owner_user_id, course_id, request.operation.id
+        )
+    ):
+        background_tasks.add_task(
+            _run_flashcard_generation,
+            request.operation.owner_user_id,
+            course_id,
+            request.operation.id,
+        )
     return request.model_dump(mode="json")
 
 
@@ -864,8 +922,18 @@ async def create_flashcard_generation_successor(course_id: str, deck_id: str, bo
             item_limit=body.item_limit, context_char_limit=body.context_char_limit,
         ))
     from deeptutor.courses.flashcard_generation_service import register_live_flashcard_generation
-    register_live_flashcard_generation(request.operation.owner_user_id, course_id, request.operation.id)
-    background_tasks.add_task(_run_flashcard_generation, request.operation.owner_user_id, course_id, request.operation.id)
+    if (
+        request.operation.state == "queued"
+        and register_live_flashcard_generation(
+            request.operation.owner_user_id, course_id, request.operation.id
+        )
+    ):
+        background_tasks.add_task(
+            _run_flashcard_generation,
+            request.operation.owner_user_id,
+            course_id,
+            request.operation.id,
+        )
     return request.model_dump(mode="json")
 
 
@@ -991,6 +1059,249 @@ async def record_flashcard_review(course_id: str, deck_id: str, body: RecordFlas
     }
 
 
+async def _resolve_learner_action_binding(
+    course_id: str,
+    *,
+    session_id: str,
+    assistant_message_id: int,
+) -> tuple[str, int]:
+    """Validate optional persisted conversation references in the owner scope.
+
+    The personal session database is already namespaced by the authenticated
+    identity.  Missing, foreign, wrong-Course, or wrong-role references all map
+    to the same not-found outcome, so this action surface cannot become an ID
+    oracle.
+    """
+
+    from deeptutor.services.session import get_personal_sqlite_session_store
+
+    store = get_personal_sqlite_session_store()
+    session = await store.get_session(session_id)
+    if session is None or str(session.get("course_id") or "") != course_id:
+        raise CourseNotFoundError("Course session not found")
+    messages = await store.get_messages(str(session["id"]))
+    message = next(
+        (item for item in messages if int(item.get("id") or 0) == assistant_message_id),
+        None,
+    )
+    if message is None or str(message.get("role") or "") != "assistant":
+        raise CourseNotFoundError("Course assistant message not found")
+    return str(session["id"]), int(message["id"])
+
+
+def _learner_action_response(
+    *,
+    action: str,
+    destination: str,
+    course,
+    session_id: str,
+    assistant_message_id: int,
+    objective_ids: list[str],
+    source_ids: list[str],
+    reason_code: str,
+    operation=None,
+    practice_set_id: str | None = None,
+    practice_set_revision_id: str | None = None,
+    deck_id: str | None = None,
+    followup_text: str | None = None,
+) -> LearnerActionResponse:
+    """Return a deliberately small action receipt, never a generation record."""
+
+    return LearnerActionResponse(
+        action=action,
+        destination=destination,
+        course_id=course.id,
+        course_revision=course.revision,
+        course_write_epoch=course.write_epoch,
+        session_id=session_id,
+        parent_message_id=assistant_message_id,
+        objective_ids=objective_ids,
+        source_ids=source_ids,
+        reason_code=reason_code,
+        operation_id=getattr(operation, "id", None),
+        operation_state=getattr(operation, "state", None),
+        practice_set_id=practice_set_id,
+        practice_set_revision_id=practice_set_revision_id,
+        deck_id=deck_id,
+        followup_text=followup_text,
+    )
+
+
+@router.post(
+    "/{course_id}/learner-actions",
+    status_code=202,
+    response_model=LearnerActionResponse,
+)
+async def create_course_learner_action(
+    course_id: str, body: LearnerActionRequest, background_tasks: BackgroundTasks
+):
+    """Resolve a learner shortcut entirely from owned persisted Course state.
+
+    Generated resources use the existing fenced background runners.  The only
+    chat action returns a fixed server-owned follow-up instruction; it does not
+    copy or transform the selected assistant message into a client-controlled
+    prompt.
+    """
+
+    try:
+        async with course_operation_lock(course_id):
+            service = _service()
+            course = service.get(course_id)
+            if course.state != "active":
+                raise CourseConflictError("Archived courses cannot accept learner actions")
+            if (
+                course.revision != body.expected_course_revision
+                or course.write_epoch != body.expected_course_write_epoch
+            ):
+                raise CourseConflictError("Course authority is stale")
+
+            session_id, assistant_message_id = await _resolve_learner_action_binding(
+                course.id,
+                session_id=body.session_id,
+                assistant_message_id=body.assistant_message_id,
+            )
+            if body.action == "explain_simpler":
+                return _learner_action_response(
+                    action=body.action,
+                    destination="chat_followup",
+                    course=course,
+                    session_id=session_id,
+                    assistant_message_id=assistant_message_id,
+                    objective_ids=[],
+                    source_ids=[],
+                    reason_code="message_context",
+                    followup_text=(
+                        "Explain the selected Course answer more simply, using one short "
+                        "example and preserving its Course grounding."
+                    ),
+                )
+
+            from deeptutor.courses.learner_actions import (
+                ready_current_source_ids,
+                weak_objective_ids,
+                weak_objective_reason_code,
+            )
+
+            objective_ids: list[str] = []
+            progress = None
+            if body.action == "review_weak_topics":
+                _course, store = _course_learning_store(course.id, require_active=False)
+                progress = store.load(course.learning_path_id)
+                objective_ids = weak_objective_ids(progress)
+                source_ids = ready_current_source_ids(service.list_sources(course.id))
+                if not objective_ids:
+                    return _learner_action_response(
+                        action=body.action,
+                        destination="learning",
+                        course=course,
+                        session_id=session_id,
+                        assistant_message_id=assistant_message_id,
+                        objective_ids=[],
+                        source_ids=source_ids,
+                        reason_code="no_targets",
+                    )
+            else:
+                source_ids = ready_current_source_ids(service.list_sources(course.id))
+
+            if not source_ids:
+                raise CourseConflictError("Course has no current ready sources")
+
+            if body.action in {"quiz_me", "review_weak_topics"}:
+                title = (
+                    "Course quiz"
+                    if body.action == "quiz_me"
+                    else "Weak-topic Course review"
+                )
+                request = _practice_generation_service().create_generated_practice(
+                    course.id,
+                    title=title,
+                    source_ids=source_ids,
+                    objective_ids=objective_ids,
+                    idempotency_key=body.idempotency_key,
+                    expected_course_write_epoch=course.write_epoch,
+                    item_limit=5,
+                    context_char_limit=12_000,
+                )
+                operation = request.operation
+                from deeptutor.courses.generation_service import register_live_practice_generation
+
+                if (
+                    operation.state == "queued"
+                    and register_live_practice_generation(
+                        operation.owner_user_id, course.id, operation.id
+                    )
+                ):
+                    background_tasks.add_task(
+                        _run_practice_generation,
+                        operation.owner_user_id,
+                        course.id,
+                        operation.id,
+                    )
+                return _learner_action_response(
+                    action=body.action,
+                    destination="practice",
+                    course=course,
+                    session_id=session_id,
+                    assistant_message_id=assistant_message_id,
+                    objective_ids=objective_ids,
+                    source_ids=source_ids,
+                    reason_code=(
+                        "course_sources"
+                        if body.action == "quiz_me"
+                        else weak_objective_reason_code(progress)
+                    ),
+                    operation=operation,
+                    practice_set_id=request.practice_set_id,
+                    practice_set_revision_id=request.practice_set_revision_id,
+                )
+
+            request = _flashcard_generation_service().create_generated_deck(
+                course.id,
+                title="Course flashcards",
+                source_ids=source_ids,
+                objective_ids=[],
+                idempotency_key=body.idempotency_key,
+                expected_course_write_epoch=course.write_epoch,
+                item_limit=8,
+                context_char_limit=12_000,
+            )
+            operation = request.operation
+            from deeptutor.courses.flashcard_generation_service import (
+                register_live_flashcard_generation,
+            )
+
+            if (
+                operation.state == "queued"
+                and register_live_flashcard_generation(
+                    operation.owner_user_id, course.id, operation.id
+                )
+            ):
+                background_tasks.add_task(
+                    _run_flashcard_generation,
+                    operation.owner_user_id,
+                    course.id,
+                    operation.id,
+                )
+            return _learner_action_response(
+                action=body.action,
+                destination="flashcards",
+                course=course,
+                session_id=session_id,
+                assistant_message_id=assistant_message_id,
+                objective_ids=[],
+                source_ids=source_ids,
+                reason_code="course_sources",
+                operation=operation,
+                deck_id=request.deck_id,
+            )
+    except CourseNotFoundError as exc:
+        raise HTTPException(status_code=404, detail="Course learner action not found") from exc
+    except (CourseConflictError, LearningConflictError) as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+
 def _course_learning_store(course_id: str, *, require_active: bool):
     from deeptutor.courses.service import install_personal_course_context
     from deeptutor.learning.storage import LearningStore
@@ -1031,6 +1342,10 @@ async def _cancel_owned_course_session(course_id: str, session_id: str | None) -
 @router.get("/{course_id}/learning")
 async def get_course_learning(course_id: str):
     try:
+        from deeptutor.courses.learner_actions import (
+            learner_safe_next,
+            learner_safe_progress,
+        )
         from deeptutor.learning import policy as learning_policy
 
         course, store = _course_learning_store(course_id, require_active=False)
@@ -1039,8 +1354,8 @@ async def get_course_learning(course_id: str):
             "course_id": course.id,
             "learning_path_id": course.learning_path_id,
             "initialized": progress is not None and bool(progress.modules),
-            "progress": progress.model_dump(mode="json") if progress else None,
-            "next": learning_policy.next_objective(progress).to_dict() if progress else None,
+            "progress": learner_safe_progress(progress) if progress else None,
+            "next": learner_safe_next(progress),
             "map": learning_policy.map_summary(progress) if progress else [],
         }
     except CourseNotFoundError as exc:

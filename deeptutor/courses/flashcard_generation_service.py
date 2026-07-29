@@ -32,9 +32,13 @@ _live: dict[tuple[str, str], set[str]] = {}
 
 def register_live_flashcard_generation(
     owner_user_id: str, course_id: str, operation_id: str
-) -> None:
+) -> bool:
     with _live_lock:
-        _live.setdefault((owner_user_id, course_id), set()).add(operation_id)
+        operations = _live.setdefault((owner_user_id, course_id), set())
+        if operation_id in operations:
+            return False
+        operations.add(operation_id)
+        return True
 
 
 def unregister_live_flashcard_generation(
