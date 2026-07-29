@@ -109,8 +109,8 @@ They provide executable detail for this plan but do not override it. P4-01 was
 implemented on the local Phase 4 branch by `1cc75f2f`. P4-02A was implemented
 by `6bdb5179`, P4-02B by `d613b8ad`, P4-03 by `96e073ee`, P4-04 by
 `5cf02793`, P4-05 by `20a604be`, and P4-06 by `c55d2dc0`; P4-07 is the
-local implementation commit `712769b3`, and P4-08 by `0b88ca61`. P4-09 is the
-next active slice.
+local implementation commit `712769b3`, P4-08 by `0b88ca61`, and P4-09 by
+`b4e68369`. P4-10 closeout is the next active slice.
 
 ## 1. Goal and non-goals
 
@@ -1121,6 +1121,49 @@ the API, unit, type, lint, or build proof above.
   - no paid provider call occurs during automated validation.
 - **Doc alignment:** Phase 2/3 adversarial test patterns.
 - **Risk / unknown:** browser and API proof do not imply physical-device or production proof.
+
+**2026-07-28 local implementation receipt:** P4-09 is provider-free,
+integration-, and authenticated-browser complete on local commit `b4e68369`.
+
+- fifty saved profiles receive separate personal Course databases and distinct
+  opaque Course, Practice, Flashcard, and learning artifacts; foreign and
+  missing Course resources retain identical `404` behavior;
+- a separate normal bcrypt/JWT proof verifies immutable user-ID ownership,
+  immediate role demotion on an already-issued token, and next-request denial
+  after account disablement;
+- ten independent assessment, review, and learning-reset operations run
+  concurrently without a provider;
+- Alice and Bob complete distinct graded-Practice and Flashcard-review loops
+  for same-titled private Courses, with direct foreign Course, Practice, and
+  Flashcard identifiers denied;
+- stale revision, autosave/review replay, archive terminalization, restore,
+  durable receipt history, and repository-wrapper reopen behavior pass;
+- the real Practice and Flashcard generation workers run through deterministic
+  local resolver/provider seams. Malicious source material remains inert text,
+  while typed worker authority and persisted citations contain only the
+  authenticated Course and immutable owned source receipts;
+- the browser runner refuses occupied ports, creates a disposable auth/runtime
+  root, and leaves no credential, cookie, report, or test-result residue in the
+  repository;
+- the two-part Playwright campaign creates same-titled Alice/Bob Courses,
+  Alice's five-question manual quiz, and distinct learning plans; it then kills
+  and waits for the backend process, starts a fresh application against the
+  same durable root, and proves quiz/learning persistence, foreign-ID `404`,
+  logout/cache isolation, and correct identity-scoped Course restoration;
+- Course list/mutation responses are fenced by immutable identity and request
+  epoch. A delayed archive of Course A checks the current runtime selection,
+  so it cannot clear a newer same-user selection of Course B;
+- final focused validation passed `32` backend learner-action/generation/beta
+  tests, `185` web node tests, TypeScript, targeted ESLint, Ruff, diff checks,
+  both authenticated Playwright halves, and a Next production build with `54`
+  pages;
+- independent Terra review initially found a false process-restart claim,
+  synthetic-auth overclaim, same-identity archive race, and worker-boundary
+  prompt-injection proof gap. All were corrected and re-reviewed with no
+  remaining P0-P2 finding.
+
+This proof is local and disposable. It does not imply a physical-device,
+hosted, deployed, paid-provider, or production release result.
 
 ### P4-10 — Phase 4 closeout
 

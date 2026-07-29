@@ -4,6 +4,15 @@
 
 ### Added
 
+- Added a provider-free Phase 4 beta qualification campaign. Fifty saved
+  profiles receive isolated Course/Practice/Flashcard/learning databases; ten
+  Course operations run concurrently; normal bcrypt/JWT requests prove current
+  role and disabled-account revalidation; deterministic local Practice and
+  Flashcard workers prove malicious source text cannot become owner, tool,
+  provider, or Knowledge authority. A hermetic two-user browser command creates
+  same-titled private Courses and a five-question quiz, kills and restarts the
+  backend process, then proves persistence, foreign-ID `404`, logout/cache
+  isolation, and current-Course selection safety without paid calls.
 - Added Course-scoped learner actions to the latest persisted assistant turn:
   Quiz me, Explain simpler, Make flashcards, and Review weak topics. The server
   re-resolves the authenticated Course, exact session/message, current ready
