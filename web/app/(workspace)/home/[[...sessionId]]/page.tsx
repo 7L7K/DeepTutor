@@ -43,6 +43,7 @@ import {
   courseIdForChatSession,
   resolveSessionCourseView,
 } from "@/lib/course-selection";
+import { getCourseCapabilities } from "@/lib/course-api";
 import {
   isCurrentCourseLearnerAction,
   requestCourseLearnerAction,
@@ -387,6 +388,10 @@ export default function ChatPage() {
   const [learnerActionError, setLearnerActionError] = useState<string | null>(
     null,
   );
+  const [practiceGenerationEnabled, setPracticeGenerationEnabled] =
+    useState(false);
+  const [flashcardGenerationEnabled, setFlashcardGenerationEnabled] =
+    useState(false);
   const learnerActionEpochRef = useRef(0);
   const learnerActionScopeRef = useRef<CourseLearnerActionScope>({
     userId: courseIdentity,
@@ -407,6 +412,31 @@ export default function ChatPage() {
     setLearnerActionBusy(null);
     setLearnerActionError(null);
   }, [courseIdentity, effectiveCourseId, state.sessionId]);
+
+  useEffect(() => {
+    let active = true;
+    setPracticeGenerationEnabled(false);
+    setFlashcardGenerationEnabled(false);
+    if (!courseIdentity || !effectiveCourseId) return () => {
+      active = false;
+    };
+    void getCourseCapabilities()
+      .then((capabilities) => {
+        if (active) {
+          setPracticeGenerationEnabled(capabilities.practice_generation);
+          setFlashcardGenerationEnabled(capabilities.flashcard_generation);
+        }
+      })
+      .catch(() => {
+        if (active) {
+          setPracticeGenerationEnabled(false);
+          setFlashcardGenerationEnabled(false);
+        }
+      });
+    return () => {
+      active = false;
+    };
+  }, [courseIdentity, effectiveCourseId]);
 
   const [knowledgeBases, setKnowledgeBases] = useState<KnowledgeBase[]>([]);
   // A connected agent to preselect once it loads, from `?agent=<name>` on the
@@ -2116,11 +2146,17 @@ export default function ChatPage() {
                       Boolean(actionCourse) &&
                       hasLlm
                     }
+                    practiceGenerationEnabled={practiceGenerationEnabled}
+                    flashcardGenerationEnabled={flashcardGenerationEnabled}
                     learnerActionBusy={learnerActionBusy}
                     onLearnerAction={handleLearnerAction}
                   />
                   {learnerActionError ? (
-                    <p className="rounded-lg border border-[var(--destructive)]/30 bg-[var(--destructive)]/5 px-3 py-2 text-sm text-[var(--destructive)]">
+                    <p
+                      role="alert"
+                      aria-live="assertive"
+                      className="rounded-lg border border-[var(--destructive)]/30 bg-[var(--destructive)]/5 px-3 py-2 text-sm text-[var(--destructive)]"
+                    >
                       {learnerActionError}
                     </p>
                   ) : null}

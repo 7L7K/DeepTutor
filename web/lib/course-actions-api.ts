@@ -6,6 +6,24 @@ export type CourseLearnerAction =
   | "make_flashcards"
   | "review_weak_topics";
 
+export function visibleCourseLearnerActions(
+  practiceGenerationEnabled: boolean,
+  flashcardGenerationEnabled: boolean,
+): CourseLearnerAction[] {
+  return [
+    ...(practiceGenerationEnabled
+      ? (["quiz_me"] as CourseLearnerAction[])
+      : []),
+    "explain_simpler",
+    ...(flashcardGenerationEnabled
+      ? (["make_flashcards"] as CourseLearnerAction[])
+      : []),
+    ...(practiceGenerationEnabled
+      ? (["review_weak_topics"] as CourseLearnerAction[])
+      : []),
+  ];
+}
+
 export type CourseLearnerActionDestination =
   | "practice"
   | "flashcards"

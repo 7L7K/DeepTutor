@@ -104,6 +104,28 @@ export interface QuizResult extends QuizAttemptView {
   questions: PracticeQuestion[];
 }
 
+/** Render the server-authoritative score as an accessible percentage and ratio. */
+export function formatPracticeScore(
+  score: QuizAttempt["score"],
+): string | null {
+  if (!score) return null;
+  const { correct, total } = score;
+  if (
+    typeof correct !== "number" ||
+    typeof total !== "number" ||
+    !Number.isFinite(correct) ||
+    !Number.isFinite(total) ||
+    !Number.isInteger(correct) ||
+    !Number.isInteger(total) ||
+    total <= 0 ||
+    correct < 0 ||
+    correct > total
+  ) {
+    return null;
+  }
+  return `${Math.round((correct / total) * 100)}% (${correct}/${total})`;
+}
+
 export interface PracticeRequestScope {
   identity: string | null;
   courseId: string | null;
@@ -269,10 +291,14 @@ export function startPracticeAttempt(
   })));
 }
 
-export async function listPracticeAttempts(courseId: string, practiceSetId: string): Promise<QuizAttempt[]> {
+export async function listPracticeAttempts(
+  courseId: string,
+  practiceSetId: string,
+  offset = 0,
+): Promise<QuizAttempt[]> {
   const body = await json<{ attempts?: QuizAttempt[] }>(apiFetch(apiUrl(path(
     courseId,
-    `/${encodeURIComponent(practiceSetId)}/attempts`,
+    `/${encodeURIComponent(practiceSetId)}/attempts?limit=50&offset=${offset}`,
   )), { cache: "no-store" }));
   return body.attempts ?? [];
 }

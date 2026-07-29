@@ -6,6 +6,7 @@ import {
   createGeneratedFlashcardSuccessor,
   isCurrentFlashcardResponse,
   isFlashcardCourseWritable,
+  listFlashcardDecks,
   listFlashcardGenerationOperations,
   requeueAgainCard,
   type FlashcardRequestScope,
@@ -152,4 +153,25 @@ test("grounded Flashcard operation listing is Course scoped", async (t) => {
 
   assert.deepEqual(await listFlashcardGenerationOperations("crs/bio"), []);
   assert.equal(requested, "/api/v1/courses/crs%2Fbio/flashcard-generation");
+});
+
+test("Flashcard deck history requests bounded pages", async (t) => {
+  const originalFetch = globalThis.fetch;
+  let requested = "";
+  t.after(() => {
+    globalThis.fetch = originalFetch;
+  });
+  globalThis.fetch = (async (input: RequestInfo | URL) => {
+    requested = String(input);
+    return new Response(JSON.stringify({ flashcard_decks: [] }), {
+      status: 200,
+      headers: { "Content-Type": "application/json" },
+    });
+  }) as typeof fetch;
+
+  assert.deepEqual(await listFlashcardDecks("crs/bio", 50), []);
+  assert.equal(
+    requested,
+    "/api/v1/courses/crs%2Fbio/flashcards?include_archived=true&limit=50&offset=50",
+  );
 });

@@ -16,7 +16,11 @@ import { useTranslation } from "react-i18next";
 import { CourseBar } from "@/components/courses/CourseBar";
 import { useCourses } from "@/context/CourseContext";
 import { fetchAuthStatus } from "@/lib/auth";
-import { listCourseSources, type CourseSource } from "@/lib/course-api";
+import {
+  getCourseCapabilities,
+  listCourseSources,
+  type CourseSource,
+} from "@/lib/course-api";
 import {
   addFlashcard,
   advanceFlashcardViewScope,
@@ -59,6 +63,7 @@ export default function FlashcardsWorkspace() {
   const { activeCourse, refresh: refreshCourses } = useCourses();
   const [identity, setIdentity] = useState<string | null>(null);
   const [decks, setDecks] = useState<FlashcardDeck[]>([]);
+  const [decksHaveMore, setDecksHaveMore] = useState(false);
   const [selectedDeckId, setSelectedDeckId] = useState<string | null>(null);
   const [view, setView] = useState<FlashcardDeckView | null>(null);
   const [deckTitle, setDeckTitle] = useState("");
@@ -69,6 +74,9 @@ export default function FlashcardsWorkspace() {
   const [generationOperations, setGenerationOperations] = useState<
     FlashcardGenerationOperation[]
   >([]);
+  const [generationAvailable, setGenerationAvailable] = useState(false);
+  const [generationUnavailableReason, setGenerationUnavailableReason] =
+    useState<string | null>(null);
   const [cardDraft, setCardDraft] = useState(emptyCard);
   const [reviewCards, setReviewCards] = useState<Flashcard[]>([]);
   const [reviewIndex, setReviewIndex] = useState(0);
@@ -89,7 +97,14 @@ export default function FlashcardsWorkspace() {
     [decks, selectedDeckId, view?.deck],
   );
   const courseId = activeCourse?.id ?? null;
-  const courseWritable = isFlashcardCourseWritable(activeCourse?.state);
+  const scopeReady = Boolean(
+    identity &&
+      courseId &&
+      scopeRef.current.identity === identity &&
+      scopeRef.current.courseId === courseId,
+  );
+  const courseWritable =
+    isFlashcardCourseWritable(activeCourse?.state) && scopeReady;
   const currentCard = reviewCards[reviewIndex] ?? null;
 
   const invalidate = useCallback(
@@ -102,6 +117,7 @@ export default function FlashcardsWorkspace() {
       };
       scopeRef.current = scope;
       setDecks([]);
+      setDecksHaveMore(false);
       setSelectedDeckId(null);
       setView(null);
       setDeckTitle("");
@@ -110,6 +126,8 @@ export default function FlashcardsWorkspace() {
       setReadySources([]);
       setSelectedSourceIds([]);
       setGenerationOperations([]);
+      setGenerationAvailable(false);
+      setGenerationUnavailableReason(null);
       setCardDraft(emptyCard);
       setReviewCards([]);
       setReviewIndex(0);
@@ -147,19 +165,25 @@ export default function FlashcardsWorkspace() {
   const loadCourse = useCallback(
     async (scope: FlashcardRequestScope) => {
       if (!scope.courseId) return;
-      const [listed, sources, operations] = await Promise.all([
+      const [listed, sources, operations, capabilities] = await Promise.all([
         listFlashcardDecks(scope.courseId),
         listCourseSources(scope.courseId),
         listFlashcardGenerationOperations(scope.courseId),
+        getCourseCapabilities(),
       ]);
       if (!current(scope)) return;
       setDecks(listed);
+      setDecksHaveMore(listed.length === 50);
       const ready = sources.filter((source) => source.state === "ready");
       setReadySources(ready);
       setSelectedSourceIds((selected) =>
         selected.filter((id) => ready.some((source) => source.id === id)),
       );
       setGenerationOperations(operations);
+      setGenerationAvailable(capabilities.flashcard_generation);
+      setGenerationUnavailableReason(
+        capabilities.grounded_generation_reason,
+      );
       const first = listed.find((deck) => deck.state !== "archived") ?? null;
       setSelectedDeckId(first?.id ?? null);
       if (first) await loadDeck(scope, first);
@@ -258,11 +282,29 @@ export default function FlashcardsWorkspace() {
     }
   }, [activeCourse, advanceView, courseWritable, current, deckTitle, loadDeck]);
 
+  const loadMoreDecks = useCallback(async () => {
+    if (!activeCourse || !decksHaveMore || busy) return;
+    const scope = scopeRef.current;
+    setBusy(true);
+    setError(null);
+    try {
+      const next = await listFlashcardDecks(activeCourse.id, decks.length);
+      if (!current(scope)) return;
+      setDecks((items) => [...items, ...next]);
+      setDecksHaveMore(next.length === 50);
+    } catch (cause) {
+      if (current(scope)) setError(errorText(cause));
+    } finally {
+      if (current(scope)) setBusy(false);
+    }
+  }, [activeCourse, busy, current, decks.length, decksHaveMore]);
+
   const requestGeneration = useCallback(
     async (successor: boolean) => {
       if (
         !activeCourse ||
         !courseWritable ||
+        !generationAvailable ||
         !generatedTitle.trim() ||
         !selectedSourceIds.length ||
         (successor &&
@@ -323,6 +365,7 @@ export default function FlashcardsWorkspace() {
       current,
       generatedTitle,
       generationObjectives,
+      generationAvailable,
       selectedDeck,
       selectedSourceIds,
     ],
@@ -341,6 +384,7 @@ export default function FlashcardsWorkspace() {
       if (!current(scope)) return;
       setGenerationOperations(operations);
       setDecks(listed);
+      setDecksHaveMore(listed.length === 50);
       if (selectedDeckId) {
         const deck = listed.find((item) => item.id === selectedDeckId);
         if (deck) await loadDeck(scope, deck);
@@ -583,7 +627,12 @@ export default function FlashcardsWorkspace() {
                     <Sparkles size={16} /> {t("Grounded generation")}
                   </h2>
                   <p className="text-sm text-[var(--muted-foreground)]">
-                    {t("Create cited cards only from ready sources in this Course.")}
+                    {generationAvailable
+                      ? t("Create cited cards only from ready sources in this Course.")
+                      : t(
+                          generationUnavailableReason ||
+                            "Grounded generation is not enabled on this server. Manual Flashcards remain available.",
+                        )}
                   </p>
                 </div>
                 <button
@@ -600,7 +649,7 @@ export default function FlashcardsWorkspace() {
                   value={generatedTitle}
                   onChange={(event) => setGeneratedTitle(event.target.value)}
                   placeholder={t("Generated deck title")}
-                  disabled={!courseWritable || busy}
+                  disabled={!generationAvailable || !courseWritable || busy}
                   className="rounded-lg border border-[var(--border)] bg-[var(--background)] px-3 py-2 text-sm"
                 />
                 <input
@@ -608,7 +657,7 @@ export default function FlashcardsWorkspace() {
                   value={generationObjectives}
                   onChange={(event) => setGenerationObjectives(event.target.value)}
                   placeholder={t("Objective IDs, comma-separated (optional)")}
-                  disabled={!courseWritable || busy}
+                  disabled={!generationAvailable || !courseWritable || busy}
                   className="rounded-lg border border-[var(--border)] bg-[var(--background)] px-3 py-2 text-sm"
                 />
               </div>
@@ -623,7 +672,7 @@ export default function FlashcardsWorkspace() {
                       <input
                         type="checkbox"
                         checked={checked}
-                        disabled={!courseWritable || busy}
+                        disabled={!generationAvailable || !courseWritable || busy}
                         onChange={() =>
                           setSelectedSourceIds((ids) =>
                             checked
@@ -647,6 +696,7 @@ export default function FlashcardsWorkspace() {
                   onClick={() => void requestGeneration(false)}
                   disabled={
                     !courseWritable ||
+                    !generationAvailable ||
                     busy ||
                     !generatedTitle.trim() ||
                     !selectedSourceIds.length
@@ -659,6 +709,7 @@ export default function FlashcardsWorkspace() {
                   onClick={() => void requestGeneration(true)}
                   disabled={
                     !courseWritable ||
+                    !generationAvailable ||
                     busy ||
                     !generatedTitle.trim() ||
                     !selectedSourceIds.length ||
@@ -731,6 +782,16 @@ export default function FlashcardsWorkspace() {
                   <p className="px-2 py-3 text-sm text-[var(--muted-foreground)]">
                     {t("No Flashcard decks yet.")}
                   </p>
+                ) : null}
+                {decksHaveMore ? (
+                  <button
+                    type="button"
+                    disabled={busy}
+                    onClick={() => void loadMoreDecks()}
+                    className="w-full rounded-lg border border-[var(--border)] px-3 py-2 text-sm disabled:opacity-50"
+                  >
+                    {t("Load more decks")}
+                  </button>
                 ) : null}
               </div>
             </section>
@@ -914,12 +975,12 @@ export default function FlashcardsWorkspace() {
         ) : null}
 
         {busy ? (
-          <p className="flex items-center gap-2 text-sm text-[var(--muted-foreground)]">
+          <p role="status" className="flex items-center gap-2 text-sm text-[var(--muted-foreground)]">
             <Loader2 size={15} className="animate-spin" /> {t("Saving…")}
           </p>
         ) : null}
-        {status ? <p className="text-sm text-emerald-600">{status}</p> : null}
-        {error ? <p className="text-sm text-red-600">{error}</p> : null}
+        {status ? <p role="status" className="text-sm text-emerald-600">{status}</p> : null}
+        {error ? <p role="alert" className="text-sm text-red-600">{error}</p> : null}
       </div>
     </main>
   );

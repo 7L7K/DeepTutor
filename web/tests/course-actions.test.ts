@@ -6,6 +6,7 @@ import {
   isCurrentCourseLearnerAction,
   requestCourseLearnerAction,
   type CourseLearnerActionScope,
+  visibleCourseLearnerActions,
 } from "../lib/course-actions-api";
 
 const scope = (
@@ -82,6 +83,25 @@ test("learner-action chips appear only on the last persisted completed Course as
     canShowCourseLearnerActions({ ...eligible, messageId: undefined }),
     false,
   );
+});
+
+test("unavailable grounded generation leaves only the model-free learner action", () => {
+  assert.deepEqual(visibleCourseLearnerActions(false, false), ["explain_simpler"]);
+  assert.deepEqual(visibleCourseLearnerActions(true, false), [
+    "quiz_me",
+    "explain_simpler",
+    "review_weak_topics",
+  ]);
+  assert.deepEqual(visibleCourseLearnerActions(false, true), [
+    "explain_simpler",
+    "make_flashcards",
+  ]);
+  assert.deepEqual(visibleCourseLearnerActions(true, true), [
+    "quiz_me",
+    "explain_simpler",
+    "make_flashcards",
+    "review_weak_topics",
+  ]);
 });
 
 test("learner-action request carries identity bindings but no prompt or source authority", async (t) => {

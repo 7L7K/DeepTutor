@@ -183,9 +183,10 @@ function mutation(body: unknown, method: "POST" | "PATCH" = "POST"): RequestInit
 
 export async function listFlashcardDecks(
   courseId: string,
+  offset = 0,
 ): Promise<FlashcardDeck[]> {
   const body = await json<{ flashcard_decks: FlashcardDeck[] }>(
-    apiFetch(apiUrl(`${path(courseId)}?include_archived=true`), {
+    apiFetch(apiUrl(`${path(courseId)}?include_archived=true&limit=50&offset=${offset}`), {
       cache: "no-store",
     }),
   );

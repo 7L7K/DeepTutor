@@ -3,9 +3,11 @@ import test from "node:test";
 
 import {
   advancePracticeViewScope,
+  formatPracticeScore,
   hasUnsavedPracticeAnswers,
   isCurrentPracticeResponse,
   learnerSafePracticeQuestions,
+  listPracticeAttempts,
   type PracticeRequestScope,
 } from "../lib/practice-api";
 
@@ -50,6 +52,20 @@ test("a new view scope stays current for its own operation completion", () => {
   assert.equal(isCurrentPracticeResponse(creationScope, creationScope), true);
 });
 
+test("Practice scores render as percentage and exact ratio", () => {
+  assert.equal(
+    formatPracticeScore({ correct: 1, total: 1, fraction: 1 }),
+    "100% (1/1)",
+  );
+  assert.equal(
+    formatPracticeScore({ correct: 2, total: 3, fraction: 2 / 3 }),
+    "67% (2/3)",
+  );
+  assert.equal(formatPracticeScore({ correct: 2, total: 1 }), null);
+  assert.equal(formatPracticeScore({ correct: 0, total: 0 }), null);
+  assert.equal(formatPracticeScore(null), null);
+});
+
 test("Practice submission is blocked until local answer text matches the durable answer revision", () => {
   const answers = [{ attempt_item_id: "ati_1", response: { answer: "saved" }, revision: 2, answered_at: 1 }];
   assert.equal(hasUnsavedPracticeAnswers({ ati_1: "saved" }, answers), false);
@@ -65,4 +81,25 @@ test("publishing clears draft answer contracts from the learner-side question st
   }]);
   assert.equal(published[0].answer_contract, undefined);
   assert.equal(published[0].prompt, "Question");
+});
+
+test("Practice attempt history requests bounded pages", async (t) => {
+  const originalFetch = globalThis.fetch;
+  let requested = "";
+  t.after(() => {
+    globalThis.fetch = originalFetch;
+  });
+  globalThis.fetch = (async (input: RequestInfo | URL) => {
+    requested = String(input);
+    return new Response(JSON.stringify({ attempts: [] }), {
+      status: 200,
+      headers: { "Content-Type": "application/json" },
+    });
+  }) as typeof fetch;
+
+  assert.deepEqual(await listPracticeAttempts("crs/bio", "pst/one", 50), []);
+  assert.equal(
+    requested,
+    "/api/v1/courses/crs%2Fbio/practice/pst%2Fone/attempts?limit=50&offset=50",
+  );
 });

@@ -145,4 +145,4 @@ test -s "$proof_state"
 stop_backend
 assert_port_free "$backend_port"
 start_backend
-run_browser_proof "after server restart"
+run_browser_proof "after server restart|manual Practice and Flashcard"

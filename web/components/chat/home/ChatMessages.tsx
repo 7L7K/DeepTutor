@@ -55,6 +55,7 @@ import { shouldSubmitOnEnter } from "@/lib/composer-keyboard";
 import {
   canShowCourseLearnerActions,
   type CourseLearnerAction,
+  visibleCourseLearnerActions,
 } from "@/lib/course-actions-api";
 import { useImeComposing } from "@/lib/use-ime-composing";
 import type { SpaceMemoryFile } from "@/lib/space-items";
@@ -1136,6 +1137,8 @@ export const ChatMessageList = memo(function ChatMessageList({
   onSubmitUserReply,
   modelActionsEnabled = true,
   courseActionsEnabled = false,
+  practiceGenerationEnabled = false,
+  flashcardGenerationEnabled = false,
   learnerActionBusy = null,
   onLearnerAction,
 }: {
@@ -1147,6 +1150,8 @@ export const ChatMessageList = memo(function ChatMessageList({
   onRegenerateMessage: () => void;
   modelActionsEnabled?: boolean;
   courseActionsEnabled?: boolean;
+  practiceGenerationEnabled?: boolean;
+  flashcardGenerationEnabled?: boolean;
   learnerActionBusy?: CourseLearnerAction | null;
   onLearnerAction?: (
     action: CourseLearnerAction,
@@ -1470,29 +1475,53 @@ export const ChatMessageList = memo(function ChatMessageList({
             })()}
             {showLearnerActions ? (
               <div className="mt-3 flex flex-wrap gap-2">
-                {(
-                  [
-                    ["quiz_me", ClipboardList, t("Quiz me")],
-                    ["explain_simpler", MessageSquare, t("Explain simpler")],
-                    ["make_flashcards", BookOpen, t("Make flashcards")],
-                    ["review_weak_topics", Brain, t("Review weak topics")],
-                  ] as const
-                ).map(([action, Icon, label]) => (
-                  <button
-                    key={action}
-                    type="button"
-                    onClick={() => void onLearnerAction?.(action, msg.id as number)}
-                    disabled={learnerActionBusy != null}
-                    className="inline-flex items-center gap-1.5 rounded-full border border-[var(--border)] bg-[var(--card)] px-3 py-1.5 text-xs font-medium text-[var(--foreground)] transition hover:bg-[var(--muted)]/40 disabled:cursor-not-allowed disabled:opacity-50"
-                  >
-                    {learnerActionBusy === action ? (
-                      <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                    ) : (
-                      <Icon className="h-3.5 w-3.5" />
-                    )}
-                    {label}
-                  </button>
-                ))}
+                {visibleCourseLearnerActions(
+                  practiceGenerationEnabled,
+                  flashcardGenerationEnabled,
+                ).map(
+                  (action) => {
+                    const presentation: {
+                      Icon: typeof ClipboardList;
+                      label: string;
+                    } = ({
+                      quiz_me: { Icon: ClipboardList, label: t("Quiz me") },
+                      explain_simpler: {
+                        Icon: MessageSquare,
+                        label: t("Explain simpler"),
+                      },
+                      make_flashcards: {
+                        Icon: BookOpen,
+                        label: t("Make flashcards"),
+                      },
+                      review_weak_topics: {
+                        Icon: Brain,
+                        label: t("Review weak topics"),
+                      },
+                    } satisfies Record<
+                      CourseLearnerAction,
+                      { Icon: typeof ClipboardList; label: string }
+                    >)[action];
+                    const { Icon, label } = presentation;
+                    return (
+                      <button
+                        key={action}
+                        type="button"
+                        onClick={() =>
+                          void onLearnerAction?.(action, msg.id as number)
+                        }
+                        disabled={learnerActionBusy != null}
+                        className="inline-flex items-center gap-1.5 rounded-full border border-[var(--border)] bg-[var(--card)] px-3 py-1.5 text-xs font-medium text-[var(--foreground)] transition hover:bg-[var(--muted)]/40 disabled:cursor-not-allowed disabled:opacity-50"
+                      >
+                        {learnerActionBusy === action ? (
+                          <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                        ) : (
+                          <Icon className="h-3.5 w-3.5" />
+                        )}
+                        {label}
+                      </button>
+                    );
+                  },
+                )}
               </div>
             ) : null}
             {(showActions || costSummary || showDelete) && (

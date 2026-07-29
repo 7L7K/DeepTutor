@@ -1,5 +1,5 @@
-import { apiFetch, apiUrl } from "@/lib/api";
-import type { MasteryMap, NextStep } from "@/lib/learning-api";
+import { apiFetch, apiUrl } from "./api";
+import type { MasteryMap, NextStep } from "./learning-api";
 
 export interface Course {
   id: string;
@@ -26,6 +26,13 @@ export interface CourseSource {
   operation_id?: string | null;
 }
 
+export interface CourseCapabilities {
+  grounded_generation: boolean;
+  practice_generation: boolean;
+  flashcard_generation: boolean;
+  grounded_generation_reason: string | null;
+}
+
 async function json<T>(response: Response): Promise<T> {
   if (!response.ok) {
     const body = await response.json().catch(() => ({}));
@@ -37,6 +44,13 @@ async function json<T>(response: Response): Promise<T> {
 export async function listCourses(): Promise<Course[]> {
   const response = await apiFetch(apiUrl("/api/v1/courses"), { cache: "no-store" });
   return (await json<{ courses: Course[] }>(response)).courses;
+}
+
+export async function getCourseCapabilities(): Promise<CourseCapabilities> {
+  const response = await apiFetch(apiUrl("/api/v1/courses"), { cache: "no-store" });
+  return (
+    await json<{ courses: Course[]; capabilities: CourseCapabilities }>(response)
+  ).capabilities;
 }
 
 export async function createCourse(title: string): Promise<Course> {
@@ -62,11 +76,18 @@ async function lifecycle(course: Course, action: "archive" | "restore") {
 export const archiveCourse = (course: Course) => lifecycle(course, "archive");
 export const restoreCourse = (course: Course) => lifecycle(course, "restore");
 
-export async function attachCourseSource(courseId: string, file: File) {
+export async function attachCourseSource(
+  courseId: string,
+  file: File,
+  supersedesSourceId?: string | null,
+) {
   const body = new FormData();
   body.append("files", file);
   body.append("kind", "document");
   body.append("display_name", file.name);
+  if (supersedesSourceId) {
+    body.append("supersedes_source_id", supersedesSourceId);
+  }
   return json<CourseSource>(
     await apiFetch(apiUrl(`/api/v1/courses/${courseId}/sources`), {
       method: "POST",
@@ -84,6 +105,24 @@ export async function listCourseSources(courseId: string): Promise<CourseSource[
       }),
     )
   ).sources;
+}
+
+export async function archiveCourseSource(
+  courseId: string,
+  source: CourseSource,
+): Promise<CourseSource> {
+  return json<CourseSource>(
+    await apiFetch(
+      apiUrl(
+        `/api/v1/courses/${encodeURIComponent(courseId)}/sources/${encodeURIComponent(source.id)}/archive`,
+      ),
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ expected_revision: source.revision }),
+      },
+    ),
+  );
 }
 
 export async function getCourseLearning(courseId: string) {

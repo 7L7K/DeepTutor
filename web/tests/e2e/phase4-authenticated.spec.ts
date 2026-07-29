@@ -211,7 +211,11 @@ test("after server restart identities, quiz, learning, and cache remain isolated
 
   await signIn(page, "alice", alicePassword!);
   await page.goto("/practice");
+  // Logout intentionally clears the identity-scoped selection cache. Reselect
+  // the persisted Course after restart without weakening that security fence.
   await page.getByLabel("Active course").selectOption(state.aliceCourseId);
+  await expect(page.getByLabel("Active course")).toHaveValue(state.aliceCourseId);
+  await expect(page.getByText("Active Course: Shared Biology")).toBeVisible();
   await page.goto("/space/learning");
   await expect(page.getByText(aliceObjective, { exact: true })).toBeVisible();
   await expect(page.getByText(bobObjective, { exact: true })).toHaveCount(0);
@@ -261,4 +265,102 @@ test("after server restart identities, quiz, learning, and cache remain isolated
     `dt:courses:active:${state.aliceIdentity}`,
   );
   expect(browserKeys).toContain(`dt:courses:active:${state.bobIdentity}`);
+});
+
+test("manual Practice and Flashcard learner flows remain usable without a provider", async ({
+  page,
+}) => {
+  test.skip(
+    !alicePassword || !stateFile,
+    "Run through scripts/test-phase4-browser so disposable credentials are provided.",
+  );
+  const state = JSON.parse(
+    readFileSync(stateFile!, "utf8"),
+  ) as Phase4BrowserState;
+
+  await signIn(page, "alice", alicePassword!);
+  await page.goto("/practice");
+  // Deliberately create immediately after selection. Both dependent writes
+  // must survive the Course/auth hydration race.
+  await page.getByLabel("Active course").selectOption(state.aliceCourseId);
+
+  await page.getByLabel("New Practice title").fill("Visible manual quiz");
+  const practiceCreateResponse = page.waitForResponse(
+    (response) =>
+      response.url().endsWith("/practice") &&
+      response.request().method() === "POST",
+  );
+  const revisionCreateResponse = page.waitForResponse(
+    (response) =>
+      response.url().includes("/revisions") &&
+      response.request().method() === "POST",
+  );
+  await page
+    .getByRole("complementary")
+    .getByRole("button", { name: "Create", exact: true })
+    .click();
+  expect((await practiceCreateResponse).status()).toBe(200);
+  expect((await revisionCreateResponse).status()).toBe(200);
+  await expect(page.getByRole("status")).toContainText("Draft Practice set created.");
+  await page.getByPlaceholder("What should the learner answer?").fill("What is two plus two?");
+  await page.getByPlaceholder("Exact accepted answer").fill("4");
+  await page.getByPlaceholder("Shown after grading").fill("Two pairs make four.");
+  await page.getByPlaceholder("Comma-separated objective IDs").fill("browser_manual_math");
+  await page.getByRole("button", { name: "Add question" }).click();
+  await expect(page.getByRole("status")).toContainText("Question added.");
+  await page.getByRole("button", { name: "Mark ready" }).click();
+  await expect(page.getByRole("button", { name: "Start or resume quiz" })).toBeVisible();
+  await page.getByRole("button", { name: "Start or resume quiz" }).click();
+  await page.getByLabel("Answer for question 1").fill("4");
+  await page.getByRole("button", { name: "Save", exact: true }).click();
+  await expect(page.getByText(/Saved revision/)).toBeVisible();
+  await page.getByRole("button", { name: "Submit", exact: true }).click();
+  const gradeResponsePromise = page.waitForResponse(
+    (response) =>
+      response.url().endsWith("/grade") &&
+      response.request().method() === "POST",
+  );
+  await page.getByRole("button", { name: "Grade", exact: true }).click();
+  const gradeResponse = await gradeResponsePromise;
+  expect(gradeResponse.status()).toBe(200);
+  expect((await gradeResponse.json()).score).toEqual({
+    correct: 1,
+    total: 1,
+    fraction: 1,
+  });
+  await expect(page.getByText(/Score: 100%/)).toBeVisible();
+
+  await page.goto("/flashcards");
+  await expect(page.getByLabel("Active course")).toHaveValue(state.aliceCourseId);
+  await expect(
+    page.getByText(
+      "Grounded generation is not enabled on this server. Manual Flashcards remain available.",
+    ),
+  ).toBeVisible();
+  await expect(page.getByLabel("Generated deck title")).toBeDisabled();
+  await expect(
+    page.getByRole("button", { name: "Generate grounded deck" }),
+  ).toBeDisabled();
+  await page.getByLabel("New Flashcard deck title").fill("Visible manual deck");
+  await page
+    .getByRole("heading", { name: "Decks" })
+    .locator("..")
+    .getByRole("button", { name: "Create", exact: true })
+    .click();
+  await expect(page.getByRole("heading", { name: "Visible manual deck" })).toBeVisible();
+  await page.getByLabel("Flashcard prompt").fill("Mitochondria");
+  await page.getByLabel("Flashcard answer").fill("Produces cellular energy");
+  await page.getByLabel("Flashcard objective IDs").fill("browser_manual_biology");
+  await page.getByRole("button", { name: "Save card" }).click();
+  await page.getByRole("button", { name: "Ready", exact: true }).click();
+  await page.getByRole("button", { name: "Review due" }).click();
+  await expect(page.getByText("Mitochondria", { exact: true })).toBeVisible();
+  await page.getByRole("button", { name: "Reveal answer" }).click();
+  await expect(page.getByText("Produces cellular energy", { exact: true })).toBeVisible();
+  await page.getByRole("button", { name: "good", exact: true }).click();
+  await expect(
+    page.getByText("Review complete. Your schedule is saved.", {
+      exact: true,
+    }),
+  ).toBeVisible();
 });
