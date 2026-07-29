@@ -51,6 +51,7 @@ import {
   type FlashcardRating,
   type FlashcardRequestScope,
 } from "@/lib/flashcards-api";
+import { flashcardGenerationUnavailableCopy } from "@/lib/flashcard-generation-presentation";
 
 const emptyCard = { prompt: "", answer: "", objectiveIds: "" };
 
@@ -844,8 +845,9 @@ export default function FlashcardsWorkspace() {
                     {generationAvailable
                       ? t("Create cited cards only from ready sources in this Course.")
                       : t(
-                          generationUnavailableReason ||
-                            "Grounded generation is not enabled on this server. Manual Flashcards remain available.",
+                          flashcardGenerationUnavailableCopy(
+                            generationUnavailableReason,
+                          ),
                         )}
                   </p>
                 </div>
