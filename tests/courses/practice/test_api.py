@@ -50,6 +50,7 @@ def practice_client(tmp_path, monkeypatch) -> TestClient:
         prefix="/api/v1/courses",
         dependencies=[Depends(auth_router.require_auth)],
     )
+    app.state.alice_id = alice["id"]
     return TestClient(app)
 
 
@@ -63,6 +64,36 @@ def _create_course(client: TestClient, owner: str = "alice") -> dict:
     )
     assert response.status_code == 200
     return response.json()
+
+
+def _ready_source(client: TestClient, course: dict) -> dict:
+    from deeptutor.courses import service as course_service
+    from deeptutor.multi_user.paths import get_personal_path_service
+
+    repository = course_service._repository_for(
+        str(
+            get_personal_path_service(
+                client.app.state.alice_id
+            ).get_courses_db()
+        ),
+        client.app.state.alice_id,
+    )
+    source = repository.create_source(
+        course["id"],
+        kind="notes",
+        display_name="cell-notes.txt",
+        manifest=[],
+        content_sha256="a" * 64,
+    )
+    return repository.transition_source(
+        course["id"],
+        source.id,
+        operation_id=source.operation_id or "",
+        expected_source_revision=source.revision,
+        expected_course_revision=course["revision"],
+        expected_write_epoch=course["write_epoch"],
+        state="ready",
+    ).model_dump(mode="json")
 
 
 def _create_ready_practice(
@@ -113,6 +144,7 @@ def test_manual_practice_api_lifecycle_autosave_idempotency_and_results(
     practice_client: TestClient,
 ) -> None:
     course = _create_course(practice_client)
+    source = _ready_source(practice_client, course)
     practice_set, revision = _create_ready_practice(practice_client, course)
     course_id = course["id"]
     start_body = {
@@ -182,6 +214,27 @@ def test_manual_practice_api_lifecycle_autosave_idempotency_and_results(
     assert learner_attempt.status_code == 200
     assert "answer_contract" not in learner_attempt.text
     assert "yes" not in learner_attempt.text
+    remediation = practice_client.post(
+        f"{endpoint}/flashcard-brief", headers=_auth("alice"), json={}
+    )
+    assert remediation.status_code == 200, remediation.text
+    assert remediation.json()["objective_ids"] == ["kp_cell"]
+    assert remediation.json()["source_snapshot"] == [
+        {
+            "source_id": source["id"],
+            "source_revision": source["revision"],
+            "content_sha256": source["content_sha256"],
+        }
+    ]
+    assert remediation.json()["origin"] == {
+        "kind": "practice_remediation",
+        "session_id": None,
+        "message_id": None,
+        "practice_attempt_id": view["attempt"]["id"],
+    }
+    assert practice_client.post(
+        f"{endpoint}/flashcard-brief", headers=_auth("bob"), json={}
+    ).status_code == 404
 
     successor = practice_client.post(
         f"/api/v1/courses/{course_id}/practice/{practice_set['id']}/revisions/successor",

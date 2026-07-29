@@ -185,7 +185,7 @@ def test_quiz_action_is_server_grounded_bounded_and_replays(
         "action", "destination", "course_id", "course_revision", "course_write_epoch",
         "session_id", "parent_message_id", "objective_ids", "source_ids", "reason_code",
         "operation_id", "operation_state", "practice_set_id", "practice_set_revision_id",
-        "deck_id", "followup_text",
+        "deck_id", "generation_brief", "followup_text",
     }
     assert payload["reason_code"] == "course_sources"
     assert all(
@@ -203,12 +203,12 @@ def test_quiz_action_is_server_grounded_bounded_and_replays(
     assert worker_calls == [payload["operation_id"]]
 
 
-def test_flashcard_action_replay_schedules_only_one_live_worker(
+def test_flashcard_action_returns_a_zero_call_review_brief_without_allocating_work(
     learner_action_client: TestClient, monkeypatch
 ) -> None:
+    worker_calls: list[str] = []
     from deeptutor.api.routers import courses as course_router
 
-    worker_calls: list[str] = []
     monkeypatch.setattr(
         course_router,
         "_run_flashcard_generation",
@@ -231,27 +231,40 @@ def test_flashcard_action_replay_schedules_only_one_live_worker(
         json=_body(course, "make_flashcards", binding),
     )
     assert first.status_code == replay.status_code == 202
-    assert replay.json() == first.json()
-    assert first.json()["destination"] == "flashcards"
-    assert first.json()["source_ids"] == [source["id"]]
-    assert first.json()["operation_id"].startswith("ofg_")
-    assert worker_calls == [first.json()["operation_id"]]
-    monkeypatch.setenv("TEEECHR_TEST_DETERMINISTIC_PROVIDER", "true")
-    flashcards = learner_action_client.post(
-        f"/api/v1/courses/{course['id']}/learner-actions",
-        headers=_auth("alice"),
-        json=_body(
-            course,
-            "make_flashcards",
-            binding,
-            idempotency_key="flashcards-same-request",
-        ),
+    first_payload = first.json()
+    replay_payload = replay.json()
+    assert first_payload["destination"] == "flashcards"
+    assert first_payload["source_ids"] == [source["id"]]
+    assert first_payload["operation_id"] is None
+    assert first_payload["deck_id"] is None
+    assert first_payload["generation_brief"]["brief"]["focus"]
+    assert first_payload["generation_brief"]["origin"] == {
+        "kind": "chat",
+        "session_id": binding[0],
+        "message_id": binding[1],
+        "practice_attempt_id": None,
+    }
+    # Availability is deliberately re-evaluated for each confirmation screen.
+    # Removing the deterministic provider between requests must not allocate
+    # durable work or alter the server-resolved authority snapshot.
+    assert replay_payload["generation_brief"]["provider_available"] is False
+    assert (
+        replay_payload["generation_brief"]["source_snapshot"]
+        == first_payload["generation_brief"]["source_snapshot"]
     )
-    assert flashcards.status_code == 202, flashcards.text
-    assert flashcards.json()["destination"] == "flashcards"
-    assert flashcards.json()["reason_code"] == "course_sources"
-    assert flashcards.json()["deck_id"].startswith("dck_")
-    assert flashcards.json()["operation_id"].startswith("ofg_")
+    assert worker_calls == []
+
+    operations = learner_action_client.get(
+        f"/api/v1/courses/{course['id']}/flashcard-generation",
+        headers=_auth("alice"),
+    )
+    decks = learner_action_client.get(
+        f"/api/v1/courses/{course['id']}/flashcards",
+        headers=_auth("alice"),
+    )
+    assert operations.status_code == decks.status_code == 200
+    assert operations.json()["operations"] == []
+    assert decks.json()["flashcard_decks"] == []
 
 
 def test_unavailable_provider_rejects_before_allocation_without_becoming_an_id_oracle(

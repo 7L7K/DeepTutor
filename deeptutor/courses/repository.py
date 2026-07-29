@@ -202,6 +202,49 @@ class CourseRepository:
             raise CourseConflictError("Course has an active source operation")
         now = time.time()
         with self._write_lock, self._connect() as conn:
+            conn.execute("BEGIN IMMEDIATE")
+            expired_reviews = conn.execute(
+                """SELECT id,deck_id FROM flashcard_generation_operations
+                   WHERE course_id=? AND owner_user_id=?
+                     AND state='awaiting_review'
+                     AND review_expires_at IS NOT NULL
+                     AND review_expires_at<=?""",
+                (course_id, self.owner_user_id, now),
+            ).fetchall()
+            for operation in expired_reviews:
+                conn.execute(
+                    """UPDATE flashcard_generation_operations
+                       SET state='cancelled',error_code='cancelled',
+                           cancel_requested_at=?,completed_at=?,updated_at=?
+                       WHERE id=? AND state='awaiting_review'""",
+                    (now, now, now, operation["id"]),
+                )
+                conn.execute(
+                    """UPDATE flashcard_decks
+                       SET state='archived',revision=revision+1,
+                           write_epoch=write_epoch+1,archived_at=?,updated_at=?
+                       WHERE id=? AND mode='generated' AND state='draft'""",
+                    (now, now, operation["deck_id"]),
+                )
+            active_generation = conn.execute(
+                """SELECT 1 FROM (
+                       SELECT state FROM practice_generation_operations
+                       WHERE course_id=? AND owner_user_id=?
+                       UNION ALL
+                       SELECT state FROM flashcard_generation_operations
+                       WHERE course_id=? AND owner_user_id=?
+                   )
+                   WHERE state IN ('queued','running','cancelling','awaiting_review')
+                   LIMIT 1""",
+                (
+                    course_id,
+                    self.owner_user_id,
+                    course_id,
+                    self.owner_user_id,
+                ),
+            ).fetchone()
+            if active_generation is not None:
+                raise CourseConflictError("Course has an active learning operation")
             result = conn.execute(
                 """UPDATE courses
                    SET state = 'archived', revision = revision + 1,
@@ -211,6 +254,18 @@ class CourseRepository:
                        SELECT 1 FROM course_sources
                        WHERE course_sources.course_id = courses.id
                          AND course_sources.state = 'processing'
+                     )
+                     AND NOT EXISTS (
+                       SELECT 1 FROM practice_generation_operations
+                       WHERE practice_generation_operations.course_id = courses.id
+                         AND practice_generation_operations.state IN ('queued','running')
+                     )
+                     AND NOT EXISTS (
+                       SELECT 1 FROM flashcard_generation_operations
+                       WHERE flashcard_generation_operations.course_id = courses.id
+                         AND flashcard_generation_operations.state IN (
+                           'queued','running','cancelling','awaiting_review'
+                         )
                      )""",
                 (now, now, course_id, self.owner_user_id, expected_revision),
             )
@@ -222,6 +277,25 @@ class CourseRepository:
                 ).fetchone()
                 if processing is not None:
                     raise CourseConflictError("Course has an active source operation")
+                active_generation = conn.execute(
+                    """SELECT 1 FROM (
+                           SELECT state FROM practice_generation_operations
+                           WHERE course_id=? AND owner_user_id=?
+                           UNION ALL
+                           SELECT state FROM flashcard_generation_operations
+                           WHERE course_id=? AND owner_user_id=?
+                       )
+                       WHERE state IN ('queued','running','cancelling','awaiting_review')
+                       LIMIT 1""",
+                    (
+                        course_id,
+                        self.owner_user_id,
+                        course_id,
+                        self.owner_user_id,
+                    ),
+                ).fetchone()
+                if active_generation is not None:
+                    raise CourseConflictError("Course has an active learning operation")
                 self._raise_missing_or_stale(conn, course_id, expected_state="active")
             row = conn.execute("SELECT * FROM courses WHERE id = ?", (course_id,)).fetchone()
         assert row is not None

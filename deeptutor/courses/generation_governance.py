@@ -68,7 +68,11 @@ def admit_generation_allocation(conn: sqlite3.Connection, owner_user_id: str) ->
     budget ceiling.
     """
 
-    if _count_operations(conn, owner_user_id, states=("queued", "running")) >= (
+    if _count_operations(
+        conn,
+        owner_user_id,
+        states=("queued", "running", "cancelling", "awaiting_review"),
+    ) >= (
         MAX_OUTSTANDING_GENERATION_OPERATIONS_PER_OWNER
     ):
         raise CourseConflictError("Generation outstanding-operation limit reached")

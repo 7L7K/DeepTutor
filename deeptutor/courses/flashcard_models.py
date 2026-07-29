@@ -39,6 +39,10 @@ class Flashcard(BaseModel):
     deck_id: str
     prompt: str
     answer: str
+    hint: str | None = None
+    card_type: Literal[
+        "definition", "concept", "comparison", "application", "process", "recall"
+    ] = "recall"
     objective_ids: list[str] = Field(default_factory=list)
     citations: list[dict] = Field(default_factory=list)
     ordinal: int = Field(ge=1)

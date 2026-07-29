@@ -7,11 +7,21 @@ Only opaque source receipts, not retrieved text or provider payloads, persist.
 
 from __future__ import annotations
 
+import time
 from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
-GenerationState = Literal["queued", "running", "completed", "failed"]
+CardType = Literal["definition", "concept", "comparison", "application", "process", "recall"]
+GenerationState = Literal[
+    "queued",
+    "running",
+    "awaiting_review",
+    "completed",
+    "failed",
+    "cancelling",
+    "cancelled",
+]
 GenerationErrorCode = Literal[
     "provider_unavailable",
     "provider_failed",
@@ -20,7 +30,57 @@ GenerationErrorCode = Literal[
     "authority_changed",
     "interrupted",
     "provider_timed_out",
+    "configuration_error",
+    "quota_exceeded",
+    "insufficient_valid_cards",
+    "cancelled",
 ]
+
+
+class FlashcardGenerationBrief(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    focus: str = Field(min_length=1, max_length=1000)
+    desired_count: int = Field(ge=3, le=48)
+    card_type_mix: list[CardType] = Field(min_length=1, max_length=6)
+    difficulty: Literal["introductory", "intermediate", "advanced", "mixed"] = "mixed"
+    answer_length: Literal["short", "medium"] = "short"
+    include_hints: bool = True
+
+    @field_validator("card_type_mix")
+    @classmethod
+    def unique_card_types(cls, value: list[CardType]) -> list[CardType]:
+        if len(value) != len(set(value)):
+            raise ValueError("card_type_mix must be unique")
+        return value
+
+
+class FlashcardGenerationOrigin(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    kind: Literal["workspace", "chat", "practice_remediation"]
+    session_id: str | None = Field(default=None, max_length=160)
+    message_id: int | None = Field(default=None, ge=1)
+    practice_attempt_id: str | None = Field(default=None, max_length=80)
+
+
+class FlashcardProviderReceipt(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    provider: Literal["deterministic-local", "openai"]
+    requested_model: str = Field(min_length=1, max_length=160)
+    actual_model: str = Field(min_length=1, max_length=160)
+    request_id: str | None = Field(default=None, max_length=200)
+    input_tokens: int | None = Field(default=None, ge=0)
+    output_tokens: int | None = Field(default=None, ge=0)
+    prompt_version: str = Field(
+        default="course-flashcards-v1", min_length=1, max_length=80
+    )
+    store: Literal[False] = False
+    latency_ms: int | None = Field(default=None, ge=0)
+    returned_count: int = Field(ge=0, le=48)
+    valid_count: int = Field(ge=0, le=48)
+    generated_at: float
 
 
 class FlashcardSourceReceipt(BaseModel):
@@ -72,6 +132,14 @@ class FlashcardGenerationOperation(BaseModel):
     request_fingerprint: str
     source_snapshot: list[FlashcardSourceReceipt]
     objective_ids: list[str] = Field(default_factory=list)
+    generation_brief: FlashcardGenerationBrief
+    origin: FlashcardGenerationOrigin
+    candidates: list["FlashcardCandidate"] | None = None
+    candidate_revision: int = Field(default=0, ge=0)
+    provider_receipt: FlashcardProviderReceipt | None = None
+    provider_invoked_at: float | None = None
+    cancel_requested_at: float | None = None
+    review_expires_at: float | None = None
     course_write_epoch: int = Field(ge=1)
     deck_write_epoch: int = Field(ge=1)
     item_limit: int = Field(ge=1, le=48)
@@ -103,15 +171,39 @@ class GeneratedFlashcard(BaseModel):
 
     prompt: str = Field(min_length=1, max_length=12_000)
     answer: str = Field(min_length=1, max_length=12_000)
+    hint: str | None = Field(default=None, max_length=2_000)
+    card_type: CardType = "recall"
     objective_ids: list[str] = Field(default_factory=list, max_length=64)
-    citations: list[FlashcardCitation] = Field(min_length=1, max_length=32)
+    citations: list[FlashcardCitation] = Field(min_length=1, max_length=3)
+
+
+class FlashcardCandidate(GeneratedFlashcard):
+    candidate_id: str
+
+    @field_validator("candidate_id")
+    @classmethod
+    def opaque_candidate_id(cls, value: str) -> str:
+        if not value.startswith("fcd_") or len(value) > 80:
+            raise ValueError("candidate_id must be opaque")
+        return value
 
 
 class GeneratedFlashcardOutput(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     cards: list[GeneratedFlashcard] = Field(min_length=1, max_length=48)
-    provider_label: Literal["deterministic-local"]
+    provider_label: Literal["deterministic-local", "openai"]
+    requested_model: str = Field(default="deterministic-local", min_length=1, max_length=160)
+    actual_model: str = Field(default="deterministic-local", min_length=1, max_length=160)
+    request_id: str | None = Field(default=None, max_length=200)
+    input_tokens: int | None = Field(default=None, ge=0)
+    output_tokens: int | None = Field(default=None, ge=0)
+    prompt_version: str = Field(
+        default="course-flashcards-v1", min_length=1, max_length=80
+    )
+    store: Literal[False] = False
+    latency_ms: int | None = Field(default=None, ge=0)
+    generated_at: float = Field(default_factory=time.time)
 
 
 class FlashcardGenerationSourceText(BaseModel):
@@ -126,10 +218,12 @@ class FlashcardGenerationInput(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     operation_id: str
+    owner_user_id: str = Field(min_length=1, max_length=160)
     course_id: str
     deck_id: str
     source_material: list[FlashcardGenerationSourceText] = Field(min_length=1, max_length=64)
     objective_ids: list[str] = Field(default_factory=list, max_length=64)
+    generation_brief: FlashcardGenerationBrief
     item_limit: int = Field(ge=1, le=48)
     context_char_limit: int = Field(ge=1, le=48_000)
 
@@ -139,3 +233,32 @@ class FlashcardGenerationRequest(BaseModel):
 
     deck_id: str
     operation: FlashcardGenerationOperation
+
+
+class FlashcardGenerationBriefReceipt(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    course_id: str
+    course_write_epoch: int = Field(ge=1)
+    brief: FlashcardGenerationBrief
+    source_snapshot: list[FlashcardSourceReceipt] = Field(min_length=1, max_length=64)
+    objective_ids: list[str] = Field(default_factory=list, max_length=64)
+    origin: FlashcardGenerationOrigin
+    provider_available: bool
+    warnings: list[str] = Field(default_factory=list, max_length=8)
+
+
+class FlashcardCandidatePublication(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    candidate_ids: list[str] = Field(min_length=1, max_length=48)
+    expected_candidate_revision: int = Field(ge=1)
+
+    @field_validator("candidate_ids")
+    @classmethod
+    def unique_candidates(cls, value: list[str]) -> list[str]:
+        if len(value) != len(set(value)):
+            raise ValueError("candidate_ids must be unique")
+        if any(not item.startswith("fcd_") or len(item) > 80 for item in value):
+            raise ValueError("candidate_ids must be opaque")
+        return value

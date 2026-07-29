@@ -322,11 +322,11 @@ def test_upgrade_from_exact_p4_05_receipts_applies_flashcards_then_generation(tm
     monkeypatch.setattr(runner, "discover_migrations", lambda: artifacts[:7])
     assert ensure_course_schema(path) == (6,)
     monkeypatch.setattr(runner, "discover_migrations", lambda: artifacts)
-    assert ensure_course_schema(path) == (7,)
+    assert ensure_course_schema(path) == (7, 8, 9)
     assert ensure_course_schema(path) == ()
     with sqlite3.connect(path) as conn:
         ledger = conn.execute("SELECT version FROM schema_migrations ORDER BY version").fetchall()
-        assert [row[0] for row in ledger] == [0, 1, 2, 3, 4, 5, 6, 7]
+        assert [row[0] for row in ledger] == [0, 1, 2, 3, 4, 5, 6, 7, 8, 9]
         assert conn.execute("SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'flashcard_reviews'").fetchone()[0] == 1
         triggers = {row[0] for row in conn.execute("SELECT name FROM sqlite_master WHERE type = 'trigger' AND name LIKE 'flashcard_%'")}
     assert {"flashcard_reviews_require_owned_ready_card", "flashcard_reviews_no_delete", "flashcard_review_state_requires_matching_review", "flashcard_generation_complete_requires_ready_deck"} <= triggers

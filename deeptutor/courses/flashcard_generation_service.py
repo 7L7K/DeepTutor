@@ -9,6 +9,8 @@ from deeptutor.multi_user.identity import get_user_by_id, identity_write_lock
 from deeptutor.multi_user.models import LOCAL_ADMIN_ID
 
 from .flashcard_generation_models import (
+    FlashcardCandidatePublication,
+    FlashcardGenerationBriefReceipt,
     FlashcardGenerationInput,
     FlashcardGenerationOperation,
     FlashcardGenerationRequest,
@@ -17,13 +19,17 @@ from .flashcard_generation_provider import (
     DeterministicIndexFlashcardSourceTextResolver,
     FlashcardGenerationProvider,
     FlashcardGenerationProviderError,
+    FlashcardGenerationProviderQuotaExceeded,
     FlashcardGenerationProviderTimedOut,
     FlashcardGenerationProviderUnavailable,
     FlashcardSourceTextResolver,
     default_flashcard_generation_provider,
     flashcard_generation_provider_available,
 )
-from .flashcard_generation_repository import CourseFlashcardGenerationRepository
+from .flashcard_generation_repository import (
+    CourseFlashcardGenerationRepository,
+    FlashcardGenerationInsufficientCandidates,
+)
 from .provider_runtime import run_provider_with_deadline
 from .repository import CourseConflictError, CourseNotFoundError
 
@@ -109,6 +115,17 @@ class CourseFlashcardGenerationService:
         # A successor is always a new deck: no previous ready deck, cards, or reviews are rewritten.
         return self.create_generated_deck(course_id, supersedes_deck_id=deck_id, **kwargs)
 
+    def prepare_brief(
+        self, course_id: str, **kwargs: object
+    ) -> FlashcardGenerationBriefReceipt:
+        if not self._account_active(self.repository.owner_user_id):
+            raise CourseConflictError("Generation account authority is no longer active")
+        return self.repository.prepare_brief(
+            course_id,
+            provider_available=self.provider_available(),
+            **kwargs,
+        )
+
     def _generate(self, request: FlashcardGenerationInput):
         return run_provider_with_deadline(
             lambda: self.provider.generate(request),
@@ -130,19 +147,29 @@ class CourseFlashcardGenerationService:
                 receipts=operation.source_snapshot,
                 context_char_limit=operation.context_char_limit,
             )
+            # This is the final zero-call authority fence.  Source resolution
+            # is intentionally before it so archive/revocation/replacement
+            # races during retrieval stop before provider invocation.
+            operation = self.repository.preflight_provider_call(
+                course_id,
+                operation_id,
+                account_active=self._account_active(self.repository.owner_user_id),
+            )
             output = self._generate(
                 FlashcardGenerationInput(
                     operation_id=operation.id,
+                    owner_user_id=operation.owner_user_id,
                     course_id=course_id,
                     deck_id=operation.deck_id,
                     source_material=material,
                     objective_ids=operation.objective_ids,
+                    generation_brief=operation.generation_brief,
                     item_limit=operation.item_limit,
                     context_char_limit=operation.context_char_limit,
                 )
             )
             with self._identity_lock():
-                return self.repository.complete_operation(
+                return self.repository.stage_candidates(
                     course_id,
                     operation_id,
                     output,
@@ -153,8 +180,14 @@ class CourseFlashcardGenerationService:
             return self.repository.fail_operation(course_id, operation_id, "provider_unavailable")
         except FlashcardGenerationProviderTimedOut:
             return self.repository.fail_operation(course_id, operation_id, "provider_timed_out")
+        except FlashcardGenerationProviderQuotaExceeded:
+            return self.repository.fail_operation(course_id, operation_id, "quota_exceeded")
         except FlashcardGenerationProviderError:
             return self.repository.fail_operation(course_id, operation_id, "provider_failed")
+        except FlashcardGenerationInsufficientCandidates:
+            return self.repository.fail_operation(
+                course_id, operation_id, "insufficient_valid_cards"
+            )
         except ValueError:
             return self.repository.fail_operation(course_id, operation_id, "invalid_output")
         except CourseNotFoundError:
@@ -168,21 +201,47 @@ class CourseFlashcardGenerationService:
         except Exception:
             return self.repository.fail_operation(course_id, operation_id, "provider_failed")
         finally:
+            try:
+                self.repository.finalize_cancellation(course_id, operation_id)
+            except (CourseNotFoundError, CourseConflictError):
+                pass
             unregister_live_flashcard_generation(
                 self.repository.owner_user_id, course_id, operation_id
             )
 
     def get_operation(self, course_id: str, operation_id: str) -> FlashcardGenerationOperation:
+        self.repository.expire_review_candidates(course_id)
         self.repository.reconcile_orphaned_operations(
             course_id, live_operation_ids=_live_ids(self.repository.owner_user_id, course_id)
         )
         return self.repository.get_operation(course_id, operation_id)
 
     def list_operations(self, course_id: str) -> list[FlashcardGenerationOperation]:
+        self.repository.expire_review_candidates(course_id)
         self.repository.reconcile_orphaned_operations(
             course_id, live_operation_ids=_live_ids(self.repository.owner_user_id, course_id)
         )
         return self.repository.list_operations(course_id)
+
+    def publish_candidates(
+        self,
+        course_id: str,
+        operation_id: str,
+        publication: FlashcardCandidatePublication,
+    ) -> FlashcardGenerationOperation:
+        self.repository.expire_review_candidates(course_id)
+        with self._identity_lock():
+            return self.repository.publish_candidates(
+                course_id,
+                operation_id,
+                publication,
+                account_active=self._account_active(self.repository.owner_user_id),
+            )
+
+    def cancel_operation(
+        self, course_id: str, operation_id: str
+    ) -> FlashcardGenerationOperation:
+        return self.repository.cancel_operation(course_id, operation_id)
 
 
 def build_flashcard_generation_service(course_service: object) -> CourseFlashcardGenerationService:

@@ -238,8 +238,10 @@ def test_flashcard_generation_api_is_server_grounded_and_idempotent(
     ]
     assert all(
         item not in str(payload).lower()
-        for item in ("prompt", "knowledge_base", "provider", "source_text", "tool")
+        for item in ("knowledge_base", "source_text", "tool", "api_key")
     )
+    assert operation["provider_receipt"] is None
+    assert operation["candidates"] is None
     replay = generation_client.post(
         f"/api/v1/courses/{course['id']}/flashcard-generation",
         headers=_headers("alice", "flashcard-once"),
@@ -284,6 +286,55 @@ def test_flashcard_generation_api_is_server_grounded_and_idempotent(
     assert bypass.status_code == 409
 
 
+def test_flashcard_generation_brief_resolves_authority_without_allocation(
+    generation_client: TestClient,
+) -> None:
+    course = _create_course(generation_client)
+    source = _ready_source(generation_client, course)
+
+    response = generation_client.post(
+        f"/api/v1/courses/{course['id']}/flashcard-generation/brief",
+        headers=_auth("alice"),
+        json=_flashcard_generation_body(
+            course,
+            source,
+            focus="Compare glycolysis with the citric acid cycle",
+            item_limit=6,
+            card_type_mix=["comparison", "application"],
+            difficulty="intermediate",
+            answer_length="short",
+            include_hints=True,
+        ),
+    )
+
+    assert response.status_code == 200, response.text
+    payload = response.json()
+    assert payload["brief"]["focus"].startswith("Compare glycolysis")
+    assert payload["brief"]["desired_count"] == 6
+    assert payload["source_snapshot"][0]["source_id"] == source["id"]
+    assert "source_text" not in str(payload).lower()
+    assert "api_key" not in str(payload).lower()
+    from deeptutor.courses import service as course_service
+    from deeptutor.multi_user.paths import get_personal_path_service
+
+    users: _TestUsers = generation_client.app.state.test_users
+    repository = course_service._repository_for(
+        str(get_personal_path_service(users.alice_id).get_courses_db()),
+        users.alice_id,
+    )
+    with repository._connect() as connection:
+        assert (
+            connection.execute(
+                "SELECT COUNT(*) FROM flashcard_generation_operations"
+            ).fetchone()[0]
+            == 0
+        )
+        assert (
+            connection.execute("SELECT COUNT(*) FROM flashcard_decks").fetchone()[0]
+            == 0
+        )
+
+
 def test_flashcard_generation_successor_foreign_and_missing_decks_are_indistinguishable(
     generation_client: TestClient, monkeypatch
 ) -> None:
@@ -303,7 +354,19 @@ def test_flashcard_generation_successor_foreign_and_missing_decks_are_indistingu
         headers=_auth("alice"),
     )
     assert operation.status_code == 200
-    assert operation.json()["state"] == "completed"
+    assert operation.json()["state"] == "awaiting_review"
+    candidates = operation.json()["candidates"]
+    published = generation_client.post(
+        f"/api/v1/courses/{alice_course['id']}/flashcard-generation/"
+        f"{created.json()['operation']['id']}/publish",
+        headers=_auth("alice"),
+        json={
+            "candidate_ids": [item["candidate_id"] for item in candidates],
+            "expected_candidate_revision": operation.json()["candidate_revision"],
+        },
+    )
+    assert published.status_code == 200, published.text
+    assert published.json()["state"] == "completed"
 
     bob_course = _create_course(generation_client, "bob")
     bob_source = _ready_source(generation_client, bob_course, "bob")

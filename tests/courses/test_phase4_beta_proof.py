@@ -797,6 +797,7 @@ def test_phase4_deterministic_generation_workers_treat_malicious_material_as_ine
 
     from deeptutor.courses import service as course_service
     from deeptutor.courses.flashcard_generation_models import (
+        FlashcardCandidatePublication,
         FlashcardCitation,
         FlashcardGenerationSourceText,
         GeneratedFlashcard,
@@ -892,11 +893,12 @@ def test_phase4_deterministic_generation_workers_treat_malicious_material_as_ine
                 provider_label="deterministic-local",
                 cards=[
                     GeneratedFlashcard(
-                        prompt="What opaque source fact is cited?",
-                        answer="fact-local",
+                        prompt=f"What opaque source fact {ordinal} is cited?",
+                        answer=f"fact-local-{ordinal}",
                         objective_ids=request.objective_ids,
                         citations=[FlashcardCitation(**receipt.model_dump())],
                     )
+                    for ordinal in range(8)
                 ],
             )
 
@@ -935,7 +937,20 @@ def test_phase4_deterministic_generation_workers_treat_malicious_material_as_ine
     )
     practice_result = practice.run_operation(course["id"], practice_request.operation.id)
     flashcard_result = flashcards.run_operation(course["id"], flashcard_request.operation.id)
-    assert practice_result.state == flashcard_result.state == "completed"
+    assert practice_result.state == "completed"
+    assert flashcard_result.state == "awaiting_review"
+    assert flashcard_result.candidates
+    flashcard_result = flashcards.publish_candidates(
+        course["id"],
+        flashcard_request.operation.id,
+        FlashcardCandidatePublication(
+            candidate_ids=[
+                candidate.candidate_id for candidate in flashcard_result.candidates
+            ],
+            expected_candidate_revision=flashcard_result.candidate_revision,
+        ),
+    )
+    assert flashcard_result.state == "completed"
 
     for resolver, provider, expected_receipt in (
         (practice_resolver, practice_provider, practice_request.operation.source_snapshot[0]),
@@ -948,8 +963,10 @@ def test_phase4_deterministic_generation_workers_treat_malicious_material_as_ine
         assert worker_request.source_material[0].receipt == expected_receipt
         # The typed worker input contains only opaque operation/course/deck
         # identity plus bounded material.  It has no user-supplied control key.
+        if hasattr(worker_request, "owner_user_id"):
+            assert worker_request.owner_user_id == owner_id
         assert not {
-            "owner_user_id", "knowledge_base", "tool", "provider"
+            "knowledge_base", "tool", "provider"
         }.intersection(worker_request.model_dump(exclude={"source_material"}))
         assert set(worker_request.source_material[0].model_dump()) == {"receipt", "text"}
         assert set(expected_receipt.model_dump()) == {

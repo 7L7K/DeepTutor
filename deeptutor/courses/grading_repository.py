@@ -261,6 +261,93 @@ class CourseGradingRepository:
                 raise self._not_found()
             return [item for item in self._records(conn, attempt_id) if item.state == "pending"]
 
+    def remediation_scope(
+        self, course_id: str, attempt_id: str
+    ) -> tuple[str, list[str], list[str]]:
+        """Resolve a graded attempt's missed objectives and source authority.
+
+        The caller supplies only the opaque attempt ID. Ownership, Practice-set
+        membership, grading state, missed items, and cited Course sources are
+        all re-derived from the private Course database.
+        """
+
+        with self.course_repository._connect() as conn:
+            attempt = conn.execute(
+                """SELECT * FROM quiz_attempts
+                   WHERE id = ? AND course_id = ? AND owner_user_id = ?""",
+                (attempt_id, course_id, self.owner_user_id),
+            ).fetchone()
+            if attempt is None:
+                raise self._not_found()
+            if str(attempt["state"]) != "graded":
+                raise CourseConflictError(
+                    "Only graded quiz attempts can propose remediation flashcards"
+                )
+            rows = conn.execute(
+                """SELECT evidence.objective_id, questions.citation_json
+                   FROM quiz_item_grading_evidence AS evidence
+                   JOIN practice_questions AS questions
+                     ON questions.id = evidence.question_id
+                   WHERE evidence.attempt_id = ? AND evidence.course_id = ?
+                     AND evidence.owner_user_id = ? AND evidence.is_correct = 0
+                   ORDER BY evidence.attempt_item_id, evidence.objective_id""",
+                (attempt_id, course_id, self.owner_user_id),
+            ).fetchall()
+            if not rows:
+                raise CourseConflictError(
+                    "This quiz attempt has no missed answers to review"
+                )
+            objectives = sorted(
+                {
+                    str(row["objective_id"])
+                    for row in rows
+                    if str(row["objective_id"] or "").strip()
+                }
+            )
+            source_ids: set[str] = set()
+            for row in rows:
+                for citation in json.loads(row["citation_json"] or "[]"):
+                    source_id = citation.get("source_id")
+                    if isinstance(source_id, str) and source_id.startswith("src_"):
+                        source_ids.add(source_id)
+            if not source_ids:
+                revision = conn.execute(
+                    """SELECT revisions.source_snapshot_json
+                       FROM practice_set_revisions AS revisions
+                       WHERE revisions.id = ? AND revisions.practice_set_id = ?""",
+                    (
+                        attempt["practice_set_revision_id"],
+                        attempt["practice_set_id"],
+                    ),
+                ).fetchone()
+                if revision is not None:
+                    for receipt in json.loads(
+                        revision["source_snapshot_json"] or "[]"
+                    ):
+                        source_id = receipt.get("source_id")
+                        if isinstance(source_id, str) and source_id.startswith(
+                            "src_"
+                        ):
+                            source_ids.add(source_id)
+            if not source_ids:
+                # Manual Practice questions predate citation authoring. They
+                # may still propose remediation, but only from the Course's
+                # current ready immutable sources resolved on the server.
+                source_ids.update(
+                    str(row["id"])
+                    for row in conn.execute(
+                        """SELECT id FROM course_sources
+                           WHERE course_id = ? AND state = 'ready'
+                           ORDER BY created_at, id""",
+                        (course_id,),
+                    ).fetchall()
+                )
+            if not source_ids:
+                raise CourseConflictError(
+                    "Missed answers have no grounded Course sources"
+                )
+            return str(attempt["practice_set_id"]), objectives, sorted(source_ids)
+
     def has_course_evidence(self, course_id: str) -> bool:
         """Return whether the owned Course has immutable grading history."""
         self.course_repository.get_course(course_id)
