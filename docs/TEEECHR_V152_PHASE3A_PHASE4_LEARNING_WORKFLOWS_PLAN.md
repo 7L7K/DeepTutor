@@ -1,6 +1,6 @@
 # TEEECHR v1.5.2 Phase 3A and Phase 4 — Close BlueWay, Restore Learning Workflows
 
-Status: **Phase 3A accepted; Phase 4 implementation active; P4-01 through P4-05 complete.**
+Status: **Phase 3A accepted; Phase 4 implementation active; P4-01 through P4-06 complete.**
 The real two-owner Apple/device flow, hosted fixture retirement, publication,
 deployment, and release certification remain parked. They do not block Phase 4,
 and Phase 4 must not imply that those distinct surfaces passed.
@@ -108,7 +108,8 @@ The P4-01 subordinate artifacts are:
 They provide executable detail for this plan but do not override it. P4-01 was
 implemented on the local Phase 4 branch by `1cc75f2f`. P4-02A was implemented
 by `6bdb5179`, P4-02B by `d613b8ad`, P4-03 by `96e073ee`, P4-04 by
-`5cf02793`, and P4-05 by `20a604be`; P4-06 is the next active slice.
+`5cf02793`, P4-05 by `20a604be`, and P4-06 by `c55d2dc0`; P4-07 is the
+next active slice.
 
 ## 1. Goal and non-goals
 
@@ -962,6 +963,8 @@ Status: **completed for the local engineering boundary by `20a604be`.**
 
 ### P4-06 — Flashcard repository and manual workflow
 
+Status: **completed for the local engineering boundary by `c55d2dc0`.**
+
 - **Scope:** introduce deck/card/review migration with repository, scheduling
   policy, API, and minimal UI.
 - **Inputs / outputs:** persistent manual decks and review sessions.
@@ -975,6 +978,39 @@ Status: **completed for the local engineering boundary by `20a604be`.**
 - **Doc alignment:** historical `FlashcardService` and `FlashcardsWorkspace`.
 - **Risk / unknown:** port scheduling behavior only after reviewing its time and
   persistence assumptions.
+
+#### P4-06 implementation receipt — 2026-07-28
+
+- migration `0005_flashcards.sql` adds private Course-owned decks, cards,
+  append-only review events, and durable per-card schedules to the one
+  checksum-backed `courses.db` migration stream (`0000..0005`);
+- manual decks retain draft/ready/archive lifecycle, optimistic deck/card
+  revisions, draft-safe restore, and archive-only history. Archived Courses,
+  decks, and cards block new review work without deleting prior events;
+- review idempotency binds the exact owner, Course, Course write epoch, deck,
+  card, rating, and deck/card revisions. A persisted two-thread same-key race
+  proves one review row, one schedule increment, and the same returned receipt;
+- the documented deterministic UTC scheduling policy is Again `60` seconds,
+  Hard at least `6` hours and `1.2x`, Good at least `1` day and `2x`, and Easy
+  at least `4` days and `3x`, with every interval capped at `180` days.
+  Flashcard ratings schedule review only and never mutate mastery;
+- the authenticated Course API exposes manual deck/card lifecycle and due
+  review operations without accepting owners, paths, Knowledge names,
+  providers, or client clock authority;
+- the `/flashcards` workspace uses the active private Course, keeps only
+  transient review state, requeues Again cards inside the current pass, clears
+  state on identity/Course changes, and becomes read-only when the Course is
+  archived;
+- exact proof passed Ruff and diff/secret checks, `98` initial Practice tests
+  plus the persisted concurrency regression, `23` migration tests, `265`
+  impacted Course and BlueWay tests, TypeScript, ESLint with no errors, `179`
+  web node tests, and a Next production build with `54` pages including
+  `/flashcards`;
+- independent Terra review initially found two P2 closeout gaps (archived-Course
+  UI fencing and a missing same-key concurrency regression). Both were fixed
+  and re-reviewed; the final verdict was `PASS_WITH_PARKED_FOLLOWUPS` with no
+  P0-P2 finding. Authenticated browser interaction and beta-scale qualification
+  remain P4-09 proof surfaces.
 
 ### P4-07 — Grounded Flashcard generation
 
