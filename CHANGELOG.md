@@ -116,6 +116,10 @@
 
 ### Changed
 
+- Hardened macOS private-workspace ACL repair against SQLite WAL/SHM
+  disappearance-and-recreation races. Volatile sidecars receive a bounded
+  retry with repeated owner, regular-file, link-count, symlink, mode `0600`,
+  and ACL enforcement; persistent or non-sidecar failures still fail closed.
 - Course and BlueWay repositories now share one path-scoped schema bootstrap
   and one packaged migration stream. The former independent DDL and replay
   repair paths were removed while normal connections continue to enforce

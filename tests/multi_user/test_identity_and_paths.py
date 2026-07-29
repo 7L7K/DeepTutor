@@ -245,6 +245,73 @@ def test_private_permission_repair_retries_acl_batch_after_sidecar_vanishes(
     assert not volatile.exists()
 
 
+def test_private_permission_repair_retries_a_recreated_sqlite_sidecar(
+    tmp_path, monkeypatch,
+) -> None:
+    root = tmp_path / "private"
+    root.mkdir()
+    stable = root / "courses.db"
+    stable.write_bytes(b"sqlite")
+    volatile = root / "courses.db-shm"
+    volatile.write_bytes(b"first inode")
+    calls: list[list[str]] = []
+
+    def recreated_sidecar_chmod(command, **_kwargs):
+        calls.append(command)
+        if len(calls) == 1:
+            raise paths.subprocess.CalledProcessError(1, command)
+        if command[-1] == str(volatile) and len(
+            [
+                call
+                for call in calls
+                if len(call) == 3 and call[-1] == str(volatile)
+            ]
+        ) == 1:
+            volatile.unlink()
+            volatile.write_bytes(b"replacement inode")
+            volatile.chmod(0o644)
+            raise paths.subprocess.CalledProcessError(1, command)
+        return paths.subprocess.CompletedProcess(command, 0)
+
+    monkeypatch.setattr(paths.sys, "platform", "darwin")
+    monkeypatch.setattr(paths.subprocess, "run", recreated_sidecar_chmod)
+
+    paths.restrict_private_tree_permissions(root)
+
+    volatile_calls = [
+        call for call in calls if len(call) == 3 and call[-1] == str(volatile)
+    ]
+    assert len(volatile_calls) == 2
+    assert volatile.read_bytes() == b"replacement inode"
+    assert stat.S_IMODE(volatile.stat().st_mode) == 0o600
+
+
+def test_private_permission_repair_fails_closed_on_persistent_sidecar_acl_error(
+    tmp_path, monkeypatch,
+) -> None:
+    root = tmp_path / "private"
+    root.mkdir()
+    volatile = root / "courses.db-wal"
+    volatile.write_bytes(b"persistent")
+    calls: list[list[str]] = []
+
+    def failing_chmod(command, **_kwargs):
+        calls.append(command)
+        if len(command) > 3 or command[-1] == str(volatile):
+            raise paths.subprocess.CalledProcessError(1, command)
+        return paths.subprocess.CompletedProcess(command, 0)
+
+    monkeypatch.setattr(paths.sys, "platform", "darwin")
+    monkeypatch.setattr(paths.subprocess, "run", failing_chmod)
+
+    with pytest.raises(RuntimeError, match="Could not clear extended ACLs"):
+        paths.restrict_private_tree_permissions(root)
+    sidecar_calls = [
+        call for call in calls if len(call) == 3 and call[-1] == str(volatile)
+    ]
+    assert len(sidecar_calls) == 4
+
+
 def test_private_permission_repair_does_not_treat_broken_symlink_as_vanished(
     tmp_path, monkeypatch,
 ) -> None:
@@ -258,15 +325,46 @@ def test_private_permission_repair_does_not_treat_broken_symlink_as_vanished(
 
     def adversarial_chmod(command, **_kwargs):
         calls.append(command)
-        if len(calls) == 1:
+        if len(command) > 3:
             volatile.unlink()
             volatile.symlink_to(root / "missing-target")
-        raise paths.subprocess.CalledProcessError(1, command)
+            raise paths.subprocess.CalledProcessError(1, command)
+        if command[-1] == str(volatile):
+            raise paths.subprocess.CalledProcessError(1, command)
+        return paths.subprocess.CompletedProcess(command, 0)
 
     monkeypatch.setattr(paths.sys, "platform", "darwin")
     monkeypatch.setattr(paths.subprocess, "run", adversarial_chmod)
 
-    with pytest.raises(RuntimeError, match="Could not clear extended ACLs"):
+    with pytest.raises(RuntimeError, match="symbolic link is not allowed"):
+        paths.restrict_private_tree_permissions(root)
+
+
+def test_private_permission_repair_rejects_recreated_hard_linked_sidecar(
+    tmp_path, monkeypatch,
+) -> None:
+    root = tmp_path / "private"
+    root.mkdir()
+    stable = root / "courses.db"
+    stable.write_bytes(b"sqlite")
+    outside = tmp_path / "outside"
+    outside.write_bytes(b"shared")
+    volatile = root / "courses.db-shm"
+    volatile.write_bytes(b"wal")
+
+    def adversarial_chmod(command, **_kwargs):
+        if len(command) > 3:
+            volatile.unlink()
+            volatile.hardlink_to(outside)
+            raise paths.subprocess.CalledProcessError(1, command)
+        if command[-1] == str(volatile):
+            raise paths.subprocess.CalledProcessError(1, command)
+        return paths.subprocess.CompletedProcess(command, 0)
+
+    monkeypatch.setattr(paths.sys, "platform", "darwin")
+    monkeypatch.setattr(paths.subprocess, "run", adversarial_chmod)
+
+    with pytest.raises(RuntimeError, match="hard-linked file is not allowed"):
         paths.restrict_private_tree_permissions(root)
 
 

@@ -141,13 +141,67 @@ def restrict_private_tree_permissions(root: Path) -> None:
                             capture_output=True,
                         )
                     except subprocess.CalledProcessError as path_error:
-                        try:
-                            candidate.lstat()
-                        except FileNotFoundError:
-                            continue
-                        raise RuntimeError(
-                            f"Could not clear extended ACLs from private workspace {root}"
-                        ) from path_error
+                        # An open SQLite sidecar can disappear and be recreated
+                        # between chmod's pathname lookup and this check. Retry
+                        # only those known-volatile files, revalidating their
+                        # identity constraints every time. Persistent errors
+                        # and every non-sidecar error still fail closed.
+                        retry_error = path_error
+                        retry_limit = (
+                            3
+                            if candidate.name.endswith(("-wal", "-shm"))
+                            else 0
+                        )
+                        for _attempt in range(retry_limit + 1):
+                            try:
+                                candidate_stat = candidate.lstat()
+                            except FileNotFoundError:
+                                break
+                            assert_owned(candidate, candidate_stat)
+                            candidate_mode = candidate_stat.st_mode
+                            if stat.S_ISLNK(candidate_mode):
+                                raise RuntimeError(
+                                    f"symbolic link is not allowed in private workspace: "
+                                    f"{candidate}"
+                                )
+                            if (
+                                stat.S_ISREG(candidate_mode)
+                                and candidate_stat.st_nlink > 1
+                            ):
+                                raise RuntimeError(
+                                    f"hard-linked file is not allowed in private workspace: "
+                                    f"{candidate}"
+                                )
+                            if retry_limit and not stat.S_ISREG(candidate_mode):
+                                raise RuntimeError(
+                                    f"SQLite sidecar is not a regular file in private "
+                                    f"workspace: {candidate}"
+                                )
+                            if retry_limit:
+                                try:
+                                    candidate.chmod(0o600)
+                                except FileNotFoundError:
+                                    break
+                            if _attempt == retry_limit:
+                                raise RuntimeError(
+                                    f"Could not clear extended ACLs from private workspace "
+                                    f"{root}"
+                                ) from retry_error
+                            try:
+                                subprocess.run(
+                                    ["/bin/chmod", "-N", str(candidate)],
+                                    check=True,
+                                    capture_output=True,
+                                )
+                                break
+                            except subprocess.CalledProcessError as exc:
+                                retry_error = exc
+                                continue
+                            except OSError as exc:
+                                raise RuntimeError(
+                                    f"Could not clear extended ACLs from private workspace "
+                                    f"{root}"
+                                ) from exc
                     except OSError as path_error:
                         raise RuntimeError(
                             f"Could not clear extended ACLs from private workspace {root}"
