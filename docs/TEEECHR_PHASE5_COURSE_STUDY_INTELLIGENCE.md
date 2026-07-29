@@ -1,6 +1,6 @@
 # TEEECHR Phase 5 — Course Study Intelligence
 
-Status: provider-free single-host engineering boundary complete
+Status: single-host engineering boundary complete; bounded provider adapter qualified
 
 Authority: `/Users/home/Desktop/2k26/teeech/DeepTutor-v1.5.2-baseline`
 
@@ -67,7 +67,7 @@ historical tester-cookie, KB-name, or shared-storage architecture.
 - No automatic paid retry occurs after an uncertain provider response.
 - The single-host beta permits one paid operation per user and two globally.
 - Real-provider closeout proof requires separate approval and a maximum total
-  budget of two US dollars.
+  lifetime pilot budget of ten US dollars.
 
 ## Non-goals
 
@@ -202,18 +202,26 @@ revision, and current Course/deck optimistic authority.
 
 ## Provider credential contract
 
-Raw provider keys do not belong in `model_catalog.json` or browser responses.
+Raw provider keys do not belong in `model_catalog.json`, Course databases, or
+browser responses.
 
-The model catalog persists an opaque `credential_ref` and a configured status.
-A server-only provider credential authority stores the secret in a private
-directory/file with current-OS ownership, `0700`/`0600` permissions,
-single-link regular-file shape, no symlink following, atomic replacement, and
-post-write verification.
+Phase 5 does not use the active Chat model catalog. It has one dedicated
+admin-owned binding pinned to the official OpenAI endpoint and GPT-5 Mini.
+The binding is disabled by default, persists only an opaque `credential_ref`,
+and cannot activate or replace Chat's model profile.
 
-Internal runtime catalog loads may resolve a credential reference to an
-ephemeral `api_key`. Public Settings payloads return only redacted configured
-status. Logs, errors, test artifacts, provider receipts, and API responses
-never contain secret values.
+A server-only credential authority stores the secret as an AES-256-GCM
+envelope authenticated to its exact credential reference. The envelope and
+separate persistent master key use current-OS ownership, `0700`/`0600`
+permissions, single-link regular-file shape, no symlink following, atomic
+replacement, and post-write verification. A valid legacy private plaintext
+JSON credential is migrated once to an authenticated envelope and removed
+only after the encrypted replacement verifies.
+
+Internal provider resolution may hold the key ephemerally for the call.
+Public Settings payloads return only redacted configured status. Logs,
+errors, test artifacts, provider receipts, API responses, and the Phase 5
+settings file never contain secret values.
 
 ## Pre-invocation authority fence
 
@@ -359,8 +367,22 @@ claim made from deterministic fakes.
 
 ### Real-provider gate
 
-After all provider-free proof and separate approval: at most three decks,
-eight cards each, two-dollar total budget, no automatic retry, no deployment.
+After all provider-free proof and separate approval: a persistent server-side
+ten-dollar lifetime pilot ceiling, paid generation disabled by default, at
+most one active generation per user, zero automatic provider retries, and no
+deployment. Admission reserves the conservative maximum request cost before
+the call and settlement records actual usage afterward. Raising or resetting
+the ceiling remains a separate administrative decision. Enabling the provider
+also requires both its dedicated encrypted credential and the exact qualified
+pricing-version stamp; stale, missing, or unqualified configuration fails
+before client construction. Administrative usage reports expose the highest
+crossed 25, 50, 75, or 90 percent budget threshold.
+
+The adapter assigns 300 output tokens per requested card, with a 1,200-token
+minimum and an explicit 14,400-token global maximum matching the validated
+48-card request limit. The complete maximum is reserved before dispatch.
+Missing, negative, or malformed provider usage totals preserve that
+reservation as `uncertain`; they never settle as zero spend.
 
 ## Execution order
 
@@ -382,14 +404,15 @@ P5-00 contract docs
 
 ## Exit
 
-Phase 5 is engineering-complete when the provider-free implementation and
-full proof campaign pass on the exact final tree; documentation and changelog
-match that tree; every tracked and untracked path is reviewed; the repository
-closeout backcheck passes; and reviewed local commits exist.
+Phase 5 is engineering-complete when the provider-free implementation, full
+proof campaign, and separately approved bounded provider smoke pass on the
+exact final tree; documentation and changelog match that tree; every tracked
+and untracked path is reviewed; the repository closeout backcheck passes; and
+reviewed local commits exist.
 
-Real-provider quality, push, merge, deployment, production release, historical
-data migration, BlueWay expansion, and upstream reconciliation remain separate
-claims and approval gates.
+Broader real-provider quality, push, merge, deployment, production release,
+historical data migration, BlueWay expansion, and upstream reconciliation
+remain separate claims and approval gates.
 
 ## 2026-07-29 closeout receipt
 
@@ -435,5 +458,28 @@ restricted sandbox:
 All five Playwright tests passed. The `module.register()` deprecation message is
 an upstream Node warning and did not affect the campaign.
 
-No real or paid provider call, push, merge, deployment, hosted mutation,
-BlueWay source change, historical import, or upstream integration occurred.
+The separately approved command-line provider smoke used a synthetic
+photosynthesis source and the dedicated encrypted Flashcard credential:
+
+- One sandboxed request could not resolve the provider endpoint. Its durable
+  admission remains conservatively `uncertain` with a $0.003954 reservation;
+  no provider acceptance or charge is claimed.
+- One real GPT-5 Mini response used 403 input and 1,152 output tokens, reached
+  the 1,200-token combined reasoning/output ceiling, and was correctly rejected
+  as incomplete after settling an estimated $0.002405.
+- After pinning reasoning effort to `minimal` without raising the output or cost
+  ceiling, GPT-5 Mini snapshot `gpt-5-mini-2025-08-07` completed three grounded
+  structured cards using 405 input and 481 output tokens, zero reasoning
+  tokens, `store=false`, and an estimated $0.001064.
+- Both provider enablement gates returned to disabled after every attempt. The
+  encrypted credential remained readable after the sole plaintext
+  `OPENAI_API_KEY` fallback was removed from the ignored mode-`0600`
+  `.env.local` file.
+
+The two settled provider responses total an estimated $0.003469. The uncertain
+reservation is tracked separately and is not reported as confirmed spend. The
+temporary smoke helper was removed after proof. The redacted machine-readable
+evidence is retained in `docs/TEEECHR_PHASE5_PROVIDER_SMOKE_RECEIPT.json`.
+
+No push, merge, deployment, hosted mutation, BlueWay source change, historical
+import, or upstream integration occurred.

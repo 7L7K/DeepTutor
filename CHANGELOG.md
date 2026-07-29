@@ -4,6 +4,33 @@
 
 ### Added
 
+- Hardened the separately gated Phase 5 paid-provider pilot with a persistent
+  disabled-by-default $10 lifetime ceiling, pre-call cost reservation,
+  post-call settlement, quarterly alert thresholds, and administrative
+  remaining-budget totals. The OpenAI
+  adapter now disables SDK retries, bounds its HTTP request inside the worker
+  deadline, pins GPT-5 Mini to minimal reasoning, enforces a 14,400-token
+  global output maximum with a 1,200-token three-card budget, sends a one-way
+  user safety identifier, rejects incomplete or empty structured responses,
+  and records cached/reasoning token and response metadata without persisting
+  prompts or Course excerpts. Missing or malformed usage metadata keeps the
+  conservative reservation `uncertain` instead of releasing it as zero spend.
+  Paid admission also fails closed unless the administrative policy carries
+  the exact qualified GPT-5 Mini pricing-version stamp. A separately approved
+  bounded smoke
+  produced three grounded structured cards with `store=false` for an estimated
+  $0.001064; the preceding default-reasoning response exhausted its output
+  ceiling and was safely rejected and settled.
+- Separated paid Flashcard generation from the active Chat model catalog.
+  Phase 5 now uses an admin-only, disabled-by-default GPT-5 Mini binding whose
+  credential and enablement cannot silently configure ordinary Chat.
+  Provider credentials are AES-256-GCM envelopes with authenticated
+  credential-reference binding, a separate private persistent master key,
+  strict ownership/link/permission checks, and automatic one-way migration
+  from the former private plaintext JSON format.
+- Stabilized the provider-unavailable Flashcard state so the settled server
+  reason always retains the visible manual-Flashcard fallback instead of
+  briefly showing it only while capability status is loading.
 - Closed the provider-free Phase 5 single-host engineering boundary with an
   authenticated five-test browser campaign. Disposable Alice/Bob Courses,
   learning state, a five-question quiz, manual Practice/Flashcards, grounded
@@ -20,9 +47,10 @@
   through the same authority contract. Manual Flashcards remain available
   without a provider.
 - Added a server-only provider credential authority that migrates catalog API
-  keys into opaque-reference private files, rejects unsafe symlink, hard-link,
-  ownership, permission, and malformed-file shapes, and returns only redacted
-  configured status to browser Settings. Added a disabled-by-default,
+  keys into opaque-reference encrypted files, rejects unsafe symlink,
+  hard-link, ownership, permission, malformed-envelope, and authentication
+  failures, and returns only redacted configured status to browser Settings.
+  Added a disabled-by-default,
   administrative single-host provider usage ledger with per-user/global
   concurrency and daily token reservations, settlement, release, and
   conservative uncertain-outcome accounting.
