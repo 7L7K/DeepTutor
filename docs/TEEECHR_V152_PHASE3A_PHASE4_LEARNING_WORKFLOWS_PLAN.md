@@ -109,7 +109,7 @@ They provide executable detail for this plan but do not override it. P4-01 was
 implemented on the local Phase 4 branch by `1cc75f2f`. P4-02A was implemented
 by `6bdb5179`, P4-02B by `d613b8ad`, P4-03 by `96e073ee`, P4-04 by
 `5cf02793`, P4-05 by `20a604be`, and P4-06 by `c55d2dc0`; P4-07 is the
-next active slice.
+local implementation commit `712769b3`. P4-08 is the next active slice.
 
 ## 1. Goal and non-goals
 
@@ -1024,6 +1024,42 @@ Status: **completed for the local engineering boundary by `c55d2dc0`.**
   - failed generation retains a safe terminal receipt.
 - **Doc alignment:** historical source-trust badge behavior and current Course sources.
 - **Risk / unknown:** do not present generated cards as source-grounded without citations.
+
+P4-07 implementation receipt:
+
+- migration `0006_flashcard_generation.sql` adds one retained, owner/Course-bound
+  operation ledger and generated-deck successor identity without a second schema
+  authority;
+- a generated request freezes exact source revision/fingerprint receipts,
+  objective IDs, item/context bounds, Course write epoch, deck write epoch,
+  idempotency key, and request fingerprint before local work begins;
+- final publication revalidates the current account, active Course/write epoch,
+  draft generated deck, exact source revisions/fingerprints, bounded provider
+  output, and every citation, then atomically inserts immutable cards, initial
+  review schedules, the ready deck transition, and the completed operation;
+- generated cards and ready state cannot be inserted through the manual
+  Flashcard APIs or direct SQLite without the bound running operation; terminal
+  completed/failed operations are immutable and no generation record has a
+  delete path;
+- explicit manual deck creation is the user-intent-only ungrounded starter path
+  and is visibly labeled `Manual deck — not source-grounded`; the generated
+  endpoint rejects empty source sets and the UI labels its result
+  `Grounded in the cited Course sources`;
+- the runtime provider is unavailable by default. The only automated execution
+  provider is the explicit deterministic local fake, which treats indexed
+  Course text as inert input, accepts no client prompt/provider/KB/tool
+  authority, and makes no paid call;
+- exact proof passed `43` focused generation/migration/Flashcard tests, `272`
+  canonical Course and BlueWay tests (excluding three preserved unrelated
+  duplicate `* 2.py` files), Ruff, staged/unstaged diff and high-confidence
+  secret checks, TypeScript, ESLint, `181` web node tests, and a Next production
+  build with `54` pages;
+- independent Terra review found three P2 closeout gaps: terminal timestamp-only
+  mutation, missing adversarial API parity/bypass checks, and ambiguous
+  ungrounded-starter labeling. All three were fixed and re-reviewed; the final
+  verdict was `PASS_WITH_PARKED_FOLLOWUPS` with no P0-P2 finding;
+- real provider generation and an authenticated browser interaction remain
+  unproved and are not implied by the local deterministic/API/build evidence.
 
 ### P4-08 — Learner actions and remediation loop
 

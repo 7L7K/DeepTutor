@@ -4,6 +4,14 @@
 
 ### Added
 
+- Added Course-grounded Flashcard generation with frozen source receipts,
+  citation-enforced immutable cards, idempotent operation replay, explicit
+  successor lineage, atomic review-schedule publication, safe terminal failure
+  receipts, restart reconciliation, and account/Course/write-epoch commit
+  fencing. Generated decks require ready Course sources and remain unavailable
+  to manual card or ready-state APIs; manual decks are visibly labeled as not
+  source-grounded. The provider seam remains fail-closed outside the explicit
+  deterministic local test mode, so validation performs no paid calls.
 - Added private Course-owned manual Flashcards with durable draft/ready/archive
   decks, optimistic card revisions, append-only idempotent review evidence,
   restart-safe due schedules, deterministic Again/Hard/Good/Easy intervals,
