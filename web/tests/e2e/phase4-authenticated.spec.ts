@@ -350,7 +350,9 @@ test("manual Practice and Flashcard learner flows remain usable without a provid
     .click();
   await expect(page.getByRole("heading", { name: "Visible manual deck" })).toBeVisible();
   await page.getByLabel("Flashcard prompt").fill("Mitochondria");
-  await page.getByLabel("Flashcard answer").fill("Produces cellular energy");
+  await page
+    .getByRole("textbox", { name: "Flashcard answer", exact: true })
+    .fill("Produces cellular energy");
   await page.getByLabel("Flashcard objective IDs").fill("browser_manual_biology");
   await page.getByRole("button", { name: "Save card" }).click();
   await page.getByRole("button", { name: "Ready", exact: true }).click();
