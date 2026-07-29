@@ -398,9 +398,9 @@ test("phase5 stages grounded candidates behind review", async ({ page }) => {
   await page
     .getByRole("button", { name: "Confirm and generate candidates" })
     .click();
-  await expect(page.getByRole("status")).toContainText(
-    "Grounded Flashcard generation queued.",
-  );
+  await expect(
+    page.getByText("Grounded Flashcard generation queued.", { exact: true }),
+  ).toBeVisible();
   await expect
     .poll(async () => {
       await page.getByRole("button", { name: "Refresh status" }).click();
@@ -435,9 +435,11 @@ test("phase5 publishes persisted reviewed candidates after restart", async ({
   );
   await page.getByRole("button", { name: /Include again/ }).click();
   await page.getByRole("button", { name: "Publish selected" }).click();
-  await expect(page.getByRole("status")).toContainText(
-    "Selected candidates published",
-  );
+  await expect(
+    page.getByText("Selected candidates published as an immutable deck.", {
+      exact: true,
+    }),
+  ).toBeVisible();
   await expect(
     page.getByRole("heading", { name: "Phase 5 grounded deck" }),
   ).toBeVisible();
