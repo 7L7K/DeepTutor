@@ -4,6 +4,29 @@
 
 ### Added
 
+- Added the provider-free Phase 5 Course Study Intelligence foundation.
+  Flashcard generation now starts with a server-normalized, Course-owned brief
+  and a separate visible confirmation; revalidates the current account,
+  Course/write epoch, draft target, and exact source receipts immediately
+  before provider use and again before persistence; stages normalized cited
+  candidates for seven-day learner review; and publishes only the learner's
+  selected order as an immutable generated deck. Chat's existing `Make
+  flashcards` action and graded Practice misses create non-mutating proposals
+  through the same authority contract. Manual Flashcards remain available
+  without a provider.
+- Added a server-only provider credential authority that migrates catalog API
+  keys into opaque-reference private files, rejects unsafe symlink, hard-link,
+  ownership, permission, and malformed-file shapes, and returns only redacted
+  configured status to browser Settings. Added a disabled-by-default,
+  administrative single-host provider usage ledger with per-user/global
+  concurrency and daily token reservations, settlement, release, and
+  conservative uncertain-outcome accounting.
+- Added a strict GPT-5 Mini Responses API Flashcard adapter with structured
+  output, `store=false`, no tools or web access, bounded untrusted Course
+  excerpts, exact evidence-quote validation, no automatic paid retry, and a
+  deterministic local provider for provider-free tests only. Real-provider
+  calls, model-quality claims, deployment, push, and merge remain separately
+  approved gates.
 - Added a provider-free Phase 4 beta qualification campaign. Fifty saved
   profiles receive isolated Course/Practice/Flashcard/learning databases; ten
   Course operations run concurrently; normal bcrypt/JWT requests prove current
