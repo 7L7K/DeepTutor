@@ -1,6 +1,6 @@
 # TEEECHR v1.5.2 Phase 4 Database Contract
 
-Status: **approved planning contract; implementation not started**
+Status: **implemented and locally qualified through migration `0006`; Phase 4 provider-free closeout complete**
 
 Canonical parent:
 `docs/TEEECHR_V152_PHASE3A_PHASE4_LEARNING_WORKFLOWS_PLAN.md`

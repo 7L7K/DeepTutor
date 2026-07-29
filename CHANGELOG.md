@@ -116,6 +116,13 @@
 
 ### Changed
 
+- Closed Phase 4 for the local provider-free single-host engineering boundary.
+  The final affected campaign passes 399 Python tests, 185 web node tests,
+  TypeScript, full lint with no errors, a 54-page production build, and a
+  disposable two-user browser flow across an actual backend restart. Real or
+  paid providers, native Apple/device certification, hosted fixture retirement,
+  deployment, historical-data import, and upstream integration remain separate
+  release gates.
 - Hardened macOS private-workspace ACL repair against SQLite WAL/SHM
   disappearance-and-recreation races. Volatile sidecars receive a bounded
   retry with repeated owner, regular-file, link-count, symlink, mode `0600`,

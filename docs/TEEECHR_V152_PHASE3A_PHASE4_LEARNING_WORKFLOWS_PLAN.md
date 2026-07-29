@@ -1,6 +1,6 @@
 # TEEECHR v1.5.2 Phase 3A and Phase 4 — Close BlueWay, Restore Learning Workflows
 
-Status: **Phase 3A accepted; Phase 4 implementation active; P4-01 through P4-06 complete.**
+Status: **Phase 3A accepted; Phase 4 locally complete for the provider-free single-host engineering boundary.**
 The real two-owner Apple/device flow, hosted fixture retirement, publication,
 deployment, and release certification remain parked. They do not block Phase 4,
 and Phase 4 must not imply that those distinct surfaces passed.
@@ -1178,6 +1178,49 @@ hosted, deployed, paid-provider, or production release result.
 - **Doc alignment:** repository `AGENTS.md`.
 - **Risk / unknown:** do not turn closeout into upstream integration.
 
+**2026-07-28 local closeout receipt:** P4-10 passes with parked release
+follow-ups. The exact tested implementation head is `d16980c9`; the final
+documentation commit follows this receipt.
+
+- P4-01 through P4-09 are represented by reviewed local implementation,
+  test, and receipt commits based on accepted Phase 3A commit `af5eab79`;
+- the final affected Python campaign passed `399` Course, BlueWay, and
+  multi-user tests with `8` warnings;
+- the web campaign passed `185` node tests and TypeScript; full ESLint
+  completed with `0` errors and `138` existing warnings; the production build
+  emitted `54` pages;
+- `scripts/test-phase4-browser` passed both authenticated halves: disposable
+  Alice/Bob setup and verification after actual backend process death and
+  restart;
+- the first broad Python run found one macOS ACL race when an active SQLite
+  `-shm` sidecar disappeared and was recreated between permission repair
+  operations. Commit `d16980c9` adds a bounded sidecar-only retry that
+  revalidates OS ownership, regular-file shape, symlink/hard-link constraints,
+  mode `0600`, and ACL removal while persistent and non-sidecar errors remain
+  fail-closed;
+- focused ACL proof covers disappearance, recreation from `0644` to repaired
+  `0600`, exact retry exhaustion, broken symlink, and hard-link substitution;
+  the previously failing hermetic BlueWay lifecycle passed five consecutive
+  reruns before the final `399`-test campaign passed;
+- high-confidence secret scanning of the Phase 4 range found no key, JWT, or
+  private-key pattern; no tracked database, WAL/SHM file, credential envelope,
+  transcript payload, browser report, generated test result, or personal
+  runtime data was added;
+- the three unrelated untracked duplicate `* 2.py` files remain preserved and
+  excluded from every Phase 4 commit;
+- the repository section-closeout backcheck passes with
+  `PASS_WITH_PARKED_FOLLOWUPS`; independent Sol review reports no unresolved
+  P0-P2 issue inside the provider-free scope;
+- no push, merge, deployment, hosted mutation, BlueWay source edit, paid
+  provider call, hard deletion, historical learner-data import, or upstream
+  integration occurred.
+
+Parked release gates are explicit: complete pre-provider account/Course/target/
+source revalidation before any real or paid generation call; current native
+two-real-owner Apple/device certification; hosted fixture retirement;
+production deployment/release; historical learner-data migration; and future
+upstream reconciliation.
+
 ## 10. API surface proposal
 
 The final names may change during contract review, but the smallest expected
@@ -1246,27 +1289,23 @@ external BlueWay title, or client-selected filesystem path.
 
 ## 12. Risks and decisions
 
-### Open product decisions
+### Resolved Phase 4 product decisions
 
-1. Historical data: functionality-only first, or also import old attempts/decks?
-   Recommendation: functionality first; separate dry-run importer later.
-2. Ungrounded generation: allow explicit topic-starter quizzes/cards?
-   Recommendation: allow only with a visible “Not grounded in your Course sources”
-   label and never use them for high-confidence mastery.
-3. Qualitative grading: model judgment or self-assessment?
-   Recommendation: deterministic grading for V1; add explicitly labeled model
-   judgment later.
-4. Flashcard scheduling: exact historical algorithm or a smaller new policy?
-   Recommendation: inspect historical behavior, then adopt a documented,
-   deterministic policy rather than copying storage code.
-5. Archived source behavior: keep old assets visible?
-   Recommendation: keep historical attempts/decks visible with an unavailable-source
-   badge; block new generation until an active source is selected.
+1. Historical data: functionality first. A separate report-only importer is
+   parked in `FUTURE_DUE.md`.
+2. Ungrounded starters: manual Practice and Flashcards are allowed only with
+   visible not-source-grounded labeling; generated endpoints require owned
+   ready sources.
+3. Grading: exact deterministic grading is the Phase 4 authority. Model
+   judgment remains a future explicitly labeled mode.
+4. Flashcard scheduling: the implementation uses a documented deterministic
+   Again/Hard/Good/Easy policy with a 180-day cap rather than copying historical
+   storage.
+5. Archived sources/assets: historical attempts and decks remain reviewable;
+   archived parents block new work and no hard-delete path exists.
 6. Accepted-commit durability: publish a checkpoint branch before Phase 4?
-   Recommendation: push the exact `af5eab79` survivor branch without merging or
-   deploying, but only after separate explicit approval. Until then, preserve the
-   current no-push boundary and treat the Phase 4 documents as an uncommitted
-   planning slice.
+   The branch remains local. Push, merge, and deployment each require separate
+   explicit approval after review of the final commit range.
 
 ### Engineering risks
 
