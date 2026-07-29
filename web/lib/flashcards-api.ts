@@ -76,6 +76,45 @@ export interface FlashcardDeckView {
   review_summary: FlashcardReviewSummary;
 }
 
+export type FlashcardGenerationState =
+  | "queued"
+  | "running"
+  | "completed"
+  | "failed";
+
+export interface FlashcardSourceReceipt {
+  source_id: string;
+  source_revision: number;
+  content_sha256: string;
+}
+
+export interface FlashcardGenerationOperation {
+  id: string;
+  owner_user_id: string;
+  course_id: string;
+  deck_id: string;
+  supersedes_deck_id: string | null;
+  idempotency_key: string;
+  request_fingerprint: string;
+  source_snapshot: FlashcardSourceReceipt[];
+  objective_ids: string[];
+  course_write_epoch: number;
+  deck_write_epoch: number;
+  item_limit: number;
+  context_char_limit: number;
+  state: FlashcardGenerationState;
+  error_code: string | null;
+  created_at: number;
+  started_at: number | null;
+  completed_at: number | null;
+  updated_at: number;
+}
+
+export interface FlashcardGenerationRequest {
+  deck_id: string;
+  operation: FlashcardGenerationOperation;
+}
+
 export interface FlashcardRequestScope {
   identity: string | null;
   courseId: string | null;
@@ -263,4 +302,95 @@ export function reviewFlashcard(
       }),
     ),
   );
+}
+
+function generationInput(
+  title: string,
+  sourceIds: string[],
+  objectiveIds: string[],
+  courseWriteEpoch: number,
+) {
+  return {
+    title,
+    source_ids: sourceIds,
+    objective_ids: objectiveIds,
+    expected_course_write_epoch: courseWriteEpoch,
+    item_limit: 8,
+    context_char_limit: 12_000,
+  };
+}
+
+export function createGeneratedFlashcardDeck(
+  courseId: string,
+  title: string,
+  sourceIds: string[],
+  objectiveIds: string[],
+  courseWriteEpoch: number,
+  idempotencyKey: string,
+) {
+  return json<FlashcardGenerationRequest>(
+    apiFetch(
+      apiUrl(`/api/v1/courses/${encodeURIComponent(courseId)}/flashcard-generation`),
+      {
+        ...mutation(
+          generationInput(
+            title,
+            sourceIds,
+            objectiveIds,
+            courseWriteEpoch,
+          ),
+        ),
+        headers: {
+          "Content-Type": "application/json",
+          "Idempotency-Key": idempotencyKey,
+        },
+      },
+    ),
+  );
+}
+
+export function createGeneratedFlashcardSuccessor(
+  courseId: string,
+  deckId: string,
+  title: string,
+  sourceIds: string[],
+  objectiveIds: string[],
+  courseWriteEpoch: number,
+  idempotencyKey: string,
+) {
+  return json<FlashcardGenerationRequest>(
+    apiFetch(
+      apiUrl(
+        `/api/v1/courses/${encodeURIComponent(courseId)}/flashcards/${encodeURIComponent(deckId)}/flashcard-generation`,
+      ),
+      {
+        ...mutation(
+          generationInput(
+            title,
+            sourceIds,
+            objectiveIds,
+            courseWriteEpoch,
+          ),
+        ),
+        headers: {
+          "Content-Type": "application/json",
+          "Idempotency-Key": idempotencyKey,
+        },
+      },
+    ),
+  );
+}
+
+export async function listFlashcardGenerationOperations(
+  courseId: string,
+): Promise<FlashcardGenerationOperation[]> {
+  const body = await json<{ operations: FlashcardGenerationOperation[] }>(
+    apiFetch(
+      apiUrl(
+        `/api/v1/courses/${encodeURIComponent(courseId)}/flashcard-generation`,
+      ),
+      { cache: "no-store" },
+    ),
+  );
+  return body.operations;
 }

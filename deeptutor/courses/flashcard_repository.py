@@ -265,6 +265,8 @@ class CourseFlashcardRepository:
             raise CourseConflictError("Flashcard deck revision is stale")
         now = time.time()
         if target_state == "ready":
+            if deck.mode != "manual":
+                raise CourseConflictError("Generated Flashcard decks are published only by generation operations")
             if deck.state != "draft":
                 raise CourseConflictError("Flashcard deck is not a draft")
             if not conn.execute("SELECT 1 FROM flashcards WHERE deck_id = ? AND state = 'active'", (deck_id,)).fetchone():

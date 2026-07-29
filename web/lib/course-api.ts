@@ -76,6 +76,16 @@ export async function attachCourseSource(courseId: string, file: File) {
   );
 }
 
+export async function listCourseSources(courseId: string): Promise<CourseSource[]> {
+  return (
+    await json<{ sources: CourseSource[] }>(
+      await apiFetch(apiUrl(`/api/v1/courses/${encodeURIComponent(courseId)}/sources`), {
+        cache: "no-store",
+      }),
+    )
+  ).sources;
+}
+
 export async function getCourseLearning(courseId: string) {
   return json<{
     course_id: string;

@@ -23,6 +23,7 @@ class FlashcardDeck(BaseModel):
     state: FlashcardDeckState
     source_snapshot: list[dict] = Field(default_factory=list)
     generation_receipt: dict | None = None
+    supersedes_deck_id: str | None = None
     revision: int = Field(ge=1)
     write_epoch: int = Field(ge=1)
     created_at: float

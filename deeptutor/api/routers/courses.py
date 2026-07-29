@@ -177,6 +177,16 @@ class RecordFlashcardReviewRequest(_PracticeRequest):
     expected_course_write_epoch: int = Field(ge=1)
 
 
+class CreateGeneratedFlashcardDeckRequest(_PracticeRequest):
+    """No prompt/provider/KB authority reaches the generated-deck backend."""
+    title: str = Field(min_length=1, max_length=160)
+    source_ids: list[Annotated[str, Field(min_length=1, max_length=80)]] = Field(min_length=1, max_length=32)
+    objective_ids: list[Annotated[str, Field(min_length=1, max_length=160)]] = Field(default_factory=list, max_length=64)
+    expected_course_write_epoch: int = Field(ge=1)
+    item_limit: int = Field(default=8, ge=1, le=48)
+    context_char_limit: int = Field(default=12_000, ge=1, le=48_000)
+
+
 def _service():
     try:
         return get_current_course_service()
@@ -334,6 +344,29 @@ def _practice_generation_service_for(course_service):
     from deeptutor.courses.generation_service import build_practice_generation_service
 
     return build_practice_generation_service(course_service)
+
+
+def _flashcard_generation_service():
+    from deeptutor.courses.flashcard_generation_service import build_flashcard_generation_service
+    return build_flashcard_generation_service(_service())
+
+
+def _flashcard_generation_service_for(course_service):
+    from deeptutor.courses.flashcard_generation_service import build_flashcard_generation_service
+    return build_flashcard_generation_service(course_service)
+
+
+def _run_flashcard_generation(owner_user_id: str, course_id: str, operation_id: str) -> None:
+    from deeptutor.courses.flashcard_generation_service import unregister_live_flashcard_generation
+    from deeptutor.courses.repository import CourseRepository
+    from deeptutor.courses.service import CourseService
+    from deeptutor.multi_user.paths import get_personal_path_service
+    try:
+        paths = get_personal_path_service(owner_user_id)
+        service = CourseService(CourseRepository(paths.get_courses_db(), owner_user_id))
+        _flashcard_generation_service_for(service).run_operation(course_id, operation_id)
+    finally:
+        unregister_live_flashcard_generation(owner_user_id, course_id, operation_id)
 
 
 def _practice_question_payload(question, *, include_answer_contract: bool) -> dict:
@@ -795,6 +828,45 @@ async def create_flashcard_deck(course_id: str, body: CreateFlashcardDeckRequest
                 expected_course_write_epoch=body.expected_course_write_epoch,
             )
         ).model_dump(mode="json")
+
+
+@router.post("/{course_id}/flashcard-generation", status_code=202)
+async def create_generated_flashcard_deck(course_id: str, body: CreateGeneratedFlashcardDeckRequest, background_tasks: BackgroundTasks, idempotency_key: str = Header(..., alias="Idempotency-Key", min_length=8, max_length=160)):
+    """Queue a source-grounded generated deck; output is never a request body."""
+    async with course_operation_lock(course_id):
+        request = _practice_call(lambda: _flashcard_generation_service().create_generated_deck(
+            course_id, title=body.title, source_ids=body.source_ids, objective_ids=body.objective_ids,
+            idempotency_key=idempotency_key, expected_course_write_epoch=body.expected_course_write_epoch,
+            item_limit=body.item_limit, context_char_limit=body.context_char_limit,
+        ))
+    from deeptutor.courses.flashcard_generation_service import register_live_flashcard_generation
+    register_live_flashcard_generation(request.operation.owner_user_id, course_id, request.operation.id)
+    background_tasks.add_task(_run_flashcard_generation, request.operation.owner_user_id, course_id, request.operation.id)
+    return request.model_dump(mode="json")
+
+
+@router.get("/{course_id}/flashcard-generation")
+async def list_flashcard_generation_operations(course_id: str):
+    return {"operations": [item.model_dump(mode="json") for item in _practice_call(lambda: _flashcard_generation_service().list_operations(course_id))]}
+
+
+@router.get("/{course_id}/flashcard-generation/{operation_id}")
+async def get_flashcard_generation_operation(course_id: str, operation_id: str):
+    return _practice_call(lambda: _flashcard_generation_service().get_operation(course_id, operation_id)).model_dump(mode="json")
+
+
+@router.post("/{course_id}/flashcards/{deck_id}/flashcard-generation", status_code=202)
+async def create_flashcard_generation_successor(course_id: str, deck_id: str, body: CreateGeneratedFlashcardDeckRequest, background_tasks: BackgroundTasks, idempotency_key: str = Header(..., alias="Idempotency-Key", min_length=8, max_length=160)):
+    async with course_operation_lock(course_id):
+        request = _practice_call(lambda: _flashcard_generation_service().request_successor(
+            course_id, deck_id, title=body.title, source_ids=body.source_ids, objective_ids=body.objective_ids,
+            idempotency_key=idempotency_key, expected_course_write_epoch=body.expected_course_write_epoch,
+            item_limit=body.item_limit, context_char_limit=body.context_char_limit,
+        ))
+    from deeptutor.courses.flashcard_generation_service import register_live_flashcard_generation
+    register_live_flashcard_generation(request.operation.owner_user_id, course_id, request.operation.id)
+    background_tasks.add_task(_run_flashcard_generation, request.operation.owner_user_id, course_id, request.operation.id)
+    return request.model_dump(mode="json")
 
 
 @router.get("/{course_id}/flashcards")

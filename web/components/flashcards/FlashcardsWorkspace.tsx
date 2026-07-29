@@ -10,27 +10,33 @@ import {
   Play,
   RotateCcw,
   Save,
+  Sparkles,
 } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import { CourseBar } from "@/components/courses/CourseBar";
 import { useCourses } from "@/context/CourseContext";
 import { fetchAuthStatus } from "@/lib/auth";
+import { listCourseSources, type CourseSource } from "@/lib/course-api";
 import {
   addFlashcard,
   advanceFlashcardViewScope,
   archiveOrRestoreFlashcardDeck,
   createFlashcardDeck,
+  createGeneratedFlashcardDeck,
+  createGeneratedFlashcardSuccessor,
   getDueFlashcards,
   getFlashcardDeck,
   isFlashcardCourseWritable,
   isCurrentFlashcardResponse,
   listFlashcardDecks,
+  listFlashcardGenerationOperations,
   readyFlashcardDeck,
   requeueAgainCard,
   reviewFlashcard,
   type Flashcard,
   type FlashcardDeck,
   type FlashcardDeckView,
+  type FlashcardGenerationOperation,
   type FlashcardRating,
   type FlashcardRequestScope,
 } from "@/lib/flashcards-api";
@@ -56,6 +62,13 @@ export default function FlashcardsWorkspace() {
   const [selectedDeckId, setSelectedDeckId] = useState<string | null>(null);
   const [view, setView] = useState<FlashcardDeckView | null>(null);
   const [deckTitle, setDeckTitle] = useState("");
+  const [generatedTitle, setGeneratedTitle] = useState("");
+  const [generationObjectives, setGenerationObjectives] = useState("");
+  const [readySources, setReadySources] = useState<CourseSource[]>([]);
+  const [selectedSourceIds, setSelectedSourceIds] = useState<string[]>([]);
+  const [generationOperations, setGenerationOperations] = useState<
+    FlashcardGenerationOperation[]
+  >([]);
   const [cardDraft, setCardDraft] = useState(emptyCard);
   const [reviewCards, setReviewCards] = useState<Flashcard[]>([]);
   const [reviewIndex, setReviewIndex] = useState(0);
@@ -92,6 +105,11 @@ export default function FlashcardsWorkspace() {
       setSelectedDeckId(null);
       setView(null);
       setDeckTitle("");
+      setGeneratedTitle("");
+      setGenerationObjectives("");
+      setReadySources([]);
+      setSelectedSourceIds([]);
+      setGenerationOperations([]);
       setCardDraft(emptyCard);
       setReviewCards([]);
       setReviewIndex(0);
@@ -129,9 +147,19 @@ export default function FlashcardsWorkspace() {
   const loadCourse = useCallback(
     async (scope: FlashcardRequestScope) => {
       if (!scope.courseId) return;
-      const listed = await listFlashcardDecks(scope.courseId);
+      const [listed, sources, operations] = await Promise.all([
+        listFlashcardDecks(scope.courseId),
+        listCourseSources(scope.courseId),
+        listFlashcardGenerationOperations(scope.courseId),
+      ]);
       if (!current(scope)) return;
       setDecks(listed);
+      const ready = sources.filter((source) => source.state === "ready");
+      setReadySources(ready);
+      setSelectedSourceIds((selected) =>
+        selected.filter((id) => ready.some((source) => source.id === id)),
+      );
+      setGenerationOperations(operations);
       const first = listed.find((deck) => deck.state !== "archived") ?? null;
       setSelectedDeckId(first?.id ?? null);
       if (first) await loadDeck(scope, first);
@@ -229,6 +257,101 @@ export default function FlashcardsWorkspace() {
       if (current(scope)) setBusy(false);
     }
   }, [activeCourse, advanceView, courseWritable, current, deckTitle, loadDeck]);
+
+  const requestGeneration = useCallback(
+    async (successor: boolean) => {
+      if (
+        !activeCourse ||
+        !courseWritable ||
+        !generatedTitle.trim() ||
+        !selectedSourceIds.length ||
+        (successor &&
+          (!selectedDeck ||
+            selectedDeck.mode !== "generated" ||
+            selectedDeck.state !== "ready"))
+      )
+        return;
+      const scope = advanceView();
+      setBusy(true);
+      setError(null);
+      try {
+        const objectiveIds = generationObjectives
+          .split(",")
+          .map((value) => value.trim())
+          .filter(Boolean);
+        const requested =
+          successor && selectedDeck
+            ? await createGeneratedFlashcardSuccessor(
+                activeCourse.id,
+                selectedDeck.id,
+                generatedTitle.trim(),
+                selectedSourceIds,
+                objectiveIds,
+                activeCourse.write_epoch,
+                idempotencyKey(),
+              )
+            : await createGeneratedFlashcardDeck(
+                activeCourse.id,
+                generatedTitle.trim(),
+                selectedSourceIds,
+                objectiveIds,
+                activeCourse.write_epoch,
+                idempotencyKey(),
+              );
+        if (!current(scope)) return;
+        setGenerationOperations((operations) => [
+          requested.operation,
+          ...operations.filter((item) => item.id !== requested.operation.id),
+        ]);
+        setGeneratedTitle("");
+        setGenerationObjectives("");
+        setStatus(
+          successor
+            ? "Grounded successor generation queued."
+            : "Grounded Flashcard generation queued.",
+        );
+      } catch (cause) {
+        if (current(scope)) setError(errorText(cause));
+      } finally {
+        if (current(scope)) setBusy(false);
+      }
+    },
+    [
+      activeCourse,
+      advanceView,
+      courseWritable,
+      current,
+      generatedTitle,
+      generationObjectives,
+      selectedDeck,
+      selectedSourceIds,
+    ],
+  );
+
+  const refreshGeneration = useCallback(async () => {
+    if (!activeCourse) return;
+    const scope = scopeRef.current;
+    setBusy(true);
+    setError(null);
+    try {
+      const [operations, listed] = await Promise.all([
+        listFlashcardGenerationOperations(activeCourse.id),
+        listFlashcardDecks(activeCourse.id),
+      ]);
+      if (!current(scope)) return;
+      setGenerationOperations(operations);
+      setDecks(listed);
+      if (selectedDeckId) {
+        const deck = listed.find((item) => item.id === selectedDeckId);
+        if (deck) await loadDeck(scope, deck);
+      }
+      if (current(scope)) setStatus("Generation status refreshed.");
+    } catch (cause) {
+      if (current(scope)) setError(errorText(cause));
+    } finally {
+      if (current(scope)) setBusy(false);
+    }
+  }, [activeCourse, current, loadDeck, selectedDeckId]);
 
   const addCard = useCallback(async () => {
     if (
@@ -452,7 +575,122 @@ export default function FlashcardsWorkspace() {
         ) : null}
 
         {activeCourse ? (
-          <div className="grid gap-5 lg:grid-cols-[280px_minmax(0,1fr)]">
+          <>
+            <section className="space-y-4 rounded-xl border border-[var(--border)] bg-[var(--card)] p-4">
+              <div className="flex flex-wrap items-start justify-between gap-3">
+                <div>
+                  <h2 className="flex items-center gap-2 font-medium">
+                    <Sparkles size={16} /> {t("Grounded generation")}
+                  </h2>
+                  <p className="text-sm text-[var(--muted-foreground)]">
+                    {t("Create cited cards only from ready sources in this Course.")}
+                  </p>
+                </div>
+                <button
+                  onClick={() => void refreshGeneration()}
+                  disabled={busy}
+                  className="rounded-lg border border-[var(--border)] px-3 py-2 text-sm disabled:opacity-50"
+                >
+                  {t("Refresh status")}
+                </button>
+              </div>
+              <div className="grid gap-3 md:grid-cols-2">
+                <input
+                  aria-label={t("Generated deck title")}
+                  value={generatedTitle}
+                  onChange={(event) => setGeneratedTitle(event.target.value)}
+                  placeholder={t("Generated deck title")}
+                  disabled={!courseWritable || busy}
+                  className="rounded-lg border border-[var(--border)] bg-[var(--background)] px-3 py-2 text-sm"
+                />
+                <input
+                  aria-label={t("Generation objective IDs")}
+                  value={generationObjectives}
+                  onChange={(event) => setGenerationObjectives(event.target.value)}
+                  placeholder={t("Objective IDs, comma-separated (optional)")}
+                  disabled={!courseWritable || busy}
+                  className="rounded-lg border border-[var(--border)] bg-[var(--background)] px-3 py-2 text-sm"
+                />
+              </div>
+              <div className="flex flex-wrap gap-2">
+                {readySources.map((source) => {
+                  const checked = selectedSourceIds.includes(source.id);
+                  return (
+                    <label
+                      key={source.id}
+                      className="flex items-center gap-2 rounded-lg border border-[var(--border)] px-3 py-2 text-sm"
+                    >
+                      <input
+                        type="checkbox"
+                        checked={checked}
+                        disabled={!courseWritable || busy}
+                        onChange={() =>
+                          setSelectedSourceIds((ids) =>
+                            checked
+                              ? ids.filter((id) => id !== source.id)
+                              : [...ids, source.id],
+                          )
+                        }
+                      />
+                      {source.display_name}
+                    </label>
+                  );
+                })}
+                {!readySources.length ? (
+                  <p className="text-sm text-[var(--muted-foreground)]">
+                    {t("Attach and finish processing a Course source before generation.")}
+                  </p>
+                ) : null}
+              </div>
+              <div className="flex flex-wrap gap-2">
+                <button
+                  onClick={() => void requestGeneration(false)}
+                  disabled={
+                    !courseWritable ||
+                    busy ||
+                    !generatedTitle.trim() ||
+                    !selectedSourceIds.length
+                  }
+                  className="rounded-lg bg-[var(--primary)] px-3 py-2 text-sm text-[var(--primary-foreground)] disabled:opacity-50"
+                >
+                  {t("Generate grounded deck")}
+                </button>
+                <button
+                  onClick={() => void requestGeneration(true)}
+                  disabled={
+                    !courseWritable ||
+                    busy ||
+                    !generatedTitle.trim() ||
+                    !selectedSourceIds.length ||
+                    selectedDeck?.mode !== "generated" ||
+                    selectedDeck?.state !== "ready"
+                  }
+                  className="rounded-lg border border-[var(--border)] px-3 py-2 text-sm disabled:opacity-50"
+                >
+                  {t("Generate successor")}
+                </button>
+              </div>
+              {generationOperations.length ? (
+                <div className="grid gap-2 md:grid-cols-2">
+                  {generationOperations.slice(0, 6).map((operation) => (
+                    <div
+                      key={operation.id}
+                      className="rounded-lg border border-[var(--border)] px-3 py-2 text-sm"
+                    >
+                      <span className="font-medium">{operation.state}</span>
+                      <span className="ml-2 text-[var(--muted-foreground)]">
+                        {operation.source_snapshot.length} {t("sources")}
+                      </span>
+                      {operation.error_code ? (
+                        <p className="text-xs text-red-600">{operation.error_code}</p>
+                      ) : null}
+                    </div>
+                  ))}
+                </div>
+              ) : null}
+            </section>
+
+            <div className="grid gap-5 lg:grid-cols-[280px_minmax(0,1fr)]">
             <section className="rounded-xl border border-[var(--border)] bg-[var(--card)] p-4">
               <h2 className="mb-3 font-medium">{t("Decks")}</h2>
               <div className="mb-3 flex gap-2">
@@ -506,9 +744,15 @@ export default function FlashcardsWorkspace() {
                       <p className="text-sm text-[var(--muted-foreground)]">
                         {view.cards.length} {t("cards")} · {view.review_summary.due_cards} {t("due")}
                       </p>
+                      <p className="mt-1 text-xs font-medium text-[var(--muted-foreground)]">
+                        {selectedDeck.mode === "generated"
+                          ? t("Grounded in the cited Course sources")
+                          : t("Manual deck — not source-grounded")}
+                      </p>
                     </div>
                     <div className="flex flex-wrap gap-2">
-                      {selectedDeck.state === "draft" ? (
+                      {selectedDeck.state === "draft" &&
+                      selectedDeck.mode === "manual" ? (
                         <button
                           onClick={() => void publishDeck()}
                           disabled={!courseWritable || busy || !view.cards.length}
@@ -541,7 +785,8 @@ export default function FlashcardsWorkspace() {
                     </div>
                   </div>
 
-                  {selectedDeck.state === "draft" ? (
+                  {selectedDeck.state === "draft" &&
+                  selectedDeck.mode === "manual" ? (
                     <div className="space-y-3 rounded-lg border border-[var(--border)] p-4">
                       <h3 className="font-medium">{t("Add a card")}</h3>
                       <textarea
@@ -590,6 +835,15 @@ export default function FlashcardsWorkspace() {
                         <Save size={15} /> {t("Save card")}
                       </button>
                     </div>
+                  ) : null}
+
+                  {selectedDeck.state === "draft" &&
+                  selectedDeck.mode === "generated" ? (
+                    <Notice>
+                      {t(
+                        "Grounded generation is still processing. Refresh status to load the immutable deck when it is ready.",
+                      )}
+                    </Notice>
                   ) : null}
 
                   {currentCard ? (
@@ -655,7 +909,8 @@ export default function FlashcardsWorkspace() {
                 </p>
               )}
             </section>
-          </div>
+            </div>
+          </>
         ) : null}
 
         {busy ? (
