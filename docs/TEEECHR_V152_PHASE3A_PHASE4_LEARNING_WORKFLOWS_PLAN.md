@@ -109,7 +109,8 @@ They provide executable detail for this plan but do not override it. P4-01 was
 implemented on the local Phase 4 branch by `1cc75f2f`. P4-02A was implemented
 by `6bdb5179`, P4-02B by `d613b8ad`, P4-03 by `96e073ee`, P4-04 by
 `5cf02793`, P4-05 by `20a604be`, and P4-06 by `c55d2dc0`; P4-07 is the
-local implementation commit `712769b3`. P4-08 is the next active slice.
+local implementation commit `712769b3`, and P4-08 by `0b88ca61`. P4-09 is the
+next active slice.
 
 ## 1. Goal and non-goals
 
@@ -1073,6 +1074,39 @@ P4-07 implementation receipt:
   - action replay cannot cross identity or Course changes.
 - **Doc alignment:** historical `ChatMessages.tsx` actions and current Course Chat.
 - **Risk / unknown:** avoid encoding large prompts in client navigation state.
+
+**2026-07-28 local implementation receipt:** P4-08 is source- and
+deterministic-test complete on local commit `0b88ca61`.
+
+- the four Chat chips appear only for the latest completed, persisted assistant
+  message in an active Course session;
+- every action requires the exact authenticated Course, persisted session,
+  selected assistant message, current Course revision, and write epoch;
+- the browser request contains no prompt, source/objective selection,
+  Knowledge-base name, provider/model, tool, path, or owner authority;
+- the server resolves only current ready non-superseded Course sources and
+  derives weak objectives from committed active errors, due reviews, and
+  encountered low-mastery objectives;
+- Practice and Flashcard actions reuse the existing fenced grounded-generation
+  operations. Atomic live-operation registration prevents an idempotent replay
+  from scheduling a second worker or orphaning the original;
+- Explain simpler returns a fixed, side-effect-free server plan bound to the
+  selected assistant message. The server does not send a chat turn, and an
+  exact replay returns the same plan;
+- delayed browser results are fenced by immutable user identity, Course,
+  session, assistant message, and request epoch;
+- Course-learning reads retain progress state while redacting pending prompt,
+  expected answer, options, learner answers, learner attribution, AI
+  confirmation, Feynman text, failure notes, and grading receipts;
+- final validation passed `33` focused learner-action and generation tests,
+  Ruff, staged/unstaged diff checks, `184` web node tests, TypeScript, targeted
+  ESLint with no errors, and a Next production build with `54` pages;
+- independent Terra review initially found duplicate-worker replay, missing
+  browser identity fencing, and optional message provenance. All were fixed
+  and re-reviewed; the final verdict had no remaining P0-P2 finding.
+
+Authenticated browser interaction remains part of P4-09 and is not implied by
+the API, unit, type, lint, or build proof above.
 
 ### P4-09 — Beta-scale and adversarial proof
 

@@ -4,6 +4,16 @@
 
 ### Added
 
+- Added Course-scoped learner actions to the latest persisted assistant turn:
+  Quiz me, Explain simpler, Make flashcards, and Review weak topics. The server
+  re-resolves the authenticated Course, exact session/message, current ready
+  source set, and committed weak-objective evidence; the browser carries no
+  prompt, provider, Knowledge-base, source, objective, tool, path, or ownership
+  authority. Action responses are fenced by immutable user identity, Course,
+  session, message, revision, write epoch, and request epoch. Idempotent
+  generation replay schedules at most one live worker, and Course-learning
+  reads redact pending answers, learner text, grading receipts, and diagnostic
+  notes.
 - Added Course-grounded Flashcard generation with frozen source receipts,
   citation-enforced immutable cards, idempotent operation replay, explicit
   successor lineage, atomic review-schedule publication, safe terminal failure
