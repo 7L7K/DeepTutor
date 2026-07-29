@@ -247,6 +247,29 @@ def _call(operation):
         raise HTTPException(status_code=422, detail=str(exc)) from exc
 
 
+def _generation_capabilities() -> dict[str, bool | str | None]:
+    """Expose the same fail-closed provider decision used before allocation."""
+
+    from deeptutor.courses.flashcard_generation_provider import (
+        flashcard_generation_provider_available,
+    )
+    from deeptutor.courses.generation_provider import (
+        practice_generation_provider_available,
+    )
+
+    practice = practice_generation_provider_available()
+    flashcards = flashcard_generation_provider_available()
+    grounded = practice and flashcards
+    return {
+        "grounded_generation": grounded,
+        "practice_generation": practice,
+        "flashcard_generation": flashcards,
+        "grounded_generation_reason": (
+            None if grounded else "Grounded generation is not enabled on this server"
+        ),
+    }
+
+
 @router.post("")
 async def create_course(body: CreateCourseRequest):
     return _call(lambda: _service().create(body.title)).model_dump()
@@ -258,7 +281,8 @@ async def list_courses(include_archived: bool = Query(default=True)):
         "courses": [
             course.model_dump()
             for course in _call(lambda: _service().list(include_archived=include_archived))
-        ]
+        ],
+        "capabilities": _generation_capabilities(),
     }
 
 
@@ -730,17 +754,25 @@ async def list_practice_attempts(
     course_id: str,
     practice_set_id: str,
     include_archived: bool = Query(default=True),
+    limit: int = Query(default=50, ge=1, le=100),
+    offset: int = Query(default=0, ge=0),
 ):
     _practice, attempts = _practice_services()
+    page = _practice_call(
+        lambda: attempts.list_attempts(
+            course_id,
+            practice_set_id,
+            include_archived=include_archived,
+            limit=limit,
+            offset=offset,
+        )
+    )
     return {
         "attempts": [
             item.model_dump(mode="json")
-            for item in _practice_call(
-                lambda: attempts.list_attempts(
-                    course_id, practice_set_id, include_archived=include_archived
-                )
-            )
-        ]
+            for item in page
+        ],
+        "next_offset": offset + len(page) if len(page) == limit else None,
     }
 
 
@@ -938,13 +970,24 @@ async def create_flashcard_generation_successor(course_id: str, deck_id: str, bo
 
 
 @router.get("/{course_id}/flashcards")
-async def list_flashcard_decks(course_id: str, include_archived: bool = Query(default=True)):
-    return {"flashcard_decks": [
-        item.model_dump(mode="json")
-        for item in _practice_call(
-            lambda: _flashcard_service().list_decks(course_id, include_archived=include_archived)
+async def list_flashcard_decks(
+    course_id: str,
+    include_archived: bool = Query(default=True),
+    limit: int = Query(default=50, ge=1, le=100),
+    offset: int = Query(default=0, ge=0),
+):
+    page = _practice_call(
+        lambda: _flashcard_service().list_decks(
+            course_id,
+            include_archived=include_archived,
+            limit=limit,
+            offset=offset,
         )
-    ]}
+    )
+    return {
+        "flashcard_decks": [item.model_dump(mode="json") for item in page],
+        "next_offset": offset + len(page) if len(page) == limit else None,
+    }
 
 
 @router.get("/{course_id}/flashcards/{deck_id}")
@@ -1373,25 +1416,38 @@ async def init_course_learning(course_id: str, body: InitCourseLearningRequest):
         _parse_modules,
         _validate_runnable_modules,
     )
+    from deeptutor.courses.grading_repository import CourseGradingRepository
     from deeptutor.learning.service import LearningService
     try:
         async with course_operation_lock(course_id):
             course, store = _course_learning_store(course_id, require_active=True)
-            await _cancel_owned_course_session(course.id, body.session_id)
             modules = _parse_modules(body.modules)
             _validate_runnable_modules(modules)
+            retained_grading_evidence = CourseGradingRepository(
+                _service().repository
+            ).has_course_evidence(course.id)
             service = LearningService(store)
             try:
                 progress = service.get_or_create(course.learning_path_id)
             except LearningDataError:
+                if retained_grading_evidence:
+                    raise LearningConflictError(
+                        "Course learning plan with grading evidence cannot be replaced"
+                    )
                 # Initialization is the explicit repair action. Preserve the
                 # unreadable bytes for operator recovery before starting fresh.
                 store.quarantine_corrupt(course.learning_path_id)
                 progress = service.get_or_create(course.learning_path_id)
-            service.init_modules(progress, modules)
-            progress.current_module_id = modules[0].id
-            progress.current_kp_index = 0
-            service.save(progress)
+            replaced = service.init_modules(
+                progress,
+                modules,
+                retained_grading_evidence=retained_grading_evidence,
+            )
+            if replaced:
+                await _cancel_owned_course_session(course.id, body.session_id)
+                progress.current_module_id = modules[0].id
+                progress.current_kp_index = 0
+                service.save(progress)
             return {
                 "status": "ok",
                 "course_id": course.id,
@@ -1401,6 +1457,8 @@ async def init_course_learning(course_id: str, body: InitCourseLearningRequest):
     except CourseNotFoundError as exc:
         raise HTTPException(status_code=404, detail="Course resource not found") from exc
     except CourseConflictError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except LearningConflictError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
 
 

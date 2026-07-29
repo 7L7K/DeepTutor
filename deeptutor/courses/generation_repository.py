@@ -9,6 +9,7 @@ import time
 from typing import Any, Iterable
 from uuid import uuid4
 
+from .generation_governance import admit_generation_allocation
 from .generation_models import (
     GeneratedPracticeOutput,
     PracticeGenerationOperation,
@@ -197,6 +198,7 @@ class CoursePracticeGenerationRepository:
         expected_course_write_epoch: int,
         item_limit: int = 8,
         context_char_limit: int = 24_000,
+        provider_available: bool = True,
     ) -> PracticeGenerationRequest:
         title = self._clean(title, "Practice title", _MAX_TITLE)
         sources = self._source_ids(source_ids)
@@ -228,6 +230,9 @@ class CoursePracticeGenerationRepository:
                     practice_set_revision_id=operation.practice_set_revision_id,
                     operation=operation,
                 )
+            if not provider_available:
+                raise CourseConflictError("Generation provider is unavailable")
+            admit_generation_allocation(conn, self.owner_user_id)
             snapshot = self._snapshot_sources(conn, course_id, sources)
             snapshot_json = self._json([item.model_dump() for item in snapshot])
             objectives_json = self._json(objectives)
@@ -278,6 +283,7 @@ class CoursePracticeGenerationRepository:
         expected_practice_set_write_epoch: int,
         item_limit: int = 8,
         context_char_limit: int = 24_000,
+        provider_available: bool = True,
     ) -> PracticeGenerationRequest:
         """Create a fenced generated successor revision for an owned generated set.
 
@@ -320,6 +326,9 @@ class CoursePracticeGenerationRepository:
                     practice_set_revision_id=operation.practice_set_revision_id,
                     operation=operation,
                 )
+            if not provider_available:
+                raise CourseConflictError("Generation provider is unavailable")
+            admit_generation_allocation(conn, self.owner_user_id)
             snapshot = self._snapshot_sources(conn, course_id, sources)
             snapshot_json, objectives_json = self._json([item.model_dump() for item in snapshot]), self._json(objectives)
             next_revision = int(conn.execute(

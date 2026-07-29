@@ -53,7 +53,9 @@ class CourseMasteryAdapter:
                 user_answer=answer if isinstance(answer, str) else "",
                 knowledge_type=KnowledgeType(item.knowledge_type),
                 scheduler=self.scheduler,
+                persist=False,
             )
+        self.service.save(progress)
         return records
 
 

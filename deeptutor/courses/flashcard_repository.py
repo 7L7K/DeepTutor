@@ -23,6 +23,9 @@ _MAX_OBJECTIVES = 64
 _MAX_JSON_BYTES = 16_384
 _MAX_CARDS = 500
 _MAX_INTERVAL_SECONDS = 180 * 24 * 60 * 60
+_MAX_REVIEWS_PER_DECK = 10_000
+_DEFAULT_PAGE_SIZE = 50
+_MAX_PAGE_SIZE = 100
 
 
 def _deck_id() -> str:
@@ -89,6 +92,16 @@ class CourseFlashcardRepository:
         if len(encoded.encode("utf-8")) > _MAX_JSON_BYTES:
             raise ValueError(f"{field} is too large")
         return encoded
+
+    @staticmethod
+    def _page(*, limit: int | None, offset: int) -> tuple[int, int]:
+        if limit is None:
+            limit = _DEFAULT_PAGE_SIZE
+        if isinstance(limit, bool) or not isinstance(limit, int) or not 1 <= limit <= _MAX_PAGE_SIZE:
+            raise ValueError(f"limit must be an integer between 1 and {_MAX_PAGE_SIZE}")
+        if isinstance(offset, bool) or not isinstance(offset, int) or offset < 0:
+            raise ValueError("offset must be a non-negative integer")
+        return limit, offset
 
     def _course_for_write(
         self, conn: sqlite3.Connection, course_id: str, expected_course_write_epoch: int
@@ -187,7 +200,15 @@ class CourseFlashcardRepository:
         assert row is not None
         return self._deck_from_row(row)
 
-    def list_decks(self, course_id: str, *, include_archived: bool = True) -> list[FlashcardDeck]:
+    def list_decks(
+        self,
+        course_id: str,
+        *,
+        include_archived: bool = True,
+        limit: int | None = _DEFAULT_PAGE_SIZE,
+        offset: int = 0,
+    ) -> list[FlashcardDeck]:
+        limit, offset = self._page(limit=limit, offset=offset)
         self.course_repository.get_course(course_id)
         sql = """SELECT flashcard_decks.* FROM flashcard_decks
                  JOIN courses ON courses.id = flashcard_decks.course_id
@@ -195,7 +216,8 @@ class CourseFlashcardRepository:
         params: list[Any] = [course_id, self.owner_user_id]
         if not include_archived:
             sql += " AND flashcard_decks.state != 'archived'"
-        sql += " ORDER BY flashcard_decks.updated_at DESC, flashcard_decks.id"
+        sql += " ORDER BY flashcard_decks.updated_at DESC, flashcard_decks.id LIMIT ? OFFSET ?"
+        params.extend((limit, offset))
         with self.course_repository._connect() as conn:
             rows = conn.execute(sql, params).fetchall()
         return [self._deck_from_row(row) for row in rows]
@@ -474,6 +496,11 @@ class CourseFlashcardRepository:
                     raise CourseConflictError("Idempotency key conflicts with an existing review")
                 schedule = FlashcardSchedule(card_id=review.card_id, review_count=review.review_count, interval_seconds=review.interval_seconds, next_review_at=review.next_review_at, last_review_id=review.id)
                 return review, schedule, self._summary(conn, deck_id, at=now)
+            review_count = int(conn.execute(
+                "SELECT COUNT(*) FROM flashcard_reviews WHERE deck_id = ?", (deck_id,)
+            ).fetchone()[0])
+            if review_count >= _MAX_REVIEWS_PER_DECK:
+                raise CourseConflictError("Flashcard deck has reached its retained review limit")
             previous = self._schedule_from_row(self._schedule_row(conn, card_id))
             interval = self._interval(previous.interval_seconds, rating)
             review = FlashcardReview(

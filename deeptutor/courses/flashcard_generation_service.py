@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-from queue import Empty, Queue
 import threading
 from typing import Callable, ContextManager
 
@@ -22,8 +21,10 @@ from .flashcard_generation_provider import (
     FlashcardGenerationProviderUnavailable,
     FlashcardSourceTextResolver,
     default_flashcard_generation_provider,
+    flashcard_generation_provider_available,
 )
 from .flashcard_generation_repository import CourseFlashcardGenerationRepository
+from .provider_runtime import run_provider_with_deadline
 from .repository import CourseConflictError, CourseNotFoundError
 
 _live_lock = threading.RLock()
@@ -93,7 +94,14 @@ class CourseFlashcardGenerationService:
     def create_generated_deck(self, course_id: str, **kwargs: object) -> FlashcardGenerationRequest:
         if not self._account_active(self.repository.owner_user_id):
             raise CourseConflictError("Generation account authority is no longer active")
-        return self.repository.create_generated_deck(course_id, **kwargs)
+        return self.repository.create_generated_deck(
+            course_id, provider_available=self.provider_available(), **kwargs
+        )
+
+    def provider_available(self) -> bool:
+        """Expose admission truth without allocating a generated draft."""
+
+        return flashcard_generation_provider_available(self.provider)
 
     def request_successor(
         self, course_id: str, deck_id: str, **kwargs: object
@@ -102,22 +110,12 @@ class CourseFlashcardGenerationService:
         return self.create_generated_deck(course_id, supersedes_deck_id=deck_id, **kwargs)
 
     def _generate(self, request: FlashcardGenerationInput):
-        result: Queue[object] = Queue(maxsize=1)
-
-        def work() -> None:
-            try:
-                result.put(self.provider.generate(request))
-            except Exception as exc:
-                result.put(exc)
-
-        threading.Thread(target=work, daemon=True, name="flashcard-generation-provider").start()
-        try:
-            value = result.get(timeout=self._timeout)
-        except Empty as exc:
-            raise FlashcardGenerationProviderTimedOut("provider timed out") from exc
-        if isinstance(value, Exception):
-            raise value
-        return value
+        return run_provider_with_deadline(
+            lambda: self.provider.generate(request),
+            timeout_seconds=self._timeout,
+            thread_name="flashcard-generation-provider",
+            timeout_error=FlashcardGenerationProviderTimedOut,
+        )
 
     def run_operation(self, course_id: str, operation_id: str) -> FlashcardGenerationOperation:
         try:

@@ -35,20 +35,30 @@ class CourseGradingService:
         self._deliver(course_id, practice_set_id, attempt_id, evidence)
 
     def _deliver(self, course_id: str, practice_set_id: str, attempt_id: str, evidence) -> None:
-        for record in self._apply_effect_to_learning(evidence):
+        records = self._apply_effect_to_learning(evidence)
+        if records:
             self._mark_effect_applied(
-                course_id, practice_set_id, attempt_id, record.id,
-                payload_sha256=record.payload_sha256,
+                course_id,
+                practice_set_id,
+                attempt_id,
+                records,
             )
 
     def _apply_effect_to_learning(self, evidence):
         return self.adapter.apply_pending(evidence)
 
     def _mark_effect_applied(
-        self, course_id: str, practice_set_id: str, attempt_id: str, evidence_id: str, **kwargs: str
+        self,
+        course_id: str,
+        practice_set_id: str,
+        attempt_id: str,
+        records,
     ):
-        return self.repository.acknowledge_applied(
-            course_id, practice_set_id, attempt_id, evidence_id, **kwargs
+        return self.repository.acknowledge_applied_batch(
+            course_id,
+            practice_set_id,
+            attempt_id,
+            [(record.id, record.payload_sha256) for record in records],
         )
 
     def _finalize_attempt(

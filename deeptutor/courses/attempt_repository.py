@@ -25,6 +25,11 @@ from .repository import CourseConflictError, CourseNotFoundError, CourseReposito
 
 _MAX_JSON_BYTES = 16_384
 _MAX_ITEMS = 256
+_MAX_RETAINED_ATTEMPTS_PER_PRACTICE_SET = 100
+_MAX_AUTOSAVE_RECEIPTS_PER_ATTEMPT = 2_048
+_MAX_AUTOSAVE_RECEIPT_BYTES_PER_ATTEMPT = 2 * 1024 * 1024
+_DEFAULT_PAGE_SIZE = 50
+_MAX_PAGE_SIZE = 100
 
 
 def _attempt_id() -> str:
@@ -60,6 +65,16 @@ class CourseAssessmentRepository:
         if len(encoded.encode("utf-8")) > maximum:
             raise ValueError(f"{field} is too large")
         return encoded
+
+    @staticmethod
+    def _page(*, limit: int | None, offset: int) -> tuple[int, int]:
+        if limit is None:
+            limit = _DEFAULT_PAGE_SIZE
+        if isinstance(limit, bool) or not isinstance(limit, int) or not 1 <= limit <= _MAX_PAGE_SIZE:
+            raise ValueError(f"limit must be an integer between 1 and {_MAX_PAGE_SIZE}")
+        if isinstance(offset, bool) or not isinstance(offset, int) or offset < 0:
+            raise ValueError("offset must be a non-negative integer")
+        return limit, offset
 
     @staticmethod
     def _attempt_from_row(row: sqlite3.Row) -> QuizAttempt:
@@ -264,6 +279,13 @@ class CourseAssessmentRepository:
                 ):
                     raise CourseConflictError("Attempt authority epoch is stale")
                 return self._view(conn, attempt)
+            retained = int(conn.execute(
+                """SELECT COUNT(*) FROM quiz_attempts
+                   WHERE owner_user_id = ? AND course_id = ? AND practice_set_id = ?""",
+                (self.owner_user_id, course_id, practice_set_id),
+            ).fetchone()[0])
+            if retained >= _MAX_RETAINED_ATTEMPTS_PER_PRACTICE_SET:
+                raise CourseConflictError("Practice set has reached its retained attempt limit")
             rows = conn.execute(
                 "SELECT * FROM practice_questions WHERE practice_set_revision_id = ? ORDER BY ordinal, id",
                 (practice_set_revision_id,),
@@ -306,14 +328,24 @@ class CourseAssessmentRepository:
         with self.course_repository._connect() as conn:
             return self._view(conn, self._attempt_from_row(self._attempt_row(conn, course_id, practice_set_id, attempt_id)))
 
-    def list_attempts(self, course_id: str, practice_set_id: str, *, include_archived: bool = True) -> list[QuizAttempt]:
+    def list_attempts(
+        self,
+        course_id: str,
+        practice_set_id: str,
+        *,
+        include_archived: bool = True,
+        limit: int | None = _DEFAULT_PAGE_SIZE,
+        offset: int = 0,
+    ) -> list[QuizAttempt]:
+        limit, offset = self._page(limit=limit, offset=offset)
         with self.course_repository._connect() as conn:
             self._attempt_row_or_set(conn, course_id, practice_set_id)
             sql = "SELECT * FROM quiz_attempts WHERE course_id = ? AND practice_set_id = ? AND owner_user_id = ?"
             params: list[Any] = [course_id, practice_set_id, self.owner_user_id]
             if not include_archived:
                 sql += " AND state != 'archived'"
-            sql += " ORDER BY updated_at DESC, id"
+            sql += " ORDER BY updated_at DESC, id LIMIT ? OFFSET ?"
+            params.extend((limit, offset))
             return [self._attempt_from_row(row) for row in conn.execute(sql, params).fetchall()]
 
     def _attempt_row_or_set(self, conn: sqlite3.Connection, course_id: str, practice_set_id: str) -> None:
@@ -370,6 +402,15 @@ class CourseAssessmentRepository:
             ).fetchone()
             if item is None:
                 raise self._not_found()
+            receipt_count, receipt_bytes = conn.execute(
+                """SELECT COUNT(*), COALESCE(SUM(length(CAST(response_json AS BLOB))), 0)
+                   FROM quiz_attempt_autosave_receipts WHERE attempt_id = ?""",
+                (attempt_id,),
+            ).fetchone()
+            if int(receipt_count) >= _MAX_AUTOSAVE_RECEIPTS_PER_ATTEMPT:
+                raise CourseConflictError("Quiz attempt has reached its autosave receipt limit")
+            if int(receipt_bytes) + len(response_json.encode("utf-8")) > _MAX_AUTOSAVE_RECEIPT_BYTES_PER_ATTEMPT:
+                raise CourseConflictError("Quiz attempt has reached its autosave receipt byte limit")
             result = conn.execute(
                 """UPDATE quiz_attempt_answers SET response_json = ?, revision = revision + 1, answered_at = ?
                    WHERE attempt_item_id = ? AND revision = ?""",

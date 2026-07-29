@@ -366,6 +366,42 @@ def test_source_replacement_preserves_prior_fingerprint_and_lineage(tmp_path) ->
     assert repo.get_source(course.id, original.id).content_sha256 == "a" * 64
 
 
+def test_failed_source_can_be_replaced_without_rewriting_failed_history(tmp_path) -> None:
+    repo = CourseRepository(tmp_path / "courses.db", "u_alice")
+    course = repo.create_course("Biology")
+    failed = repo.create_source(
+        course.id,
+        kind="document",
+        display_name="broken.pdf",
+        manifest=[],
+        content_sha256="a" * 64,
+    )
+    failed = repo.transition_source(
+        course.id,
+        failed.id,
+        operation_id=failed.operation_id or "",
+        expected_source_revision=failed.revision,
+        expected_course_revision=course.revision,
+        expected_write_epoch=course.write_epoch,
+        state="failed",
+    )
+
+    replacement = repo.create_source(
+        course.id,
+        kind="document",
+        display_name="fixed.pdf",
+        manifest=[],
+        content_sha256="b" * 64,
+        supersedes_source_id=failed.id,
+    )
+
+    assert replacement.supersedes_source_id == failed.id
+    assert replacement.state == "processing"
+    retained = repo.get_source(course.id, failed.id)
+    assert retained.state == "failed"
+    assert retained.content_sha256 == "a" * 64
+
+
 def test_source_lineage_allows_only_one_live_replacement(tmp_path) -> None:
     db_path = tmp_path / "courses.db"
     repo = CourseRepository(db_path, "u_alice")

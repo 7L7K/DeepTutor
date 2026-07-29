@@ -16,6 +16,9 @@ from .grading_models import GradingEvidence
 from .practice_models import ExactAnswerContract
 from .repository import CourseConflictError, CourseNotFoundError, CourseRepository
 
+_MAX_EVIDENCE_RECORDS_PER_ATTEMPT = 4_096
+_MAX_EVIDENCE_BYTES_PER_ATTEMPT = 2 * 1024 * 1024
+
 
 def _evidence_id() -> str:
     return f"grd_{uuid4().hex}"
@@ -127,7 +130,15 @@ class CourseGradingRepository:
             ).fetchall()
             if not rows or any(row["response_json"] is None for row in rows):
                 raise CourseConflictError("Submitted quiz attempts require every answer before grading")
+            # Build and bound the complete evidence plan before inserting any
+            # evidence.  Attempts are immutable history, so admission control
+            # must reject an oversized aggregate rather than relying on later
+            # deletion or a partially-written grade.
+            planned_evidence: list[
+                tuple[str, dict[str, Any], str, bool, str | None, str | None, str, str]
+            ] = []
             item_results: list[tuple[str, bool, str | None, list[str]]] = []
+            planned_bytes = 0
             for row in rows:
                 contract = ExactAnswerContract.model_validate(json.loads(row["answer_contract_json"]))
                 raw_response = json.loads(row["response_json"])
@@ -151,22 +162,48 @@ class CourseGradingRepository:
                         "error_type": error_type,
                     }
                     evidence_id = _evidence_id()
-                    conn.execute(
-                        """INSERT INTO quiz_item_grading_evidence
-                           (id, owner_user_id, course_id, practice_set_id, attempt_id,
-                            attempt_item_id, question_id, objective_id, module_id, knowledge_type,
-                            algorithm, payload_sha256, is_correct, grading_json, error_type,
-                            state, created_at, applied_at)
-                           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'exact-v1', ?, ?, ?, ?, ?, ?, ?)""",
-                        (
-                            evidence_id, self.owner_user_id, course_id, practice_set_id, attempt_id,
-                            row["attempt_item_id"], row["question_id"], objective_id, module_id,
-                            knowledge_type, self._digest(payload), int(is_correct), self._json(payload),
-                            error_type, state, now, now if state == "unmapped" else None,
-                        ),
-                    )
+                    grading_json = self._json(payload)
+                    planned_evidence.append((
+                        evidence_id, payload, grading_json, is_correct, error_type,
+                        module_id, knowledge_type, state,
+                    ))
+                    planned_bytes += len(grading_json.encode("utf-8"))
                     evidence_ids.append(evidence_id)
                 item_results.append((row["attempt_item_id"], is_correct, error_type, evidence_ids))
+            retained_count, retained_bytes = conn.execute(
+                """SELECT COUNT(*), COALESCE(SUM(length(CAST(grading_json AS BLOB))), 0)
+                   FROM quiz_item_grading_evidence WHERE attempt_id = ?""",
+                (attempt_id,),
+            ).fetchone()
+            if int(retained_count) + len(planned_evidence) > _MAX_EVIDENCE_RECORDS_PER_ATTEMPT:
+                raise CourseConflictError("Quiz attempt exceeds its grading evidence record limit")
+            if int(retained_bytes) + planned_bytes > _MAX_EVIDENCE_BYTES_PER_ATTEMPT:
+                raise CourseConflictError("Quiz attempt exceeds its grading evidence byte limit")
+            for (
+                evidence_id,
+                payload,
+                grading_json,
+                is_correct,
+                error_type,
+                module_id,
+                knowledge_type,
+                state,
+            ) in planned_evidence:
+                objective_id = str(payload["objective_id"])
+                conn.execute(
+                    """INSERT INTO quiz_item_grading_evidence
+                       (id, owner_user_id, course_id, practice_set_id, attempt_id,
+                        attempt_item_id, question_id, objective_id, module_id, knowledge_type,
+                        algorithm, payload_sha256, is_correct, grading_json, error_type,
+                        state, created_at, applied_at)
+                       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'exact-v1', ?, ?, ?, ?, ?, ?, ?)""",
+                    (
+                        evidence_id, self.owner_user_id, course_id, practice_set_id, attempt_id,
+                        payload["attempt_item_id"], payload["question_id"], objective_id, module_id,
+                        knowledge_type, self._digest(payload), int(is_correct), grading_json,
+                        error_type, state, now, now if state == "unmapped" else None,
+                    ),
+                )
             for item_id, is_correct, error_type, evidence_ids in item_results:
                 conn.execute(
                     """UPDATE quiz_attempt_items SET grading_json = ?, error_type = ?, graded_at = ?
@@ -261,6 +298,59 @@ class CourseGradingRepository:
                 row = conn.execute("SELECT * FROM quiz_item_grading_evidence WHERE id = ?", (evidence_id,)).fetchone()
             assert row is not None
             return self._evidence_from_row(row)
+
+    def acknowledge_applied_batch(
+        self,
+        course_id: str,
+        practice_set_id: str,
+        attempt_id: str,
+        evidence_receipts: list[tuple[str, str]],
+    ) -> list[GradingEvidence]:
+        """Acknowledge one fully persisted learning projection atomically."""
+
+        if not evidence_receipts:
+            return []
+        if len(evidence_receipts) > _MAX_EVIDENCE_RECORDS_PER_ATTEMPT:
+            raise CourseConflictError("Quiz attempt exceeds its grading evidence record limit")
+        if len({evidence_id for evidence_id, _digest in evidence_receipts}) != len(
+            evidence_receipts
+        ):
+            raise CourseConflictError("Duplicate grading evidence acknowledgement")
+        now = time.time()
+        acknowledged: list[GradingEvidence] = []
+        with self.course_repository._write_lock, self.course_repository._connect() as conn:
+            conn.execute("BEGIN IMMEDIATE")
+            for evidence_id, payload_sha256 in evidence_receipts:
+                row = conn.execute(
+                    """SELECT evidence.* FROM quiz_item_grading_evidence AS evidence
+                       JOIN quiz_attempts AS attempts ON attempts.id = evidence.attempt_id
+                       WHERE evidence.id = ? AND evidence.attempt_id = ?
+                         AND evidence.course_id = ? AND evidence.practice_set_id = ?
+                         AND evidence.owner_user_id = ? AND attempts.owner_user_id = ?""",
+                    (
+                        evidence_id,
+                        attempt_id,
+                        course_id,
+                        practice_set_id,
+                        self.owner_user_id,
+                        self.owner_user_id,
+                    ),
+                ).fetchone()
+                if row is None or str(row["payload_sha256"]) != payload_sha256:
+                    raise self._not_found()
+                if row["state"] == "pending":
+                    conn.execute(
+                        """UPDATE quiz_item_grading_evidence
+                           SET state = 'applied', applied_at = ? WHERE id = ?""",
+                        (now, evidence_id),
+                    )
+                    row = conn.execute(
+                        "SELECT * FROM quiz_item_grading_evidence WHERE id = ?",
+                        (evidence_id,),
+                    ).fetchone()
+                assert row is not None
+                acknowledged.append(self._evidence_from_row(row))
+        return acknowledged
 
     # Compatibility inspection helper; grading is already final when this returns.
     def finalize(self, course_id: str, practice_set_id: str, attempt_id: str, **_kwargs: Any) -> QuizAttempt:

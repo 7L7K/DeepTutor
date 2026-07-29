@@ -27,6 +27,10 @@ def generation_client(tmp_path, monkeypatch) -> TestClient:
     from deeptutor.multi_user.identity import save_user
     from deeptutor.services.auth import TokenPayload
 
+    # Generation admission is fail-closed in normal runtime.  This fixture
+    # deliberately exercises the deterministic local test provider instead.
+    monkeypatch.setenv("TEEECHR_TEST_DETERMINISTIC_PROVIDER", "1")
+
     admin_root = (tmp_path / "data").resolve()
     users_root = admin_root / "users"
     system_root = admin_root / "system"
@@ -495,46 +499,26 @@ def test_generation_api_rejects_malformed_and_fenced_course_source_and_set_reque
     assert archived_source.status_code == 404
 
 
-def test_generation_api_background_failure_is_terminal_and_never_publishes_ready_questions(
-    generation_client: TestClient,
+def test_generation_api_unavailable_provider_rejects_before_allocating_a_draft(
+    generation_client: TestClient, monkeypatch
 ) -> None:
-    """The default provider fails closed; a failed operation cannot look ready."""
+    """Normal runtime has no provider, so no generated draft is allocated."""
 
+    monkeypatch.delenv("TEEECHR_TEST_DETERMINISTIC_PROVIDER")
     course = _create_course(generation_client)
     source = _ready_source(generation_client, course)
-    _write_deterministic_source_index(generation_client, course, source)
-    created = _queue_generation(generation_client, course, source, key="provider-unavailable")
-    operation_id = created["operation"]["id"]
-    terminal = generation_client.get(
-        f"/api/v1/courses/{course['id']}/practice-generation/{operation_id}",
-        headers=_auth("alice"),
+    rejected = generation_client.post(
+        f"/api/v1/courses/{course['id']}/practice-generation",
+        headers=_headers("alice", "provider-unavailable"),
+        json=_generation_body(course, source),
     )
-    assert terminal.status_code == 200
-    assert terminal.json()["state"] == "failed"
-    assert terminal.json()["error_code"] == "provider_unavailable"
-    assert terminal.json()["completed_at"] is not None
-
-    practice_set = generation_client.get(
-        f"/api/v1/courses/{course['id']}/practice/{created['practice_set_id']}",
-        headers=_auth("alice"),
+    assert rejected.status_code == 409
+    assert rejected.json()["detail"] == "Generation provider is unavailable"
+    operations = generation_client.get(
+        f"/api/v1/courses/{course['id']}/practice-generation", headers=_auth("alice")
     )
-    assert practice_set.status_code == 200
-    assert practice_set.json()["state"] == "draft"
-    assert practice_set.json()["current_revision_id"] is None
-    revision = generation_client.get(
-        f"/api/v1/courses/{course['id']}/practice/{created['practice_set_id']}/revisions/"
-        f"{created['practice_set_revision_id']}",
-        headers=_auth("alice"),
-    )
-    assert revision.status_code == 200
-    assert revision.json()["state"] == "draft"
-    questions = generation_client.get(
-        f"/api/v1/courses/{course['id']}/practice/{created['practice_set_id']}/revisions/"
-        f"{created['practice_set_revision_id']}/questions",
-        headers=_auth("alice"),
-    )
-    assert questions.status_code == 200
-    assert questions.json() == {"questions": []}
+    assert operations.status_code == 200
+    assert operations.json() == {"operations": []}
 
 
 def test_generation_api_background_completion_uses_only_server_resolved_source_snapshot(

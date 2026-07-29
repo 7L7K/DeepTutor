@@ -129,3 +129,14 @@ def default_flashcard_generation_provider() -> FlashcardGenerationProvider:
         if deterministic_enabled()
         else UnavailableFlashcardGenerationProvider()
     )
+
+
+def flashcard_generation_provider_available(
+    provider: FlashcardGenerationProvider | None = None,
+) -> bool:
+    """Whether the selected provider can be admitted for a new operation."""
+
+    return not isinstance(
+        provider if provider is not None else default_flashcard_generation_provider(),
+        UnavailableFlashcardGenerationProvider,
+    )

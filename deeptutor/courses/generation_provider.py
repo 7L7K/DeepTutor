@@ -159,3 +159,14 @@ def default_practice_generation_provider() -> PracticeGenerationProvider:
         if deterministic_enabled()
         else UnavailablePracticeGenerationProvider()
     )
+
+
+def practice_generation_provider_available(
+    provider: PracticeGenerationProvider | None = None,
+) -> bool:
+    """Whether the selected provider can be admitted for a new operation."""
+
+    return not isinstance(
+        provider if provider is not None else default_practice_generation_provider(),
+        UnavailablePracticeGenerationProvider,
+    )

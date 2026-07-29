@@ -90,6 +90,27 @@ def test_idempotency_atomic_publication_and_successor_lineage(tmp_path: Path) ->
         expected_course_write_epoch=course.write_epoch,
     )
     assert (same.deck_id, same.operation.id) == (request.deck_id, request.operation.id)
+    unavailable_replay = repo.create_generated_deck(
+        course.id,
+        title="Terms",
+        source_ids=[source.id],
+        idempotency_key="same-request",
+        expected_course_write_epoch=course.write_epoch,
+        provider_available=False,
+    )
+    assert (unavailable_replay.deck_id, unavailable_replay.operation.id) == (
+        request.deck_id,
+        request.operation.id,
+    )
+    with pytest.raises(CourseConflictError, match="provider is unavailable"):
+        repo.create_generated_deck(
+            course.id,
+            title="Other terms",
+            source_ids=[source.id],
+            idempotency_key="new-unavailable-request",
+            expected_course_write_epoch=course.write_epoch,
+            provider_available=False,
+        )
     # A same-key replay after the exact source receipt changes is not silently
     # treated as the old request.
     with courses._write_lock, courses._connect() as conn:

@@ -37,6 +37,10 @@ def phase4_client(tmp_path, monkeypatch) -> TestClient:
     from deeptutor.multi_user.identity import save_user
     from deeptutor.services.auth import TokenPayload
 
+    # Queued-operation proof uses the explicit deterministic test provider;
+    # normal runtime remains unavailable until an approved provider exists.
+    monkeypatch.setenv("TEEECHR_TEST_DETERMINISTIC_PROVIDER", "1")
+
     admin_root = (tmp_path / "data").resolve()
     users_root = admin_root / "users"
     system_root = admin_root / "system"

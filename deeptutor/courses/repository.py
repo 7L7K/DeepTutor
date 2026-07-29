@@ -300,8 +300,8 @@ class CourseRepository:
             raise CourseConflictError("Archived courses cannot accept sources")
         if supersedes_source_id is not None:
             prior = self.get_source(course_id, supersedes_source_id)
-            if prior.state not in {"ready", "archived"}:
-                raise CourseConflictError("Only a completed source can be superseded")
+            if prior.state not in {"ready", "failed", "archived"}:
+                raise CourseConflictError("Only a terminal source can be superseded")
         sid = _source_id()
         op_id = operation_id or _operation_id()
         now = time.time()

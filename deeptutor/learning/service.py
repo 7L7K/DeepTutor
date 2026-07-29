@@ -35,12 +35,35 @@ class LearningService:
         self._store.save(progress)  # persist immediately to prevent race
         return progress
 
-    def init_modules(self, progress: LearningProgress, modules: list[LearningModule]) -> None:
+    def init_modules(
+        self,
+        progress: LearningProgress,
+        modules: list[LearningModule],
+        *,
+        retained_grading_evidence: bool = False,
+    ) -> bool:
         """Initialize the runnable module set (replace semantics)."""
-        self.replace_modules(progress, modules)
+        return self.replace_modules(
+            progress,
+            modules,
+            retained_grading_evidence=retained_grading_evidence,
+        )
 
-    def replace_modules(self, progress: LearningProgress, modules: list[LearningModule]) -> None:
+    def replace_modules(
+        self,
+        progress: LearningProgress,
+        modules: list[LearningModule],
+        *,
+        retained_grading_evidence: bool = False,
+    ) -> bool:
         """Replace all modules and clean stale KP state."""
+        if retained_grading_evidence or progress.grading_evidence_receipts:
+            if modules != progress.modules:
+                raise LearningConflictError(
+                    "Course learning plan with grading evidence cannot be replaced"
+                )
+            return False
+
         new_kp_ids = {kp.id for m in modules for kp in m.knowledge_points}
 
         # Clean stale KP state
@@ -74,6 +97,7 @@ class LearningService:
         for mod in modules:
             for kp in mod.knowledge_points:
                 progress.knowledge_types[kp.id] = kp.type
+        return True
 
     def advance_stage(self, progress: LearningProgress, next_stage: LearningStage) -> None:
         progress.current_stage = next_stage
@@ -244,6 +268,7 @@ class LearningService:
         user_answer: str,
         knowledge_type: KnowledgeType,
         scheduler: SpacedRepetitionScheduler | None = None,
+        persist: bool = True,
     ) -> bool:
         """Persist one already-determined Course grading effect exactly once.
 
@@ -283,7 +308,8 @@ class LearningService:
                 scheduler.schedule_next(state, knowledge_type, is_correct)
                 progress.review_queue = scheduler.build_review_queue(progress)
         progress.grading_evidence_receipts[evidence_id] = payload_sha256
-        self.save(progress)
+        if persist:
+            self.save(progress)
         return is_correct
 
     # ── Loop-driven tutoring helpers ─────────────────────────────────────

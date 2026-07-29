@@ -53,6 +53,17 @@ def learner_action_client(tmp_path, monkeypatch) -> TestClient:
         }.get(token),
     )
     monkeypatch.setattr(course_service, "is_pocketbase_enabled", lambda: False)
+    monkeypatch.setenv("TEEECHR_TEST_DETERMINISTIC_PROVIDER", "true")
+    monkeypatch.setattr(
+        course_router,
+        "_generation_capabilities",
+        lambda: {
+            "grounded_generation": True,
+            "practice_generation": True,
+            "flashcard_generation": True,
+            "grounded_generation_reason": None,
+        },
+    )
     course_service._repository_for.cache_clear()
 
     app = FastAPI()
@@ -181,6 +192,7 @@ def test_quiz_action_is_server_grounded_bounded_and_replays(
         forbidden not in str(payload).lower()
         for forbidden in ("owner", "provider", "prompt", "source_text", "answer_contract")
     )
+    monkeypatch.delenv("TEEECHR_TEST_DETERMINISTIC_PROVIDER", raising=False)
     replay = learner_action_client.post(
         f"/api/v1/courses/{course['id']}/learner-actions",
         headers=_auth("alice"),
@@ -212,6 +224,7 @@ def test_flashcard_action_replay_schedules_only_one_live_worker(
         headers=_auth("alice"),
         json=_body(course, "make_flashcards", binding),
     )
+    monkeypatch.delenv("TEEECHR_TEST_DETERMINISTIC_PROVIDER", raising=False)
     replay = learner_action_client.post(
         endpoint,
         headers=_auth("alice"),
@@ -223,6 +236,7 @@ def test_flashcard_action_replay_schedules_only_one_live_worker(
     assert first.json()["source_ids"] == [source["id"]]
     assert first.json()["operation_id"].startswith("ofg_")
     assert worker_calls == [first.json()["operation_id"]]
+    monkeypatch.setenv("TEEECHR_TEST_DETERMINISTIC_PROVIDER", "true")
     flashcards = learner_action_client.post(
         f"/api/v1/courses/{course['id']}/learner-actions",
         headers=_auth("alice"),
@@ -238,6 +252,49 @@ def test_flashcard_action_replay_schedules_only_one_live_worker(
     assert flashcards.json()["reason_code"] == "course_sources"
     assert flashcards.json()["deck_id"].startswith("dck_")
     assert flashcards.json()["operation_id"].startswith("ofg_")
+
+
+def test_unavailable_provider_rejects_before_allocation_without_becoming_an_id_oracle(
+    learner_action_client: TestClient, monkeypatch
+) -> None:
+    from deeptutor.api.routers import courses as course_router
+
+    course = _course(learner_action_client)
+    _ready_source(learner_action_client, course)
+    course = _latest_course(learner_action_client, course)
+    binding = _assistant_binding(learner_action_client, course)
+    monkeypatch.setattr(
+        course_router,
+        "_generation_capabilities",
+        lambda: {
+            "grounded_generation": False,
+            "practice_generation": False,
+            "flashcard_generation": False,
+            "grounded_generation_reason": "Grounded generation is not enabled on this server",
+        },
+    )
+    monkeypatch.delenv("TEEECHR_TEST_DETERMINISTIC_PROVIDER", raising=False)
+
+    owned = learner_action_client.post(
+        f"/api/v1/courses/{course['id']}/learner-actions",
+        headers=_auth("alice"),
+        json=_body(course, "quiz_me", binding),
+    )
+    assert owned.status_code == 409
+    assert owned.json() == {"detail": "Generation provider is unavailable"}
+    practice = learner_action_client.get(
+        f"/api/v1/courses/{course['id']}/practice",
+        headers=_auth("alice"),
+    )
+    assert practice.status_code == 200
+    assert practice.json()["practice_sets"] == []
+
+    foreign = learner_action_client.post(
+        f"/api/v1/courses/{course['id']}/learner-actions",
+        headers=_auth("bob"),
+        json=_body(course, "quiz_me", binding),
+    )
+    assert foreign.status_code == 404
 
 
 def test_actions_reject_extra_authority_and_foreign_or_stale_course(

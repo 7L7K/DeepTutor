@@ -15,6 +15,7 @@ from .flashcard_generation_models import (
     FlashcardSourceReceipt,
     GeneratedFlashcardOutput,
 )
+from .generation_governance import admit_generation_allocation
 from .repository import CourseConflictError, CourseNotFoundError, CourseRepository
 
 
@@ -170,6 +171,7 @@ class CourseFlashcardGenerationRepository:
         item_limit: int = 8,
         context_char_limit: int = 24_000,
         supersedes_deck_id: str | None = None,
+        provider_available: bool = True,
     ) -> FlashcardGenerationRequest:
         title, source_ids, objectives = (
             self._clean(title, "Deck title", 160),
@@ -188,8 +190,30 @@ class CourseFlashcardGenerationRepository:
         with self.course_repository._write_lock, self.course_repository._connect() as conn:
             conn.execute("BEGIN IMMEDIATE")
             self._course_for_write(conn, course_id, expected_course_write_epoch)
-            # A source identity includes revision and content fingerprint, not
-            # merely a caller-provided opaque ID. Re-snapshot before replay.
+            prior = conn.execute(
+                "SELECT * FROM flashcard_generation_operations WHERE course_id=? AND idempotency_key=?",
+                (course_id, idempotency_key),
+            ).fetchone()
+            if prior:
+                # A replay is exact only while the caller's source IDs still
+                # resolve to the same immutable revision/fingerprint snapshot.
+                snapshot = self._snapshot(conn, course_id, source_ids)
+                fingerprint = self._fingerprint(
+                    title=title,
+                    source_snapshot=snapshot,
+                    objective_ids=objectives,
+                    item_limit=item_limit,
+                    context_char_limit=context_char_limit,
+                    supersedes_deck_id=supersedes_deck_id,
+                )
+                operation = self._operation(prior)
+                if operation.request_fingerprint != fingerprint:
+                    raise CourseConflictError(
+                        "Idempotency key was already used for another generation request"
+                    )
+                return FlashcardGenerationRequest(deck_id=operation.deck_id, operation=operation)
+            if not provider_available:
+                raise CourseConflictError("Generation provider is unavailable")
             snapshot = self._snapshot(conn, course_id, source_ids)
             fingerprint = self._fingerprint(
                 title=title,
@@ -199,21 +223,11 @@ class CourseFlashcardGenerationRepository:
                 context_char_limit=context_char_limit,
                 supersedes_deck_id=supersedes_deck_id,
             )
-            prior = conn.execute(
-                "SELECT * FROM flashcard_generation_operations WHERE course_id=? AND idempotency_key=?",
-                (course_id, idempotency_key),
-            ).fetchone()
-            if prior:
-                operation = self._operation(prior)
-                if operation.request_fingerprint != fingerprint:
-                    raise CourseConflictError(
-                        "Idempotency key was already used for another generation request"
-                    )
-                return FlashcardGenerationRequest(deck_id=operation.deck_id, operation=operation)
             if supersedes_deck_id:
                 old = self._owned_deck(conn, course_id, supersedes_deck_id)
                 if old["mode"] != "generated" or old["state"] != "ready":
                     raise CourseConflictError("Flashcard generation successor authority is stale")
+            admit_generation_allocation(conn, self.owner_user_id)
             snapshot_json, objectives_json = (
                 self._json([item.model_dump() for item in snapshot]),
                 self._json(objectives),

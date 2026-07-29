@@ -203,6 +203,41 @@ def test_unresolved_objective_is_immutable_unmapped_evidence_with_no_learning_ef
     assert [item.knowledge_point_id for item in progress.quiz_attempts] == ["kp_one"]
 
 
+def test_attempt_projection_saves_learning_and_acknowledges_sqlite_once(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    courses, practice, attempts, adapter, grading = _services(tmp_path)
+    course = courses.create_course("Batching")
+    objectives = ("kp_one", "kp_two", "kp_three")
+    _init_objectives(adapter, course.id, *objectives)
+    practice_set, revision, _ = _practice(
+        courses, practice, course.id, objectives=objectives
+    )
+    attempt_id, _ = _submitted(
+        courses, attempts, course.id, practice_set, revision, {"answer": "yes"}
+    )
+    save_calls = 0
+    ack_calls = 0
+    original_save = adapter.service.save
+    original_ack = grading.repository.acknowledge_applied_batch
+
+    def counted_save(progress):
+        nonlocal save_calls
+        save_calls += 1
+        return original_save(progress)
+
+    def counted_ack(*args, **kwargs):
+        nonlocal ack_calls
+        ack_calls += 1
+        return original_ack(*args, **kwargs)
+
+    monkeypatch.setattr(adapter.service, "save", counted_save)
+    monkeypatch.setattr(grading.repository, "acknowledge_applied_batch", counted_ack)
+    assert _grade(grading, courses, course.id, practice_set.id, attempt_id).state == "graded"
+    assert save_calls == 1
+    assert ack_calls == 1
+
+
 def test_crash_after_learning_save_before_sql_ack_recovers_without_double_effect(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     courses, practice, attempts, adapter, grading = _services(tmp_path)
     course = courses.create_course("History")
@@ -439,7 +474,7 @@ def test_0002_upgrade_applies_grading_and_generation_migrations_preserves_rows_a
     with sqlite3.connect(path) as conn:
         conn.execute("INSERT INTO courses (id, owner_user_id, title, state, revision, write_epoch, managed_kb_ref, created_at, updated_at, archived_at) VALUES ('crs_keep', 'u_alice', 'Keep', 'active', 1, 1, NULL, 1, 1, NULL)")
     monkeypatch.setattr(runner, "discover_migrations", lambda: artifacts)
-    assert ensure_course_schema(path) == (3, 4, 5, 6)
+    assert ensure_course_schema(path) == (3, 4, 5, 6, 7)
     with sqlite3.connect(path) as conn:
         assert conn.execute("SELECT title FROM courses WHERE id = 'crs_keep'").fetchone()[0] == "Keep"
 
@@ -493,7 +528,7 @@ def test_exact_p4_03_upgrade_applies_generation_and_flashcard_migrations_and_pre
         }
 
     monkeypatch.setattr(runner, "discover_migrations", lambda: artifacts)
-    assert ensure_course_schema(path) == (4, 5, 6)
+    assert ensure_course_schema(path) == (4, 5, 6, 7)
     assert ensure_course_schema(path) == ()
     with courses._connect() as conn:
         after = {
@@ -517,7 +552,7 @@ def test_exact_p4_03_upgrade_applies_generation_and_flashcard_migrations_and_pre
         } <= effective_triggers
         assert tuple(
             row[0] for row in conn.execute("SELECT version FROM schema_migrations ORDER BY version")
-        ) == (0, 1, 2, 3, 4, 5, 6)
+        ) == (0, 1, 2, 3, 4, 5, 6, 7)
     assert after == before
 
 

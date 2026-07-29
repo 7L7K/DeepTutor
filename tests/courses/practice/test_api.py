@@ -307,6 +307,19 @@ def test_manual_practice_api_is_private_strict_and_archive_terminalizes_attempt(
         },
     )
     assert started.status_code == 200
+    attempt_page = practice_client.get(
+        f"/api/v1/courses/{course_id}/practice/{practice_set['id']}/attempts?limit=1&offset=0",
+        headers=_auth("alice"),
+    )
+    assert attempt_page.status_code == 200
+    assert [item["id"] for item in attempt_page.json()["attempts"]] == [
+        started.json()["attempt"]["id"]
+    ]
+    assert attempt_page.json()["next_offset"] == 1
+    assert practice_client.get(
+        f"/api/v1/courses/{course_id}/practice/{practice_set['id']}/attempts?limit=101",
+        headers=_auth("alice"),
+    ).status_code == 422
     archived = practice_client.post(
         f"/api/v1/courses/{course_id}/practice/{practice_set['id']}/archive",
         headers=_auth("alice"),
@@ -403,6 +416,18 @@ def test_manual_flashcard_api_lifecycle_due_queue_idempotency_and_archive(
     )
     assert deck.status_code == 200
     deck = deck.json()
+    deck_page = practice_client.get(
+        f"{root}?include_archived=true&limit=1&offset=0",
+        headers=_auth("alice"),
+    )
+    assert deck_page.status_code == 200
+    assert [item["id"] for item in deck_page.json()["flashcard_decks"]] == [
+        deck["id"]
+    ]
+    assert deck_page.json()["next_offset"] == 1
+    assert practice_client.get(
+        f"{root}?limit=101", headers=_auth("alice")
+    ).status_code == 422
     card = practice_client.post(
         f"{root}/{deck['id']}/cards",
         headers=_auth("alice"),

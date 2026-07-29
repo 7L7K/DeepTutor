@@ -9,6 +9,8 @@ rebuilds the review queue, and persists.
 
 from pathlib import Path
 
+import pytest
+
 from deeptutor.learning.models import (
     ErrorRecord,
     ErrorType,
@@ -21,7 +23,7 @@ from deeptutor.learning.models import (
 )
 from deeptutor.learning.scheduler import SpacedRepetitionScheduler
 from deeptutor.learning.service import LearningService
-from deeptutor.learning.storage import LearningStore
+from deeptutor.learning.storage import LearningConflictError, LearningStore
 
 
 def _make_kp(kp_id: str, module_id: str = "m1") -> KnowledgePoint:
@@ -43,6 +45,64 @@ def _make_module(mod_id: str, kp_ids: list[str]) -> LearningModule:
 
 
 class TestReplaceModules:
+    def test_replace_rejects_different_plan_after_grading_receipt(self, tmp_path: Path):
+        service = LearningService(LearningStore(root=tmp_path))
+        progress = LearningProgress(book_id="lp_crs_test")
+        original = [_make_module("m1", ["kp1"])]
+        service.replace_modules(progress, original)
+        progress.mastery_levels["kp1"] = 0.8
+        progress.grading_evidence_receipts["grd_one"] = "a" * 64
+
+        with pytest.raises(
+            LearningConflictError,
+            match="plan with grading evidence cannot be replaced",
+        ):
+            service.replace_modules(progress, [_make_module("m2", ["kp2"])])
+
+        assert progress.modules == original
+        assert progress.mastery_levels == {"kp1": 0.8}
+        assert progress.grading_evidence_receipts == {"grd_one": "a" * 64}
+
+    def test_replace_rejects_sqlite_evidence_before_learning_receipt(self, tmp_path: Path):
+        service = LearningService(LearningStore(root=tmp_path))
+        progress = LearningProgress(book_id="lp_crs_test")
+        original = [_make_module("m1", ["kp1"])]
+        service.replace_modules(progress, original)
+
+        with pytest.raises(
+            LearningConflictError,
+            match="plan with grading evidence cannot be replaced",
+        ):
+            service.replace_modules(
+                progress,
+                [_make_module("m2", ["kp2"])],
+                retained_grading_evidence=True,
+            )
+
+        assert progress.modules == original
+        assert progress.grading_evidence_receipts == {}
+
+    def test_identity_equivalent_replace_is_noop_after_grading_evidence(
+        self, tmp_path: Path
+    ):
+        service = LearningService(LearningStore(root=tmp_path))
+        progress = LearningProgress(book_id="lp_crs_test")
+        modules = [_make_module("m1", ["kp1"])]
+        service.replace_modules(progress, modules)
+        progress.mastery_levels["kp1"] = 0.8
+        progress.stage_failure_counts["explain"] = 2
+        progress.grading_evidence_receipts["grd_one"] = "a" * 64
+
+        before = progress.model_copy(deep=True)
+        replaced = service.replace_modules(
+            progress,
+            [module.model_copy(deep=True) for module in modules],
+            retained_grading_evidence=True,
+        )
+
+        assert replaced is False
+        assert progress == before
+
     def test_init_modules_replaces_existing_modules(self, tmp_path: Path):
         store = LearningStore(root=tmp_path)
         service = LearningService(store)

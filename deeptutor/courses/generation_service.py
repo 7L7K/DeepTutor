@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-from queue import Empty, Queue
 import threading
 from typing import Callable, ContextManager
 
@@ -22,8 +21,10 @@ from .generation_provider import (
     PracticeGenerationProviderTimedOut,
     PracticeGenerationProviderUnavailable,
     default_practice_generation_provider,
+    practice_generation_provider_available,
 )
 from .generation_repository import CoursePracticeGenerationRepository
+from .provider_runtime import run_provider_with_deadline
 from .repository import CourseConflictError, CourseNotFoundError
 
 _live_generation_lock = threading.RLock()
@@ -104,28 +105,24 @@ class CoursePracticeGenerationService:
         self._provider_timeout_seconds = provider_timeout_seconds
 
     def _generate_with_deadline(self, request: PracticeGenerationInput):
-        result: Queue[object] = Queue(maxsize=1)
-
-        def invoke() -> None:
-            try:
-                result.put(self.provider.generate(request))
-            except Exception as exc:  # carried back only to the owning worker
-                result.put(exc)
-
-        thread = threading.Thread(target=invoke, daemon=True, name="practice-generation-provider")
-        thread.start()
-        try:
-            outcome = result.get(timeout=self._provider_timeout_seconds)
-        except Empty as exc:
-            raise PracticeGenerationProviderTimedOut("provider timed out") from exc
-        if isinstance(outcome, Exception):
-            raise outcome
-        return outcome
+        return run_provider_with_deadline(
+            lambda: self.provider.generate(request),
+            timeout_seconds=self._provider_timeout_seconds,
+            thread_name="practice-generation-provider",
+            timeout_error=PracticeGenerationProviderTimedOut,
+        )
 
     def create_generated_practice(self, course_id: str, **kwargs: object) -> PracticeGenerationRequest:
         if not self._account_active(self.repository.owner_user_id):
             raise CourseConflictError("Generation account authority is no longer active")
-        return self.repository.create_generated_practice(course_id, **kwargs)
+        return self.repository.create_generated_practice(
+            course_id, provider_available=self.provider_available(), **kwargs
+        )
+
+    def provider_available(self) -> bool:
+        """Expose admission truth without allocating a generated draft."""
+
+        return practice_generation_provider_available(self.provider)
 
     def get_operation(self, course_id: str, operation_id: str) -> PracticeGenerationOperation:
         self._reconcile_for_owned_read(course_id)
@@ -138,7 +135,12 @@ class CoursePracticeGenerationService:
     def request_generation(self, course_id: str, practice_set_id: str, **kwargs: object) -> PracticeGenerationRequest:
         if not self._account_active(self.repository.owner_user_id):
             raise CourseConflictError("Generation account authority is no longer active")
-        return self.repository.request_generation(course_id, practice_set_id, **kwargs)
+        return self.repository.request_generation(
+            course_id,
+            practice_set_id,
+            provider_available=self.provider_available(),
+            **kwargs,
+        )
 
     def run_operation(self, course_id: str, operation_id: str) -> PracticeGenerationOperation:
         """Synchronously run one operation; API adapters may schedule this in background."""

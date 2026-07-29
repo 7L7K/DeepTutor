@@ -79,6 +79,32 @@ def test_course_api_isolates_users_and_admin_personal_profiles(course_client) ->
     ).json()["courses"]] == [carol.json()["id"]]
 
 
+def test_course_api_reports_generation_capability_truthfully(
+    course_client, monkeypatch
+) -> None:
+    monkeypatch.delenv("TEEECHR_TEST_DETERMINISTIC_PROVIDER", raising=False)
+    unavailable = course_client.get("/api/v1/courses", headers=_auth("bob"))
+    assert unavailable.status_code == 200
+    assert unavailable.json()["capabilities"] == {
+        "grounded_generation": False,
+        "practice_generation": False,
+        "flashcard_generation": False,
+        "grounded_generation_reason": (
+            "Grounded generation is not enabled on this server"
+        ),
+    }
+
+    monkeypatch.setenv("TEEECHR_TEST_DETERMINISTIC_PROVIDER", "1")
+    deterministic = course_client.get("/api/v1/courses", headers=_auth("bob"))
+    assert deterministic.status_code == 200
+    assert deterministic.json()["capabilities"] == {
+        "grounded_generation": True,
+        "practice_generation": True,
+        "flashcard_generation": True,
+        "grounded_generation_reason": None,
+    }
+
+
 def test_course_api_revision_archive_restore_and_no_delete(course_client) -> None:
     created = course_client.post(
         "/api/v1/courses", headers=_auth("bob"), json={"title": "Physics"}
@@ -210,6 +236,88 @@ def test_course_learning_reset_rejects_authoritative_grading_history(
     assert response.json()["detail"] == (
         "Course learning with grading evidence cannot be reset"
     )
+
+
+def test_course_learning_reinit_rejects_plan_change_with_grading_history_but_allows_identity(
+    course_client, monkeypatch
+) -> None:
+    from deeptutor.api.routers import courses as course_router
+    from deeptutor.courses.grading_repository import CourseGradingRepository
+
+    created = course_client.post(
+        "/api/v1/courses", headers=_auth("bob"), json={"title": "Biology"}
+    ).json()
+    module = {
+        "id": "bio_m1",
+        "name": "Cells",
+        "order": 0,
+        "knowledge_points": [
+            {
+                "id": "bio_kp1",
+                "name": "Explain ATP",
+                "type": "concept",
+                "module_id": "bio_m1",
+            }
+        ],
+    }
+    endpoint = f"/api/v1/courses/{created['id']}/learning/init"
+    assert course_client.post(
+        endpoint,
+        headers=_auth("bob"),
+        json={"modules": [module]},
+    ).status_code == 200
+    monkeypatch.setattr(
+        CourseGradingRepository,
+        "has_course_evidence",
+        lambda self, course_id: course_id == created["id"],
+    )
+    cancellations: list[tuple[str, str | None]] = []
+
+    async def record_cancellation(course_id: str, session_id: str | None) -> None:
+        cancellations.append((course_id, session_id))
+
+    monkeypatch.setattr(
+        course_router,
+        "_cancel_owned_course_session",
+        record_cancellation,
+    )
+
+    identity_replay = course_client.post(
+        endpoint,
+        headers=_auth("bob"),
+        json={"modules": [module]},
+    )
+    assert identity_replay.status_code == 200
+    assert cancellations == []
+
+    changed = {
+        **module,
+        "knowledge_points": [
+            {
+                "id": "bio_kp2",
+                "name": "Explain DNA",
+                "type": "concept",
+                "module_id": "bio_m1",
+            }
+        ],
+    }
+    rejected = course_client.post(
+        endpoint,
+        headers=_auth("bob"),
+        json={"modules": [changed]},
+    )
+    assert rejected.status_code == 409
+    assert rejected.json()["detail"] == (
+        "Course learning plan with grading evidence cannot be replaced"
+    )
+    assert cancellations == []
+    progress = course_client.get(
+        f"/api/v1/courses/{created['id']}/learning",
+        headers=_auth("bob"),
+    ).json()["progress"]
+    assert [item["id"] for item in progress["modules"][0]["knowledge_points"]] == [
+        "bio_kp1"
+    ]
 
 
 def test_course_source_api_accepts_only_prepared_owned_operation(

@@ -189,6 +189,26 @@ def test_idempotency_reuses_exact_request_and_rejects_a_changed_request(tmp_path
         idempotency_key="same-key", expected_course_write_epoch=course.write_epoch,
     )
     assert second.operation.id == first.operation.id
+    replay_while_unavailable = service.repository.create_generated_practice(
+        course.id,
+        title="Week 1",
+        source_ids=[source.id],
+        objective_ids=["obj_atp"],
+        idempotency_key="same-key",
+        expected_course_write_epoch=course.write_epoch,
+        provider_available=False,
+    )
+    assert replay_while_unavailable.operation.id == first.operation.id
+    with pytest.raises(CourseConflictError, match="provider is unavailable"):
+        service.repository.create_generated_practice(
+            course.id,
+            title="Week 2",
+            source_ids=[source.id],
+            objective_ids=["obj_atp"],
+            idempotency_key="new-unavailable-key",
+            expected_course_write_epoch=course.write_epoch,
+            provider_available=False,
+        )
     with pytest.raises(CourseConflictError):
         service.create_generated_practice(
             course.id, title="Changed", source_ids=[source.id], objective_ids=["obj_atp"],
@@ -308,8 +328,10 @@ def test_restart_reconciliation_and_default_unavailable_provider_are_safe_termin
     from deeptutor.courses.generation_provider import UnavailablePracticeGenerationProvider
     service2.provider = UnavailablePracticeGenerationProvider()
     course2 = courses2.create_course("Chemistry")
-    _source2, request2 = _request(courses2, service2, course2.id)
-    assert service2.run_operation(course2.id, request2.operation.id).error_code == "provider_unavailable"
+    with pytest.raises(CourseConflictError, match="provider is unavailable"):
+        _request(courses2, service2, course2.id)
+    with courses2._connect() as conn:
+        assert conn.execute("SELECT COUNT(*) FROM practice_generation_operations").fetchone()[0] == 0
 
     courses3, service3 = _service(tmp_path / "provider-failure", provider=FailingProvider())
     course3 = courses3.create_course("Physics")
