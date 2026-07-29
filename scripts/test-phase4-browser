@@ -153,6 +153,7 @@ run_browser_proof "after server restart|manual Practice and Flashcard"
 # Provider-free Phase 5 proof uses the explicit deterministic local adapter
 # and a private fingerprint-bound source shard. It never contacts a model.
 stop_backend
+cd "$repo_root"
 DEEPTUTOR_HOME="$runtime_root" "$python_bin" - "$proof_state" <<'PY'
 import json
 from pathlib import Path
