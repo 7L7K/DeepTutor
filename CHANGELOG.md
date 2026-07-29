@@ -4,6 +4,11 @@
 
 ### Added
 
+- Closed the provider-free Phase 5 single-host engineering boundary with an
+  authenticated five-test browser campaign. Disposable Alice/Bob Courses,
+  learning state, a five-question quiz, manual Practice/Flashcards, grounded
+  candidate staging, learner review, immutable publication, and durable review
+  all passed across actual backend process restarts without contacting a model.
 - Added the provider-free Phase 5 Course Study Intelligence foundation.
   Flashcard generation now starts with a server-normalized, Course-owned brief
   and a separate visible confirmation; revalidates the current account,

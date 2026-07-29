@@ -1,6 +1,6 @@
 # TEEECHR Phase 5 — Course Study Intelligence
 
-Status: provider-free source and automated proof complete; authenticated browser proof pending
+Status: provider-free single-host engineering boundary complete
 
 Authority: `/Users/home/Desktop/2k26/teeech/DeepTutor-v1.5.2-baseline`
 
@@ -417,11 +417,23 @@ its build subprocess requires unavailable PyPI build dependencies. The same
 wheel contents passed the explicit offline build-and-inspection proof without
 changing the regression test.
 
-The authenticated Phase 5 browser campaign is also environment-blocked here
-because the sandbox forbids its loopback listener. Run
-`./scripts/test-phase4-browser` outside this sandbox against the reviewed tree.
-Until that command passes, this receipt must not be described as full Phase 5
-engineering closure.
+The authenticated browser campaign passed on the reviewed tree outside the
+restricted sandbox:
+
+- Disposable Alice and Bob created same-titled private Courses without identity
+  or browser-cache crossover.
+- Course learning state and a five-question quiz survived actual backend
+  process death and restart.
+- Manual Practice and Flashcards remained usable with provider generation
+  disabled.
+- The explicit deterministic Phase 5 adapter staged grounded candidates behind
+  learner review without contacting a model.
+- A second backend restart preserved the awaiting-review operation, after which
+  the learner excluded/reincluded a candidate, published the selected immutable
+  deck, and entered the durable review flow.
+
+All five Playwright tests passed. The `module.register()` deprecation message is
+an upstream Node warning and did not affect the campaign.
 
 No real or paid provider call, push, merge, deployment, hosted mutation,
 BlueWay source change, historical import, or upstream integration occurred.
