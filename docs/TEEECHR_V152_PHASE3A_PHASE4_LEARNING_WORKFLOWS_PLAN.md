@@ -1,6 +1,6 @@
 # TEEECHR v1.5.2 Phase 3A and Phase 4 — Close BlueWay, Restore Learning Workflows
 
-Status: **Phase 3A accepted; Phase 4 implementation active; P4-01 through P4-02B complete.**
+Status: **Phase 3A accepted; Phase 4 implementation active; P4-01 through P4-04 complete.**
 The real two-owner Apple/device flow, hosted fixture retirement, publication,
 deployment, and release certification remain parked. They do not block Phase 4,
 and Phase 4 must not imply that those distinct surfaces passed.
@@ -107,8 +107,8 @@ The P4-01 subordinate artifacts are:
 
 They provide executable detail for this plan but do not override it. P4-01 was
 implemented on the local Phase 4 branch by `1cc75f2f`. P4-02A was implemented
-by `6bdb5179`, P4-02B by `d613b8ad`, and P4-03 by `96e073ee`; P4-04 is the
-next active slice.
+by `6bdb5179`, P4-02B by `d613b8ad`, P4-03 by `96e073ee`, and P4-04 by
+`5cf02793`; P4-05 is the next active slice.
 
 ## 1. Goal and non-goals
 
@@ -878,6 +878,31 @@ Status: **completed for the local engineering boundary by `d613b8ad`.**
   - no broad redesign of Chat, Settings, or Course navigation.
 - **Doc alignment:** historical `PracticeWorkspace`.
 - **Risk / unknown:** retain the useful UX without carrying historical component debt.
+
+#### P4-04 implementation receipt — 2026-07-28
+
+- implementation commit: `5cf02793`;
+- the authenticated Course API now exposes private manual Practice authoring,
+  archive/restore, immutable ready revisions, resumable attempts, CAS and
+  idempotent answer saves, submit/abandon, deterministic grading, and results;
+- draft authoring responses include the answer contract, while ready learner
+  responses omit it until the owned attempt is durably graded; results resolve
+  the attempt's frozen revision rather than a newer current revision;
+- `/practice` always displays the active Course, clears identity-, Course-, and
+  view-scoped state on replacement, fences delayed set and attempt responses,
+  requires explicit durable answer saves before submit, and persists no answer
+  or quiz snapshot in browser storage;
+- same-title Alice/Bob tests and foreign Course, set, revision, attempt, and item
+  identifiers prove uniform private `404` behavior; archive, stale CAS,
+  idempotency, answer-authority, historical-revision, and grading retries are
+  covered;
+- the exact slice passed Ruff, `78` focused backend tests, `235` impacted
+  Course and BlueWay tests, TypeScript, ESLint, `175` web node tests, a Next
+  production build including `/practice`, secret/diff checks, and independent
+  Terra review with no P0-P2 finding;
+- live browser interaction, refresh/back-navigation behavior, and two real
+  authenticated browser sessions remain explicitly unproved here and are
+  retained for the integrated P4-09 browser campaign.
 
 ### P4-05 — Grounded Practice generation
 
