@@ -388,3 +388,104 @@ def test_manual_practice_api_keeps_same_title_users_and_all_foreign_ids_private(
     )
     assert [item["id"] for item in alice_list.json()["practice_sets"]] == [alice_set["id"]]
     assert [item["id"] for item in bob_list.json()["practice_sets"]] == [bob_set["id"]]
+
+
+def test_manual_flashcard_api_lifecycle_due_queue_idempotency_and_archive(
+    practice_client: TestClient,
+) -> None:
+    course = _create_course(practice_client)
+    course_id = course["id"]
+    root = f"/api/v1/courses/{course_id}/flashcards"
+    deck = practice_client.post(
+        root,
+        headers=_auth("alice"),
+        json={"title": "Biology terms", "expected_course_write_epoch": course["write_epoch"]},
+    )
+    assert deck.status_code == 200
+    deck = deck.json()
+    card = practice_client.post(
+        f"{root}/{deck['id']}/cards",
+        headers=_auth("alice"),
+        json={
+            "prompt": "ATP?",
+            "answer": "Energy currency",
+            "objective_ids": ["cell_energy"],
+            "expected_deck_revision": deck["revision"],
+            "expected_course_write_epoch": course["write_epoch"],
+        },
+    )
+    assert card.status_code == 200
+    card = card.json()
+    deck = practice_client.get(f"{root}/{deck['id']}", headers=_auth("alice")).json()["deck"]
+    ready = practice_client.post(
+        f"{root}/{deck['id']}/ready",
+        headers=_auth("alice"),
+        json={"expected_revision": deck["revision"], "expected_course_write_epoch": course["write_epoch"]},
+    )
+    assert ready.status_code == 200
+    deck = ready.json()
+    review_body = {
+        "card_id": card["id"],
+        "rating": "again",
+        "idempotency_key": "review-once",
+        "expected_deck_revision": deck["revision"],
+        "expected_card_revision": card["revision"],
+        "expected_course_write_epoch": course["write_epoch"],
+    }
+    first = practice_client.post(f"{root}/{deck['id']}/reviews", headers=_auth("alice"), json=review_body)
+    assert first.status_code == 200
+    assert practice_client.post(
+        f"{root}/{deck['id']}/reviews", headers=_auth("alice"), json=review_body
+    ).json()["review"] == first.json()["review"]
+    due = practice_client.get(f"{root}/{deck['id']}/reviews", headers=_auth("alice"))
+    assert due.status_code == 200
+    assert due.json()["review_summary"]["review_count"] == 1
+    archived = practice_client.post(
+        f"{root}/{deck['id']}/archive",
+        headers=_auth("alice"),
+        json={"expected_revision": deck["revision"], "expected_course_write_epoch": course["write_epoch"]},
+    )
+    assert archived.status_code == 200
+    assert practice_client.post(
+        f"{root}/{deck['id']}/reviews",
+        headers=_auth("alice"),
+        json={**review_body, "idempotency_key": "after-archive", "expected_deck_revision": archived.json()["revision"]},
+    ).status_code == 409
+    assert practice_client.get(f"{root}/{deck['id']}", headers=_auth("alice")).json()["review_summary"]["review_count"] == 1
+
+
+def test_manual_flashcard_api_hides_foreign_deck_card_and_review_ids(
+    practice_client: TestClient,
+) -> None:
+    alice_course = _create_course(practice_client, "alice")
+    bob_course = _create_course(practice_client, "bob")
+    root = f"/api/v1/courses/{alice_course['id']}/flashcards"
+    deck = practice_client.post(
+        root,
+        headers=_auth("alice"),
+        json={"title": "Same title", "expected_course_write_epoch": alice_course["write_epoch"]},
+    ).json()
+    card = practice_client.post(
+        f"{root}/{deck['id']}/cards",
+        headers=_auth("alice"),
+        json={
+            "prompt": "one", "answer": "two", "expected_deck_revision": deck["revision"],
+            "expected_course_write_epoch": alice_course["write_epoch"],
+        },
+    ).json()
+    bob_root = f"/api/v1/courses/{bob_course['id']}/flashcards/{deck['id']}"
+    responses = [
+        practice_client.get(f"{root}/{deck['id']}", headers=_auth("bob")),
+        practice_client.get(bob_root, headers=_auth("bob")),
+        practice_client.post(
+            f"{bob_root}/reviews",
+            headers=_auth("bob"),
+            json={
+                "card_id": card["id"], "rating": "good", "idempotency_key": "foreign-review",
+                "expected_deck_revision": deck["revision"], "expected_card_revision": card["revision"],
+                "expected_course_write_epoch": bob_course["write_epoch"],
+            },
+        ),
+    ]
+    assert [response.status_code for response in responses] == [404, 404, 404]
+    assert {response.json()["detail"] for response in responses} == {"Practice resource not found"}

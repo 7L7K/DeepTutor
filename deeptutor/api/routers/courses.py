@@ -134,6 +134,49 @@ class GeneratePracticeRevisionRequest(_PracticeRequest):
     context_char_limit: int = Field(default=12_000, ge=1, le=48_000)
 
 
+class CreateFlashcardDeckRequest(_PracticeRequest):
+    title: str = Field(min_length=1, max_length=160)
+    expected_course_write_epoch: int = Field(ge=1)
+
+
+class FlashcardDeckMutationRequest(_PracticeRequest):
+    expected_revision: int = Field(ge=1)
+    expected_course_write_epoch: int = Field(ge=1)
+
+
+class RenameFlashcardDeckRequest(FlashcardDeckMutationRequest):
+    title: str = Field(min_length=1, max_length=160)
+
+
+class CreateFlashcardCardRequest(_PracticeRequest):
+    prompt: str = Field(min_length=1, max_length=12_000)
+    answer: str = Field(min_length=1, max_length=12_000)
+    objective_ids: list[Annotated[str, Field(min_length=1, max_length=160)]] = Field(
+        default_factory=list, max_length=64
+    )
+    expected_deck_revision: int = Field(ge=1)
+    expected_course_write_epoch: int = Field(ge=1)
+
+
+class UpdateFlashcardCardRequest(CreateFlashcardCardRequest):
+    expected_card_revision: int = Field(ge=1)
+
+
+class ArchiveFlashcardCardRequest(_PracticeRequest):
+    expected_card_revision: int = Field(ge=1)
+    expected_deck_revision: int = Field(ge=1)
+    expected_course_write_epoch: int = Field(ge=1)
+
+
+class RecordFlashcardReviewRequest(_PracticeRequest):
+    card_id: str = Field(min_length=1, max_length=80)
+    rating: str = Field(pattern="^(again|hard|good|easy)$")
+    idempotency_key: str = Field(min_length=1, max_length=160)
+    expected_deck_revision: int = Field(ge=1)
+    expected_card_revision: int = Field(ge=1)
+    expected_course_write_epoch: int = Field(ge=1)
+
+
 def _service():
     try:
         return get_current_course_service()
@@ -226,6 +269,13 @@ def _practice_services():
         CoursePracticeService(CoursePracticeRepository(repository)),
         CourseAssessmentService(CourseAssessmentRepository(repository)),
     )
+
+
+def _flashcard_service():
+    from deeptutor.courses.flashcard_repository import CourseFlashcardRepository
+    from deeptutor.courses.flashcard_service import CourseFlashcardService
+
+    return CourseFlashcardService(CourseFlashcardRepository(_service().repository))
 
 
 def _practice_grading_service():
@@ -733,6 +783,139 @@ async def get_practice_attempt_results(
             _practice_question_payload(item, include_answer_contract=True)
             for item in questions
         ],
+    }
+
+
+@router.post("/{course_id}/flashcards")
+async def create_flashcard_deck(course_id: str, body: CreateFlashcardDeckRequest):
+    async with course_operation_lock(course_id):
+        return _practice_call(
+            lambda: _flashcard_service().create_deck(
+                course_id, title=body.title,
+                expected_course_write_epoch=body.expected_course_write_epoch,
+            )
+        ).model_dump(mode="json")
+
+
+@router.get("/{course_id}/flashcards")
+async def list_flashcard_decks(course_id: str, include_archived: bool = Query(default=True)):
+    return {"flashcard_decks": [
+        item.model_dump(mode="json")
+        for item in _practice_call(
+            lambda: _flashcard_service().list_decks(course_id, include_archived=include_archived)
+        )
+    ]}
+
+
+@router.get("/{course_id}/flashcards/{deck_id}")
+async def get_flashcard_deck(course_id: str, deck_id: str):
+    return _practice_call(lambda: _flashcard_service().get_deck(course_id, deck_id)).model_dump(mode="json")
+
+
+@router.patch("/{course_id}/flashcards/{deck_id}")
+async def rename_flashcard_deck(course_id: str, deck_id: str, body: RenameFlashcardDeckRequest):
+    async with course_operation_lock(course_id):
+        return _practice_call(
+            lambda: _flashcard_service().rename_deck(
+                course_id, deck_id, title=body.title, expected_revision=body.expected_revision,
+                expected_course_write_epoch=body.expected_course_write_epoch,
+            )
+        ).model_dump(mode="json")
+
+
+@router.post("/{course_id}/flashcards/{deck_id}/ready")
+async def ready_flashcard_deck(course_id: str, deck_id: str, body: FlashcardDeckMutationRequest):
+    async with course_operation_lock(course_id):
+        return _practice_call(
+            lambda: _flashcard_service().ready_deck(
+                course_id, deck_id, expected_revision=body.expected_revision,
+                expected_course_write_epoch=body.expected_course_write_epoch,
+            )
+        ).model_dump(mode="json")
+
+
+@router.post("/{course_id}/flashcards/{deck_id}/archive")
+async def archive_flashcard_deck(course_id: str, deck_id: str, body: FlashcardDeckMutationRequest):
+    async with course_operation_lock(course_id):
+        return _practice_call(
+            lambda: _flashcard_service().archive_deck(
+                course_id, deck_id, expected_revision=body.expected_revision,
+                expected_course_write_epoch=body.expected_course_write_epoch,
+            )
+        ).model_dump(mode="json")
+
+
+@router.post("/{course_id}/flashcards/{deck_id}/restore")
+async def restore_flashcard_deck(course_id: str, deck_id: str, body: FlashcardDeckMutationRequest):
+    async with course_operation_lock(course_id):
+        return _practice_call(
+            lambda: _flashcard_service().restore_deck(
+                course_id, deck_id, expected_revision=body.expected_revision,
+                expected_course_write_epoch=body.expected_course_write_epoch,
+            )
+        ).model_dump(mode="json")
+
+
+@router.post("/{course_id}/flashcards/{deck_id}/cards")
+async def add_flashcard(course_id: str, deck_id: str, body: CreateFlashcardCardRequest):
+    async with course_operation_lock(course_id):
+        return _practice_call(
+            lambda: _flashcard_service().add_card(
+                course_id, deck_id, prompt=body.prompt, answer=body.answer,
+                objective_ids=body.objective_ids, expected_deck_revision=body.expected_deck_revision,
+                expected_course_write_epoch=body.expected_course_write_epoch,
+            )
+        ).model_dump(mode="json")
+
+
+@router.patch("/{course_id}/flashcards/{deck_id}/cards/{card_id}")
+async def update_flashcard(course_id: str, deck_id: str, card_id: str, body: UpdateFlashcardCardRequest):
+    async with course_operation_lock(course_id):
+        return _practice_call(
+            lambda: _flashcard_service().update_card(
+                course_id, deck_id, card_id, prompt=body.prompt, answer=body.answer,
+                objective_ids=body.objective_ids, expected_card_revision=body.expected_card_revision,
+                expected_deck_revision=body.expected_deck_revision,
+                expected_course_write_epoch=body.expected_course_write_epoch,
+            )
+        ).model_dump(mode="json")
+
+
+@router.post("/{course_id}/flashcards/{deck_id}/cards/{card_id}/archive")
+async def archive_flashcard(course_id: str, deck_id: str, card_id: str, body: ArchiveFlashcardCardRequest):
+    async with course_operation_lock(course_id):
+        return _practice_call(
+            lambda: _flashcard_service().archive_card(
+                course_id, deck_id, card_id, expected_card_revision=body.expected_card_revision,
+                expected_deck_revision=body.expected_deck_revision,
+                expected_course_write_epoch=body.expected_course_write_epoch,
+            )
+        ).model_dump(mode="json")
+
+
+@router.get("/{course_id}/flashcards/{deck_id}/reviews")
+async def due_flashcards(course_id: str, deck_id: str):
+    return _practice_call(
+        lambda: _flashcard_service().due_cards(course_id, deck_id)
+    ).model_dump(mode="json")
+
+
+@router.post("/{course_id}/flashcards/{deck_id}/reviews")
+async def record_flashcard_review(course_id: str, deck_id: str, body: RecordFlashcardReviewRequest):
+    async with course_operation_lock(course_id):
+        review, schedule, summary = _practice_call(
+            lambda: _flashcard_service().record_review(
+                course_id, deck_id, card_id=body.card_id, rating=body.rating,
+                idempotency_key=body.idempotency_key,
+                expected_deck_revision=body.expected_deck_revision,
+                expected_card_revision=body.expected_card_revision,
+                expected_course_write_epoch=body.expected_course_write_epoch,
+            )
+        )
+    return {
+        "review": review.model_dump(mode="json"),
+        "schedule": schedule.model_dump(mode="json"),
+        "review_summary": summary.model_dump(mode="json"),
     }
 
 

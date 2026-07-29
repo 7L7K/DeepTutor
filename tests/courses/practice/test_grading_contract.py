@@ -439,7 +439,7 @@ def test_0002_upgrade_applies_grading_and_generation_migrations_preserves_rows_a
     with sqlite3.connect(path) as conn:
         conn.execute("INSERT INTO courses (id, owner_user_id, title, state, revision, write_epoch, managed_kb_ref, created_at, updated_at, archived_at) VALUES ('crs_keep', 'u_alice', 'Keep', 'active', 1, 1, NULL, 1, 1, NULL)")
     monkeypatch.setattr(runner, "discover_migrations", lambda: artifacts)
-    assert ensure_course_schema(path) == (3, 4)
+    assert ensure_course_schema(path) == (3, 4, 5)
     with sqlite3.connect(path) as conn:
         assert conn.execute("SELECT title FROM courses WHERE id = 'crs_keep'").fetchone()[0] == "Keep"
 
@@ -461,10 +461,10 @@ def test_0002_upgrade_applies_grading_and_generation_migrations_preserves_rows_a
         assert conn.execute("SELECT COUNT(*) FROM sqlite_master WHERE name = 'should_rollback'").fetchone()[0] == 0
 
 
-def test_exact_p4_03_upgrade_applies_only_generation_migration_and_preserves_learning_rows(
+def test_exact_p4_03_upgrade_applies_generation_and_flashcard_migrations_and_preserves_learning_rows(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """P4-05 must be a no-rewrite upgrade from the accepted P4-03 ledger."""
+    """P4-05/06 must be no-rewrite upgrades from the accepted P4-03 ledger."""
     root = tmp_path / "p4_03_upgrade"
     path = root / "courses.db"
     artifacts = runner.discover_migrations()
@@ -493,7 +493,7 @@ def test_exact_p4_03_upgrade_applies_only_generation_migration_and_preserves_lea
         }
 
     monkeypatch.setattr(runner, "discover_migrations", lambda: artifacts)
-    assert ensure_course_schema(path) == (4,)
+    assert ensure_course_schema(path) == (4, 5)
     assert ensure_course_schema(path) == ()
     with courses._connect() as conn:
         after = {
@@ -501,6 +501,7 @@ def test_exact_p4_03_upgrade_applies_only_generation_migration_and_preserves_lea
             for table in before
         }
         assert conn.execute("SELECT COUNT(*) FROM practice_generation_operations").fetchone()[0] == 0
+        assert conn.execute("SELECT COUNT(*) FROM flashcard_reviews").fetchone()[0] == 0
         effective_triggers = {
             str(row[0])
             for row in conn.execute(
@@ -516,7 +517,7 @@ def test_exact_p4_03_upgrade_applies_only_generation_migration_and_preserves_lea
         } <= effective_triggers
         assert tuple(
             row[0] for row in conn.execute("SELECT version FROM schema_migrations ORDER BY version")
-        ) == (0, 1, 2, 3, 4)
+        ) == (0, 1, 2, 3, 4, 5)
     assert after == before
 
 

@@ -4,6 +4,13 @@
 
 ### Added
 
+- Added private Course-owned manual Flashcards with durable draft/ready/archive
+  decks, optimistic card revisions, append-only idempotent review evidence,
+  restart-safe due schedules, deterministic Again/Hard/Good/Easy intervals,
+  and a 180-day scheduling cap. The `/flashcards` workspace supports manual
+  authoring, missed-card requeue, archive/restore, and identity/Course-scoped
+  stale-response fencing without provider calls, mastery mutations, browser
+  answer caches, or permanent deletion.
 - Added durable Course-grounded Practice generation operations with frozen
   source receipts, strict citation and output validation, idempotent new-set
   and successor requests, bounded local-provider execution, restart

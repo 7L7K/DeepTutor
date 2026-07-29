@@ -11,6 +11,7 @@ import {
   Bot,
   Brain,
   ClipboardCheck,
+  GalleryVerticalEnd,
   ChevronDown,
   Github,
   HeartHandshake,
@@ -90,6 +91,12 @@ const PRIMARY_NAV: NavEntry[] = [
     label: "Practice",
     icon: ClipboardCheck,
     tooltipKey: "Practice",
+  },
+  {
+    href: "/flashcards",
+    label: "Flashcards",
+    icon: GalleryVerticalEnd,
+    tooltipKey: "Flashcards",
   },
 ];
 
