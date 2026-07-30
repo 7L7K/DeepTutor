@@ -4,12 +4,34 @@
 
 ### Added
 
+- Refined active Flashcard study into a focused notecard surface: deck
+  management and neighboring prompts are hidden after study begins, while
+  private numbered navigation lets learners move between unfinished cards
+  without exposing their questions.
+- Kept deployment-owned model and provider authority in the global settings
+  namespace while Course Chat uses a private personal workspace. Administrators
+  can now run Course Chat with the active server model without the personal
+  Course scope incorrectly resolving an empty per-user model catalog.
+- Resolved General Chat Flashcard actions from the same authenticated session
+  store that owns the conversation while continuing to save General Study and
+  destination Course decks in the learner's private Course workspace.
+- Made General Chat Flashcard planning produce a useful no-spend title, learning
+  focus, and coverage preview from the paired learner question and meaningful
+  explanation headings. Unrelated zero-overlap turns are excluded, and the
+  frozen receipt preserves the authenticated session namespace so confirmed
+  generation reloads the exact reviewed conversation. Administrator-scope
+  conversation work now revalidates the current role before reading context,
+  before provider admission, and before committing candidates, so demotion
+  fails the queued operation closed.
 - Added private General Study and conversation-drafted Flashcards. General Chat
   can now prepare an editable, no-spend Flashcard plan from a bounded relevant
   message branch, freeze exact message receipts, save to General Study by
   default or an explicitly selected Course without claiming Course grounding,
-  then generate once, review candidates, publish an exact selection, and study
-  the preserved deck. General Study is blocked from Course sources, Knowledge,
+  then confirm once in a centered modal, generate validated cards, publish them
+  automatically, and open the first study card. The normal learner journey no
+  longer exposes candidate operations or requires separate Save cards and
+  Start studying actions; Activity retains restart-safe recovery. General Study
+  is blocked from Course sources, Knowledge,
   Practice, learning, and mastery; generated counts support 1 through 48; one
   ready Course source is automatic while multiple sources remain learner
   selectable; and changed conversation authority fails before provider use.
@@ -28,13 +50,13 @@
   experience. Provider-off Courses now present a direct manual path instead of
   disabled generation controls; grounded requests keep advanced choices
   optional and retain explicit provider confirmation; generation activity uses
-  learner-safe state and recovery copy; candidate review publishes an exact
-  selected count; and study uses Show answer, Got it, and Study again while
+  learner-safe state and recovery copy; automatic finalization atomically
+  publishes validated cards; and study uses Show answer, Got it, and Study again while
   keeping scheduler dates internal. Raw objective IDs, operation states, and
   provider error codes no longer appear in the normal learner surface.
   Restored vertical scrolling within the shared fixed-height application shell
   and added authenticated browser coverage for the study-first shell, manual
-  fallback, candidate review, restart persistence, and narrow-height overflow.
+  fallback, automatic finalization, restart persistence, and narrow-height overflow.
 - Repaired the Phase 3 BlueWay-to-Phase 5 Flashcard provenance bridge for
   already-ready Course sources. Startup reconciliation now rebuilds only a
   missing or stale derived deterministic index whose owner-scoped immutable

@@ -43,9 +43,9 @@ Inputs:
 Outputs:
 
 - a provider-free review summary;
-- one explicitly confirmed bounded provider operation;
-- private reviewable candidates;
-- an immutable ready deck containing only learner-selected candidates;
+- one explicitly confirmed bounded provider operation from a centered modal;
+- private server-validated candidates;
+- an immutable ready deck containing all validated candidates;
 - durable source or conversation provenance.
 
 Success requires Course and General Study journeys to preserve owner isolation,
@@ -64,14 +64,19 @@ source-grounded.
 - TEEECHR chooses deterministic safe defaults before exposing optional
   customization.
 - Every paid provider call still requires visible learner confirmation.
-- Every generated candidate still requires learner review before publication.
+- Every generated candidate still requires server-side schema, quality,
+  relevance, provenance, ownership, revision, and publication validation.
+- The normal learner journey automatically publishes all validated candidates
+  and opens the first study card; candidate machinery is not learner-facing.
 - Chat and Practice prepare proposals but cannot call a paid provider or
   publish.
 - General Study is created lazily, is private and system-managed, and cannot be
   archived, renamed, mapped to BlueWay, or used for Course mastery.
 - General Chat may prepare conversation-draft cards without an attached source.
   The server selects a bounded relevant message path, freezes its message IDs
-  and fingerprint, and labels the result `Based on this conversation`.
+  and fingerprint, derives a no-spend learning brief from the paired question
+  plus the assistant explanation's structure, and labels the result
+  `Based on this conversation`.
 - A General Chat proposal defaults to General Study. The learner may explicitly
   choose an active Course, but changing the destination never converts
   conversation provenance into grounded provenance.
@@ -85,11 +90,11 @@ source-grounded.
   disclosure and grounded generation never proceeds with zero materials.
 - Imported BlueWay data is Course material, not a generation permission.
   BlueWay sync never generates cards automatically.
-- Pressing the final `Generate N cards` action is the visible paid-action
-  confirmation. There is no redundant confirmation modal, automatic paid
-  retry, or background generation.
-- Exact duplicate candidates are removed. Likely semantic duplicates are
-  marked for learner review rather than silently discarded.
+- Pressing `Create N cards with AI` inside the centered `Ready to create` modal
+  is the visible paid-action confirmation. Coverage checks and opening the
+  modal make zero paid calls. There is no automatic paid retry.
+- Exact duplicate candidates are removed. A candidate that does not pass the
+  server's deterministic and provider-output checks cannot be published.
 - Rejected unpublished candidates may disappear. Published cards and decks use
   archive and restore only; no hard-delete path exists.
 - Generated factual cards remain immutable after publication.
@@ -125,20 +130,19 @@ The Phase 5 backend and persistence boundary already supports:
 - server-normalized generation briefs;
 - explicit provider confirmation;
 - bounded GPT-5 Mini provider use;
-- durable queued, running, awaiting-review, completed, failed, and cancelled
-  operations;
-- cited candidate review;
-- include, exclude, reorder, and immutable publication;
+- durable queued, running, awaiting-finalization, completed, failed, and
+  cancelled operations;
+- cited candidate validation;
+- atomic immutable publication;
 - review scheduling and restart persistence;
 - Chat and Practice proposal preparation;
 - provider-free deterministic validation;
 - owner and Course isolation.
 
-The current Flashcards page combines Study, Create, operation history,
-candidate review, errors, and manual editing in one long workspace. It exposes
-raw objective IDs, raw operation states, raw failure codes, and disabled
-provider controls. This project reorganizes the learner surface without
-weakening the existing contracts.
+The original Flashcards page combined Study, Create, operation history,
+candidate review, errors, and manual editing in one long workspace. The current
+learner surface separates those concerns, keeps raw operation details out of
+the normal flow, and preserves Activity as a recovery surface.
 
 An uncommitted scroll repair already makes the Flashcards workspace vertically
 scrollable and adds a browser regression. That repair must be preserved and
@@ -198,15 +202,15 @@ Raw objective IDs are never learner-facing.
 
 Activity contains:
 
-- resumable generation and candidate drafts when the learner returns after a
-  reload or restart;
+- resumable generation and finalization recovery when the learner returns after
+  a reload or restart;
 - recoverable failures from earlier requests;
 - collapsed previous activity.
 
-The normal create journey remains on one page through coverage check,
-confirmation, generation progress, candidate review, and save. Activity is the
-recovery/history surface, not a required detour. Technical operation history
-does not appear in Study or inside the normal creation form.
+The normal create journey is `edit -> coverage check -> centered confirmation
+modal -> generation -> automatic validated publication -> first study card`.
+Activity is the recovery/history surface, not a required detour. Technical
+operation history does not appear in Study or inside the normal creation form.
 
 ## Learner state contract
 
@@ -250,19 +254,25 @@ then require an integer from 1 through 48.
 Before confirmation, run a provider-free relevance check against the selected
 Course materials. If those materials do not cover the learner's topic, explain
 what to change and make zero provider calls. Otherwise summarize the requested
-count, focus, selected Course materials, and provider disclosure. Confirming is
-the only action that may schedule paid work.
+count, focus, selected Course materials, destination, provenance basis, and
+provider disclosure in a centered modal over the creation form. The learner may
+return to change the request or confirm there. Confirming is the only action
+that may schedule paid work.
 
 ### Generating
 
 Explain that TEEECHR is creating cards and that the learner may leave the page.
 Update automatically. Manual refresh is only a disconnected fallback.
 
-### Candidate review
+### Automatic finalization
 
-Present one candidate at a time with question, answer, Keep, Remove, and an
-optional source disclosure. A summary supports final ordering and publication.
-The publish action includes the exact selected count.
+When the operation produces candidates, the client submits every candidate that
+passed server validation through the existing atomic publication endpoint.
+Publication rechecks owner, Course, write epoch, source or conversation
+authority, candidate revision, and immutable provenance. On success, the client
+loads the ready deck and opens its first due card without showing candidate
+operations, Save cards, or Start studying. If finalization fails, no partial
+deck becomes active and Activity remains the recovery surface.
 
 ### Generation failure
 
@@ -346,23 +356,27 @@ General conversation
   -> open the editable review summary
   -> default destination to General Study
   -> learner may explicitly choose an active Course
-  -> learner presses Generate N cards
+  -> learner confirms Create N cards with AI in the modal
   -> candidates remain Based on this conversation
-  -> learner reviews and saves selected cards
+  -> validated candidates publish atomically
+  -> the first study card opens
 ```
 
 The context selector begins at the requested assistant message, walks only its
 owned branch ancestry, includes directly relevant surrounding messages, removes
-system/tool/credential surfaces, applies a strict size bound, and asks for a
-clearer focus when one coherent topic cannot be identified. The review summary
-shows the proposed title, focus, destination, count, and a learner-safe
-description such as `Using 8 messages from your recent discussion about linear
-equations`.
+system/tool/credential surfaces, rejects zero-overlap neighboring turns, and
+applies a strict size bound. Before any provider call, the deterministic planner
+uses the paired learner request plus meaningful numbered explanation headings
+to derive a proposed title, coverage topics, and learning focus. Misspelled
+learner topic words may be corrected only against words already present in the
+selected assistant response. The review summary shows the proposed title,
+coverage, focus, destination, count, and exact selected-message count.
 
 The immutable conversation receipt records session ID, selected message IDs,
-the terminal assistant message ID, and a canonical content fingerprint. It
-does not copy conversation text into Course sources or manufacture Course
-citations.
+the terminal assistant message ID, canonical content fingerprint, safe title
+and topic summary, and the authenticated session-storage scope needed to reload
+the exact reviewed conversation. It does not copy conversation text into Course
+sources or manufacture Course citations.
 
 ## Doc alignment matrix
 
@@ -372,8 +386,8 @@ citations.
 | Chat branch authority | `deeptutor/services/session/sqlite_store.py:get_messages_for_context` | Resolve the owned branch ending at the selected assistant message | Sibling branches, foreign sessions, wrong roles, and stale messages are rejected |
 | Grounded provenance | `flashcard_generation_models.py:FlashcardSourceReceipt` | Preserve required source receipts and citations | Source revision or fingerprint drift blocks publication |
 | Conversation provenance | `flashcard_generation_models.py:FlashcardGenerationOrigin` | Add an immutable conversation receipt without source authority | Cards persist `Based on this conversation` and carry no fabricated source citation |
-| Provider admission | `flashcard_generation_provider.py:OpenAIFlashcardGenerationProvider.generate` | One bounded call only after Generate N cards | Coverage/review makes zero calls; no automatic retry; one active operation |
-| Publication | `flashcard_generation_repository.py:publish_candidates` | Preserve atomic selected-candidate publication | Failure or stale authority publishes zero cards |
+| Provider admission | `flashcard_generation_provider.py:OpenAIFlashcardGenerationProvider.generate` | One bounded call only after modal confirmation | Coverage check and opening the modal make zero calls; no automatic retry; one active operation |
+| Publication | `flashcard_generation_repository.py:publish_candidates` | Automatically submit all validated candidates through the existing atomic publication contract | Failure or stale authority publishes zero cards |
 | Lifecycle | `flashcard_repository.py` and migration triggers | Keep archive/restore; no delete | No deck/card/workspace hard-delete route is reachable |
 | Mastery | `deeptutor/learning` Course path | General Study and conversation drafts do not mutate Course mastery | Review scheduling persists while mastery files remain unchanged |
 
@@ -390,7 +404,7 @@ citations.
 | Publish selected cards | Save the exact selected count |
 | queued | Waiting to start |
 | running | Creating cards |
-| awaiting_review | Ready for your review |
+| awaiting_review | Finishing your cards |
 | provider_failed | Learner-safe recovery copy selected by failure category |
 
 ## Presentation types
@@ -409,7 +423,7 @@ type GroundedCreateStage =
   | "editing"
   | "confirming"
   | "generating"
-  | "reviewing";
+  | "publishing";
 ```
 
 Suggested component seams:
@@ -422,7 +436,7 @@ Suggested component seams:
 - `GroundedDeckComposer`
 - `GenerationConfirmation`
 - `GenerationProgress`
-- `CandidateReviewFlow`
+- `AutomaticGenerationFinalizer`
 - `FlashcardStudySession`
 - `GenerationActivity`
 - `LearnerGenerationNotice`
@@ -482,15 +496,14 @@ boundaries.
 - [x] Remove raw objective IDs; apply prepared Course objectives automatically
       until the Course API exposes authoritative learner-facing objective names.
 
-### P0-04 Candidate review
+### P0-04 Automatic finalization
 
-- [x] Present candidates in a focused review flow.
-- [x] Support Keep, Remove, reversible inclusion, and final ordering.
-- [x] Keep citations available through a source disclosure.
-- [x] Publish the exact selected count.
-- [x] Return the ready deck to Study.
-- [x] Keep generation progress and candidate review inside the Create journey;
-      use Activity only for recovery after navigation, reload, or restart.
+- [x] Keep provider candidates behind server validation.
+- [x] Publish every validated candidate atomically.
+- [x] Preserve citations and provenance on the immutable published cards.
+- [x] Open the ready deck directly on its first study card.
+- [x] Keep generation progress inside Create and use Activity only for recovery
+      after navigation, reload, restart, or a finalization failure.
 
 ### P0-05 Study session
 
@@ -533,64 +546,64 @@ boundaries.
 
 ### P1-01 General Study aggregate
 
-- [ ] Add an explicit workspace-kind schema and model contract.
-- [ ] Lazily create exactly one private General Study workspace per owner.
-- [ ] Exclude it from BlueWay mapping, Course archive/restore, and Course
+- [x] Add an explicit workspace-kind schema and model contract.
+- [x] Lazily create exactly one private General Study workspace per owner.
+- [x] Exclude it from BlueWay mapping, Course archive/restore, and Course
       mastery endpoints.
-- [ ] Preserve the existing deck, card, review, ownership, and scheduling
+- [x] Preserve the existing deck, card, review, ownership, and scheduling
       repositories.
 
 ### P1-02 Conversation context authority
 
-- [ ] Resolve only the authenticated owner's persisted session and active
+- [x] Resolve only the authenticated owner's persisted session and active
       branch ending at the selected assistant message.
-- [ ] Select a bounded relevant context window and persist only its immutable
+- [x] Select a bounded relevant context window and persist only its immutable
       receipt/fingerprint as generation authority.
-- [ ] Keep conversation-draft and source-grounded provider/output contracts
+- [x] Keep conversation-draft and source-grounded provider/output contracts
       explicit and separate.
-- [ ] Reject foreign, deleted, wrong-role, sibling-branch, oversized, incoherent,
+- [x] Reject foreign, deleted, wrong-role, sibling-branch, oversized, incoherent,
       or changed context before provider use or publication.
 
 ### P1-03 Unified review and generation
 
-- [ ] Show proposed title, focus, destination, count, and provenance basis
+- [x] Show proposed title, focus, destination, count, and provenance basis
       before the paid action.
-- [ ] Support General Study default plus explicit active-Course destination.
-- [ ] Support counts 1 through 48 with blank-safe editing and 5/10/20 shortcuts.
-- [ ] Deduplicate candidates without hiding meaningful alternate questions.
-- [ ] Preserve explicit Generate N cards confirmation and selected-candidate
-      publication.
+- [x] Support General Study default plus explicit active-Course destination.
+- [x] Support counts 1 through 48 with blank-safe editing and 5/10/20 shortcuts.
+- [x] Deduplicate candidates without hiding meaningful alternate questions.
+- [x] Preserve explicit Create N cards confirmation and automatic atomic
+      publication of server-validated candidates.
 
 ### P1-04 Course creation simplification
 
-- [ ] Auto-use the only ready Course material without a checkbox.
-- [ ] Auto-select all ready material and reveal Change materials only when more
+- [x] Auto-use the only ready Course material without a checkbox.
+- [x] Auto-select all ready material and reveal Change materials only when more
       than one exists.
-- [ ] Prevent zero selected material in grounded mode.
-- [ ] Keep BlueWay origin in provenance rather than presenting it as a
+- [x] Prevent zero selected material in grounded mode.
+- [x] Keep BlueWay origin in provenance rather than presenting it as a
       generation permission.
 
 ### P1-05 Chat entry points
 
-- [ ] Show Make flashcards on eligible Course and General Chat answers.
-- [ ] Recognize natural requests without silently scheduling work.
-- [ ] Route both entry points through the same server-owned proposal and review
+- [x] Show Make flashcards on eligible Course and General Chat answers.
+- [x] Recognize natural requests without silently scheduling work.
+- [x] Route both entry points through the same server-owned proposal and review
       contract.
-- [ ] Clear stale proposals on identity, session, branch, or destination
+- [x] Clear stale proposals on identity, session, branch, or destination
       changes.
 
 ### P1-06 Qualification
 
-- [ ] Fresh and upgrade migration replay.
-- [ ] Two-user General Study isolation and lazy singleton proof.
-- [ ] Grounded versus conversation-draft provenance tests.
-- [ ] Context branch, size, relevance, and stale-message adversarial tests.
-- [ ] Counts 1, 5, 8, 20, and 48 plus blank/invalid UI proof.
-- [ ] Failure, cancellation, archive/restore, restart, and zero-partial-deck
+- [x] Fresh and upgrade migration replay.
+- [x] Two-user General Study isolation and lazy singleton proof.
+- [x] Grounded versus conversation-draft provenance tests.
+- [x] Context branch, size, relevance, and stale-message adversarial tests.
+- [x] Counts 1, 5, 8, 20, and 48 plus blank/invalid UI proof.
+- [x] Failure, cancellation, archive/restore, restart, and zero-partial-deck
       proof.
-- [ ] Authenticated browser journeys for Course, General Chat, destination
+- [x] Authenticated browser journeys for Course, General Chat, destination
       change, review, publication, and study.
-- [ ] No automatic paid-provider test; retain a separately approved bounded
+- [x] No automatic paid-provider test; retain a separately approved bounded
       smoke only.
 
 ## Test and proof plan
@@ -605,7 +618,7 @@ Automated proof must cover:
 - manual creation;
 - request confirmation;
 - queued and running generation;
-- candidate review;
+- automatic validated publication;
 - immutable publication;
 - cards ready;
 - no cards ready;
@@ -764,8 +777,8 @@ Parked P3:
 - The relevance fence is deliberately a bounded lexical safety heuristic, not
   a complete semantic-quality claim. It handles short scientific terms,
   Unicode, longer common inflections, and symbolic C++/C# names while rejecting
-  short shared-prefix collisions; learner review remains the final quality
-  gate. Chat and Practice wrapper briefs use their already owned
+  short shared-prefix collisions; the server validation boundary remains the
+  final publication quality gate. Chat and Practice wrapper briefs use their already owned
   source/objective scope for availability rather than treating system-written
   workflow copy as the learner's topic. Their confirmation payloads cannot
   choose that relaxed contract: the server re-derives and exactly compares the
@@ -828,6 +841,15 @@ Implemented:
   branch. The proposal freezes exact message IDs, a digest, and a plain summary;
   execution reloads those exact messages and stops before provider use if they
   changed.
+- Upgraded the no-spend conversation planner to remove unrelated zero-overlap
+  turns and derive a proposed title, learning focus, and coverage list from the
+  learner's question and the selected explanation's headings. The immutable
+  receipt also records whether the authenticated General Chat lived in the
+  personal or legacy administrator session namespace so execution reloads the
+  reviewed authority rather than guessing a database. An administrator-scope
+  operation revalidates the account's current role under the identity lock
+  before context resolution, provider admission, and candidate commit; demotion
+  fails the operation as an authority change without invoking the provider.
 - Added an editable no-spend review screen showing the proposed deck, focus,
   destination, count, and conversation or Course-material provenance.
 - Kept conversation-drafted provenance when the learner explicitly saves the
@@ -857,9 +879,85 @@ Closeout proof:
 - The authority-change adversarial test proves changed reviewed messages fail
   with `authority_changed` before the provider is called.
 
+### 2026-07-30 - single-confirmation direct-study amendment
+
+Approved and implemented:
+
+- Replaced the inline `Ready to create` block with a centered, keyboard-aware
+  modal over the creation form.
+- Kept the modal as the single explicit paid-action confirmation and preserved
+  an immediate Change request path.
+- Removed candidate review, Save cards, and Start studying from the normal
+  generated-card journey.
+- Automatically submits all server-validated candidates through the existing
+  atomic publication endpoint exactly once.
+- Opens the immutable ready deck directly on its first study card.
+- Keeps operation and candidate data available in Activity only for
+  restart-safe recovery or a finalization failure.
+- Preserved schema, relevance, provenance, owner, current-role, Course,
+  write-epoch, source or conversation fingerprint, candidate-revision, and
+  immutable-publication checks.
+
+The updated normal journey is:
+
+```text
+edit request
+  -> provider-free coverage check
+  -> centered Ready to create modal
+  -> one explicit Create N cards with AI confirmation
+  -> bounded generation
+  -> server validation
+  -> automatic atomic publication
+  -> first study card
+```
+
+Proof for this amendment:
+
+- TypeScript and focused ESLint passed.
+- All 208 frontend Node contract tests passed.
+- The seven-flow hermetic authenticated browser campaign passed.
+- The Course and General Chat journeys each proved one generation request, one
+  automatic publication request, no learner candidate-review screen, and an
+  immediately active first study card.
+- The automatically published Course deck remained ready and studyable after a
+  backend process restart.
+- `git diff --check` and the added-line secret scan passed.
+
 Proof boundaries:
 
 - The browser and automated campaigns use deterministic local providers; they
   do not claim a new paid GPT-5 Mini call or model-quality proof.
 - No push, merge, deployment, production migration, BlueWay mutation, or
   release claim is included.
+
+### 2026-07-30 - focused numbered-study amendment
+
+Approved and implemented:
+
+- Starting a study session replaces deck management with one centered
+  notecard.
+- `Start studying`, archive controls, the deck list, archived decks, and
+  neighboring card prompts are unavailable until the learner exits or finishes
+  the session.
+- Navigation exposes only numbered positions. Selecting a number changes the
+  active unfinished card without revealing its question in advance.
+- Ratings remain durable server-owned scheduler writes. Arbitrary navigation
+  does not skip unfinished cards when the session advances.
+
+### 2026-07-30 - beta learner-experience acceptance
+
+Decision:
+
+- The user accepted the current Phase 5 Flashcards learner experience as good
+  enough for the current beta.
+- Phase 5 product behavior is frozen at the current Study, Create, Activity,
+  Course-grounded, General Study, General Chat, automatic publication, and
+  focused numbered-study contracts.
+- Additional Flashcard capabilities belong in `FUTURE_DUE.md`; they are not
+  required to close the Phase 5 learner experience.
+
+Boundary:
+
+- This acceptance is a product/human-review gate. By itself it does not claim
+  that the work is pushed, merged, deployed, reconciled with newer upstream
+  DeepTutor, or production released.
