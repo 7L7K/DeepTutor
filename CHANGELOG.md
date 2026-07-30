@@ -4,6 +4,17 @@
 
 ### Added
 
+- Reorganized Course Flashcards into a study-first Study, Create, and Activity
+  experience. Provider-off Courses now present a direct manual path instead of
+  disabled generation controls; grounded requests keep advanced choices
+  optional and retain explicit provider confirmation; generation activity uses
+  learner-safe state and recovery copy; candidate review publishes an exact
+  selected count; and study uses Show answer, Got it, and Study again while
+  keeping scheduler dates internal. Raw objective IDs, operation states, and
+  provider error codes no longer appear in the normal learner surface.
+  Restored vertical scrolling within the shared fixed-height application shell
+  and added authenticated browser coverage for the study-first shell, manual
+  fallback, candidate review, restart persistence, and narrow-height overflow.
 - Repaired the Phase 3 BlueWay-to-Phase 5 Flashcard provenance bridge for
   already-ready Course sources. Startup reconciliation now rebuilds only a
   missing or stale derived deterministic index whose owner-scoped immutable

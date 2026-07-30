@@ -333,18 +333,22 @@ test("manual Practice and Flashcard learner flows remain usable without a provid
 
   await page.goto("/flashcards");
   await expect(page.getByLabel("Active course")).toHaveValue(state.aliceCourseId);
+  await page.setViewportSize({ width: 1280, height: 600 });
+  const flashcardsScrollContainer = page.getByTestId(
+    "flashcards-scroll-container",
+  );
+  await expect(flashcardsScrollContainer).toHaveCSS("overflow-y", "auto");
+  await page.getByRole("button", { name: "Create", exact: true }).click();
   await expect(
     page.getByText(
       "Grounded generation is not enabled on this server. Manual Flashcards remain available.",
     ),
   ).toBeVisible();
-  await expect(page.getByLabel("Generated deck title")).toBeDisabled();
-  await expect(
-    page.getByRole("button", { name: "Review grounded deck request" }),
-  ).toBeDisabled();
+  await expect(page.getByLabel("Generated deck title")).toHaveCount(0);
+  await page.getByRole("button", { name: "Create manually" }).click();
   await page.getByLabel("New Flashcard deck title").fill("Visible manual deck");
   await page
-    .getByRole("heading", { name: "Decks" })
+    .getByRole("heading", { name: "Manual decks" })
     .locator("..")
     .getByRole("button", { name: "Create", exact: true })
     .click();
@@ -353,19 +357,30 @@ test("manual Practice and Flashcard learner flows remain usable without a provid
   await page
     .getByRole("textbox", { name: "Flashcard answer", exact: true })
     .fill("Produces cellular energy");
-  await page.getByLabel("Flashcard objective IDs").fill("browser_manual_biology");
   await page.getByRole("button", { name: "Save card" }).click();
   await page.getByRole("button", { name: "Ready", exact: true }).click();
-  await page.getByRole("button", { name: "Review due" }).click();
+  await page.getByRole("button", { name: "Study", exact: true }).click();
+  await page.getByRole("button", { name: "Start studying" }).click();
   await expect(page.getByText("Mitochondria", { exact: true })).toBeVisible();
-  await page.getByRole("button", { name: "Reveal answer" }).click();
+  await page.getByRole("button", { name: "Show answer" }).click();
   await expect(page.getByText("Produces cellular energy", { exact: true })).toBeVisible();
-  await page.getByRole("button", { name: "good", exact: true }).click();
-  await expect(
-    page.getByText("Review complete. Your schedule is saved.", {
-      exact: true,
-    }),
-  ).toBeVisible();
+  await page.getByRole("button", { name: "Got it", exact: true }).click();
+  await expect(page.getByRole("heading", { name: "Study complete" })).toBeVisible();
+  await expect(page.getByText("You reviewed 1 card.", { exact: true })).toBeVisible();
+  const flashcardsScrollProof = await flashcardsScrollContainer.evaluate(
+    (element) => {
+      element.scrollTop = element.scrollHeight;
+      return {
+        clientHeight: element.clientHeight,
+        scrollHeight: element.scrollHeight,
+        scrollTop: element.scrollTop,
+      };
+    },
+  );
+  expect(flashcardsScrollProof.scrollHeight).toBeGreaterThan(
+    flashcardsScrollProof.clientHeight,
+  );
+  expect(flashcardsScrollProof.scrollTop).toBeGreaterThan(0);
 });
 
 test("phase5 stages grounded candidates behind review", async ({ page }) => {
@@ -382,35 +397,38 @@ test("phase5 stages grounded candidates behind review", async ({ page }) => {
   await signIn(page, "alice", alicePassword!);
   await page.goto("/flashcards");
   await page.getByLabel("Active course").selectOption(state.aliceCourseId);
-  await expect(page.getByLabel("Generated deck title")).toBeEnabled();
-  await page.getByLabel("Generated deck title").fill("Phase 5 grounded deck");
+  await page.getByRole("button", { name: "Create", exact: true }).click();
+  await page
+    .getByRole("button", { name: "Generate from Course materials" })
+    .click();
+  await expect(page.getByLabel("Generated deck title")).toHaveCount(0);
   await page
     .getByLabel("Flashcard generation focus")
     .fill("Review cellular energy from the selected notes");
   await page.getByLabel("Generated card count").fill("3");
-  await page.getByText("Phase 5 browser notes", { exact: true }).click();
   await page
-    .getByRole("button", { name: "Review grounded deck request" })
+    .getByRole("button", { name: "Review request" })
     .click();
   await expect(
     page.getByRole("heading", { name: "Confirm provider use" }),
   ).toBeVisible();
   await page
-    .getByRole("button", { name: "Confirm and generate candidates" })
+    .getByRole("button", { name: "Generate cards" })
     .click();
   await expect(
     page.getByText("Grounded Flashcard generation queued.", { exact: true }),
   ).toBeVisible();
   await expect
     .poll(async () => {
-      await page.getByRole("button", { name: "Refresh status" }).click();
-      return page.getByText("awaiting_review", { exact: true }).count();
+      return page.getByText("Ready for your review", { exact: true }).count();
     })
     .toBe(1);
   await expect(
-    page.getByText(/What bounded fact 1 is represented by source/),
+    page
+      .getByRole("paragraph")
+      .filter({ hasText: /What bounded fact 1 is represented by source/ }),
   ).toBeVisible();
-  await expect(page.getByText(/Source src_/).first()).toBeVisible();
+  await expect(page.getByText(/provider_failed/)).toHaveCount(0);
 });
 
 test("phase5 publishes persisted reviewed candidates after restart", async ({
@@ -428,22 +446,20 @@ test("phase5 publishes persisted reviewed candidates after restart", async ({
   await signIn(page, "alice", alicePassword!);
   await page.goto("/flashcards");
   await page.getByLabel("Active course").selectOption(state.aliceCourseId);
-  await expect(page.getByText("awaiting_review", { exact: true })).toBeVisible();
-  await page.getByRole("button", { name: "Exclude candidate" }).first().click();
-  await expect(page.getByRole("button", { name: /Include again/ })).toHaveCount(
-    1,
-  );
-  await page.getByRole("button", { name: /Include again/ }).click();
-  await page.getByRole("button", { name: "Publish selected" }).click();
+  await page.getByRole("button", { name: "Activity", exact: true }).click();
+  await expect(page.getByText("Ready for your review", { exact: true })).toBeVisible();
+  await page.getByRole("button", { name: /^Remove:/ }).click();
+  await page.getByRole("button", { name: /^Keep:/ }).click();
+  await page.getByRole("button", { name: /Publish 3 cards/ }).click();
   await expect(
-    page.getByText("Selected candidates published as an immutable deck.", {
+    page.getByText("3 cards published and ready to study.", {
       exact: true,
     }),
   ).toBeVisible();
   await expect(
-    page.getByRole("heading", { name: "Phase 5 grounded deck" }),
+    page.getByRole("heading", { name: "Shared Biology flashcards" }),
   ).toBeVisible();
-  await page.getByRole("button", { name: "Review due" }).click();
+  await page.getByRole("button", { name: "Start studying" }).click();
   await expect(
     page.getByText(/What bounded fact 1 is represented by source/),
   ).toBeVisible();

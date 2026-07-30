@@ -37,7 +37,10 @@ export default defineConfig({
     },
     {
       name: "phase4-authenticated",
-      testMatch: "**/phase4-authenticated.spec.ts",
+      testMatch: [
+        "**/phase4-authenticated.spec.ts",
+        "**/phase5-flashcards-ux.spec.ts",
+      ],
       use: { ...devices["Desktop Chrome"], channel: "chrome" },
     },
   ],

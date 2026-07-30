@@ -4,8 +4,8 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   Archive,
   CheckCircle2,
-  Eye,
-  GalleryVerticalEnd,
+  ChevronDown,
+  ChevronUp,
   Loader2,
   Play,
   RotateCcw,
@@ -51,7 +51,15 @@ import {
   type FlashcardRating,
   type FlashcardRequestScope,
 } from "@/lib/flashcards-api";
-import { flashcardGenerationUnavailableCopy } from "@/lib/flashcard-generation-presentation";
+import {
+  FLASHCARDS_VIEW_PRESENTATION,
+  flashcardGenerationFailurePresentation,
+  flashcardGenerationStatePresentation,
+  flashcardGenerationUnavailableCopy,
+  type FlashcardCreateMode,
+  type FlashcardsView,
+} from "@/lib/flashcard-generation-presentation";
+import { FlashcardStudySession } from "@/components/flashcards/study/FlashcardStudySession";
 
 const emptyCard = { prompt: "", answer: "", objectiveIds: "" };
 
@@ -63,7 +71,17 @@ function idempotencyKey(): string {
 }
 
 function errorText(cause: unknown): string {
-  return cause instanceof Error ? cause.message : "Flashcard request failed";
+  const message = cause instanceof Error ? cause.message.toLowerCase() : "";
+  if (message.includes("stale") || message.includes("revision")) {
+    return "This Course changed while you were working. Refresh and try again.";
+  }
+  if (message.includes("archived")) {
+    return "This Course or deck is archived. Restore it before making changes.";
+  }
+  if (message.includes("not found") || message.includes("404")) {
+    return "This Flashcard item is no longer available.";
+  }
+  return "We could not finish that Flashcard action. Please try again.";
 }
 
 export default function FlashcardsWorkspace() {
@@ -92,6 +110,9 @@ export default function FlashcardsWorkspace() {
   const [candidateOrder, setCandidateOrder] = useState<
     Record<string, string[]>
   >({});
+  const [candidateReviewIndex, setCandidateReviewIndex] = useState<
+    Record<string, number>
+  >({});
   const [generationObjectives, setGenerationObjectives] = useState("");
   const [readySources, setReadySources] = useState<CourseSource[]>([]);
   const [selectedSourceIds, setSelectedSourceIds] = useState<string[]>([]);
@@ -105,6 +126,18 @@ export default function FlashcardsWorkspace() {
   const [reviewCards, setReviewCards] = useState<Flashcard[]>([]);
   const [reviewIndex, setReviewIndex] = useState(0);
   const [answerVisible, setAnswerVisible] = useState(false);
+  const [hintVisible, setHintVisible] = useState(false);
+  const [sourceVisible, setSourceVisible] = useState(false);
+  const [reviewedCards, setReviewedCards] = useState(0);
+  const [pageView, setPageView] = useState<FlashcardsView>("study");
+  const [createMode, setCreateMode] = useState<FlashcardCreateMode>("choose");
+  const [showCustomize, setShowCustomize] = useState(false);
+  const [showArchived, setShowArchived] = useState(false);
+  const [showPreviousActivity, setShowPreviousActivity] = useState(false);
+  const [proposalOrigin, setProposalOrigin] = useState<
+    "chat" | "practice_remediation" | null
+  >(null);
+  const [courseLoaded, setCourseLoaded] = useState(false);
   const [busy, setBusy] = useState(false);
   const [status, setStatus] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -130,6 +163,36 @@ export default function FlashcardsWorkspace() {
   const courseWritable =
     isFlashcardCourseWritable(activeCourse?.state) && scopeReady;
   const currentCard = reviewCards[reviewIndex] ?? null;
+  const generationDeckTitle =
+    generatedTitle.trim() ||
+    `${activeCourse?.title?.trim() || t("Course")} ${t("flashcards")}`;
+  const activeDecks = useMemo(
+    () => decks.filter((deck) => deck.state !== "archived"),
+    [decks],
+  );
+  const archivedDecks = useMemo(
+    () => decks.filter((deck) => deck.state === "archived"),
+    [decks],
+  );
+  const currentSourceDisclosure = useMemo(() => {
+    if (!currentCard?.citations.length) return null;
+    const names = currentCard.citations
+      .map((citation) =>
+        readySources.find(
+          (source) => source.id === String(citation.source_id ?? ""),
+        ),
+      )
+      .filter((source): source is CourseSource => Boolean(source))
+      .map((source) => source.display_name);
+    if (!names.length) return null;
+    return (
+      <p>
+        {t("Grounded in {{sources}}.", {
+          sources: Array.from(new Set(names)).join(", "),
+        })}
+      </p>
+    );
+  }, [currentCard, readySources, t]);
 
   const invalidate = useCallback(
     (nextIdentity: string | null, nextCourseId: string | null) => {
@@ -164,6 +227,7 @@ export default function FlashcardsWorkspace() {
       setPreparedBrief(null);
       setPreparedSuccessor(false);
       setCandidateOrder({});
+      setCandidateReviewIndex({});
       setGenerationObjectives("");
       setReadySources([]);
       setSelectedSourceIds([]);
@@ -174,6 +238,16 @@ export default function FlashcardsWorkspace() {
       setReviewCards([]);
       setReviewIndex(0);
       setAnswerVisible(false);
+      setHintVisible(false);
+      setSourceVisible(false);
+      setReviewedCards(0);
+      setPageView("study");
+      setCreateMode("choose");
+      setShowCustomize(false);
+      setShowArchived(false);
+      setShowPreviousActivity(false);
+      setProposalOrigin(null);
+      setCourseLoaded(false);
       setBusy(false);
       setStatus(null);
       setError(null);
@@ -233,6 +307,13 @@ export default function FlashcardsWorkspace() {
             ]),
         ),
       );
+      setCandidateReviewIndex(
+        Object.fromEntries(
+          operations
+            .filter((operation) => operation.candidates?.length)
+            .map((operation) => [operation.id, 0]),
+        ),
+      );
       setGenerationAvailable(capabilities.flashcard_generation);
       setGenerationUnavailableReason(
         capabilities.grounded_generation_reason,
@@ -258,56 +339,57 @@ export default function FlashcardsWorkspace() {
           );
           setPreparedBrief(proposal);
           setPreparedSuccessor(false);
-          setStatus("Review the Chat generation brief before confirming provider use.");
+          setProposalOrigin(
+            proposal.origin.kind === "practice_remediation"
+              ? "practice_remediation"
+              : "chat",
+          );
+          setPageView("create");
+          setCreateMode("grounded");
+          setStatus("Your flashcard request is ready to review.");
         }
       }
       const first = listed.find((deck) => deck.state !== "archived") ?? null;
       setSelectedDeckId(first?.id ?? null);
       if (first) await loadDeck(scope, first);
+      if (current(scope)) setCourseLoaded(true);
     },
     [current, loadDeck],
   );
 
   useEffect(() => {
     let alive = true;
-    void fetchAuthStatus().then(async (auth) => {
+    void fetchAuthStatus().then((auth) => {
       if (!alive) return;
       const nextIdentity = auth?.authenticated ? auth.user_id ?? null : null;
       setIdentity(nextIdentity);
-      const scope = invalidate(nextIdentity, courseId);
-      if (nextIdentity && courseId) {
-        try {
-          await loadCourse(scope);
-        } catch (cause) {
-          if (current(scope)) setError(errorText(cause));
-        }
-      }
+      if (!nextIdentity) invalidate(null, null);
     });
     return () => {
       alive = false;
     };
-  }, [courseId, current, invalidate, loadCourse]);
+  }, [invalidate]);
+
+  useEffect(() => {
+    const scope = invalidate(identity, courseId);
+    if (!identity || !courseId) return;
+    void loadCourse(scope).catch((cause) => {
+      if (current(scope)) setError(errorText(cause));
+    });
+  }, [courseId, current, identity, invalidate, loadCourse]);
 
   useEffect(() => {
     const onAuthChanged = () => {
       invalidate(null, null);
       setIdentity(null);
-      void fetchAuthStatus().then(async (auth) => {
+      void fetchAuthStatus().then((auth) => {
         const nextIdentity = auth?.authenticated ? auth.user_id ?? null : null;
         setIdentity(nextIdentity);
-        const scope = invalidate(nextIdentity, activeCourse?.id ?? null);
-        if (nextIdentity && scope.courseId) {
-          try {
-            await loadCourse(scope);
-          } catch (cause) {
-            if (current(scope)) setError(errorText(cause));
-          }
-        }
       });
     };
     window.addEventListener("dt:auth-changed", onAuthChanged);
     return () => window.removeEventListener("dt:auth-changed", onAuthChanged);
-  }, [activeCourse?.id, current, invalidate, loadCourse]);
+  }, [invalidate]);
 
   useEffect(() => {
     if (courseWritable) return;
@@ -324,6 +406,9 @@ export default function FlashcardsWorkspace() {
       setReviewCards([]);
       setReviewIndex(0);
       setAnswerVisible(false);
+      setHintVisible(false);
+      setSourceVisible(false);
+      setReviewedCards(0);
       setStatus(null);
       setError(null);
       try {
@@ -334,6 +419,18 @@ export default function FlashcardsWorkspace() {
     },
     [advanceView, current, loadDeck],
   );
+
+  const openManualCreation = useCallback(() => {
+    setCreateMode("manual");
+    const manualDeck = activeDecks.find((deck) => deck.mode === "manual");
+    if (manualDeck) {
+      void selectDeck(manualDeck);
+      return;
+    }
+    advanceView();
+    setSelectedDeckId(null);
+    setView(null);
+  }, [activeDecks, advanceView, selectDeck]);
 
   const createDeck = useCallback(async () => {
     if (!activeCourse || !courseWritable || !deckTitle.trim()) return;
@@ -403,7 +500,6 @@ export default function FlashcardsWorkspace() {
         !activeCourse ||
         !courseWritable ||
         !generationAvailable ||
-        !generatedTitle.trim() ||
         !selectedSourceIds.length ||
         (successor &&
           (!selectedDeck ||
@@ -421,7 +517,7 @@ export default function FlashcardsWorkspace() {
           .filter(Boolean);
         const brief = await prepareFlashcardGenerationBrief(
           activeCourse.id,
-          generatedTitle.trim(),
+          generationDeckTitle,
           selectedSourceIds,
           objectiveIds,
           activeCourse.write_epoch,
@@ -441,7 +537,7 @@ export default function FlashcardsWorkspace() {
       activeCourse,
       courseWritable,
       current,
-      generatedTitle,
+      generationDeckTitle,
       generationObjectives,
       generationAvailable,
       generationOptions,
@@ -461,7 +557,7 @@ export default function FlashcardsWorkspace() {
           ? await createGeneratedFlashcardSuccessor(
               activeCourse.id,
               selectedDeck.id,
-              generatedTitle.trim(),
+              generationDeckTitle,
               preparedBrief.source_snapshot.map((item) => item.source_id),
               preparedBrief.objective_ids,
               preparedBrief.course_write_epoch,
@@ -470,7 +566,7 @@ export default function FlashcardsWorkspace() {
             )
           : await createGeneratedFlashcardDeck(
               activeCourse.id,
-              generatedTitle.trim(),
+              generationDeckTitle,
               preparedBrief.source_snapshot.map((item) => item.source_id),
               preparedBrief.objective_ids,
               preparedBrief.course_write_epoch,
@@ -486,6 +582,7 @@ export default function FlashcardsWorkspace() {
         setGenerationFocus("");
         setGenerationObjectives("");
         setPreparedBrief(null);
+        setPageView("activity");
         setStatus(
           preparedSuccessor
             ? "Grounded successor generation queued."
@@ -501,7 +598,7 @@ export default function FlashcardsWorkspace() {
     advanceView,
     courseWritable,
     current,
-    generatedTitle,
+    generationDeckTitle,
     preparedBrief,
     preparedSuccessor,
     selectedDeck,
@@ -535,7 +632,10 @@ export default function FlashcardsWorkspace() {
           setSelectedDeckId(published.id);
           await loadDeck(scope, published);
         }
-        if (current(scope)) setStatus("Selected candidates published as an immutable deck.");
+        if (current(scope)) {
+          setPageView("study");
+          setStatus(`${selected.length} cards published and ready to study.`);
+        }
       } catch (cause) {
         if (current(scope)) setError(errorText(cause));
       } finally {
@@ -598,6 +698,13 @@ export default function FlashcardsWorkspace() {
             ]),
         ),
       );
+      setCandidateReviewIndex((indexes) =>
+        Object.fromEntries(
+          operations
+            .filter((operation) => operation.candidates?.length)
+            .map((operation) => [operation.id, indexes[operation.id] ?? 0]),
+        ),
+      );
       setDecks(listed);
       setDecksHaveMore(listed.length === 50);
       if (selectedDeckId) {
@@ -611,6 +718,21 @@ export default function FlashcardsWorkspace() {
       if (current(scope)) setBusy(false);
     }
   }, [activeCourse, current, loadDeck, selectedDeckId]);
+
+  useEffect(() => {
+    if (
+      !activeCourse ||
+      !generationOperations.some((operation) =>
+        ["queued", "running", "cancelling"].includes(operation.state),
+      )
+    ) {
+      return;
+    }
+    const timer = window.setInterval(() => {
+      if (!busy) void refreshGeneration();
+    }, 3_000);
+    return () => window.clearInterval(timer);
+  }, [activeCourse, busy, generationOperations, refreshGeneration]);
 
   const addCard = useCallback(async () => {
     if (
@@ -702,6 +824,9 @@ export default function FlashcardsWorkspace() {
       setReviewCards(due.cards);
       setReviewIndex(0);
       setAnswerVisible(false);
+      setHintVisible(false);
+      setSourceVisible(false);
+      setReviewedCards(0);
       setStatus(due.cards.length ? "Review started." : "Nothing is due right now.");
     } catch (cause) {
       if (current(scope)) setError(errorText(cause));
@@ -746,6 +871,9 @@ export default function FlashcardsWorkspace() {
           setReviewCards((cards) => requeueAgainCard(cards, currentCard, rating));
         }
         setAnswerVisible(false);
+        setHintVisible(false);
+        setSourceVisible(false);
+        setReviewedCards((count) => count + 1);
         setReviewIndex((index) => index + 1);
         setStatus(
           rating !== "again" && reviewIndex + 1 >= reviewCards.length
@@ -808,22 +936,19 @@ export default function FlashcardsWorkspace() {
   ]);
 
   return (
-    <main className="min-h-full bg-[var(--background)] text-[var(--foreground)]">
+    <main
+      data-testid="flashcards-scroll-container"
+      className="h-full overflow-y-auto bg-[var(--background)] text-[var(--foreground)] [scrollbar-gutter:stable]"
+    >
       <CourseBar />
       <div className="mx-auto max-w-6xl space-y-5 px-5 py-6">
-        <div className="flex flex-wrap items-center justify-between gap-3">
+        <div>
           <div>
             <h1 className="text-2xl font-semibold">{t("Flashcards")}</h1>
             <p className="text-sm text-[var(--muted-foreground)]">
-              {t("Private, Course-owned cards with a durable review schedule.")}
+              {t("Study and create private Flashcards for this Course.")}
             </p>
           </div>
-          {activeCourse ? (
-            <div className="rounded-lg border border-[var(--border)] bg-[var(--card)] px-3 py-2 text-sm">
-              <span className="text-[var(--muted-foreground)]">{t("Active Course:")} </span>
-              <strong>{activeCourse.title}</strong>
-            </div>
-          ) : null}
         </div>
 
         {!identity ? (
@@ -833,56 +958,123 @@ export default function FlashcardsWorkspace() {
           <Notice>{t("Select or create a Course above to use Flashcards.")}</Notice>
         ) : null}
 
-        {activeCourse ? (
+        {activeCourse && scopeReady && courseLoaded ? (
           <>
+            <nav
+              aria-label={t("Flashcards views")}
+              className="flex gap-1 rounded-xl border border-[var(--border)] bg-[var(--card)] p-1"
+            >
+              {(Object.keys(FLASHCARDS_VIEW_PRESENTATION) as FlashcardsView[]).map(
+                (item) => (
+                  <button
+                    key={item}
+                    type="button"
+                    aria-current={pageView === item ? "page" : undefined}
+                    disabled={!scopeReady || !courseLoaded}
+                    onClick={() => setPageView(item)}
+                    className={`flex-1 rounded-lg px-4 py-2 text-sm font-medium ${
+                      pageView === item
+                        ? "bg-[var(--primary)] text-[var(--primary-foreground)]"
+                        : "text-[var(--muted-foreground)] hover:bg-[var(--secondary)]"
+                    } disabled:opacity-50`}
+                  >
+                    {t(FLASHCARDS_VIEW_PRESENTATION[item].label)}
+                  </button>
+                ),
+              )}
+            </nav>
+
+            {pageView === "create" && createMode === "choose" ? (
+              <section className="space-y-4 rounded-xl border border-[var(--border)] bg-[var(--card)] p-5">
+                <div>
+                  <h2 className="text-xl font-semibold">{t("Create flashcards")}</h2>
+                  <p className="mt-1 text-sm text-[var(--muted-foreground)]">
+                    {t("Choose how you want to build this deck.")}
+                  </p>
+                </div>
+                <div className="grid gap-3 md:grid-cols-2">
+                  {generationAvailable ? (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setCreateMode("grounded");
+                        setSelectedSourceIds(readySources.map((source) => source.id));
+                      }}
+                      className="rounded-xl border border-[var(--border)] p-5 text-left hover:bg-[var(--secondary)]/50"
+                    >
+                      <span className="flex items-center gap-2 font-medium">
+                        <Sparkles size={18} /> {t("Generate from Course materials")}
+                      </span>
+                      <span className="mt-2 block text-sm text-[var(--muted-foreground)]">
+                        {readySources.length
+                          ? t("Create cited cards from the ready material in this Course.")
+                          : t("Attach a ready Course source before generating cards.")}
+                      </span>
+                    </button>
+                  ) : (
+                    <div className="rounded-xl border border-[var(--border)] p-5">
+                      <p className="font-medium">{t("Card generation is unavailable right now")}</p>
+                      <p className="mt-2 text-sm text-[var(--muted-foreground)]">
+                        {t(flashcardGenerationUnavailableCopy(generationUnavailableReason))}
+                      </p>
+                    </div>
+                  )}
+                  <button
+                    type="button"
+                    onClick={openManualCreation}
+                    className="rounded-xl border border-[var(--border)] p-5 text-left hover:bg-[var(--secondary)]/50"
+                  >
+                    <span className="font-medium">{t("Create manually")}</span>
+                    <span className="mt-2 block text-sm text-[var(--muted-foreground)]">
+                      {t("Write your own questions and answers without using a provider.")}
+                    </span>
+                  </button>
+                </div>
+              </section>
+            ) : null}
+
+            {pageView === "create" && createMode === "grounded" ? (
             <section className="space-y-4 rounded-xl border border-[var(--border)] bg-[var(--card)] p-4">
               <div className="flex flex-wrap items-start justify-between gap-3">
                 <div>
                   <h2 className="flex items-center gap-2 font-medium">
-                    <Sparkles size={16} /> {t("Grounded generation")}
+                    <Sparkles size={16} /> {t("Generate from Course materials")}
                   </h2>
                   <p className="text-sm text-[var(--muted-foreground)]">
-                    {generationAvailable
-                      ? t("Create cited cards only from ready sources in this Course.")
-                      : t(
-                          flashcardGenerationUnavailableCopy(
-                            generationUnavailableReason,
-                          ),
-                        )}
+                    {t("Tell TEEECHR what these cards should help you understand.")}
                   </p>
                 </div>
                 <button
-                  onClick={() => void refreshGeneration()}
-                  disabled={busy}
+                  type="button"
+                  onClick={() => {
+                    setCreateMode("choose");
+                    setPreparedBrief(null);
+                  }}
                   className="rounded-lg border border-[var(--border)] px-3 py-2 text-sm disabled:opacity-50"
                 >
-                  {t("Refresh status")}
+                  {t("Back")}
                 </button>
               </div>
-              <div className="grid gap-3 md:grid-cols-2">
-                <input
-                  aria-label={t("Generated deck title")}
-                  value={generatedTitle}
-                  onChange={(event) => {
-                    setGeneratedTitle(event.target.value);
-                    setPreparedBrief(null);
-                  }}
-                  placeholder={t("Generated deck title")}
-                  disabled={!generationAvailable || !courseWritable || busy}
-                  className="rounded-lg border border-[var(--border)] bg-[var(--background)] px-3 py-2 text-sm"
-                />
-                <input
-                  aria-label={t("Generation objective IDs")}
-                  value={generationObjectives}
-                  onChange={(event) => {
-                    setGenerationObjectives(event.target.value);
-                    setPreparedBrief(null);
-                  }}
-                  placeholder={t("Objective IDs, comma-separated (optional)")}
-                  disabled={!generationAvailable || !courseWritable || busy}
-                  className="rounded-lg border border-[var(--border)] bg-[var(--background)] px-3 py-2 text-sm"
-                />
-              </div>
+              {proposalOrigin ? (
+                <Notice>
+                  {proposalOrigin === "practice_remediation"
+                    ? t("Prepared from your Practice results. Review it before generating cards.")
+                    : t("Prepared from Course Chat. Review it before generating cards.")}
+                </Notice>
+              ) : null}
+              {showCustomize ? (
+              <input
+                aria-label={t("Generated deck title")}
+                value={generatedTitle}
+                onChange={(event) => {
+                  setGeneratedTitle(event.target.value);
+                  setPreparedBrief(null);
+                }}
+                placeholder={t("Deck name")}
+                disabled={!generationAvailable || !courseWritable || busy}
+                className="w-full rounded-lg border border-[var(--border)] bg-[var(--background)] px-3 py-2 text-sm"
+              />
+              ) : null}
               <textarea
                 aria-label={t("Flashcard generation focus")}
                 value={generationFocus}
@@ -896,7 +1088,7 @@ export default function FlashcardsWorkspace() {
                 disabled={!generationAvailable || !courseWritable || busy}
                 className="min-h-20 w-full rounded-lg border border-[var(--border)] bg-[var(--background)] p-3 text-sm"
               />
-              <div className="grid gap-3 sm:grid-cols-3">
+              <div className="grid gap-3 sm:grid-cols-2">
                 <label className="grid gap-1 text-sm">
                   <span>{t("Card count")}</span>
                   <input
@@ -915,6 +1107,25 @@ export default function FlashcardsWorkspace() {
                     className="rounded-lg border border-[var(--border)] bg-[var(--background)] px-3 py-2"
                   />
                 </label>
+                <div className="rounded-lg border border-[var(--border)] px-3 py-2 text-sm">
+                  <span className="text-[var(--muted-foreground)]">{t("Course materials")}</span>
+                  <p className="font-medium">
+                    {selectedSourceIds.length} {t("selected")}
+                  </p>
+                </div>
+              </div>
+              <button
+                type="button"
+                aria-expanded={showCustomize}
+                onClick={() => setShowCustomize((shown) => !shown)}
+                className="inline-flex items-center gap-2 text-sm font-medium"
+              >
+                {showCustomize ? <ChevronUp size={16} /> : <ChevronDown size={16} />}
+                {showCustomize ? t("Hide customization") : t("Customize")}
+              </button>
+              {showCustomize ? (
+              <>
+              <div className="grid gap-3 sm:grid-cols-2">
                 <label className="grid gap-1 text-sm">
                   <span>{t("Difficulty")}</span>
                   <select
@@ -1014,6 +1225,13 @@ export default function FlashcardsWorkspace() {
                   </label>
                 </div>
               </fieldset>
+              <p className="text-xs text-[var(--muted-foreground)]">
+                {generationObjectives.trim()
+                  ? t("Learning objectives from the prepared Course request will be applied automatically.")
+                  : t("Course learning objectives are applied automatically when available.")}
+              </p>
+              </>
+              ) : null}
               <div className="flex flex-wrap gap-2">
                 {readySources.map((source) => {
                   const checked = selectedSourceIds.includes(source.id);
@@ -1054,12 +1272,12 @@ export default function FlashcardsWorkspace() {
                     !courseWritable ||
                     !generationAvailable ||
                     busy ||
-                    !generatedTitle.trim() ||
+                    !generationFocus.trim() ||
                     !selectedSourceIds.length
                   }
                   className="rounded-lg bg-[var(--primary)] px-3 py-2 text-sm text-[var(--primary-foreground)] disabled:opacity-50"
                 >
-                  {t("Review grounded deck request")}
+                  {t("Review request")}
                 </button>
                 <button
                   onClick={() => void prepareGeneration(true)}
@@ -1067,14 +1285,14 @@ export default function FlashcardsWorkspace() {
                     !courseWritable ||
                     !generationAvailable ||
                     busy ||
-                    !generatedTitle.trim() ||
+                    !generationFocus.trim() ||
                     !selectedSourceIds.length ||
                     selectedDeck?.mode !== "generated" ||
                     selectedDeck?.state !== "ready"
                   }
                   className="rounded-lg border border-[var(--border)] px-3 py-2 text-sm disabled:opacity-50"
                 >
-                  {t("Review successor request")}
+                  {t("Create updated version")}
                 </button>
               </div>
               {preparedBrief ? (
@@ -1119,19 +1337,19 @@ export default function FlashcardsWorkspace() {
                       disabled={busy || !preparedBrief.provider_available}
                       className="rounded-lg bg-[var(--primary)] px-3 py-2 text-sm text-[var(--primary-foreground)] disabled:opacity-50"
                     >
-                      {t("Confirm and generate candidates")}
+                      {t("Generate cards")}
                     </button>
                     <button
                       onClick={() => setPreparedBrief(null)}
                       disabled={busy}
                       className="rounded-lg border border-[var(--border)] px-3 py-2 text-sm"
                     >
-                      {t("Change brief")}
+                      {t("Change request")}
                     </button>
                   </div>
                 </div>
               ) : null}
-              {generationOperations.length ? (
+              {false && generationOperations.length ? (
                 <div className="grid gap-2 md:grid-cols-2">
                   {generationOperations.slice(0, 6).map((operation) => (
                     <div
@@ -1339,10 +1557,25 @@ export default function FlashcardsWorkspace() {
                 </div>
               ) : null}
             </section>
+            ) : null}
 
+            {pageView === "study" ||
+            (pageView === "create" && createMode === "manual") ? (
             <div className="grid gap-5 lg:grid-cols-[280px_minmax(0,1fr)]">
             <section className="rounded-xl border border-[var(--border)] bg-[var(--card)] p-4">
-              <h2 className="mb-3 font-medium">{t("Decks")}</h2>
+              <h2 className="mb-3 font-medium">
+                {pageView === "study" ? t("Your decks") : t("Manual decks")}
+              </h2>
+              {pageView === "create" ? (
+                <button
+                  type="button"
+                  onClick={() => setCreateMode("choose")}
+                  className="mb-3 text-sm text-[var(--muted-foreground)] underline underline-offset-4"
+                >
+                  {t("Back to creation choices")}
+                </button>
+              ) : null}
+              {pageView === "create" ? (
               <div className="mb-3 flex gap-2">
                 <input
                   aria-label={t("New Flashcard deck title")}
@@ -1360,8 +1593,12 @@ export default function FlashcardsWorkspace() {
                   {t("Create")}
                 </button>
               </div>
+              ) : null}
               <div className="space-y-1">
-                {decks.map((deck) => (
+                {(pageView === "study"
+                  ? activeDecks
+                  : activeDecks.filter((deck) => deck.mode === "manual")
+                ).map((deck) => (
                   <button
                     key={deck.id}
                     onClick={() => void selectDeck(deck)}
@@ -1373,11 +1610,13 @@ export default function FlashcardsWorkspace() {
                   >
                     <span className="block font-medium">{deck.title}</span>
                     <span className="text-xs text-[var(--muted-foreground)]">
-                      {deck.state} · {deck.mode}
+                      {deck.state === "ready"
+                        ? t("Ready to study")
+                        : t("Still being built")}
                     </span>
                   </button>
                 ))}
-                {!decks.length ? (
+                {!activeDecks.length ? (
                   <p className="px-2 py-3 text-sm text-[var(--muted-foreground)]">
                     {t("No Flashcard decks yet.")}
                   </p>
@@ -1402,7 +1641,11 @@ export default function FlashcardsWorkspace() {
                     <div>
                       <h2 className="text-xl font-semibold">{selectedDeck.title}</h2>
                       <p className="text-sm text-[var(--muted-foreground)]">
-                        {view.cards.length} {t("cards")} · {view.review_summary.due_cards} {t("due")}
+                        {view.review_summary.due_cards > 0
+                          ? `${view.review_summary.due_cards} ${t("cards ready")}`
+                          : selectedDeck.state === "ready"
+                            ? t("You are caught up")
+                            : `${view.cards.length} ${t("cards")}`}
                       </p>
                       <p className="mt-1 text-xs font-medium text-[var(--muted-foreground)]">
                         {selectedDeck.mode === "generated"
@@ -1427,7 +1670,10 @@ export default function FlashcardsWorkspace() {
                           disabled={!courseWritable || busy}
                           className="inline-flex items-center gap-1 rounded-lg bg-[var(--primary)] px-3 py-2 text-sm text-[var(--primary-foreground)] disabled:opacity-50"
                         >
-                          <Play size={15} /> {t("Review due")}
+                          <Play size={15} />{" "}
+                          {view.review_summary.due_cards > 0
+                            ? t("Start studying")
+                            : t("Check for cards")}
                         </button>
                       ) : null}
                       <button
@@ -1469,19 +1715,6 @@ export default function FlashcardsWorkspace() {
                         disabled={!courseWritable || busy}
                         className="min-h-20 w-full rounded-lg border border-[var(--border)] bg-[var(--background)] p-2 text-sm"
                       />
-                      <input
-                        aria-label={t("Flashcard objective IDs")}
-                        value={cardDraft.objectiveIds}
-                        onChange={(event) =>
-                          setCardDraft((value) => ({
-                            ...value,
-                            objectiveIds: event.target.value,
-                          }))
-                        }
-                        placeholder={t("Objective IDs, comma-separated (optional)")}
-                        disabled={!courseWritable || busy}
-                        className="w-full rounded-lg border border-[var(--border)] bg-[var(--background)] px-2 py-1.5 text-sm"
-                      />
                       <button
                         onClick={() => void addCard()}
                         disabled={
@@ -1506,48 +1739,27 @@ export default function FlashcardsWorkspace() {
                     </Notice>
                   ) : null}
 
-                  {currentCard ? (
-                    <div className="space-y-4 rounded-xl border border-[var(--border)] p-5">
-                      <div className="flex items-center gap-2 text-sm text-[var(--muted-foreground)]">
-                        <GalleryVerticalEnd size={16} />
-                        {t("Card")} {reviewIndex + 1} {t("of")} {reviewCards.length}
-                      </div>
-                      <p className="text-lg font-medium">{currentCard.prompt}</p>
-                      {answerVisible ? (
-                        <div className="rounded-lg bg-[var(--secondary)] p-4">
-                          {currentCard.answer}
-                        </div>
-                      ) : (
-                        <button
-                          onClick={() => setAnswerVisible(true)}
-                          disabled={!courseWritable}
-                          className="inline-flex items-center gap-1 rounded-lg border border-[var(--border)] px-3 py-2 text-sm"
-                        >
-                          <Eye size={15} /> {t("Reveal answer")}
-                        </button>
-                      )}
-                      {answerVisible ? (
-                        <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
-                          {(["again", "hard", "good", "easy"] as const).map(
-                            (rating) => (
-                              <button
-                                key={rating}
-                                disabled={!courseWritable || busy}
-                                onClick={() => void rate(rating)}
-                                className="rounded-lg border border-[var(--border)] px-3 py-2 text-sm capitalize disabled:opacity-50"
-                              >
-                                {t(rating)}
-                              </button>
-                            ),
-                          )}
-                        </div>
-                      ) : null}
-                    </div>
-                  ) : null}
-
-                  {!currentCard && reviewCards.length > 0 ? (
-                    <Notice>{t("Review complete. The next due times are saved.")}</Notice>
-                  ) : null}
+                  <FlashcardStudySession
+                    card={currentCard}
+                    cardsLeft={Math.max(reviewCards.length - reviewIndex, 0)}
+                    reviewedCards={reviewedCards}
+                    answerVisible={answerVisible}
+                    hintVisible={hintVisible}
+                    sourceVisible={sourceVisible}
+                    sourceDisclosure={currentSourceDisclosure}
+                    busy={busy || !courseWritable}
+                    complete={!currentCard && reviewCards.length > 0}
+                    onReveal={() => setAnswerVisible(true)}
+                    onRate={(rating) => void rate(rating)}
+                    onHintVisibilityChange={setHintVisible}
+                    onSourceVisibilityChange={setSourceVisible}
+                    onDone={() => {
+                      setReviewCards([]);
+                      setReviewIndex(0);
+                      setReviewedCards(0);
+                    }}
+                    onKeepStudying={() => void beginReview()}
+                  />
 
                   <div className="space-y-2">
                     {view.cards.map((card) => (
@@ -1556,21 +1768,447 @@ export default function FlashcardsWorkspace() {
                         className="rounded-lg border border-[var(--border)] px-3 py-2"
                       >
                         <p className="text-sm font-medium">{card.prompt}</p>
-                        <p className="mt-1 text-xs text-[var(--muted-foreground)]">
-                          {card.state} · {t("revision")} {card.revision}
-                        </p>
+                        {card.hint ? (
+                          <p className="mt-1 text-xs text-[var(--muted-foreground)]">
+                            {t("Includes a hint")}
+                          </p>
+                        ) : null}
                       </div>
                     ))}
                   </div>
                 </div>
               ) : (
-                <p className="text-sm text-[var(--muted-foreground)]">
-                  {t("Choose a deck or create one.")}
-                </p>
+                <div className="space-y-3">
+                  <p className="text-sm text-[var(--muted-foreground)]">
+                    {archivedDecks.length
+                      ? t("No active decks. Restore an archived deck or create a new one.")
+                      : t("Create your first deck to start studying.")}
+                  </p>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setCreateMode("choose");
+                      setPageView("create");
+                    }}
+                    className="rounded-lg bg-[var(--primary)] px-3 py-2 text-sm text-[var(--primary-foreground)]"
+                  >
+                    {t("Create flashcards")}
+                  </button>
+                </div>
               )}
             </section>
             </div>
+            ) : null}
+
+            {pageView === "study" && archivedDecks.length ? (
+              <section className="rounded-xl border border-[var(--border)] bg-[var(--card)] p-4">
+                <button
+                  type="button"
+                  aria-expanded={showArchived}
+                  onClick={() => setShowArchived((shown) => !shown)}
+                  className="flex w-full items-center justify-between text-left font-medium"
+                >
+                  <span>{t("Archived decks")} ({archivedDecks.length})</span>
+                  {showArchived ? <ChevronUp size={16} /> : <ChevronDown size={16} />}
+                </button>
+                {showArchived ? (
+                  <div className="mt-3 grid gap-2 sm:grid-cols-2">
+                    {archivedDecks.map((deck) => (
+                      <button
+                        key={deck.id}
+                        type="button"
+                        onClick={() => void selectDeck(deck)}
+                        className="rounded-lg border border-[var(--border)] px-3 py-2 text-left text-sm"
+                      >
+                        <span className="block font-medium">{deck.title}</span>
+                        <span className="text-xs text-[var(--muted-foreground)]">
+                          {t("Select to restore")}
+                        </span>
+                      </button>
+                    ))}
+                  </div>
+                ) : null}
+              </section>
+            ) : null}
+
+            {pageView === "activity" ? (
+              <section className="space-y-4 rounded-xl border border-[var(--border)] bg-[var(--card)] p-5">
+                <div className="flex flex-wrap items-start justify-between gap-3">
+                  <div>
+                    <h2 className="text-xl font-semibold">{t("Card creation activity")}</h2>
+                    <p className="mt-1 text-sm text-[var(--muted-foreground)]">
+                      {t("Track active requests and review card drafts before publishing.")}
+                    </p>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => void refreshGeneration()}
+                    disabled={busy}
+                    className="rounded-lg border border-[var(--border)] px-3 py-2 text-sm disabled:opacity-50"
+                  >
+                    {t("Refresh")}
+                  </button>
+                </div>
+                {generationOperations
+                  .filter(
+                    (operation) =>
+                      operation.state !== "completed" &&
+                      operation.state !== "cancelled",
+                  )
+                  .map((operation) => {
+                    const presentation = flashcardGenerationStatePresentation(
+                      operation.state,
+                    );
+                    const selected = candidateOrder[operation.id] ?? [];
+                    const reviewIndexForOperation = Math.min(
+                      candidateReviewIndex[operation.id] ?? 0,
+                      Math.max((operation.candidates?.length ?? 1) - 1, 0),
+                    );
+                    const failure =
+                      operation.state === "failed"
+                        ? flashcardGenerationFailurePresentation(
+                            operation.error_code,
+                            false,
+                          )
+                        : null;
+                    return (
+                      <article
+                        key={operation.id}
+                        className="space-y-4 rounded-xl border border-[var(--border)] p-4"
+                      >
+                        <div>
+                          <h3 className="font-medium">
+                            {failure?.title ?? t(presentation.label)}
+                          </h3>
+                          <p className="text-sm text-[var(--muted-foreground)]">
+                            {failure?.detail ?? t(presentation.description)}
+                          </p>
+                          <p className="mt-1 text-xs text-[var(--muted-foreground)]">
+                            {operation.source_snapshot.length} {t("Course materials")}
+                          </p>
+                        </div>
+                        {operation.state === "failed" ? (
+                          <div className="flex flex-wrap gap-2">
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setGeneratedTitle("Course flashcards");
+                                setGenerationFocus(operation.generation_brief.focus);
+                                setGenerationCount(
+                                  operation.generation_brief.desired_count,
+                                );
+                                setGenerationDifficulty(
+                                  operation.generation_brief.difficulty,
+                                );
+                                setGenerationAnswerLength(
+                                  operation.generation_brief.answer_length,
+                                );
+                                setGenerationHints(
+                                  operation.generation_brief.include_hints,
+                                );
+                                setGenerationCardTypes(
+                                  operation.generation_brief.card_type_mix,
+                                );
+                                setGenerationObjectives(
+                                  operation.objective_ids.join(", "),
+                                );
+                                setSelectedSourceIds(
+                                  operation.source_snapshot.map(
+                                    (source) => source.source_id,
+                                  ),
+                                );
+                                setPreparedBrief(null);
+                                setCreateMode("grounded");
+                                setPageView("create");
+                              }}
+                              className="rounded-lg bg-[var(--primary)] px-3 py-2 text-sm text-[var(--primary-foreground)]"
+                            >
+                              {t("Change request")}
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => {
+                                openManualCreation();
+                                setPageView("create");
+                              }}
+                              className="rounded-lg border border-[var(--border)] px-3 py-2 text-sm"
+                            >
+                              {t("Create manually")}
+                            </button>
+                          </div>
+                        ) : null}
+                        {operation.state === "awaiting_review" &&
+                        operation.candidates ? (
+                          <div className="space-y-3">
+                            <p className="text-sm font-medium">
+                              {selected.length} {t("cards selected")}
+                            </p>
+                            <p className="text-xs text-[var(--muted-foreground)]">
+                              {t("Candidate")} {reviewIndexForOperation + 1}{" "}
+                              {t("of")} {operation.candidates.length}
+                            </p>
+                            {operation.candidates.map((candidate, candidateIndex) => {
+                              if (candidateIndex !== reviewIndexForOperation) {
+                                return null;
+                              }
+                              const included = selected.includes(
+                                candidate.candidate_id,
+                              );
+                              const index = selected.indexOf(
+                                candidate.candidate_id,
+                              );
+                              const sourceNames = candidate.citations
+                                .map((citation) =>
+                                  readySources.find(
+                                    (source) =>
+                                      source.id ===
+                                      String(citation.source_id ?? ""),
+                                  ),
+                                )
+                                .filter(
+                                  (source): source is CourseSource =>
+                                    Boolean(source),
+                                )
+                                .map((source) => source.display_name);
+                              return (
+                                <div
+                                  key={candidate.candidate_id}
+                                  className={`space-y-3 rounded-lg border p-4 ${
+                                    included
+                                      ? "border-[var(--border)]"
+                                      : "border-dashed border-[var(--border)] opacity-70"
+                                  }`}
+                                >
+                                  <div>
+                                    <p className="font-medium">{candidate.prompt}</p>
+                                    <p className="mt-2 text-sm">{candidate.answer}</p>
+                                  </div>
+                                  {sourceNames.length ? (
+                                    <details className="text-xs text-[var(--muted-foreground)]">
+                                      <summary className="cursor-pointer">
+                                        {t("Show sources")}
+                                      </summary>
+                                      <p className="mt-1">
+                                        {Array.from(new Set(sourceNames)).join(", ")}
+                                      </p>
+                                    </details>
+                                  ) : null}
+                                  <div className="flex flex-wrap gap-2">
+                                    <button
+                                      type="button"
+                                      onClick={() =>
+                                        setCandidateOrder((orders) => ({
+                                          ...orders,
+                                          [operation.id]: included
+                                            ? selected.filter(
+                                                (id) =>
+                                                  id !== candidate.candidate_id,
+                                              )
+                                            : [
+                                                ...selected,
+                                                candidate.candidate_id,
+                                              ],
+                                        }))
+                                      }
+                                      aria-label={`${
+                                        included ? t("Remove") : t("Keep")
+                                      }: ${candidate.prompt}`}
+                                      className="rounded-lg border border-[var(--border)] px-3 py-1.5 text-xs"
+                                    >
+                                      {included ? t("Remove") : t("Keep")}
+                                    </button>
+                                    {included ? (
+                                      <>
+                                        <button
+                                          type="button"
+                                          disabled={index === 0}
+                                          onClick={() =>
+                                            setCandidateOrder((orders) => {
+                                              const next = [...selected];
+                                              [next[index - 1], next[index]] = [
+                                                next[index],
+                                                next[index - 1],
+                                              ];
+                                              return {
+                                                ...orders,
+                                                [operation.id]: next,
+                                              };
+                                            })
+                                          }
+                                          className="text-xs disabled:opacity-40"
+                                        >
+                                          {t("Move up")}
+                                        </button>
+                                        <button
+                                          type="button"
+                                          disabled={index === selected.length - 1}
+                                          onClick={() =>
+                                            setCandidateOrder((orders) => {
+                                              const next = [...selected];
+                                              [next[index], next[index + 1]] = [
+                                                next[index + 1],
+                                                next[index],
+                                              ];
+                                              return {
+                                                ...orders,
+                                                [operation.id]: next,
+                                              };
+                                            })
+                                          }
+                                          className="text-xs disabled:opacity-40"
+                                        >
+                                          {t("Move down")}
+                                        </button>
+                                      </>
+                                    ) : null}
+                                  </div>
+                                </div>
+                              );
+                            })}
+                            <div className="flex items-center justify-between gap-2">
+                              <button
+                                type="button"
+                                disabled={reviewIndexForOperation === 0}
+                                onClick={() =>
+                                  setCandidateReviewIndex((indexes) => ({
+                                    ...indexes,
+                                    [operation.id]: Math.max(
+                                      reviewIndexForOperation - 1,
+                                      0,
+                                    ),
+                                  }))
+                                }
+                                className="rounded-lg border border-[var(--border)] px-3 py-2 text-sm disabled:opacity-40"
+                              >
+                                {t("Previous candidate")}
+                              </button>
+                              <button
+                                type="button"
+                                disabled={
+                                  reviewIndexForOperation ===
+                                  operation.candidates.length - 1
+                                }
+                                onClick={() =>
+                                  setCandidateReviewIndex((indexes) => ({
+                                    ...indexes,
+                                    [operation.id]: Math.min(
+                                      reviewIndexForOperation + 1,
+                                      operation.candidates!.length - 1,
+                                    ),
+                                  }))
+                                }
+                                className="rounded-lg border border-[var(--border)] px-3 py-2 text-sm disabled:opacity-40"
+                              >
+                                {t("Next candidate")}
+                              </button>
+                            </div>
+                            <details className="rounded-lg border border-[var(--border)] p-3">
+                              <summary className="cursor-pointer text-sm font-medium">
+                                {t("Review selected order")} ({selected.length})
+                              </summary>
+                              <ol className="mt-2 space-y-1 text-sm">
+                                {selected.map((candidateId, index) => (
+                                  <li key={candidateId}>
+                                    {index + 1}.{" "}
+                                    {operation.candidates?.find(
+                                      (candidate) =>
+                                        candidate.candidate_id === candidateId,
+                                    )?.prompt ?? t("Selected card")}
+                                  </li>
+                                ))}
+                              </ol>
+                            </details>
+                            <div className="flex flex-wrap gap-2">
+                              <button
+                                type="button"
+                                onClick={() => void publishCandidates(operation)}
+                                disabled={busy || selected.length === 0}
+                                className="rounded-lg bg-[var(--primary)] px-3 py-2 text-sm text-[var(--primary-foreground)] disabled:opacity-50"
+                              >
+                                {t("Publish")} {selected.length}{" "}
+                                {selected.length === 1 ? t("card") : t("cards")}
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => void cancelGeneration(operation)}
+                                disabled={busy}
+                                className="rounded-lg border border-[var(--border)] px-3 py-2 text-sm"
+                              >
+                                {t("Cancel draft")}
+                              </button>
+                            </div>
+                          </div>
+                        ) : null}
+                        {["queued", "running", "cancelling"].includes(
+                          operation.state,
+                        ) ? (
+                          <button
+                            type="button"
+                            onClick={() => void cancelGeneration(operation)}
+                            disabled={busy}
+                            className="rounded-lg border border-[var(--border)] px-3 py-2 text-sm disabled:opacity-50"
+                          >
+                            {t("Cancel")}
+                          </button>
+                        ) : null}
+                      </article>
+                    );
+                  })}
+                {!generationOperations.some(
+                  (operation) =>
+                    operation.state !== "completed" &&
+                    operation.state !== "cancelled",
+                ) ? (
+                  <Notice>{t("No card creation needs your attention.")}</Notice>
+                ) : null}
+                {generationOperations.some((operation) =>
+                  ["completed", "cancelled"].includes(operation.state),
+                ) ? (
+                  <div>
+                    <button
+                      type="button"
+                      aria-expanded={showPreviousActivity}
+                      onClick={() =>
+                        setShowPreviousActivity((shown) => !shown)
+                      }
+                      className="inline-flex items-center gap-2 text-sm font-medium"
+                    >
+                      {showPreviousActivity ? (
+                        <ChevronUp size={16} />
+                      ) : (
+                        <ChevronDown size={16} />
+                      )}
+                      {t("Previous activity")}
+                    </button>
+                    {showPreviousActivity ? (
+                      <ul className="mt-3 space-y-2">
+                        {generationOperations
+                          .filter((operation) =>
+                            ["completed", "cancelled"].includes(operation.state),
+                          )
+                          .map((operation) => {
+                            const presentation =
+                              flashcardGenerationStatePresentation(
+                                operation.state,
+                              );
+                            return (
+                              <li
+                                key={operation.id}
+                                className="rounded-lg border border-[var(--border)] px-3 py-2 text-sm"
+                              >
+                                {t(presentation.label)}
+                              </li>
+                            );
+                          })}
+                      </ul>
+                    ) : null}
+                  </div>
+                ) : null}
+              </section>
+            ) : null}
           </>
+        ) : activeCourse && identity ? (
+          <Notice>{t("Loading this Course's Flashcards…")}</Notice>
         ) : null}
 
         {busy ? (

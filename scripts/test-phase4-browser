@@ -149,6 +149,7 @@ stop_backend
 assert_port_free "$backend_port"
 start_backend
 run_browser_proof "after server restart|manual Practice and Flashcard"
+run_browser_proof "phase5 study-first shell"
 
 # Provider-free Phase 5 proof uses the explicit deterministic local adapter
 # and a private fingerprint-bound source shard. It never contacts a model.
