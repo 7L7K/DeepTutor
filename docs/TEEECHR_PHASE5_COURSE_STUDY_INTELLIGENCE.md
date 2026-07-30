@@ -481,5 +481,44 @@ reservation is tracked separately and is not reported as confirmed spend. The
 temporary smoke helper was removed after proof. The redacted machine-readable
 evidence is retained in `docs/TEEECHR_PHASE5_PROVIDER_SMOKE_RECEIPT.json`.
 
+### Existing BlueWay Course browser proof
+
+The first authenticated paid browser path exposed a compatibility boundary
+between the older Phase 3 BlueWay importer and the Phase 5 resolver:
+already-ready source bundles had a verified immutable raw export but their
+derived deterministic index predated the Course source fingerprint field.
+Phase 5 correctly refused to use that index.
+
+The repair does not trust or rewrite arbitrary derived content. It resolves the
+bundle through the authenticated owner and Course source, rejects path escape,
+symlinks, hard links, malformed structure, foreign identity, or digest drift,
+and rebuilds the derived index only when the immutable raw export still matches
+the persisted source receipt. Startup reconciliation is best-effort; any
+unverifiable source stays unavailable.
+
+The provider boundary also exposed an OpenAI strict Structured Outputs
+restriction: a string-valued evidence enum containing a literal double quote
+was rejected as `invalid_json_schema`. The adapter now derives a bounded
+allowlist of exact source substrings, excludes only literals that cannot be
+represented by the strict schema, and verifies every returned citation against
+the source-specific allowlist before staging candidates. The provider receives
+no free-form full-source `text` field.
+
+The reviewed live flow then completed:
+
+- the authenticated learner selected one existing ready BlueWay Course source;
+- GPT-5 Mini snapshot `gpt-5-mini-2025-08-07` returned three valid cited
+  candidates with `store=false`;
+- the request used 967 input and 488 output tokens for an estimated $0.001218;
+- the learner-review gate excluded one weak candidate and published the other
+  two as an immutable ready deck;
+- after an actual backend restart, the deck remained ready with two due cards;
+- the Flashcard provider and paid-usage gates both returned to disabled.
+
+Provider-rejected diagnostic attempts remain conservatively `uncertain` in the
+usage ledger; they are not reported as confirmed charges. The redacted
+browser-proof record is retained in
+`docs/TEEECHR_PHASE5_BROWSER_PROVIDER_RECEIPT.json`.
+
 No push, merge, deployment, hosted mutation, BlueWay source change, historical
 import, or upstream integration occurred.

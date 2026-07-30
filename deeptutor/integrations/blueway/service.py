@@ -18,7 +18,11 @@ from deeptutor.multi_user.context import get_current_user_or_none
 from deeptutor.multi_user.identity import identity_write_lock
 from deeptutor.multi_user.paths import get_personal_path_service
 
-from .bundles import BundleMaterializationError, materialize_course_bundles
+from .bundles import (
+    BundleMaterializationError,
+    materialize_course_bundles,
+    reconcile_ready_bundle_indexes,
+)
 from .config import BlueWaySettings, IntegrationConfigurationError
 from .credentials import CredentialError, CredentialStore
 from .repository import BlueWayNotFoundError, BlueWayRepository, Connection, SyncRun
@@ -615,9 +619,14 @@ class BlueWayService:
 
     def reconcile_owner(self, owner_user_id: str) -> dict[str, int]:
         """Startup-only repair: retry fenced revocations and remove safe orphans."""
+        repository = self._repository_for_owner(owner_user_id)
+        # Legacy Phase 3 bundles may predate the Course-source fingerprint in
+        # their derived deterministic index. Rebuild only from an immutable raw
+        # bundle whose bytes and embedded Course identity match the owned source
+        # receipt. This does not require or refresh BlueWay authority.
+        reconcile_ready_bundle_indexes(repository)
         if not self.settings.enabled:
             return {"revoked": 0, "orphans": 0, "interrupted": 0}
-        repository = self._repository_for_owner(owner_user_id)
         store = self._credential_store(owner_user_id)
         visible = repository.visible_connection()
         if visible is not None:

@@ -10,10 +10,12 @@ from __future__ import annotations
 from collections.abc import Callable
 import hashlib
 import json
+from pathlib import Path
 import secrets
 
-from deeptutor.courses.deterministic_provider import build_index
+from deeptutor.courses.deterministic_provider import build_index, build_index_payload
 from deeptutor.courses.ingestion import source_kb_name
+from deeptutor.courses.models import CourseSource
 from deeptutor.multi_user.identity import identity_write_lock
 from deeptutor.multi_user.paths import get_personal_path_service, restrict_private_tree_permissions
 
@@ -22,6 +24,141 @@ from .repository import BlueWayRepository, Connection
 
 class BundleMaterializationError(RuntimeError):
     pass
+
+
+def _ready_bundle_path(
+    repository: BlueWayRepository, *, course_id: str, source: CourseSource
+) -> tuple[Path, Path]:
+    """Resolve and verify the immutable raw bundle behind one ready source."""
+    root = (
+        get_personal_path_service(repository.owner_user_id)
+        .get_knowledge_bases_root()
+        .resolve()
+    )
+    kb_dir = root / source_kb_name(course_id, source.id)
+    bundle_path = kb_dir / "raw" / source.id / "blueway-course-bundle.json"
+    try:
+        resolved_kb_dir = kb_dir.resolve()
+        resolved_bundle_path = bundle_path.resolve(strict=True)
+        resolved_kb_dir.relative_to(root)
+        resolved_bundle_path.relative_to(resolved_kb_dir)
+    except (OSError, ValueError) as exc:
+        raise BundleMaterializationError(
+            "BlueWay Course bundle path is unavailable"
+        ) from exc
+    if (
+        not resolved_bundle_path.is_file()
+        or bundle_path.is_symlink()
+        or resolved_bundle_path.stat().st_nlink != 1
+    ):
+        raise BundleMaterializationError(
+            "BlueWay Course bundle path is unavailable"
+        )
+    try:
+        restrict_private_tree_permissions(resolved_kb_dir)
+    except (OSError, RuntimeError, ValueError) as exc:
+        raise BundleMaterializationError(
+            "BlueWay Course bundle path is unavailable"
+        ) from exc
+    encoded = resolved_bundle_path.read_bytes()
+    if hashlib.sha256(encoded).hexdigest() != source.content_sha256:
+        raise BundleMaterializationError(
+            "BlueWay Course bundle fingerprint does not match its source receipt"
+        )
+    try:
+        payload = json.loads(encoded.decode("utf-8"))
+    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise BundleMaterializationError(
+            "BlueWay Course bundle is invalid"
+        ) from exc
+    if (
+        not isinstance(payload, dict)
+        or payload.get("schema") != "teeechr.blueway.course-bundle.v1"
+        or payload.get("course_id") != course_id
+        or not isinstance(payload.get("records"), list)
+    ):
+        raise BundleMaterializationError(
+            "BlueWay Course bundle identity does not match its source"
+        )
+    return resolved_kb_dir, resolved_bundle_path
+
+
+def _ready_index_matches(
+    kb_dir: Path, bundle_path: Path, expected_sha256: str
+) -> bool:
+    index_path = kb_dir / "deterministic-index.json"
+    try:
+        resolved_index_path = index_path.resolve(strict=True)
+        resolved_index_path.relative_to(kb_dir)
+        index_stat = index_path.lstat()
+        if index_path.is_symlink() or index_stat.st_nlink != 1:
+            return False
+        raw = index_path.read_bytes()
+        if len(raw) > 256_000:
+            return False
+        payload = json.loads(raw.decode("utf-8"))
+    except (OSError, ValueError, UnicodeDecodeError, json.JSONDecodeError):
+        return False
+    expected = build_index_payload(
+        [str(bundle_path)],
+        source_content_sha256=expected_sha256,
+    )
+    return expected is not None and payload == expected
+
+
+def ensure_ready_bundle_index(
+    repository: BlueWayRepository, *, course_id: str, source: CourseSource
+) -> bool:
+    """Repair a derived legacy index only from its verified immutable bundle.
+
+    Returns ``True`` when the index was rebuilt and ``False`` when the existing
+    index already carried the exact Course-source receipt.
+    """
+    if source.kind != "blueway snapshot" or source.state != "ready":
+        raise BundleMaterializationError(
+            "Only ready BlueWay Course bundles can be reconciled"
+        )
+    kb_dir, bundle_path = _ready_bundle_path(
+        repository, course_id=course_id, source=source
+    )
+    if _ready_index_matches(kb_dir, bundle_path, source.content_sha256):
+        return False
+    if not build_index(
+        kb_dir,
+        [str(bundle_path)],
+        source_content_sha256=source.content_sha256,
+    ):
+        raise BundleMaterializationError(
+            "Deterministic BlueWay bundle index was empty"
+        )
+    restrict_private_tree_permissions(kb_dir)
+    if not _ready_index_matches(kb_dir, bundle_path, source.content_sha256):
+        raise BundleMaterializationError(
+            "Deterministic BlueWay bundle index receipt is invalid"
+        )
+    return True
+
+
+def reconcile_ready_bundle_indexes(repository: BlueWayRepository) -> int:
+    """Best-effort startup reconciliation for legacy derived indexes.
+
+    Invalid or missing immutable raw bundles remain unavailable. They are never
+    converted into provider authority merely because an index file exists.
+    """
+    repaired = 0
+    for course in repository.courses.list_courses():
+        for source in repository.courses.list_sources(course.id):
+            if source.kind != "blueway snapshot" or source.state != "ready":
+                continue
+            try:
+                repaired += int(
+                    ensure_ready_bundle_index(
+                        repository, course_id=course.id, source=source
+                    )
+                )
+            except BundleMaterializationError:
+                continue
+    return repaired
 
 
 def _encoded_bundle(*, snapshot_id: str, course_id: str, records: list[dict]) -> bytes:
@@ -96,6 +233,9 @@ def materialize_course_bundles(
             elif source.state == "ready":
                 # A same-subject reconnect may own the exact immutable bundle
                 # already.  It still needs a guarded record-source rebind.
+                ensure_ready_bundle_index(
+                    repository, course_id=course_id, source=source
+                )
                 staged.append({
                     "course_id": course_id, "source_id": source.id,
                     "operation_id": str(source.operation_id), "source_revision": source.revision,

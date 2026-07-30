@@ -4,6 +4,21 @@
 
 ### Added
 
+- Repaired the Phase 3 BlueWay-to-Phase 5 Flashcard provenance bridge for
+  already-ready Course sources. Startup reconciliation now rebuilds only a
+  missing or stale derived deterministic index whose owner-scoped immutable
+  raw bundle still matches the persisted Course source receipt; traversal,
+  symlink, hard-link, foreign-owner, malformed-bundle, identity, and digest
+  failures remain fail-closed. The GPT-5 Mini Flashcard adapter now sends a
+  bounded allowlist of exact citation excerpts instead of the full source text
+  field, constrains structured output to permitted card types, objectives, and
+  source receipts, and omits quote literals that OpenAI strict Structured
+  Outputs cannot represent. An authenticated browser proof used one existing
+  verified BlueWay Course bundle to generate three cited candidates, excluded
+  one weak candidate at the learner-review gate, published an immutable
+  two-card deck, and proved the ready deck survived a backend restart. The
+  successful `store=false` request used 967 input and 488 output tokens for an
+  estimated $0.001218; both paid-provider gates were disabled afterward.
 - Hardened the separately gated Phase 5 paid-provider pilot with a persistent
   disabled-by-default $10 lifetime ceiling, pre-call cost reservation,
   post-call settlement, quarterly alert thresholds, and administrative

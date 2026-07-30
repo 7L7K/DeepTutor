@@ -316,6 +316,101 @@ def test_openai_provider_rejects_unverifiable_evidence_quote(tmp_path: Path) -> 
         provider.generate(_request())
 
 
+def test_openai_provider_constrains_output_to_exact_bounded_evidence(
+    tmp_path: Path,
+) -> None:
+    captured: dict = {}
+    provider = _provider(tmp_path, _payload(), captured)
+
+    output = provider.generate(
+        _request(
+            json.dumps(
+                {
+                    "schema": "teeechr.blueway.course-bundle.v1",
+                    "records": [
+                        {
+                            "kind": "class_notes",
+                            "record": {
+                                "title": "Cellular energy",
+                                "text": "ATP stores cellular energy.",
+                                "content_sha256": "a" * 64,
+                            },
+                        }
+                    ],
+                },
+                separators=(",", ":"),
+            )
+        )
+    )
+
+    assert len(output.cards) == 3
+    sent = json.loads(captured["input"])
+    assert "text" not in sent["sources"][0]
+    assert sent["sources"][0]["allowed_evidence_quotes"] == [
+        "Cellular energy",
+        "ATP stores cellular energy.",
+    ]
+    card_schema = captured["text"]["format"]["schema"]["properties"]["cards"][
+        "items"
+    ]["properties"]
+    assert card_schema["card_type"]["enum"] == ["definition", "application"]
+    assert card_schema["objective_ids"]["items"]["enum"] == ["obj_energy"]
+    assert card_schema["objective_ids"]["maxItems"] == 1
+    assert card_schema["citations"]["maxItems"] == 3
+    citation_schema = card_schema["citations"]["items"]["properties"]
+    assert citation_schema["source_id"]["enum"] == ["src_" + ("a" * 32)]
+    assert citation_schema["evidence_quote"]["enum"] == [
+        "Cellular energy",
+        "ATP stores cellular energy.",
+    ]
+
+
+def test_openai_provider_requires_empty_objective_ids_when_none_are_allowed(
+    tmp_path: Path,
+) -> None:
+    captured: dict = {}
+    request = _request().model_copy(update={"objective_ids": []})
+    payload = _payload()
+    for card in payload["cards"]:
+        card["objective_ids"] = []
+    provider = _provider(tmp_path, payload, captured)
+
+    assert len(provider.generate(request).cards) == 3
+    objective_schema = captured["text"]["format"]["schema"]["properties"][
+        "cards"
+    ]["items"]["properties"]["objective_ids"]
+    assert objective_schema["maxItems"] == 64
+    assert "enum" not in objective_schema["items"]
+
+
+def test_openai_provider_omits_strict_schema_incompatible_quote_literals(
+    tmp_path: Path,
+) -> None:
+    captured: dict = {}
+    provider = _provider(
+        tmp_path,
+        _payload("ATP stores cellular energy."),
+        captured,
+    )
+    source_text = json.dumps(
+        {
+            "records": [
+                {
+                    "quoted_note": 'The instructor said "study chapter three".',
+                    "plain_note": "ATP stores cellular energy.",
+                }
+            ]
+        },
+        separators=(",", ":"),
+    )
+
+    assert len(provider.generate(_request(source_text)).cards) == 3
+    evidence = json.loads(captured["input"])["sources"][0][
+        "allowed_evidence_quotes"
+    ]
+    assert evidence == ["ATP stores cellular energy."]
+
+
 def test_openai_provider_kill_switch_causes_zero_client_calls(tmp_path: Path) -> None:
     captured: dict = {}
     provider = _provider(tmp_path, _payload(), captured, enabled=False)

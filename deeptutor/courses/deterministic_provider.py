@@ -41,10 +41,10 @@ def _embedding(text: str) -> list[int]:
     return [digest[0], digest[1], digest[2], digest[3]]
 
 
-def build_index(
-    kb_dir: Path, uploaded_paths: list[str], *, source_content_sha256: str | None = None
-) -> bool:
-    """Write a deterministic, private index for UTF-8-compatible source files."""
+def build_index_payload(
+    uploaded_paths: list[str], *, source_content_sha256: str | None = None
+) -> dict[str, Any] | None:
+    """Derive the exact deterministic index without mutating storage."""
     chunks: list[dict[str, Any]] = []
     for raw_path in uploaded_paths:
         path = Path(raw_path)
@@ -61,14 +61,26 @@ def build_index(
                 }
             )
     if not chunks:
-        return False
-    kb_dir.mkdir(parents=True, exist_ok=True, mode=0o700)
-    kb_dir.chmod(0o700)
+        return None
     payload: dict[str, Any] = {"chunks": chunks}
     # Chat deliberately remains backward-compatible with its existing index.
     # Course Practice generation independently requires this stamp.
     if source_content_sha256 is not None:
         payload["course_source_content_sha256"] = source_content_sha256
+    return payload
+
+
+def build_index(
+    kb_dir: Path, uploaded_paths: list[str], *, source_content_sha256: str | None = None
+) -> bool:
+    """Write a deterministic, private index for UTF-8-compatible source files."""
+    payload = build_index_payload(
+        uploaded_paths, source_content_sha256=source_content_sha256
+    )
+    if payload is None:
+        return False
+    kb_dir.mkdir(parents=True, exist_ok=True, mode=0o700)
+    kb_dir.chmod(0o700)
     atomic_write_json(kb_dir / "deterministic-index.json", payload)
     return True
 

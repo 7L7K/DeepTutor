@@ -3,6 +3,7 @@ from __future__ import annotations
 import base64
 from concurrent.futures import ThreadPoolExecutor
 import copy
+import json
 import os
 from pathlib import Path
 import threading
@@ -14,7 +15,16 @@ import httpx
 import pytest
 
 from deeptutor.courses.repository import CourseConflictError, CourseRepository
+from deeptutor.courses.flashcard_generation_models import FlashcardSourceReceipt
+from deeptutor.courses.flashcard_generation_provider import (
+    DeterministicIndexFlashcardSourceTextResolver,
+)
 from deeptutor.integrations.blueway import config as blueway_config
+from deeptutor.integrations.blueway.bundles import (
+    BundleMaterializationError,
+    ensure_ready_bundle_index,
+    reconcile_ready_bundle_indexes,
+)
 from deeptutor.integrations.blueway.config import BlueWaySettings, IntegrationConfigurationError
 from deeptutor.integrations.blueway.credentials import CredentialError, CredentialStore
 from deeptutor.integrations.blueway.refresh import (
@@ -114,6 +124,7 @@ def _service(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> tuple[BlueWaySe
     monkeypatch.setattr("deeptutor.integrations.blueway.service._current_personal_user", lambda _owner: SimpleNamespace(id="owner-a"))
     monkeypatch.setattr("deeptutor.integrations.blueway.service.get_current_course_service", lambda: SimpleNamespace(repository=courses))
     monkeypatch.setattr("deeptutor.integrations.blueway.service.get_personal_path_service", lambda _owner: paths)
+    monkeypatch.setattr("deeptutor.integrations.blueway.bundles.get_personal_path_service", lambda _owner: paths)
     return service, courses
 
 
@@ -951,6 +962,223 @@ def test_failed_bundle_retries_same_snapshot_with_one_ready_source_per_course(tm
     monkeypatch.setattr("deeptutor.integrations.blueway.bundles.build_index", original)
     assert service.run_queued_sync(run_id=service.queue_sync().id).state == "completed"
     assert all(len([source for source in courses.list_sources(course.id) if source.state == "ready"]) == 1 for course in courses.list_courses())
+
+
+def test_legacy_ready_bundle_index_is_repaired_from_verified_raw_source(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    service, courses = _service(tmp_path, monkeypatch)
+    attempt = service.start_connection()
+    service.complete_connection_for_transport(
+        attempt_id=attempt.id,
+        exchange=TokenExchange(
+            "grant-a", "subject-a", "access",
+            "2026-07-23T00:00:00Z", "refresh-secret",
+        ),
+    )
+    assert service.run_queued_sync(run_id=service.queue_sync().id).state == "completed"
+    course = courses.list_courses()[0]
+    source = next(
+        source for source in courses.list_sources(course.id)
+        if source.kind == "blueway snapshot" and source.state == "ready"
+    )
+    kb_dir = (
+        PathService(tmp_path / "workspace").get_knowledge_bases_root()
+        / f"course_{course.id}_{source.id}"
+    )
+    index_path = kb_dir / "deterministic-index.json"
+    legacy = copy.deepcopy(json.loads(index_path.read_text(encoding="utf-8")))
+    legacy.pop("course_source_content_sha256")
+    index_path.write_text(json.dumps(legacy), encoding="utf-8")
+
+    restarted = BlueWayRepository(
+        CourseRepository(tmp_path / "courses.db", "owner-a")
+    )
+    assert reconcile_ready_bundle_indexes(restarted) == 1
+    repaired = json.loads(index_path.read_text(encoding="utf-8"))
+    assert repaired["course_source_content_sha256"] == source.content_sha256
+    assert repaired["chunks"] == legacy["chunks"]
+    monkeypatch.setattr(
+        "deeptutor.courses.flashcard_generation_provider.get_personal_path_service",
+        lambda _owner: PathService(tmp_path / "workspace"),
+    )
+    material = DeterministicIndexFlashcardSourceTextResolver().resolve(
+        owner_user_id="owner-a",
+        course_id=course.id,
+        receipts=[
+            FlashcardSourceReceipt(
+                source_id=source.id,
+                source_revision=source.revision,
+                content_sha256=source.content_sha256,
+            )
+        ],
+        context_char_limit=48_000,
+    )
+    assert len(material) == 1
+    assert "teeechr.blueway.course-bundle.v1" in material[0].text
+    assert reconcile_ready_bundle_indexes(restarted) == 0
+
+
+def test_ready_bundle_repair_fails_closed_when_raw_bytes_are_tampered(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    service, courses = _service(tmp_path, monkeypatch)
+    attempt = service.start_connection()
+    service.complete_connection_for_transport(
+        attempt_id=attempt.id,
+        exchange=TokenExchange(
+            "grant-a", "subject-a", "access",
+            "2026-07-23T00:00:00Z", "refresh-secret",
+        ),
+    )
+    assert service.run_queued_sync(run_id=service.queue_sync().id).state == "completed"
+    course = courses.list_courses()[0]
+    source = next(
+        source for source in courses.list_sources(course.id)
+        if source.kind == "blueway snapshot" and source.state == "ready"
+    )
+    kb_dir = (
+        PathService(tmp_path / "workspace").get_knowledge_bases_root()
+        / f"course_{course.id}_{source.id}"
+    )
+    index_path = kb_dir / "deterministic-index.json"
+    legacy = json.loads(index_path.read_text(encoding="utf-8"))
+    legacy.pop("course_source_content_sha256")
+    index_path.write_text(json.dumps(legacy), encoding="utf-8")
+    before = index_path.read_bytes()
+    bundle_path = kb_dir / "raw" / source.id / "blueway-course-bundle.json"
+    bundle_path.write_bytes(bundle_path.read_bytes() + b"\n")
+
+    with pytest.raises(
+        BundleMaterializationError, match="fingerprint does not match"
+    ):
+        ensure_ready_bundle_index(
+            BlueWayRepository(courses), course_id=course.id, source=source
+        )
+    assert index_path.read_bytes() == before
+    assert reconcile_ready_bundle_indexes(BlueWayRepository(courses)) == 0
+    assert index_path.read_bytes() == before
+
+
+def test_ready_bundle_repair_replaces_same_receipt_tampered_index(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    service, courses = _service(tmp_path, monkeypatch)
+    attempt = service.start_connection()
+    service.complete_connection_for_transport(
+        attempt_id=attempt.id,
+        exchange=TokenExchange(
+            "grant-a", "subject-a", "access",
+            "2026-07-23T00:00:00Z", "refresh-secret",
+        ),
+    )
+    assert service.run_queued_sync(run_id=service.queue_sync().id).state == "completed"
+    course = courses.list_courses()[0]
+    source = next(
+        source for source in courses.list_sources(course.id)
+        if source.kind == "blueway snapshot" and source.state == "ready"
+    )
+    kb_dir = (
+        PathService(tmp_path / "workspace").get_knowledge_bases_root()
+        / f"course_{course.id}_{source.id}"
+    )
+    index_path = kb_dir / "deterministic-index.json"
+    original = json.loads(index_path.read_text(encoding="utf-8"))
+    tampered = copy.deepcopy(original)
+    tampered["chunks"][0]["text"] = "Injected text with a valid receipt stamp."
+    index_path.write_text(json.dumps(tampered), encoding="utf-8")
+
+    assert reconcile_ready_bundle_indexes(BlueWayRepository(courses)) == 1
+    assert json.loads(index_path.read_text(encoding="utf-8")) == original
+
+
+def test_ready_bundle_repair_rejects_symlink_in_private_bundle_tree(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    service, courses = _service(tmp_path, monkeypatch)
+    attempt = service.start_connection()
+    service.complete_connection_for_transport(
+        attempt_id=attempt.id,
+        exchange=TokenExchange(
+            "grant-a", "subject-a", "access",
+            "2026-07-23T00:00:00Z", "refresh-secret",
+        ),
+    )
+    assert service.run_queued_sync(run_id=service.queue_sync().id).state == "completed"
+    course = courses.list_courses()[0]
+    source = next(
+        source for source in courses.list_sources(course.id)
+        if source.kind == "blueway snapshot" and source.state == "ready"
+    )
+    kb_dir = (
+        PathService(tmp_path / "workspace").get_knowledge_bases_root()
+        / f"course_{course.id}_{source.id}"
+    )
+    index_path = kb_dir / "deterministic-index.json"
+    bundle_path = kb_dir / "raw" / source.id / "blueway-course-bundle.json"
+    index_path.unlink()
+    index_path.symlink_to(bundle_path)
+
+    with pytest.raises(BundleMaterializationError, match="path is unavailable"):
+        ensure_ready_bundle_index(
+            BlueWayRepository(courses), course_id=course.id, source=source
+        )
+
+
+def test_ready_bundle_repair_is_owner_scoped(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    service, courses = _service(tmp_path, monkeypatch)
+    attempt = service.start_connection()
+    service.complete_connection_for_transport(
+        attempt_id=attempt.id,
+        exchange=TokenExchange(
+            "grant-a", "subject-a", "access",
+            "2026-07-23T00:00:00Z", "refresh-secret",
+        ),
+    )
+    assert service.run_queued_sync(run_id=service.queue_sync().id).state == "completed"
+    course = courses.list_courses()[0]
+    source = next(
+        source for source in courses.list_sources(course.id)
+        if source.kind == "blueway snapshot" and source.state == "ready"
+    )
+    kb_dir = (
+        PathService(tmp_path / "workspace").get_knowledge_bases_root()
+        / f"course_{course.id}_{source.id}"
+    )
+    index_path = kb_dir / "deterministic-index.json"
+    legacy = json.loads(index_path.read_text(encoding="utf-8"))
+    legacy.pop("course_source_content_sha256")
+    index_path.write_text(json.dumps(legacy), encoding="utf-8")
+    before = index_path.read_bytes()
+
+    foreign = BlueWayRepository(
+        CourseRepository(tmp_path / "courses.db", "owner-b")
+    )
+    assert reconcile_ready_bundle_indexes(foreign) == 0
+    assert index_path.read_bytes() == before
+
+
+def test_startup_reconciliation_repairs_indexes_before_credential_preflight(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    service, courses = _service(tmp_path, monkeypatch)
+    service.settings = BlueWaySettings(enabled=False)
+    repository = BlueWayRepository(courses)
+    called: list[str] = []
+    monkeypatch.setattr(
+        service, "_repository_for_owner", lambda _owner: repository
+    )
+    monkeypatch.setattr(
+        "deeptutor.integrations.blueway.service.reconcile_ready_bundle_indexes",
+        lambda selected: called.append(selected.owner_user_id) or 0,
+    )
+
+    assert service.reconcile_owner("owner-a") == {
+        "revoked": 0, "orphans": 0, "interrupted": 0,
+    }
+    assert called == ["owner-a"]
 
 
 def test_changed_snapshot_second_bundle_failure_preserves_prior_ready_sources(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
