@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import asyncio
+
 from fastapi import Depends, FastAPI
 from fastapi.testclient import TestClient
 import pytest
@@ -190,41 +192,43 @@ def test_course_api_reports_generation_capability_truthfully(
 
 
 def test_general_chat_flashcard_plan_is_private_bounded_and_not_course_grounded(
-    course_client, monkeypatch
+    course_client,
 ) -> None:
-    class Store:
-        async def get_session(self, session_id: str):
-            return (
-                {"id": session_id, "course_id": None}
-                if session_id == "unified_general"
-                else None
-            )
+    from deeptutor.multi_user.identity import get_user
+    from deeptutor.multi_user.paths import get_personal_path_service
+    from deeptutor.services.session.sqlite_store import SQLiteSessionStore
 
-        async def get_messages_for_context(
-            self, session_id: str, leaf_message_id: int | None = None
-        ):
-            assert session_id == "unified_general"
-            assert leaf_message_id == 2
-            return [
-                {"id": 1, "role": "user", "content": "Explain linear equations"},
-                {
-                    "id": 2,
-                    "role": "assistant",
-                    "content": "Slope is the rate of change in y for a change in x.",
-                },
-            ]
-
-    monkeypatch.setattr(
-        "deeptutor.services.session.get_personal_sqlite_session_store",
-        lambda: Store(),
+    bob = get_user("bob")
+    assert bob is not None
+    store = SQLiteSessionStore(
+        db_path=get_personal_path_service(str(bob["id"])).get_chat_history_db()
     )
+
+    async def seed_bob_general_chat() -> tuple[int, int]:
+        await store.create_session(
+            title="Linear equations",
+            session_id="unified_general",
+            course_id=None,
+        )
+        user_message_id = await store.add_message(
+            "unified_general", "user", "Explain linear equations"
+        )
+        assistant_message_id = await store.add_message(
+            "unified_general",
+            "assistant",
+            "Slope is the rate of change in y for a change in x.",
+            parent_message_id=user_message_id,
+        )
+        return user_message_id, assistant_message_id
+
+    user_message_id, assistant_message_id = asyncio.run(seed_bob_general_chat())
     response = course_client.post(
         "/api/v1/courses/general-study/learner-actions",
         headers=_auth("bob"),
         json={
             "action": "make_flashcards",
             "session_id": "unified_general",
-            "assistant_message_id": 2,
+            "assistant_message_id": assistant_message_id,
             "desired_count": 5,
         },
     )
@@ -236,9 +240,18 @@ def test_general_chat_flashcard_plan_is_private_bounded_and_not_course_grounded(
     assert payload["generation_brief"]["source_snapshot"] == []
     origin = payload["generation_brief"]["origin"]
     assert origin["kind"] == "general_chat"
-    assert origin["selected_message_ids"] == [1, 2]
+    assert origin["selected_message_ids"] == [
+        user_message_id,
+        assistant_message_id,
+    ]
     assert len(origin["context_sha256"]) == 64
-    assert origin["context_summary"] == "Explain linear equations"
+    assert origin["context_summary"] == "Linear Equations"
+    assert origin["context_title"] == "Understanding Linear Equations"
+    assert origin["context_topics"] == ["Linear Equations"]
+    assert origin["session_scope"] == "personal"
+    assert payload["generation_brief"]["brief"]["focus"] == (
+        "Understand Linear Equations through Linear Equations."
+    )
 
     alice_general = course_client.post(
         "/api/v1/courses/general-study", headers=_auth("alice")
@@ -256,7 +269,7 @@ def test_general_chat_flashcard_plan_is_private_bounded_and_not_course_grounded(
         json={
             "action": "make_flashcards",
             "session_id": "unified_general",
-            "assistant_message_id": 2,
+            "assistant_message_id": assistant_message_id,
             "desired_count": 3,
             "destination_course_id": destination["id"],
         },
@@ -274,12 +287,78 @@ def test_general_chat_flashcard_plan_is_private_bounded_and_not_course_grounded(
         json={
             "action": "make_flashcards",
             "session_id": "unified_general",
-            "assistant_message_id": 2,
+            "assistant_message_id": assistant_message_id,
             "destination_course_id": destination["id"],
         },
     )
     # Alice does not own Bob's session or Course; neither identifier is exposed.
     assert foreign_destination.status_code == 404
+
+
+def test_general_chat_flashcard_plan_resolves_admin_chat_without_sharing_courses(
+    course_client,
+) -> None:
+    from deeptutor.multi_user.paths import get_admin_path_service
+    from deeptutor.services.session.sqlite_store import SQLiteSessionStore
+
+    store = SQLiteSessionStore(
+        db_path=get_admin_path_service().get_chat_history_db()
+    )
+
+    async def seed_admin_general_chat() -> tuple[int, int]:
+        await store.create_session(
+            title="Cellular respiration",
+            session_id="unified_admin_general",
+            course_id=None,
+        )
+        user_message_id = await store.add_message(
+            "unified_admin_general",
+            "user",
+            "Explain how mitochondria make usable cellular energy.",
+        )
+        assistant_message_id = await store.add_message(
+            "unified_admin_general",
+            "assistant",
+            (
+                "Mitochondria use cellular respiration to convert energy stored "
+                "in nutrients into ATP, a form cells can use."
+            ),
+            parent_message_id=user_message_id,
+        )
+        return user_message_id, assistant_message_id
+
+    user_message_id, assistant_message_id = asyncio.run(seed_admin_general_chat())
+    response = course_client.post(
+        "/api/v1/courses/general-study/learner-actions",
+        headers=_auth("alice"),
+        json={
+            "action": "make_flashcards",
+            "session_id": "unified_admin_general",
+            "assistant_message_id": assistant_message_id,
+            "desired_count": 3,
+        },
+    )
+
+    assert response.status_code == 200, response.text
+    payload = response.json()
+    assert payload["generation_brief"]["origin"]["session_scope"] == "admin"
+    assert payload["generation_brief"]["origin"]["selected_message_ids"] == [
+        user_message_id,
+        assistant_message_id,
+    ]
+    assert payload["generation_brief"]["source_snapshot"] == []
+
+    # Bob's personal request cannot resolve the administrator's generic Chat.
+    foreign = course_client.post(
+        "/api/v1/courses/general-study/learner-actions",
+        headers=_auth("bob"),
+        json={
+            "action": "make_flashcards",
+            "session_id": "unified_admin_general",
+            "assistant_message_id": assistant_message_id,
+        },
+    )
+    assert foreign.status_code == 404
 
 
 def test_course_api_revision_archive_restore_and_no_delete(course_client) -> None:

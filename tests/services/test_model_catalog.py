@@ -1,7 +1,65 @@
 import json
 from pathlib import Path
 
+from deeptutor.multi_user.models import CurrentUser, UserScope
+import deeptutor.multi_user.paths as multi_user_paths
+from deeptutor.multi_user.paths import user_context
+from deeptutor.services.config import model_catalog as model_catalog_module
 from deeptutor.services.config.model_catalog import ModelCatalogService
+from deeptutor.services.model_selection.runtime import resolve_llm_config_for_selection
+from deeptutor.services.path_service import PathService
+
+
+def test_catalog_authority_stays_global_during_personal_course_context(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    admin_paths = PathService(workspace_root=tmp_path / "admin")
+    personal_root = tmp_path / "users" / "admin-user"
+    personal_user = CurrentUser(
+        id="admin-user",
+        username="admin",
+        role="admin",
+        scope=UserScope(kind="user", user_id="admin-user", root=personal_root),
+    )
+    monkeypatch.setattr(
+        multi_user_paths,
+        "get_admin_path_service",
+        lambda: admin_paths,
+    )
+    catalog_service = ModelCatalogService(path=admin_paths.get_settings_file("model_catalog"))
+    catalog = catalog_service.load()
+    catalog["services"]["llm"] = {
+        "active_profile_id": "profile-global",
+        "active_model_id": "model-global",
+        "profiles": [
+            {
+                "id": "profile-global",
+                "name": "Global provider",
+                "binding": "openai",
+                "base_url": "https://api.openai.com/v1",
+                "api_key": "test-only-key",
+                "models": [
+                    {
+                        "id": "model-global",
+                        "name": "Test model",
+                        "model": "gpt-test",
+                    }
+                ],
+            }
+        ],
+    }
+    catalog_service.save(catalog)
+
+    with user_context(personal_user):
+        service = model_catalog_module.get_model_catalog_service()
+        resolved = resolve_llm_config_for_selection(
+            {"profile_id": "profile-global", "model_id": "model-global"}
+        )
+
+    assert service.path == admin_paths.get_settings_file("model_catalog").resolve()
+    assert resolved.model == "gpt-test"
+    assert resolved.api_key == "test-only-key"
 
 
 def test_load_creates_empty_catalog_without_dotenv_hydration(tmp_path: Path):

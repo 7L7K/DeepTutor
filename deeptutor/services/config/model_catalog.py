@@ -14,9 +14,9 @@ from .provider_credentials import (
     ProviderCredentialError,
 )
 
-# Fallback only — frozen at admin scope at import time. Production code should
-# enter through ``get_model_catalog_service()`` so the path is resolved from the
-# current user's PathService on every call.
+# Legacy fallback only — frozen at admin scope at import time. Production code
+# enters through ``get_model_catalog_service()``, which resolves the explicit
+# deployment-owned admin path on every call.
 CATALOG_PATH = get_path_service().get_settings_file("model_catalog")
 
 
@@ -309,17 +309,18 @@ class ModelCatalogService:
 
 
 def get_model_catalog_service() -> ModelCatalogService:
-    try:
-        from deeptutor.multi_user.context import get_current_user
-        from deeptutor.multi_user.paths import get_admin_path_service
+    """Return the deployment-owned provider catalog.
 
-        if not get_current_user().is_admin:
-            return ModelCatalogService.get_instance(
-                get_admin_path_service().get_settings_file("model_catalog")
-            )
-    except Exception:
-        pass
-    return ModelCatalogService.get_instance(get_path_service().get_settings_file("model_catalog"))
+    Course operations temporarily route the ambient ``PathService`` to the
+    authenticated learner's private workspace, including for administrators.
+    Provider credentials and model authority are deployment settings, not
+    learner-owned Course data, so they must never follow that personal scope.
+    """
+    from deeptutor.multi_user.paths import get_admin_path_service
+
+    return ModelCatalogService.get_instance(
+        get_admin_path_service().get_settings_file("model_catalog")
+    )
 
 
 __all__ = ["CATALOG_PATH", "ModelCatalogService", "get_model_catalog_service"]

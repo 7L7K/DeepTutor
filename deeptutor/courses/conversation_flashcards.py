@@ -3,11 +3,16 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from difflib import get_close_matches
 import hashlib
 import re
 from typing import Any, Iterable
 
 _TOKEN = re.compile(r"[^\W_]+", flags=re.UNICODE)
+_NUMBERED_HEADING = re.compile(
+    r"^\s*(?:#{1,6}\s*)?(?:\d+[.)]\s+|[a-z][.)]\s+)(.+?)\s*$",
+    flags=re.IGNORECASE,
+)
 _STOP = {
     "a",
     "about",
@@ -16,22 +21,39 @@ _STOP = {
     "as",
     "at",
     "be",
+    "create",
+    "do",
+    "does",
+    "explain",
     "for",
     "from",
+    "give",
+    "help",
     "how",
     "i",
     "in",
+    "into",
     "is",
     "it",
+    "let",
+    "lets",
     "make",
+    "me",
     "of",
     "on",
     "or",
+    "please",
+    "show",
     "that",
     "the",
     "these",
     "this",
+    "through",
+    "thruh",
     "to",
+    "turn",
+    "understand",
+    "walk",
     "what",
     "with",
 }
@@ -43,13 +65,16 @@ class SelectedConversationContext:
     context_sha256: str
     text: str
     summary: str
+    title: str
+    topics: tuple[str, ...]
+    focus: str
 
 
 def _tokens(value: str) -> set[str]:
     return {
         token
         for token in _TOKEN.findall(value.casefold())
-        if len(token) >= 2 and token not in _STOP
+        if (len(token) >= 2 or token in {"e", "x", "y"}) and token not in _STOP
     }
 
 
@@ -59,8 +84,8 @@ def _line(message: dict[str, Any]) -> str:
     return f"{role}: {content}"
 
 
-def _summary(messages: list[dict[str, Any]]) -> str:
-    user_text = next(
+def _last_user_text(messages: list[dict[str, Any]]) -> str:
+    return next(
         (
             " ".join(str(item.get("content") or "").split())
             for item in reversed(messages)
@@ -68,9 +93,173 @@ def _summary(messages: list[dict[str, Any]]) -> str:
         ),
         "",
     )
-    if not user_text:
-        user_text = "the recent conversation"
-    return user_text[:157] + ("..." if len(user_text) > 160 else "")
+
+
+def _assistant_text(messages: list[dict[str, Any]]) -> str:
+    return "\n".join(
+        str(item.get("content") or "").strip()
+        for item in messages
+        if item.get("role") == "assistant" and str(item.get("content") or "").strip()
+    )
+
+
+def _title_case(value: str) -> str:
+    small = {"a", "an", "and", "for", "in", "of", "on", "or", "the", "to"}
+    words = value.split()
+    return " ".join(
+        word if any(char.isupper() for char in word[1:]) else (
+            word.casefold() if index and word.casefold() in small else word.capitalize()
+        )
+        for index, word in enumerate(words)
+    )
+
+
+def _subject(messages: list[dict[str, Any]]) -> str:
+    user_text = _last_user_text(messages)
+    assistant_text = _assistant_text(messages)
+    assistant_tokens = sorted(_tokens(assistant_text))
+    subject_tokens: list[str] = []
+    for token in _TOKEN.findall(user_text.casefold()):
+        if (len(token) < 2 and token not in {"e", "x", "y"}) or token in _STOP:
+            continue
+        corrected = token
+        if token not in assistant_tokens:
+            close = get_close_matches(token, assistant_tokens, n=1, cutoff=0.78)
+            if close:
+                corrected = close[0]
+        if corrected not in subject_tokens:
+            subject_tokens.append(corrected)
+    subject = " ".join(subject_tokens[:5]).strip()
+    if "euler" in subject and re.search(
+        r"\bEuler[’']?s\s+number\b", assistant_text, flags=re.IGNORECASE
+    ):
+        return "Euler's Number"
+    if len(subject_tokens) > 3:
+        first_sentence = re.split(r"[.!?\n]", assistant_text, maxsplit=1)[0]
+        leading = re.match(
+            r"^\s*(?:sure[,— -]*|great[,— -]*|(?:i(?:'ll| will)\s+"
+            r"(?:explain|show|describe)\s+)?)"
+            r"(.{2,80}?)\s+(?:is|are|uses?|means|refers|describes|involves)\b",
+            first_sentence,
+            flags=re.IGNORECASE,
+        )
+        if leading:
+            candidate = " ".join(leading.group(1).split())
+            candidate = re.sub(r"[*_`#]", "", candidate).strip(" ,—-")
+            if candidate and len(candidate.split()) <= 5:
+                return _title_case(candidate)
+    if subject:
+        return _title_case(subject)
+    return "This Conversation"
+
+
+def _clean_heading(value: str) -> str:
+    heading = re.sub(r"[*_`#]", "", value).strip()
+    heading = re.sub(r"\s*\([^)]{1,50}\)\s*$", "", heading).strip()
+    heading = re.split(r"\s+[—–-]\s+", heading, maxsplit=1)[0].strip()
+    lowered = heading.casefold()
+    if lowered.startswith(("where to go next", "would you like")):
+        return ""
+    replacements = (
+        (r"^what (?:is|are)\s+", ""),
+        (r"^common\s+", ""),
+        (r"^simple\s+", ""),
+        (r"^key\s+", ""),
+        (r"^short\s+", ""),
+    )
+    for pattern, replacement in replacements:
+        heading = re.sub(pattern, replacement, heading, flags=re.IGNORECASE).strip()
+    return heading
+
+
+def _topics(messages: list[dict[str, Any]], subject: str) -> tuple[str, ...]:
+    assistant_text = _assistant_text(messages)
+    candidates: list[str] = []
+    for line in assistant_text.splitlines():
+        match = _NUMBERED_HEADING.match(line)
+        if not match:
+            continue
+        heading = _clean_heading(match.group(1))
+        if not heading or len(heading) > 64:
+            continue
+        if heading.casefold() in {"examples", "intuition", "examples and intuition"}:
+            heading = "examples and applications"
+        if heading.casefold() == subject.casefold():
+            continue
+        if heading.casefold() not in {item.casefold() for item in candidates}:
+            candidates.append(heading)
+    specific_definitions = any(
+        "definition" in item.casefold() and item.casefold() != "definitions"
+        for item in candidates
+    )
+    candidates = [
+        item
+        for item in candidates
+        if not (
+            (item.casefold() == "definitions" and specific_definitions)
+            or item.casefold() in {"derivations and checks", "proofs sketches"}
+        )
+    ][:6]
+    if not candidates:
+        first_sentence = re.split(r"[.!?\n]", assistant_text, maxsplit=1)[0]
+        clauses = re.split(
+            r"\s+to\s+|[,;]\s*|\s+and\s+(?=(?:the\s+)?[\w-]+\s+(?:is|are)\b)",
+            first_sentence,
+            flags=re.IGNORECASE,
+        )
+        for clause in clauses:
+            phrase = " ".join(clause.split()).strip(" ,—-")
+            phrase = re.sub(
+                r"^.{1,60}?\s+(?:is|are|uses?|means|refers to|describes|involves)\s+",
+                "",
+                phrase,
+                count=1,
+                flags=re.IGNORECASE,
+            )
+            phrase = re.sub(
+                r"^(?:convert|converts|explain|explains|show|shows)\s+",
+                "",
+                phrase,
+                flags=re.IGNORECASE,
+            )
+            phrase = re.sub(r"^(?:a|an|the)\s+", "", phrase, flags=re.IGNORECASE)
+            words = phrase.split()
+            if not words or len(words) > 8:
+                continue
+            phrase = " ".join(words)
+            if (
+                phrase.casefold() != subject.casefold()
+                and phrase.casefold()
+                not in {item.casefold() for item in candidates}
+            ):
+                candidates.append(phrase)
+            if len(candidates) >= 4:
+                break
+    if not candidates:
+        candidates = [subject]
+    return tuple(candidates)
+
+
+def _join_topics(topics: tuple[str, ...]) -> str:
+    if len(topics) == 1:
+        return topics[0]
+    if len(topics) == 2:
+        return f"{topics[0]} and {topics[1]}"
+    return f"{', '.join(topics[:-1])}, and {topics[-1]}"
+
+
+def _learning_plan(messages: list[dict[str, Any]]) -> tuple[str, tuple[str, ...], str, str]:
+    subject = _subject(messages)
+    topics = _topics(messages, subject)
+    title = (
+        subject
+        if subject.casefold().endswith(("review", "flashcards"))
+        else f"Understanding {subject}"
+    )
+    topic_text = _join_topics(topics)
+    summary = f"{subject}: {topic_text}" if topic_text != subject else subject
+    focus = f"Understand {subject} through {topic_text}."
+    return title[:120], topics, summary[:160], focus[:1000]
 
 
 def _usable_messages(messages: Iterable[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -103,11 +292,15 @@ def _selected_context(
     text = "\n".join(_line(item) for item in chronological)
     if not text or len(text) > max_chars:
         raise ValueError("conversation context is too large")
+    title, topics, summary, focus = _learning_plan(chronological)
     return SelectedConversationContext(
         message_ids=tuple(item["id"] for item in chronological),
         context_sha256=hashlib.sha256(text.encode("utf-8")).hexdigest(),
         text=text,
-        summary=_summary(chronological),
+        summary=summary,
+        title=title,
+        topics=topics,
+        focus=focus,
     )
 
 
@@ -156,12 +349,18 @@ def select_conversation_context(
     if paired_index is not None:
         required.add(paired_index)
 
-    anchor_terms = _tokens(f"{focus}\n{leaf['content']}")
+    # Earlier turns must overlap the learner's current request, not merely a
+    # generic word somewhere in a long assistant answer. The paired response
+    # is already mandatory, so a vague request safely stays a two-message
+    # context instead of pulling unrelated greetings or old topics.
+    anchor_terms = _tokens(f"{focus}\n{usable[paired_index]['content']}")
     ranked: list[tuple[int, int]] = []
     for index, item in enumerate(usable):
         if index in required:
             continue
         overlap = len(anchor_terms & _tokens(item["content"]))
+        if overlap == 0:
+            continue
         recency = max(0, index - max(0, len(usable) - 6))
         ranked.append((overlap * 100 + recency, index))
     ranked.sort(key=lambda item: (item[0], item[1]), reverse=True)

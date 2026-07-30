@@ -17,7 +17,6 @@ from .flashcard_generation_models import (
     FlashcardGenerationOperation,
     FlashcardGenerationRequest,
 )
-from .conversation_flashcards import select_conversation_context
 from .flashcard_generation_provider import (
     DeterministicIndexFlashcardSourceTextResolver,
     FlashcardGenerationFocusUnsupported,
@@ -75,6 +74,16 @@ def _account_active(user_id: str) -> bool:
     return record is not None and not bool(record[1].get("disabled", False))
 
 
+def _account_role(user_id: str) -> str | None:
+    if user_id == LOCAL_ADMIN_ID:
+        return "admin"
+    record = get_user_by_id(user_id)
+    if record is None or bool(record[1].get("disabled", False)):
+        return None
+    role = str(record[1].get("role") or "")
+    return role if role in {"admin", "user"} else None
+
+
 class CourseFlashcardGenerationService:
     def __init__(
         self,
@@ -83,6 +92,7 @@ class CourseFlashcardGenerationService:
         source_text_resolver: FlashcardSourceTextResolver | None = None,
         *,
         account_active: Callable[[str], bool] = _account_active,
+        account_role: Callable[[str], str | None] = _account_role,
         identity_lock: Callable[[], ContextManager[object]] = identity_write_lock,
         provider_timeout_seconds: float = 30.0,
     ) -> None:
@@ -95,8 +105,9 @@ class CourseFlashcardGenerationService:
         self.source_text_resolver = (
             source_text_resolver or DeterministicIndexFlashcardSourceTextResolver()
         )
-        self._account_active, self._identity_lock, self._timeout = (
+        self._account_active, self._account_role, self._identity_lock, self._timeout = (
             account_active,
+            account_role,
             identity_lock,
             provider_timeout_seconds,
         )
@@ -177,22 +188,41 @@ class CourseFlashcardGenerationService:
             context_char_limit=operation.context_char_limit,
         )
 
-    @staticmethod
+    def _conversation_scope_active(
+        self, operation: FlashcardGenerationOperation
+    ) -> bool:
+        if not self._account_active(operation.owner_user_id):
+            return False
+        return (
+            operation.origin.kind != "general_chat"
+            or operation.origin.session_scope != "admin"
+            or self._account_role(operation.owner_user_id) == "admin"
+        )
+
     def _resolve_conversation(
+        self,
         operation: FlashcardGenerationOperation,
     ) -> FlashcardGenerationConversationText | None:
         if operation.origin.kind != "general_chat":
             return None
-        from deeptutor.multi_user.paths import get_personal_path_service
+        if not self._conversation_scope_active(operation):
+            raise CourseConflictError("Conversation session authority is stale")
+        from deeptutor.multi_user.paths import (
+            get_admin_path_service,
+            get_personal_path_service,
+        )
         from deeptutor.services.session.sqlite_store import SQLiteSessionStore
 
         origin = operation.origin
         if not origin.session_id or origin.message_id is None:
             raise CourseConflictError("Conversation generation authority is stale")
+        session_paths = (
+            get_admin_path_service()
+            if origin.session_scope == "admin"
+            else get_personal_path_service(operation.owner_user_id)
+        )
         store = SQLiteSessionStore(
-            db_path=get_personal_path_service(
-                operation.owner_user_id
-            ).get_chat_history_db()
+            db_path=session_paths.get_chat_history_db()
         )
 
         async def resolve():
@@ -238,18 +268,29 @@ class CourseFlashcardGenerationService:
             operation, claimed = self.repository.claim_operation(course_id, operation_id)
             if not claimed:
                 return operation
-            if not self._account_active(self.repository.owner_user_id):
-                return self.repository.fail_operation(course_id, operation_id, "authority_changed")
+            with self._identity_lock():
+                if not self._conversation_scope_active(operation):
+                    return self.repository.fail_operation(
+                        course_id, operation_id, "authority_changed"
+                    )
             material = self._resolve_material(operation)
-            conversation = self._resolve_conversation(operation)
+            with self._identity_lock():
+                conversation = self._resolve_conversation(operation)
             # This is the final zero-call authority fence.  Source resolution
             # is intentionally before it so archive/revocation/replacement
             # races during retrieval stop before provider invocation.
-            operation = self.repository.preflight_provider_call(
-                course_id,
-                operation_id,
-                account_active=self._account_active(self.repository.owner_user_id),
-            )
+            with self._identity_lock():
+                if not self._conversation_scope_active(operation):
+                    return self.repository.fail_operation(
+                        course_id, operation_id, "authority_changed"
+                    )
+                operation = self.repository.preflight_provider_call(
+                    course_id,
+                    operation_id,
+                    account_active=self._account_active(
+                        self.repository.owner_user_id
+                    ),
+                )
             output = self._generate(
                 FlashcardGenerationInput(
                     operation_id=operation.id,
@@ -266,6 +307,10 @@ class CourseFlashcardGenerationService:
                 )
             )
             with self._identity_lock():
+                if not self._conversation_scope_active(operation):
+                    return self.repository.fail_operation(
+                        course_id, operation_id, "authority_changed"
+                    )
                 return self.repository.stage_candidates(
                     course_id,
                     operation_id,

@@ -10,7 +10,15 @@ from __future__ import annotations
 import time
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    SerializerFunctionWrapHandler,
+    field_validator,
+    model_serializer,
+    model_validator,
+)
 
 CardType = Literal["definition", "concept", "comparison", "application", "process", "recall"]
 GenerationState = Literal[
@@ -65,6 +73,9 @@ class FlashcardGenerationOrigin(BaseModel):
     selected_message_ids: list[int] = Field(default_factory=list, max_length=32)
     context_sha256: str | None = Field(default=None, max_length=64)
     context_summary: str | None = Field(default=None, max_length=160)
+    context_title: str | None = Field(default=None, max_length=120)
+    context_topics: list[str] = Field(default_factory=list, max_length=6)
+    session_scope: Literal["personal", "admin"] | None = None
 
     @field_validator("selected_message_ids")
     @classmethod
@@ -72,6 +83,17 @@ class FlashcardGenerationOrigin(BaseModel):
         if any(item < 1 for item in value) or len(value) != len(set(value)):
             raise ValueError("selected_message_ids are invalid")
         return value
+
+    @field_validator("context_topics")
+    @classmethod
+    def valid_context_topics(cls, value: list[str]) -> list[str]:
+        cleaned = [item.strip() for item in value]
+        if (
+            any(not item or len(item) > 80 for item in cleaned)
+            or len(cleaned) != len({item.casefold() for item in cleaned})
+        ):
+            raise ValueError("context_topics are invalid")
+        return cleaned
 
     @field_validator("context_sha256")
     @classmethod
@@ -98,11 +120,22 @@ class FlashcardGenerationOrigin(BaseModel):
             self.selected_message_ids
             or self.context_sha256 is not None
             or self.context_summary is not None
+            or self.context_title is not None
+            or self.context_topics
+            or self.session_scope is not None
         ):
             raise ValueError(
                 "Conversation context provenance is reserved for General Chat"
             )
         return self
+
+    @model_serializer(mode="wrap")
+    def serialize_origin(self, handler: SerializerFunctionWrapHandler):
+        payload = handler(self)
+        if self.kind != "general_chat":
+            for key in ("context_title", "context_topics", "session_scope"):
+                payload.pop(key, None)
+        return payload
 
 
 class FlashcardProviderReceipt(BaseModel):

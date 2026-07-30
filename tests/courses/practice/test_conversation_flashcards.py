@@ -15,11 +15,11 @@ from deeptutor.courses.flashcard_generation_models import (
     GeneratedFlashcard,
     GeneratedFlashcardOutput,
 )
-from deeptutor.courses.flashcard_generation_repository import (
-    CourseFlashcardGenerationRepository,
-)
 from deeptutor.courses.flashcard_generation_provider import (
     DeterministicFlashcardGenerationProvider,
+)
+from deeptutor.courses.flashcard_generation_repository import (
+    CourseFlashcardGenerationRepository,
 )
 from deeptutor.courses.flashcard_generation_service import (
     CourseFlashcardGenerationService,
@@ -48,7 +48,57 @@ def test_conversation_selector_freezes_relevant_branch_without_system_text() -> 
     assert selected.message_ids[-2:] == (4, 5)
     assert "system instruction" not in selected.text
     assert len(selected.context_sha256) == 64
-    assert selected.summary == "Explain slope and y intercept"
+    assert selected.title == "Understanding Slope Y Intercept"
+    assert selected.summary == (
+        "Slope Y Intercept: rate of change and where x is zero"
+    )
+    assert selected.topics == (
+        "rate of change",
+        "where x is zero",
+    )
+    assert selected.focus == (
+        "Understand Slope Y Intercept through rate of change and where x is zero."
+    )
+
+
+def test_conversation_selector_builds_a_useful_no_spend_learning_plan() -> None:
+    selected = select_conversation_context(
+        [
+            {"id": 1, "role": "user", "content": "lets walk thruh what the eular is"},
+            {
+                "id": 2,
+                "role": "assistant",
+                "content": """I'll explain Euler's number e.
+
+1) What is e — a quick picture
+2) Common definitions (equivalent)
+3) Simple derivations and checks
+4) Key properties
+5) Euler's formula (complex connection)
+6) Examples and intuition
+7) Where to go next
+""",
+            },
+        ],
+        assistant_message_id=2,
+    )
+
+    assert selected.title == "Understanding Euler's Number"
+    assert selected.topics == (
+        "e",
+        "definitions",
+        "properties",
+        "Euler's formula",
+        "examples and applications",
+    )
+    assert selected.summary == (
+        "Euler's Number: e, definitions, properties, Euler's formula, "
+        "and examples and applications"
+    )
+    assert selected.focus == (
+        "Understand Euler's Number through e, definitions, properties, Euler's formula, "
+        "and examples and applications."
+    )
 
 
 def test_conversation_selector_requires_a_real_user_assistant_exchange() -> None:
@@ -405,6 +455,143 @@ def test_general_chat_generation_stops_before_provider_when_frozen_context_chang
         provider=provider,
         account_active=lambda _owner: True,
     )
+
+    operation = service.run_operation(general.id, request.operation.id)
+
+    assert operation.state == "failed"
+    assert operation.error_code == "authority_changed"
+    assert provider.called is False
+
+
+def test_general_chat_execution_reloads_the_recorded_admin_session_scope(
+    tmp_path: Path, monkeypatch
+) -> None:
+    session_path = tmp_path / "admin-chat-history.db"
+    store = SQLiteSessionStore(db_path=session_path)
+
+    async def seed() -> tuple[int, list[dict]]:
+        await store.create_session(
+            title="Euler", session_id="unified_admin", course_id=None
+        )
+        user_id = await store.add_message(
+            "unified_admin", "user", "Explain Euler's number"
+        )
+        assistant_id = await store.add_message(
+            "unified_admin",
+            "assistant",
+            "Euler's number is the natural base for exponential growth.",
+            parent_message_id=user_id,
+        )
+        return assistant_id, await store.get_messages_for_context(
+            "unified_admin", leaf_message_id=assistant_id
+        )
+
+    assistant_id, messages = asyncio.run(seed())
+    selected = select_conversation_context(
+        messages, assistant_message_id=assistant_id
+    )
+    courses = CourseRepository(tmp_path / "courses.db", "u_admin")
+    general = courses.get_or_create_general_study()
+    repository = CourseFlashcardGenerationRepository(courses)
+    request = repository.create_generated_deck(
+        general.id,
+        title=selected.title,
+        source_ids=[],
+        idempotency_key="admin-conversation-scope",
+        expected_course_write_epoch=general.write_epoch,
+        item_limit=1,
+        generation_brief={
+            "focus": selected.focus,
+            "desired_count": 1,
+            "card_type_mix": ["concept"],
+            "difficulty": "mixed",
+            "answer_length": "short",
+            "include_hints": True,
+        },
+        origin={
+            "kind": "general_chat",
+            "session_id": "unified_admin",
+            "message_id": assistant_id,
+            "selected_message_ids": list(selected.message_ids),
+            "context_sha256": selected.context_sha256,
+            "context_summary": selected.summary,
+            "context_title": selected.title,
+            "context_topics": list(selected.topics),
+            "session_scope": "admin",
+        },
+    )
+    monkeypatch.setattr(
+        "deeptutor.multi_user.paths.get_admin_path_service",
+        lambda: SimpleNamespace(get_chat_history_db=lambda: session_path),
+    )
+    monkeypatch.setattr(
+        "deeptutor.multi_user.paths.get_personal_path_service",
+        lambda _owner=None: pytest.fail("personal session scope must not be used"),
+    )
+
+    service = CourseFlashcardGenerationService(
+        repository,
+        provider=DeterministicFlashcardGenerationProvider(),
+        account_active=lambda _owner: True,
+        account_role=lambda _owner: "admin",
+    )
+    context = service._resolve_conversation(request.operation)
+
+    assert context is not None
+    assert context.selected_message_ids == list(selected.message_ids)
+    assert context.context_sha256 == selected.context_sha256
+
+
+def test_admin_chat_generation_stops_before_read_or_provider_after_demotion(
+    tmp_path: Path,
+) -> None:
+    courses = CourseRepository(tmp_path / "courses.db", "u_admin")
+    general = courses.get_or_create_general_study()
+    repository = CourseFlashcardGenerationRepository(courses)
+    request = repository.create_generated_deck(
+        general.id,
+        title="Private admin conversation",
+        source_ids=[],
+        idempotency_key="admin-demotion-race",
+        expected_course_write_epoch=general.write_epoch,
+        item_limit=1,
+        generation_brief={
+            "focus": "Understand the private administrator discussion",
+            "desired_count": 1,
+            "card_type_mix": ["concept"],
+            "difficulty": "mixed",
+            "answer_length": "short",
+            "include_hints": True,
+        },
+        origin={
+            "kind": "general_chat",
+            "session_id": "unified_admin_private",
+            "message_id": 2,
+            "selected_message_ids": [1, 2],
+            "context_sha256": "d" * 64,
+            "context_summary": "private administrator discussion",
+            "context_title": "Administrator Notes",
+            "context_topics": ["private discussion"],
+            "session_scope": "admin",
+        },
+    )
+
+    class ProviderSpy:
+        called = False
+
+        def generate(self, _request):
+            self.called = True
+            raise AssertionError("provider must not be called after demotion")
+
+    provider = ProviderSpy()
+    authority = {"role": "admin"}
+    service = CourseFlashcardGenerationService(
+        repository,
+        provider=provider,
+        account_active=lambda _owner: True,
+        account_role=lambda _owner: authority["role"],
+    )
+    authority["role"] = "user"
 
     operation = service.run_operation(general.id, request.operation.id)
 

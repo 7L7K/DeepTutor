@@ -282,6 +282,11 @@ async def _authoritative_flashcard_generation_arguments(
             session_id=parsed.session_id,
             assistant_message_id=parsed.message_id,
         )
+        from deeptutor.multi_user.context import get_current_user
+
+        session_scope = (
+            "admin" if get_current_user().scope.kind == "admin" else "personal"
+        )
         canonical = arguments(
             origin=FlashcardGenerationOrigin(
                 kind="general_chat",
@@ -290,6 +295,9 @@ async def _authoritative_flashcard_generation_arguments(
                 selected_message_ids=list(selected.message_ids),
                 context_sha256=selected.context_sha256,
                 context_summary=selected.summary,
+                context_title=selected.title,
+                context_topics=list(selected.topics),
+                session_scope=session_scope,
             ),
             source_ids=[],
             objective_ids=[],
@@ -1494,9 +1502,13 @@ async def _resolve_general_chat_context(
     from deeptutor.courses.conversation_flashcards import (
         select_conversation_context,
     )
-    from deeptutor.services.session import get_personal_sqlite_session_store
+    from deeptutor.services.session import get_session_store
 
-    store = get_personal_sqlite_session_store()
+    # General Chat is persisted by the generic turn runtime. For ordinary
+    # users that store is already personal; for administrators it remains the
+    # deployment admin workspace while Course and General Study data stay in
+    # the administrator's separate personal workspace.
+    store = get_session_store()
     session = await store.get_session(session_id)
     if session is None or session.get("course_id") is not None:
         raise CourseNotFoundError("General Chat session not found")
@@ -1531,10 +1543,14 @@ async def prepare_general_study_learner_action(
         )
         if destination.state != "active":
             raise CourseConflictError("Archived Courses cannot receive Flashcards")
-        focus = f"Create useful review cards about {selected.summary}"
+        from deeptutor.multi_user.context import get_current_user
+
+        session_scope = (
+            "admin" if get_current_user().scope.kind == "admin" else "personal"
+        )
         receipt = _flashcard_generation_service().prepare_brief(
             destination.id,
-            focus=focus,
+            focus=selected.focus,
             source_ids=[],
             objective_ids=[],
             expected_course_write_epoch=destination.write_epoch,
@@ -1550,6 +1566,9 @@ async def prepare_general_study_learner_action(
                 "selected_message_ids": list(selected.message_ids),
                 "context_sha256": selected.context_sha256,
                 "context_summary": selected.summary,
+                "context_title": selected.title,
+                "context_topics": list(selected.topics),
+                "session_scope": session_scope,
             },
         )
         return {
