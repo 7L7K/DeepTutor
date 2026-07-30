@@ -30,7 +30,9 @@ async function signIn(page: Page, username: string, password: string) {
   expect((await loginResponse).status()).toBe(200);
   await expect
     .poll(async () =>
-      (await page.context().cookies()).some((cookie) => cookie.name === "dt_token"),
+      (await page.context().cookies()).some(
+        (cookie) => cookie.name === "dt_token",
+      ),
     )
     .toBe(true);
   await page.goto("/space/learning");
@@ -55,7 +57,9 @@ async function createCourseLearningLoop(
   await expect(page.getByText(`Active Course: ${courseTitle}`)).toBeVisible();
 
   await page.goto("/space/learning");
-  await expect(page.getByRole("heading", { name: `${courseTitle} learning` })).toBeVisible();
+  await expect(
+    page.getByRole("heading", { name: `${courseTitle} learning` }),
+  ).toBeVisible();
 
   await page.getByPlaceholder(/Module name/).fill(moduleName);
   await page.getByPlaceholder(/One objective per line/).fill(objective);
@@ -88,7 +92,9 @@ async function createFiveQuestionQuiz(page: Page, courseId: string) {
       });
       const body = await response.json().catch(() => ({}));
       if (!response.ok) {
-        throw new Error(`${path} failed: ${response.status} ${JSON.stringify(body)}`);
+        throw new Error(
+          `${path} failed: ${response.status} ${JSON.stringify(body)}`,
+        );
       }
       return body;
     }
@@ -217,30 +223,35 @@ test("after server restart identities, quiz, learning, and cache remain isolated
   // Logout intentionally clears the identity-scoped selection cache. Reselect
   // the persisted Course after restart without weakening that security fence.
   await page.getByLabel("Active course").selectOption(state.aliceCourseId);
-  await expect(page.getByLabel("Active course")).toHaveValue(state.aliceCourseId);
+  await expect(page.getByLabel("Active course")).toHaveValue(
+    state.aliceCourseId,
+  );
   await expect(page.getByText("Active Course: Shared Biology")).toBeVisible();
   await page.goto("/space/learning");
   await expect(page.getByText(aliceObjective, { exact: true })).toBeVisible();
   await expect(page.getByText(bobObjective, { exact: true })).toHaveCount(0);
 
-  const restoredQuiz = await page.evaluate(async (proof) => {
-    const root = `/api/v1/courses/${encodeURIComponent(proof.courseId)}/practice/${encodeURIComponent(proof.practiceSetId)}`;
-    const setResponse = await fetch(root, { cache: "no-store" });
-    const questionResponse = await fetch(
-      `${root}/revisions/${encodeURIComponent(proof.revisionId)}/questions`,
-      { cache: "no-store" },
-    );
-    return {
-      setStatus: setResponse.status,
-      practiceSet: await setResponse.json(),
-      questionStatus: questionResponse.status,
-      questions: (await questionResponse.json()).questions,
-    };
-  }, {
-    courseId: state.aliceCourseId,
-    practiceSetId: state.alicePracticeSetId,
-    revisionId: state.aliceRevisionId,
-  });
+  const restoredQuiz = await page.evaluate(
+    async (proof) => {
+      const root = `/api/v1/courses/${encodeURIComponent(proof.courseId)}/practice/${encodeURIComponent(proof.practiceSetId)}`;
+      const setResponse = await fetch(root, { cache: "no-store" });
+      const questionResponse = await fetch(
+        `${root}/revisions/${encodeURIComponent(proof.revisionId)}/questions`,
+        { cache: "no-store" },
+      );
+      return {
+        setStatus: setResponse.status,
+        practiceSet: await setResponse.json(),
+        questionStatus: questionResponse.status,
+        questions: (await questionResponse.json()).questions,
+      };
+    },
+    {
+      courseId: state.aliceCourseId,
+      practiceSetId: state.alicePracticeSetId,
+      revisionId: state.aliceRevisionId,
+    },
+  );
   expect(restoredQuiz.setStatus).toBe(200);
   expect(restoredQuiz.questionStatus).toBe(200);
   expect(restoredQuiz.practiceSet.current_revision_id).toBe(
@@ -256,17 +267,20 @@ test("after server restart identities, quiz, learning, and cache remain isolated
   await expect(page.getByText(bobObjective, { exact: true })).toBeVisible();
   await expect(page.getByText(aliceObjective, { exact: true })).toHaveCount(0);
   const foreignStatus = await page.evaluate(async (courseId) => {
-    const response = await fetch(`/api/v1/courses/${encodeURIComponent(courseId)}`, {
-      cache: "no-store",
-    });
+    const response = await fetch(
+      `/api/v1/courses/${encodeURIComponent(courseId)}`,
+      {
+        cache: "no-store",
+      },
+    );
     return response.status;
   }, state.aliceCourseId);
   expect(foreignStatus).toBe(404);
 
-  const browserKeys = await page.evaluate(() => Object.keys(window.localStorage));
-  expect(browserKeys).not.toContain(
-    `dt:courses:active:${state.aliceIdentity}`,
+  const browserKeys = await page.evaluate(() =>
+    Object.keys(window.localStorage),
   );
+  expect(browserKeys).not.toContain(`dt:courses:active:${state.aliceIdentity}`);
   expect(browserKeys).toContain(`dt:courses:active:${state.bobIdentity}`);
 });
 
@@ -304,15 +318,25 @@ test("manual Practice and Flashcard learner flows remain usable without a provid
     .click();
   expect((await practiceCreateResponse).status()).toBe(200);
   expect((await revisionCreateResponse).status()).toBe(200);
-  await expect(page.getByRole("status")).toContainText("Draft Practice set created.");
-  await page.getByPlaceholder("What should the learner answer?").fill("What is two plus two?");
+  await expect(page.getByRole("status")).toContainText(
+    "Draft Practice set created.",
+  );
+  await page
+    .getByPlaceholder("What should the learner answer?")
+    .fill("What is two plus two?");
   await page.getByPlaceholder("Exact accepted answer").fill("4");
-  await page.getByPlaceholder("Shown after grading").fill("Two pairs make four.");
-  await page.getByPlaceholder("Comma-separated objective IDs").fill("browser_manual_math");
+  await page
+    .getByPlaceholder("Shown after grading")
+    .fill("Two pairs make four.");
+  await page
+    .getByPlaceholder("Comma-separated objective IDs")
+    .fill("browser_manual_math");
   await page.getByRole("button", { name: "Add question" }).click();
   await expect(page.getByRole("status")).toContainText("Question added.");
   await page.getByRole("button", { name: "Mark ready" }).click();
-  await expect(page.getByRole("button", { name: "Start or resume quiz" })).toBeVisible();
+  await expect(
+    page.getByRole("button", { name: "Start or resume quiz" }),
+  ).toBeVisible();
   await page.getByRole("button", { name: "Start or resume quiz" }).click();
   await page.getByLabel("Answer for question 1").fill("4");
   await page.getByRole("button", { name: "Save", exact: true }).click();
@@ -334,7 +358,9 @@ test("manual Practice and Flashcard learner flows remain usable without a provid
   await expect(page.getByText(/Score: 100%/)).toBeVisible();
 
   await page.goto("/flashcards");
-  await expect(page.getByLabel("Active course")).toHaveValue(state.aliceCourseId);
+  await expect(page.getByLabel("Active course")).toHaveValue(
+    state.aliceCourseId,
+  );
   await page.setViewportSize({ width: 1280, height: 600 });
   const flashcardsScrollContainer = page.getByTestId(
     "flashcards-scroll-container",
@@ -354,7 +380,9 @@ test("manual Practice and Flashcard learner flows remain usable without a provid
     .locator("..")
     .getByRole("button", { name: "Create", exact: true })
     .click();
-  await expect(page.getByRole("heading", { name: "Visible manual deck" })).toBeVisible();
+  await expect(
+    page.getByRole("heading", { name: "Visible manual deck" }),
+  ).toBeVisible();
   await page.getByLabel("Flashcard prompt").fill("Mitochondria");
   await page
     .getByRole("textbox", { name: "Flashcard answer", exact: true })
@@ -365,27 +393,28 @@ test("manual Practice and Flashcard learner flows remain usable without a provid
   await page.getByRole("button", { name: "Start studying" }).click();
   await expect(page.getByText("Mitochondria", { exact: true })).toBeVisible();
   await page.getByRole("button", { name: "Show answer" }).click();
-  await expect(page.getByText("Produces cellular energy", { exact: true })).toBeVisible();
+  await expect(
+    page.getByText("Produces cellular energy", { exact: true }),
+  ).toBeVisible();
   await page.getByRole("button", { name: "Got it", exact: true }).click();
-  await expect(page.getByRole("heading", { name: "Study complete" })).toBeVisible();
-  await expect(page.getByText("You reviewed 1 card.", { exact: true })).toBeVisible();
-  const flashcardsScrollProof = await flashcardsScrollContainer.evaluate(
-    (element) => {
-      element.scrollTop = element.scrollHeight;
-      return {
-        clientHeight: element.clientHeight,
-        scrollHeight: element.scrollHeight,
-        scrollTop: element.scrollTop,
-      };
-    },
-  );
-  expect(flashcardsScrollProof.scrollHeight).toBeGreaterThan(
-    flashcardsScrollProof.clientHeight,
-  );
-  expect(flashcardsScrollProof.scrollTop).toBeGreaterThan(0);
+  await expect(
+    page.getByRole("heading", { name: "Study complete" }),
+  ).toBeVisible();
+  await expect(
+    page.getByText("You reviewed 1 card.", { exact: true }),
+  ).toBeVisible();
+  await expect(flashcardsScrollContainer).toContainText("Study complete");
+  await expect(
+    page.getByRole("button", { name: "Start studying" }),
+  ).toHaveCount(0);
+  await expect(
+    page.getByRole("button", { name: "Archive", exact: true }),
+  ).toHaveCount(0);
 });
 
-test("phase5 stages grounded candidates behind review", async ({ page }) => {
+test("phase5 confirms in a modal and opens the first grounded card", async ({
+  page,
+}) => {
   test.skip(
     !alicePassword ||
       !stateFile ||
@@ -397,6 +426,17 @@ test("phase5 stages grounded candidates behind review", async ({ page }) => {
   ) as Phase4BrowserState;
   expect(state.phase5SourceId).toBeTruthy();
   await signIn(page, "alice", alicePassword!);
+  let publicationPosts = 0;
+  page.on("request", (request) => {
+    if (
+      request.method() === "POST" &&
+      /\/flashcard-generation\/[^/]+\/publish$/.test(
+        new URL(request.url()).pathname,
+      )
+    ) {
+      publicationPosts += 1;
+    }
+  });
   await page.goto("/flashcards");
   await page.getByLabel("Active course").selectOption(state.aliceCourseId);
   await page.getByRole("button", { name: "Create", exact: true }).click();
@@ -437,9 +477,7 @@ test("phase5 stages grounded candidates behind review", async ({ page }) => {
   await page
     .getByLabel("Flashcard generation focus")
     .fill("how to bake sourdough bread");
-  await page
-    .getByRole("button", { name: "Check Course coverage" })
-    .click();
+  await page.getByRole("button", { name: "Check Course coverage" }).click();
   await expect(
     page.getByRole("heading", {
       name: "This topic is not in the selected Course materials",
@@ -451,34 +489,71 @@ test("phase5 stages grounded candidates behind review", async ({ page }) => {
   await expect(
     page.getByRole("button", { name: "Create 20 cards with AI" }),
   ).toBeDisabled();
+  await expect(page.getByTestId("flashcard-confirmation-overlay")).toHaveCSS(
+    "position",
+    "fixed",
+  );
+  await expect(page.getByRole("dialog")).toBeVisible();
+  await page.getByRole("button", { name: "Change request" }).click();
+  await expect(page.getByRole("dialog")).toHaveCount(0);
   await page
     .getByLabel("Flashcard generation focus")
     .fill("Review cellular energy from the selected notes");
   await page.getByLabel("Generated card count").fill("3");
-  await page
-    .getByRole("button", { name: "Check Course coverage" })
-    .click();
+  await page.getByRole("button", { name: "Check Course coverage" }).click();
   await expect(
     page.getByRole("heading", { name: "Ready to create" }),
   ).toBeVisible();
-  await page
-    .getByRole("button", { name: "Create 3 cards with AI" })
-    .click();
+  await expect(page.getByRole("dialog")).toBeVisible();
   await expect(
-    page.getByText("Creating your cards. You can leave this page.", {
-      exact: true,
-    }),
+    page.getByText(
+      "After you confirm, it will create and save the cards, then open the first one.",
+      { exact: false },
+    ),
   ).toBeVisible();
-  await expect
-    .poll(async () => {
-      return page.getByRole("heading", { name: "Review your cards" }).count();
-    })
-    .toBe(1);
+  await page.getByRole("button", { name: "Create 3 cards with AI" }).click();
+  await expect(page.getByRole("button", { name: "Show answer" })).toBeVisible({
+    timeout: 15_000,
+  });
+  await expect(
+    page.getByText("3 cards are ready. Study starts now.", { exact: true }),
+  ).toBeVisible();
+  expect(publicationPosts).toBe(1);
   await expect(
     page
-      .getByRole("paragraph")
-      .filter({ hasText: /What bounded fact 1 is represented by source/ }),
+      .getByLabel("Flashcard study session")
+      .getByText(/What bounded fact 1 is represented by source/),
   ).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Your decks" })).toHaveCount(
+    0,
+  );
+  await expect(
+    page.getByRole("button", { name: "Start studying" }),
+  ).toHaveCount(0);
+  await expect(
+    page.getByRole("button", { name: "Archive", exact: true }),
+  ).toHaveCount(0);
+  await expect(
+    page.getByRole("button", { name: "Go to card 2" }),
+  ).toBeVisible();
+  await expect(
+    page.getByText(/What bounded fact 2 is represented by source/),
+  ).toHaveCount(0);
+  await page.getByRole("button", { name: "Go to card 2" }).click();
+  await expect(
+    page
+      .getByLabel("Flashcard study session")
+      .getByText(/What bounded fact 2 is represented by source/),
+  ).toBeVisible();
+  await expect(
+    page.getByText(/What bounded fact 1 is represented by source/),
+  ).toHaveCount(0);
+  await expect(
+    page.getByRole("heading", { name: "Review your cards" }),
+  ).toHaveCount(0);
+  await expect(
+    page.getByRole("button", { name: /Save \d+ cards/ }),
+  ).toHaveCount(0);
   await expect(page.getByText(/provider_failed/)).toHaveCount(0);
 
   await page.route(
@@ -544,7 +619,7 @@ test("phase5 stages grounded candidates behind review", async ({ page }) => {
   ).toBeVisible();
 });
 
-test("phase5 publishes persisted reviewed candidates after restart", async ({
+test("phase5 keeps the automatically published deck study-ready after restart", async ({
   page,
 }) => {
   test.skip(
@@ -559,26 +634,18 @@ test("phase5 publishes persisted reviewed candidates after restart", async ({
   await signIn(page, "alice", alicePassword!);
   await page.goto("/flashcards");
   await page.getByLabel("Active course").selectOption(state.aliceCourseId);
-  await page.getByRole("button", { name: "Activity", exact: true }).click();
-  await expect(page.getByText("Ready for your review", { exact: true })).toBeVisible();
-  await page.getByRole("button", { name: /^Remove:/ }).click();
-  await page.getByRole("button", { name: /^Keep:/ }).click();
-  await page.getByRole("button", { name: /Publish 3 cards/ }).click();
-  await expect(
-    page.getByText("3 cards saved and ready to study.", {
-      exact: true,
-    }),
-  ).toBeVisible();
   await expect(
     page.getByRole("heading", { name: "Shared Biology flashcards" }),
   ).toBeVisible();
   await page.getByRole("button", { name: "Start studying" }).click();
   await expect(
-    page.getByText(/What bounded fact 1 is represented by source/),
+    page
+      .getByLabel("Flashcard study session")
+      .getByText(/What bounded fact 1 is represented by source/),
   ).toBeVisible();
 });
 
-test("phase5 General Chat prepares before generation and publishes reviewed cards", async ({
+test("phase5 General Chat confirms once and opens the first conversation card", async ({
   page,
 }) => {
   test.skip(
@@ -595,6 +662,7 @@ test("phase5 General Chat prepares before generation and publishes reviewed card
   await signIn(page, "alice", alicePassword!);
 
   let generationPosts = 0;
+  let publicationPosts = 0;
   const generationCourseIds: string[] = [];
   page.on("request", (request) => {
     if (
@@ -607,20 +675,44 @@ test("phase5 General Chat prepares before generation and publishes reviewed card
       );
       if (match) generationCourseIds.push(match[1]);
     }
+    if (
+      request.method() === "POST" &&
+      /\/flashcard-generation\/[^/]+\/publish$/.test(
+        new URL(request.url()).pathname,
+      )
+    ) {
+      publicationPosts += 1;
+    }
   });
 
   await page.goto(`/home/${state.phase5GeneralSessionId}`);
   await expect(
     page.getByText(/Mitochondria use cellular respiration/),
   ).toBeVisible();
+  const proposalResponse = page.waitForResponse(
+    (response) =>
+      response.request().method() === "POST" &&
+      new URL(response.url()).pathname.endsWith(
+        "/courses/general-study/learner-actions",
+      ),
+  );
   await page.getByRole("button", { name: "Make flashcards" }).click();
+  const proposal = await proposalResponse;
+  expect(proposal.status(), await proposal.text()).toBe(200);
   await expect(page).toHaveURL(/\/flashcards$/);
   await expect(page.getByText("Based on this conversation.")).toBeVisible();
+  await expect(page.getByLabel("Generated deck title")).toHaveValue(
+    /Understanding Mitochondria/,
+  );
+  await expect(
+    page.getByText(
+      "Mitochondria: cellular respiration, energy stored in nutrients into ATP, and form cells can use",
+      { exact: true },
+    ),
+  ).toBeVisible();
   expect(generationPosts).toBe(0);
 
-  await expect(page.getByLabel("Flashcard destination")).toHaveValue(
-    /crs_/,
-  );
+  await expect(page.getByLabel("Flashcard destination")).toHaveValue(/crs_/);
   await page
     .getByLabel("Flashcard destination")
     .selectOption(state.aliceCourseId);
@@ -637,38 +729,30 @@ test("phase5 General Chat prepares before generation and publishes reviewed card
     .getByLabel("Flashcard generation focus")
     .fill("How mitochondria produce usable ATP");
   await page.getByLabel("Generated card count").fill("3");
-  await page
-    .getByRole("button", { name: "Review conversation plan" })
-    .click();
+  await page.getByRole("button", { name: "Review conversation plan" }).click();
   await expect(
     page.getByRole("heading", { name: "Ready to create" }),
   ).toBeVisible();
+  await expect(page.getByRole("dialog")).toBeVisible();
   await expect(
     page.getByText("2 selected messages from this conversation"),
   ).toBeVisible();
   expect(generationPosts).toBe(0);
 
-  await page
-    .getByRole("button", { name: "Create 3 cards with AI" })
-    .click();
+  await page.getByRole("button", { name: "Create 3 cards with AI" }).click();
   await expect.poll(() => generationPosts).toBe(1);
   expect(generationCourseIds).toEqual([state.aliceCourseId]);
-  await expect
-    .poll(async () =>
-      page.getByRole("heading", { name: "Review your cards" }).count(),
-    )
-    .toBe(1);
+  await expect(page.getByRole("button", { name: "Show answer" })).toBeVisible({
+    timeout: 15_000,
+  });
   await expect(
-    page.getByText("Based on the selected conversation context", {
-      exact: false,
-    }),
+    page.getByText("3 cards are ready. Study starts now.", { exact: true }),
   ).toBeVisible();
-
-  await page.getByRole("button", { name: "Remove this card" }).click();
-  await page.getByRole("button", { name: "Save 2 cards" }).click();
+  expect(publicationPosts).toBe(1);
   await expect(
-    page.getByText("2 cards saved and ready to study.", { exact: true }),
-  ).toBeVisible();
-  await page.getByRole("button", { name: "Start studying" }).click();
-  await expect(page.getByRole("button", { name: "Show answer" })).toBeVisible();
+    page.getByRole("heading", { name: "Review your cards" }),
+  ).toHaveCount(0);
+  await expect(
+    page.getByRole("button", { name: /Save \d+ cards/ }),
+  ).toHaveCount(0);
 });

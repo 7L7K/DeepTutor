@@ -18,6 +18,9 @@ export interface FlashcardStudySessionProps {
   /** Includes the current card while it is being studied. */
   cardsLeft: number;
   reviewedCards: number;
+  currentIndex: number;
+  cardCount: number;
+  completedIndexes?: readonly number[];
   answerVisible: boolean;
   hintVisible?: boolean;
   sourceVisible?: boolean;
@@ -30,6 +33,7 @@ export interface FlashcardStudySessionProps {
   onSourceVisibilityChange?: (visible: boolean) => void;
   onDone?: () => void;
   onKeepStudying?: () => void;
+  onNavigate?: (index: number) => void;
 }
 
 /**
@@ -40,6 +44,9 @@ export function FlashcardStudySession({
   card,
   cardsLeft,
   reviewedCards,
+  currentIndex,
+  cardCount,
+  completedIndexes = [],
   answerVisible,
   hintVisible = false,
   sourceVisible = false,
@@ -52,8 +59,10 @@ export function FlashcardStudySession({
   onSourceVisibilityChange,
   onDone,
   onKeepStudying,
+  onNavigate,
 }: FlashcardStudySessionProps) {
   const { t } = useTranslation();
+  const completed = new Set(completedIndexes);
 
   if (complete) {
     return (
@@ -101,22 +110,59 @@ export function FlashcardStudySession({
   return (
     <section
       aria-label={t("Flashcard study session")}
-      className="space-y-4 rounded-xl border border-[var(--border)] bg-[var(--card)] p-5"
+      className="mx-auto w-full max-w-3xl space-y-6 rounded-[28px] border border-[var(--border)] bg-[var(--background)] p-6 shadow-[0_18px_50px_rgba(0,0,0,0.14)] sm:min-h-[420px] sm:p-9"
     >
       <div className="flex items-center justify-between gap-3 text-sm text-[var(--muted-foreground)]">
-        <span>{t("Study session")}</span>
+        <span>
+          {t("Card")} {currentIndex + 1} {t("of")} {cardCount}
+        </span>
         <span aria-live="polite">{t(cardsLeftLabel(cardsLeft))}</span>
       </div>
 
-      <div className="space-y-2">
+      <nav
+        aria-label={t("Flashcard navigation")}
+        className="flex flex-wrap justify-center gap-2"
+      >
+        {Array.from({ length: cardCount }, (_, index) => {
+          const isCurrent = index === currentIndex;
+          const isCompleted = completed.has(index);
+          return (
+            <button
+              key={index}
+              type="button"
+              aria-current={isCurrent ? "step" : undefined}
+              aria-label={
+                isCompleted
+                  ? t("Card {{number}} completed", { number: index + 1 })
+                  : t("Go to card {{number}}", { number: index + 1 })
+              }
+              disabled={busy || isCompleted}
+              onClick={() => onNavigate?.(index)}
+              className={`flex h-9 w-9 items-center justify-center rounded-full border text-sm transition ${
+                isCurrent
+                  ? "border-[var(--primary)] bg-[var(--primary)] text-[var(--primary-foreground)]"
+                  : isCompleted
+                    ? "border-transparent bg-[var(--secondary)] text-[var(--muted-foreground)] opacity-55"
+                    : "border-[var(--border)] hover:border-[var(--primary)]"
+              } disabled:cursor-default`}
+            >
+              {index + 1}
+            </button>
+          );
+        })}
+      </nav>
+
+      <div className="flex min-h-44 flex-col justify-center space-y-3 border-y border-[var(--border)] py-8 text-center sm:min-h-56">
         <h2 className="text-sm font-medium text-[var(--muted-foreground)]">
           {t("Question")}
         </h2>
-        <p className="text-lg font-medium">{card.prompt}</p>
+        <p className="text-xl font-medium leading-relaxed sm:text-2xl">
+          {card.prompt}
+        </p>
       </div>
 
       {!answerVisible ? (
-        <div className="flex flex-wrap gap-2">
+        <div className="flex flex-wrap justify-center gap-2">
           <button
             type="button"
             disabled={busy}
@@ -148,13 +194,13 @@ export function FlashcardStudySession({
 
       {answerVisible ? (
         <>
-          <div className="space-y-2 rounded-lg bg-[var(--secondary)] p-4">
+          <div className="space-y-2 rounded-2xl bg-[var(--secondary)] p-5 text-center">
             <h2 className="text-sm font-medium text-[var(--muted-foreground)]">
               {t("Answer")}
             </h2>
             <p>{card.answer}</p>
           </div>
-          <div className="grid gap-2 sm:grid-cols-2">
+          <div className="mx-auto grid w-full max-w-lg gap-2 sm:grid-cols-2">
             <button
               type="button"
               disabled={busy}

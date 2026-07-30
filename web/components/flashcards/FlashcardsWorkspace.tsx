@@ -66,8 +66,10 @@ import {
   type GroundedCreateStage,
 } from "@/lib/flashcard-generation-presentation";
 import { FlashcardStudySession } from "@/components/flashcards/study/FlashcardStudySession";
+import { nextIncompleteStudyIndex } from "@/components/flashcards/study/study-session-presentation";
 
 const emptyCard = { prompt: "", answer: "", objectiveIds: "" };
+const legacyCandidateReviewEnabled: boolean = false;
 
 function idempotencyKey(): string {
   return (
@@ -140,6 +142,9 @@ export default function FlashcardsWorkspace() {
   const [hintVisible, setHintVisible] = useState(false);
   const [sourceVisible, setSourceVisible] = useState(false);
   const [reviewedCards, setReviewedCards] = useState(0);
+  const [completedReviewIndexes, setCompletedReviewIndexes] = useState<
+    number[]
+  >([]);
   const [pageView, setPageView] = useState<FlashcardsView>("study");
   const [createMode, setCreateMode] = useState<FlashcardCreateMode>("choose");
   const [groundedCreateStage, setGroundedCreateStage] =
@@ -160,6 +165,9 @@ export default function FlashcardsWorkspace() {
   const [status, setStatus] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const epochRef = useRef(0);
+  const autoPublishingOperationRef = useRef<string | null>(null);
+  const modalCreateButtonRef = useRef<HTMLButtonElement | null>(null);
+  const modalChangeButtonRef = useRef<HTMLButtonElement | null>(null);
   const scopeRef = useRef<FlashcardRequestScope>({
     identity: null,
     courseId: null,
@@ -168,7 +176,8 @@ export default function FlashcardsWorkspace() {
   });
 
   const selectedDeck = useMemo(
-    () => decks.find((deck) => deck.id === selectedDeckId) ?? view?.deck ?? null,
+    () =>
+      decks.find((deck) => deck.id === selectedDeckId) ?? view?.deck ?? null,
     [decks, selectedDeckId, view?.deck],
   );
   const normalizedGenerationCount =
@@ -184,13 +193,14 @@ export default function FlashcardsWorkspace() {
   const courseId = activeCourse?.id ?? null;
   const scopeReady = Boolean(
     identity &&
-      courseId &&
-      scopeRef.current.identity === identity &&
-      scopeRef.current.courseId === courseId,
+    courseId &&
+    scopeRef.current.identity === identity &&
+    scopeRef.current.courseId === courseId,
   );
   const courseWritable =
     isFlashcardCourseWritable(activeCourse?.state) && scopeReady;
   const currentCard = reviewCards[reviewIndex] ?? null;
+  const studySessionActive = reviewCards.length > 0;
   const generationDeckTitle =
     generatedTitle.trim() ||
     `${activeCourse?.title?.trim() || t("Course")} ${t("flashcards")}`;
@@ -208,6 +218,12 @@ export default function FlashcardsWorkspace() {
         (operation) => operation.id === activeGenerationOperationId,
       ) ?? null,
     [activeGenerationOperationId, generationOperations],
+  );
+  const preparedBriefBlocked = Boolean(
+    preparedBrief &&
+    (!preparedBrief.provider_available ||
+      preparedBrief.warnings.includes("focus_not_supported") ||
+      preparedBrief.warnings.includes("material_unavailable")),
   );
   const currentSourceDisclosure = useMemo(() => {
     if (!currentCard?.citations.length) return null;
@@ -276,10 +292,12 @@ export default function FlashcardsWorkspace() {
       setHintVisible(false);
       setSourceVisible(false);
       setReviewedCards(0);
+      setCompletedReviewIndexes([]);
       setPageView("study");
       setCreateMode("choose");
       setGroundedCreateStage("editing");
       setActiveGenerationOperationId(null);
+      autoPublishingOperationRef.current = null;
       setShowCustomize(false);
       setShowMaterials(false);
       setShowArchived(false);
@@ -346,8 +364,9 @@ export default function FlashcardsWorkspace() {
             .filter((operation) => operation.candidates?.length)
             .map((operation) => [
               operation.id,
-              operation.candidates?.map((candidate) => candidate.candidate_id) ??
-                [],
+              operation.candidates?.map(
+                (candidate) => candidate.candidate_id,
+              ) ?? [],
             ]),
         ),
       );
@@ -359,9 +378,7 @@ export default function FlashcardsWorkspace() {
         ),
       );
       setGenerationAvailable(capabilities.flashcard_generation);
-      setGenerationUnavailableReason(
-        capabilities.flashcard_generation_reason,
-      );
+      setGenerationUnavailableReason(capabilities.flashcard_generation_reason);
       if (scope.identity) {
         const proposal = consumeFlashcardProposal(
           scope.identity,
@@ -370,7 +387,7 @@ export default function FlashcardsWorkspace() {
         if (proposal) {
           setGeneratedTitle(
             proposal.origin.kind === "general_chat"
-              ? "Conversation flashcards"
+              ? proposal.origin.context_title || "Conversation flashcards"
               : "Course flashcards",
           );
           setGenerationFocus(proposal.brief.focus);
@@ -415,7 +432,7 @@ export default function FlashcardsWorkspace() {
     let alive = true;
     void fetchAuthStatus().then((auth) => {
       if (!alive) return;
-      const nextIdentity = auth?.authenticated ? auth.user_id ?? null : null;
+      const nextIdentity = auth?.authenticated ? (auth.user_id ?? null) : null;
       setIdentity(nextIdentity);
       if (!nextIdentity) invalidate(null, null);
     });
@@ -437,7 +454,9 @@ export default function FlashcardsWorkspace() {
       invalidate(null, null);
       setIdentity(null);
       void fetchAuthStatus().then((auth) => {
-        const nextIdentity = auth?.authenticated ? auth.user_id ?? null : null;
+        const nextIdentity = auth?.authenticated
+          ? (auth.user_id ?? null)
+          : null;
         setIdentity(nextIdentity);
       });
     };
@@ -449,8 +468,32 @@ export default function FlashcardsWorkspace() {
     if (courseWritable) return;
     setReviewCards([]);
     setReviewIndex(0);
+    setCompletedReviewIndexes([]);
     setAnswerVisible(false);
   }, [courseWritable]);
+
+  useEffect(() => {
+    if (!preparedBrief) return;
+    const previouslyFocused = document.activeElement;
+    const focusFrame = window.requestAnimationFrame(() => {
+      (preparedBriefBlocked
+        ? modalChangeButtonRef.current
+        : modalCreateButtonRef.current
+      )?.focus();
+    });
+    const closeOnEscape = (event: KeyboardEvent) => {
+      if (event.key !== "Escape") return;
+      event.preventDefault();
+      setPreparedBrief(null);
+      setGroundedCreateStage("editing");
+    };
+    document.addEventListener("keydown", closeOnEscape);
+    return () => {
+      window.cancelAnimationFrame(focusFrame);
+      document.removeEventListener("keydown", closeOnEscape);
+      if (previouslyFocused instanceof HTMLElement) previouslyFocused.focus();
+    };
+  }, [preparedBrief, preparedBriefBlocked]);
 
   const selectDeck = useCallback(
     async (deck: FlashcardDeck) => {
@@ -463,6 +506,7 @@ export default function FlashcardsWorkspace() {
       setHintVisible(false);
       setSourceVisible(false);
       setReviewedCards(0);
+      setCompletedReviewIndexes([]);
       setStatus(null);
       setError(null);
       try {
@@ -633,11 +677,7 @@ export default function FlashcardsWorkspace() {
         if (!plan.generation_brief) {
           throw new Error("Conversation Flashcard plan is unavailable");
         }
-        storeFlashcardProposal(
-          identity,
-          plan.course_id,
-          plan.generation_brief,
-        );
+        storeFlashcardProposal(identity, plan.course_id, plan.generation_brief);
         selectCourse(plan.course_id);
       } catch (cause) {
         setError(errorText(cause));
@@ -682,21 +722,22 @@ export default function FlashcardsWorkspace() {
               { ...preparedBrief.brief, origin: preparedBrief.origin },
             );
       if (!current(scope)) return;
-        setGenerationOperations((operations) => [
-          requested.operation,
-          ...operations.filter((item) => item.id !== requested.operation.id),
-        ]);
-        setActiveGenerationOperationId(requested.operation.id);
-        setGroundedCreateStage("generating");
-        setGeneratedTitle("");
-        setPreparedBrief(null);
-        setPageView("create");
-        setStatus("Creating your cards. You can leave this page.");
-      } catch (cause) {
-        if (current(scope)) setError(errorText(cause));
-      } finally {
-        if (current(scope)) setBusy(false);
-      }
+      setGenerationOperations((operations) => [
+        requested.operation,
+        ...operations.filter((item) => item.id !== requested.operation.id),
+      ]);
+      setActiveGenerationOperationId(requested.operation.id);
+      autoPublishingOperationRef.current = null;
+      setGroundedCreateStage("generating");
+      setGeneratedTitle("");
+      setPreparedBrief(null);
+      setPageView("create");
+      setStatus("Creating your cards. You can leave this page.");
+    } catch (cause) {
+      if (current(scope)) setError(errorText(cause));
+    } finally {
+      if (current(scope)) setBusy(false);
+    }
   }, [
     activeCourse,
     advanceView,
@@ -709,9 +750,16 @@ export default function FlashcardsWorkspace() {
   ]);
 
   const publishCandidates = useCallback(
-    async (operation: FlashcardGenerationOperation) => {
+    async (
+      operation: FlashcardGenerationOperation,
+      options: {
+        candidateIds?: string[];
+        startStudy?: boolean;
+      } = {},
+    ) => {
       if (!activeCourse || operation.state !== "awaiting_review") return;
-      const selected = candidateOrder[operation.id] ?? [];
+      const selected =
+        options.candidateIds ?? candidateOrder[operation.id] ?? [];
       if (!selected.length) return;
       const scope = scopeRef.current;
       setBusy(true);
@@ -725,27 +773,62 @@ export default function FlashcardsWorkspace() {
         );
         if (!current(scope)) return;
         setGenerationOperations((operations) =>
-          operations.map((item) => (item.id === completed.id ? completed : item)),
+          operations.map((item) =>
+            item.id === completed.id ? completed : item,
+          ),
         );
-        const listed = await listFlashcardDecks(activeCourse.id);
+        const [listed, due] = await Promise.all([
+          listFlashcardDecks(activeCourse.id),
+          options.startStudy
+            ? getDueFlashcards(activeCourse.id, completed.deck_id)
+            : Promise.resolve(null),
+        ]);
         if (!current(scope)) return;
         setDecks(listed);
         setDecksHaveMore(listed.length === 50);
         const published = listed.find((deck) => deck.id === completed.deck_id);
         if (published) {
           setSelectedDeckId(published.id);
-          await loadDeck(scope, published);
+          if (due) {
+            setView(due);
+            setReviewCards(due.cards);
+            setReviewIndex(0);
+            setAnswerVisible(false);
+            setHintVisible(false);
+            setSourceVisible(false);
+            setReviewedCards(0);
+            setCompletedReviewIndexes([]);
+          } else {
+            await loadDeck(scope, published);
+          }
         }
         if (current(scope)) {
           setGroundedCreateStage("editing");
           setActiveGenerationOperationId(null);
+          autoPublishingOperationRef.current = null;
           setGenerationFocus("");
           setGenerationObjectives("");
           setPageView("study");
-          setStatus(`${selected.length} cards saved and ready to study.`);
+          setStatus(
+            options.startStudy
+              ? due?.cards.length
+                ? `${selected.length} cards are ready. Study starts now.`
+                : `${selected.length} cards are ready.`
+              : `${selected.length} cards saved and ready to study.`,
+          );
         }
       } catch (cause) {
-        if (current(scope)) setError(errorText(cause));
+        if (current(scope)) {
+          setError(
+            options.startStudy
+              ? "Your cards were created but could not be finalized. Open Activity to continue."
+              : errorText(cause),
+          );
+          if (options.startStudy) {
+            setGroundedCreateStage("editing");
+            setActiveGenerationOperationId(null);
+          }
+        }
       } finally {
         if (current(scope)) setBusy(false);
       }
@@ -766,7 +849,9 @@ export default function FlashcardsWorkspace() {
         );
         if (!current(scope)) return;
         setGenerationOperations((operations) =>
-          operations.map((item) => (item.id === cancelled.id ? cancelled : item)),
+          operations.map((item) =>
+            item.id === cancelled.id ? cancelled : item,
+          ),
         );
         setStatus(
           cancelled.state === "cancelling"
@@ -845,7 +930,27 @@ export default function FlashcardsWorkspace() {
   useEffect(() => {
     if (!activeGenerationOperation) return;
     if (activeGenerationOperation.state === "awaiting_review") {
-      setGroundedCreateStage("reviewing");
+      if (autoPublishingOperationRef.current === activeGenerationOperation.id) {
+        return;
+      }
+      const candidateIds =
+        activeGenerationOperation.candidates?.map(
+          (candidate) => candidate.candidate_id,
+        ) ?? [];
+      if (!candidateIds.length) {
+        setGroundedCreateStage("editing");
+        setActiveGenerationOperationId(null);
+        setError(
+          "TEEECHR could not create usable cards from that request. Change the request and try again.",
+        );
+        return;
+      }
+      autoPublishingOperationRef.current = activeGenerationOperation.id;
+      setGroundedCreateStage("publishing");
+      void publishCandidates(activeGenerationOperation, {
+        candidateIds,
+        startStudy: true,
+      });
       return;
     }
     if (
@@ -859,7 +964,7 @@ export default function FlashcardsWorkspace() {
     if (activeGenerationOperation.state === "failed") {
       setGroundedCreateStage("editing");
     }
-  }, [activeGenerationOperation]);
+  }, [activeGenerationOperation, publishCandidates]);
 
   const addCard = useCallback(async () => {
     if (
@@ -954,7 +1059,10 @@ export default function FlashcardsWorkspace() {
       setHintVisible(false);
       setSourceVisible(false);
       setReviewedCards(0);
-      setStatus(due.cards.length ? "Review started." : "Nothing is due right now.");
+      setCompletedReviewIndexes([]);
+      setStatus(
+        due.cards.length ? "Review started." : "Nothing is due right now.",
+      );
     } catch (cause) {
       if (current(scope)) setError(errorText(cause));
     } finally {
@@ -964,7 +1072,8 @@ export default function FlashcardsWorkspace() {
 
   const rate = useCallback(
     async (rating: FlashcardRating) => {
-      if (!activeCourse || !courseWritable || !selectedDeck || !currentCard) return;
+      if (!activeCourse || !courseWritable || !selectedDeck || !currentCard)
+        return;
       const scope = scopeRef.current;
       setBusy(true);
       setError(null);
@@ -992,18 +1101,23 @@ export default function FlashcardsWorkspace() {
               }
             : existing,
         );
-        if (rating === "again") {
-          // Keep the missed-card loop inside the current pass while the durable
-          // server schedule remains the authority across reloads.
-          setReviewCards((cards) => requeueAgainCard(cards, currentCard, rating));
-        }
+        const nextCards = requeueAgainCard(reviewCards, currentCard, rating);
+        const completedIndexes = new Set(completedReviewIndexes);
+        completedIndexes.add(reviewIndex);
+        setReviewCards(nextCards);
+        setCompletedReviewIndexes(Array.from(completedIndexes));
         setAnswerVisible(false);
         setHintVisible(false);
         setSourceVisible(false);
         setReviewedCards((count) => count + 1);
-        setReviewIndex((index) => index + 1);
+        const nextIndex = nextIncompleteStudyIndex(
+          nextCards.length,
+          completedIndexes,
+          reviewIndex,
+        );
+        setReviewIndex(nextIndex);
         setStatus(
-          rating !== "again" && reviewIndex + 1 >= reviewCards.length
+          nextIndex >= nextCards.length
             ? "Review complete. Your schedule is saved."
             : "Rating saved.",
         );
@@ -1018,7 +1132,8 @@ export default function FlashcardsWorkspace() {
       courseWritable,
       current,
       currentCard,
-      reviewCards.length,
+      completedReviewIndexes,
+      reviewCards,
       reviewIndex,
       selectedDeck,
     ],
@@ -1072,7 +1187,8 @@ export default function FlashcardsWorkspace() {
       )
     : 0;
   const activeCandidate = activeGenerationOperation?.candidates?.find(
-    (candidate) => candidate.candidate_id === activeCandidateIds[activeCandidateIndex],
+    (candidate) =>
+      candidate.candidate_id === activeCandidateIds[activeCandidateIndex],
   );
   const activeFailure =
     activeGenerationOperation?.state === "failed"
@@ -1104,7 +1220,9 @@ export default function FlashcardsWorkspace() {
           <Notice>{t("Sign in to use private Course Flashcards.")}</Notice>
         ) : null}
         {identity && !activeCourse ? (
-          <Notice>{t("Select or create a Course above to use Flashcards.")}</Notice>
+          <Notice>
+            {t("Select or create a Course above to use Flashcards.")}
+          </Notice>
         ) : null}
 
         {activeCourse && scopeReady && courseLoaded ? (
@@ -1113,30 +1231,32 @@ export default function FlashcardsWorkspace() {
               aria-label={t("Flashcards views")}
               className="flex gap-1 rounded-xl border border-[var(--border)] bg-[var(--card)] p-1"
             >
-              {(Object.keys(FLASHCARDS_VIEW_PRESENTATION) as FlashcardsView[]).map(
-                (item) => (
-                  <button
-                    key={item}
-                    type="button"
-                    aria-current={pageView === item ? "page" : undefined}
-                    disabled={!scopeReady || !courseLoaded}
-                    onClick={() => setPageView(item)}
-                    className={`flex-1 rounded-lg px-4 py-2 text-sm font-medium ${
-                      pageView === item
-                        ? "bg-[var(--primary)] text-[var(--primary-foreground)]"
-                        : "text-[var(--muted-foreground)] hover:bg-[var(--secondary)]"
-                    } disabled:opacity-50`}
-                  >
-                    {t(FLASHCARDS_VIEW_PRESENTATION[item].label)}
-                  </button>
-                ),
-              )}
+              {(
+                Object.keys(FLASHCARDS_VIEW_PRESENTATION) as FlashcardsView[]
+              ).map((item) => (
+                <button
+                  key={item}
+                  type="button"
+                  aria-current={pageView === item ? "page" : undefined}
+                  disabled={!scopeReady || !courseLoaded}
+                  onClick={() => setPageView(item)}
+                  className={`flex-1 rounded-lg px-4 py-2 text-sm font-medium ${
+                    pageView === item
+                      ? "bg-[var(--primary)] text-[var(--primary-foreground)]"
+                      : "text-[var(--muted-foreground)] hover:bg-[var(--secondary)]"
+                  } disabled:opacity-50`}
+                >
+                  {t(FLASHCARDS_VIEW_PRESENTATION[item].label)}
+                </button>
+              ))}
             </nav>
 
             {pageView === "create" && createMode === "choose" ? (
               <section className="space-y-4 rounded-xl border border-[var(--border)] bg-[var(--card)] p-5">
                 <div>
-                  <h2 className="text-xl font-semibold">{t("Create flashcards")}</h2>
+                  <h2 className="text-xl font-semibold">
+                    {t("Create flashcards")}
+                  </h2>
                   <p className="mt-1 text-sm text-[var(--muted-foreground)]">
                     {t("Choose how you want to build this deck.")}
                   </p>
@@ -1163,24 +1283,37 @@ export default function FlashcardsWorkspace() {
                         setCreateMode("grounded");
                         setGroundedCreateStage("editing");
                         setActiveGenerationOperationId(null);
-                        setSelectedSourceIds(readySources.map((source) => source.id));
+                        setSelectedSourceIds(
+                          readySources.map((source) => source.id),
+                        );
                       }}
                       className="rounded-xl border border-[var(--border)] p-5 text-left hover:bg-[var(--secondary)]/50"
                     >
                       <span className="flex items-center gap-2 font-medium">
-                        <Sparkles size={18} /> {t("Generate from Course materials")}
+                        <Sparkles size={18} />{" "}
+                        {t("Generate from Course materials")}
                       </span>
                       <span className="mt-2 block text-sm text-[var(--muted-foreground)]">
                         {readySources.length
-                          ? t("Create cited cards from the ready material in this Course.")
-                          : t("Attach a ready Course source before generating cards.")}
+                          ? t(
+                              "Create cited cards from the ready material in this Course.",
+                            )
+                          : t(
+                              "Attach a ready Course source before generating cards.",
+                            )}
                       </span>
                     </button>
                   ) : (
                     <div className="rounded-xl border border-[var(--border)] p-5">
-                      <p className="font-medium">{t("Card generation is unavailable right now")}</p>
+                      <p className="font-medium">
+                        {t("Card generation is unavailable right now")}
+                      </p>
                       <p className="mt-2 text-sm text-[var(--muted-foreground)]">
-                        {t(flashcardGenerationUnavailableCopy(generationUnavailableReason))}
+                        {t(
+                          flashcardGenerationUnavailableCopy(
+                            generationUnavailableReason,
+                          ),
+                        )}
                       </p>
                     </div>
                   )}
@@ -1191,7 +1324,9 @@ export default function FlashcardsWorkspace() {
                   >
                     <span className="font-medium">{t("Create manually")}</span>
                     <span className="mt-2 block text-sm text-[var(--muted-foreground)]">
-                      {t("Write your own questions and answers without using a provider.")}
+                      {t(
+                        "Write your own questions and answers without using a provider.",
+                      )}
                     </span>
                   </button>
                 </div>
@@ -1199,1257 +1334,1495 @@ export default function FlashcardsWorkspace() {
             ) : null}
 
             {pageView === "create" && createMode === "grounded" ? (
-            <section className="space-y-4 rounded-xl border border-[var(--border)] bg-[var(--card)] p-4">
-              <div className="flex flex-wrap items-start justify-between gap-3">
-                <div>
-                  <h2 className="flex items-center gap-2 font-medium">
-                    <Sparkles size={16} />{" "}
-                    {isConversationDraft
-                      ? t("Create from this conversation")
-                      : t("Generate from Course materials")}
-                  </h2>
-                  <p className="text-sm text-[var(--muted-foreground)]">
-                    {isConversationDraft
-                      ? t("Review what the cards will cover before using AI.")
-                      : t("Tell TEEECHR what these cards should help you understand.")}
-                  </p>
-                </div>
-                <button
-                  type="button"
-                  onClick={() => {
-                    setCreateMode("choose");
-                    setPreparedBrief(null);
-                    setGroundedCreateStage("editing");
-                    setActiveGenerationOperationId(null);
-                  }}
-                  className="rounded-lg border border-[var(--border)] px-3 py-2 text-sm disabled:opacity-50"
-                >
-                  {t("Back")}
-                </button>
-              </div>
-              {proposalOrigin ? (
-                <Notice>
-                  {proposalOrigin === "practice_remediation"
-                    ? t("Prepared from your Practice results. Review it before generating cards.")
-                    : proposalOrigin === "general_chat"
-                      ? t("Based on this conversation. These cards are not Course-grounded.")
-                    : t("Prepared from Course Chat. Review it before generating cards.")}
-                </Notice>
-              ) : null}
-              {isConversationDraft ? (
-                <label className="grid gap-1 text-sm">
-                  <span>{t("Save this deck to")}</span>
-                  <select
-                    aria-label={t("Flashcard destination")}
-                    value={activeCourse?.id ?? ""}
-                    onChange={(event) =>
-                      void moveConversationDraft(event.target.value)
-                    }
-                    disabled={busy}
-                    className="rounded-lg border border-[var(--border)] bg-[var(--background)] px-3 py-2"
-                  >
-                    {courses
-                      .filter(
-                        (course) =>
-                          course.state === "active" &&
-                          (course.workspace_kind === "general_study" ||
-                            course.workspace_kind === "academic_course"),
-                      )
-                      .map((course) => (
-                        <option key={course.id} value={course.id}>
-                          {course.workspace_kind === "general_study"
-                            ? t("General Study")
-                            : course.title}
-                        </option>
-                      ))}
-                  </select>
-                  <span className="text-xs text-[var(--muted-foreground)]">
-                    {t(
-                      "Changing the destination never turns conversation cards into Course-grounded cards.",
-                    )}
-                  </span>
-                </label>
-              ) : null}
-              {groundedCreateStage === "editing" ||
-              groundedCreateStage === "confirming" ? (
-              <>
-              {activeFailure ? (
-                <div
-                  role="alert"
-                  className="space-y-2 rounded-xl border border-red-500/40 bg-red-500/5 p-4"
-                >
-                  <h3 className="font-medium">{t(activeFailure.title)}</h3>
-                  <p className="text-sm text-[var(--muted-foreground)]">
-                    {t(activeFailure.detail)}
-                  </p>
-                  <p className="text-xs text-[var(--muted-foreground)]">
-                    {t("No cards were saved and your existing decks were not changed.")}
-                  </p>
-                </div>
-              ) : null}
-              {showCustomize || isConversationDraft ? (
-              <label className="grid gap-1 text-sm">
-                <span>{t("Deck name (optional)")}</span>
-                <input
-                  aria-label={t("Generated deck title")}
-                  value={generatedTitle}
-                  onChange={(event) => {
-                    setGeneratedTitle(event.target.value);
-                    setPreparedBrief(null);
-                  }}
-                  placeholder={t("Example: Linear equations review")}
-                  disabled={!generationAvailable || !courseWritable || busy}
-                  className="w-full rounded-lg border border-[var(--border)] bg-[var(--background)] px-3 py-2 text-sm"
-                />
-              </label>
-              ) : null}
-              <label className="grid gap-1 text-sm">
-                <span>{t("What should these cards teach you?")}</span>
-                <textarea
-                  aria-label={t("Flashcard generation focus")}
-                  value={generationFocus}
-                  onChange={(event) => {
-                    setGenerationFocus(event.target.value);
-                    setPreparedBrief(null);
-                  }}
-                  placeholder={t(
-                    "Example: Use y = mx + b to identify slope and intercepts",
-                  )}
-                  disabled={!generationAvailable || !courseWritable || busy}
-                  className="min-h-20 w-full rounded-lg border border-[var(--border)] bg-[var(--background)] p-3 text-sm"
-                />
-              </label>
-              <div className="grid gap-3 sm:grid-cols-2">
-                <label className="grid gap-1 text-sm">
-                  <span>{t("Card count")}</span>
-                  <input
-                    aria-label={t("Generated card count")}
-                    type="number"
-                    min={1}
-                    max={48}
-                    value={generationCount}
-                    onChange={(event) => {
-                      const raw = event.target.value;
-                      setGenerationCount(raw === "" ? "" : Number(raw));
-                      setPreparedBrief(null);
-                    }}
-                    onBlur={() => {
-                      if (generationCount === "") return;
-                      setGenerationCount(
-                        Math.max(1, Math.min(48, Math.trunc(generationCount))),
-                      );
-                    }}
-                    disabled={!generationAvailable || !courseWritable || busy}
-                    className="rounded-lg border border-[var(--border)] bg-[var(--background)] px-3 py-2"
-                  />
-                  <span className="text-xs text-[var(--muted-foreground)]">
-                    {generationCount === ""
-                      ? t("Enter between 1 and 48 cards.")
-                      : t("Choose a shortcut or enter any number from 1 to 48.")}
-                  </span>
-                  <span className="flex flex-wrap gap-1">
-                    {[5, 10, 20].map((count) => (
-                      <button
-                        key={count}
-                        type="button"
-                        onClick={() => {
-                          setGenerationCount(count);
-                          setPreparedBrief(null);
-                        }}
-                        disabled={!generationAvailable || !courseWritable || busy}
-                        className="rounded-md border border-[var(--border)] px-2 py-1 text-xs disabled:opacity-50"
-                      >
-                        {count}
-                      </button>
-                    ))}
-                  </span>
-                </label>
-                <div className="rounded-lg border border-[var(--border)] px-3 py-2 text-sm">
-                  <span className="text-[var(--muted-foreground)]">
-                    {isConversationDraft ? t("Based on") : t("Course materials")}
-                  </span>
-                  <p className="font-medium">
-                    {isConversationDraft
-                      ? t("This conversation")
-                      : readySources.length === 1
-                      ? t("Using the ready material in this Course")
-                      : t("Using {{count}} ready materials", {
-                          count: selectedSourceIds.length,
-                        })}
-                  </p>
-                </div>
-              </div>
-              <button
-                type="button"
-                aria-expanded={showCustomize}
-                onClick={() => setShowCustomize((shown) => !shown)}
-                className="inline-flex items-center gap-2 text-sm font-medium"
-              >
-                {showCustomize ? <ChevronUp size={16} /> : <ChevronDown size={16} />}
-                {showCustomize ? t("Hide customization") : t("Customize")}
-              </button>
-              {showCustomize ? (
-              <>
-              <div className="grid gap-3 sm:grid-cols-2">
-                <label className="grid gap-1 text-sm">
-                  <span>{t("Difficulty")}</span>
-                  <select
-                    aria-label={t("Flashcard difficulty")}
-                    value={generationDifficulty}
-                    onChange={(event) => {
-                      setGenerationDifficulty(
-                        event.target
-                          .value as FlashcardGenerationOptions["difficulty"],
-                      );
-                      setPreparedBrief(null);
-                    }}
-                    disabled={!generationAvailable || !courseWritable || busy}
-                    className="rounded-lg border border-[var(--border)] bg-[var(--background)] px-3 py-2"
-                  >
-                    {["introductory", "intermediate", "advanced", "mixed"].map(
-                      (value) => (
-                        <option key={value} value={value}>
-                          {t(value)}
-                        </option>
-                      ),
-                    )}
-                  </select>
-                </label>
-                <label className="grid gap-1 text-sm">
-                  <span>{t("Answer length")}</span>
-                  <select
-                    aria-label={t("Flashcard answer length")}
-                    value={generationAnswerLength}
-                    onChange={(event) => {
-                      setGenerationAnswerLength(
-                        event.target
-                          .value as FlashcardGenerationOptions["answer_length"],
-                      );
-                      setPreparedBrief(null);
-                    }}
-                    disabled={!generationAvailable || !courseWritable || busy}
-                    className="rounded-lg border border-[var(--border)] bg-[var(--background)] px-3 py-2"
-                  >
-                    <option value="short">{t("short")}</option>
-                    <option value="medium">{t("medium")}</option>
-                  </select>
-                </label>
-              </div>
-              <fieldset className="space-y-2">
-                <legend className="text-sm font-medium">{t("Card mix")}</legend>
-                <div className="flex flex-wrap gap-2">
-                  {(
-                    [
-                      "definition",
-                      "concept",
-                      "comparison",
-                      "application",
-                      "process",
-                      "recall",
-                    ] as const
-                  ).map((cardType) => {
-                    const checked = generationCardTypes.includes(cardType);
-                    return (
-                      <label
-                        key={cardType}
-                        className="flex items-center gap-2 rounded-lg border border-[var(--border)] px-3 py-2 text-sm"
-                      >
-                        <input
-                          type="checkbox"
-                          checked={checked}
-                          disabled={
-                            !generationAvailable ||
-                            !courseWritable ||
-                            busy ||
-                            (checked && generationCardTypes.length === 1)
-                          }
-                          onChange={() => {
-                            setGenerationCardTypes((types) =>
-                              checked
-                                ? types.filter((item) => item !== cardType)
-                                : [...types, cardType],
-                            );
-                            setPreparedBrief(null);
-                          }}
-                        />
-                        {t(cardType)}
-                      </label>
-                    );
-                  })}
-                  <label className="flex items-center gap-2 rounded-lg border border-[var(--border)] px-3 py-2 text-sm">
-                    <input
-                      type="checkbox"
-                      checked={generationHints}
-                      onChange={(event) => {
-                        setGenerationHints(event.target.checked);
-                        setPreparedBrief(null);
-                      }}
-                      disabled={!generationAvailable || !courseWritable || busy}
-                    />
-                    {t("Include hints")}
-                  </label>
-                </div>
-              </fieldset>
-              <p className="text-xs text-[var(--muted-foreground)]">
-                {generationObjectives.trim()
-                  ? t("Learning objectives from the prepared Course request will be applied automatically.")
-                  : t("Course learning objectives are applied automatically when available.")}
-              </p>
-              </>
-              ) : null}
-              {!isConversationDraft && readySources.length > 1 ? (
-                <button
-                  type="button"
-                  aria-expanded={showMaterials}
-                  onClick={() => setShowMaterials((shown) => !shown)}
-                  className="inline-flex items-center gap-2 text-sm font-medium"
-                >
-                  {showMaterials ? <ChevronUp size={16} /> : <ChevronDown size={16} />}
-                  {showMaterials ? t("Hide materials") : t("Change materials")}
-                </button>
-              ) : null}
-              {!isConversationDraft && readySources.length > 1 && showMaterials ? (
-              <fieldset className="space-y-2">
-                <legend className="sr-only">
-                  {t("Use these Course materials")}
-                </legend>
-                <div className="flex flex-wrap gap-2">
-                {readySources.map((source) => {
-                  const checked = selectedSourceIds.includes(source.id);
-                  const finalSelectedSource =
-                    checked && selectedSourceIds.length === 1;
-                  return (
-                    <label
-                      key={source.id}
-                      className="flex items-center gap-2 rounded-lg border border-[var(--border)] px-3 py-2 text-sm"
-                    >
-                      <input
-                        type="checkbox"
-                        checked={checked}
-                        disabled={
-                          !generationAvailable ||
-                          !courseWritable ||
-                          busy ||
-                          finalSelectedSource
-                        }
-                        onChange={() =>
-                          {
-                            setSelectedSourceIds((ids) =>
-                              checked
-                                ? ids.filter((id) => id !== source.id)
-                                : [...ids, source.id],
-                            );
-                            setPreparedBrief(null);
-                          }
-                        }
-                      />
-                      {t(
-                        flashcardCourseSourceLabel(
-                          source.display_name,
-                          source.kind,
-                        ),
-                      )}
-                    </label>
-                  );
-                })}
-                </div>
-                <p className="text-xs text-[var(--muted-foreground)]">
-                  {t(
-                    selectedSourceIds.length === 1
-                      ? "At least one Course material stays selected."
-                      : "Choose the materials TEEECHR should use for these cards.",
-                  )}
-                </p>
-              </fieldset>
-              ) : null}
-              {!isConversationDraft && !readySources.length ? (
-                <p className="text-sm text-[var(--muted-foreground)]">
-                  {t("Attach and finish processing a Course source before generation.")}
-                </p>
-              ) : null}
-              <div className="flex flex-wrap gap-2">
-                <button
-                  onClick={() => void prepareGeneration(false)}
-                  disabled={
-                    !courseWritable ||
-                    !generationAvailable ||
-                    busy ||
-                    !generationFocus.trim() ||
-                    !normalizedGenerationCount ||
-                    (!isConversationDraft && !selectedSourceIds.length)
-                  }
-                  className="rounded-lg bg-[var(--primary)] px-3 py-2 text-sm text-[var(--primary-foreground)] disabled:opacity-50"
-                >
-                  {isConversationDraft
-                    ? t("Review conversation plan")
-                    : t("Check Course coverage")}
-                </button>
-                {selectedDeck?.mode === "generated" &&
-                selectedDeck.state === "ready" ? (
-                  <button
-                    onClick={() => void prepareGeneration(true)}
-                    disabled={
-                      !courseWritable ||
-                      !generationAvailable ||
-                      busy ||
-                      !generationFocus.trim() ||
-                      !normalizedGenerationCount ||
-                      (!isConversationDraft && !selectedSourceIds.length)
-                    }
-                    className="rounded-lg border border-[var(--border)] px-3 py-2 text-sm disabled:opacity-50"
-                  >
-                    {t("Create updated version")}
-                  </button>
-                ) : null}
-              </div>
-              {preparedBrief ? (
-                <div
-                  className={`space-y-3 rounded-xl border p-4 ${
-                    preparedBrief.warnings.includes("focus_not_supported") ||
-                    preparedBrief.warnings.includes("material_unavailable")
-                      ? "border-red-500/40 bg-red-500/5"
-                      : "border-emerald-500/40 bg-emerald-500/5"
-                  }`}
-                >
+              <section className="space-y-4 rounded-xl border border-[var(--border)] bg-[var(--card)] p-4">
+                <div className="flex flex-wrap items-start justify-between gap-3">
                   <div>
-                    <h3 className="font-medium">
-                      {preparedBrief.warnings.includes("focus_not_supported")
-                        ? t("This topic is not in the selected Course materials")
-                        : preparedBrief.warnings.includes("material_unavailable")
-                          ? t("The selected material is not ready to use")
-                          : t("Ready to create")}
-                    </h3>
+                    <h2 className="flex items-center gap-2 font-medium">
+                      <Sparkles size={16} />{" "}
+                      {isConversationDraft
+                        ? t("Create from this conversation")
+                        : t("Generate from Course materials")}
+                    </h2>
                     <p className="text-sm text-[var(--muted-foreground)]">
-                      {preparedBrief.warnings.includes("focus_not_supported")
-                        ? t(
-                            "Change the topic, choose different Course material, or create cards manually. No AI generation was started.",
-                          )
-                        : preparedBrief.warnings.includes("material_unavailable")
-                          ? t(
-                              "Choose another ready Course source or try again after processing finishes. No AI generation was started.",
-                            )
-                          : isConversationDraft
-                            ? t(
-                                "TEEECHR will use only the bounded conversation shown in this plan. Nothing is saved until you review the cards.",
-                              )
-                          : t(
-                              "TEEECHR found relevant Course material. Only bounded excerpts will be sent, and nothing is saved until you review the cards.",
-                            )}
+                      {isConversationDraft
+                        ? t("Review what the cards will cover before using AI.")
+                        : t(
+                            "Tell TEEECHR what these cards should help you understand.",
+                          )}
                     </p>
                   </div>
-                  <dl className="grid gap-2 text-sm sm:grid-cols-2">
-                    <div>
-                      <dt className="text-[var(--muted-foreground)]">{t("Focus")}</dt>
-                      <dd>{preparedBrief.brief.focus}</dd>
-                    </div>
-                    <div>
-                      <dt className="text-[var(--muted-foreground)]">{t("Plan")}</dt>
-                      <dd>
-                        {preparedBrief.brief.desired_count} {t("cards")} ·{" "}
-                        {preparedBrief.brief.difficulty} ·{" "}
-                        {preparedBrief.brief.card_type_mix.join(", ")}
-                      </dd>
-                    </div>
-                    <div>
-                      <dt className="text-[var(--muted-foreground)]">
-                        {isConversationDraft ? t("Basis") : t("Sources")}
-                      </dt>
-                      <dd>
-                        {isConversationDraft
-                          ? t("{{count}} selected messages from this conversation", {
-                              count:
-                                preparedBrief.origin.selected_message_ids
-                                  ?.length ?? 0,
-                            })
-                          : preparedBrief.source_snapshot.length}
-                      </dd>
-                    </div>
-                    <div>
-                      <dt className="text-[var(--muted-foreground)]">
-                        {t("Destination")}
-                      </dt>
-                      <dd>
-                        {activeCourse?.workspace_kind === "general_study"
-                          ? t("General Study")
-                          : activeCourse?.title}
-                      </dd>
-                    </div>
-                    <div>
-                      <dt className="text-[var(--muted-foreground)]">{t("Provider")}</dt>
-                      <dd>
-                        {preparedBrief.provider_available
-                          ? t("Available")
-                          : t("Unavailable")}
-                      </dd>
-                    </div>
-                  </dl>
-                  <div className="flex flex-wrap gap-2">
-                    <button
-                      onClick={() => void confirmGeneration()}
-                      disabled={
-                        busy ||
-                        !preparedBrief.provider_available ||
-                        preparedBrief.warnings.includes("focus_not_supported") ||
-                        preparedBrief.warnings.includes("material_unavailable")
-                      }
-                      className="rounded-lg bg-[var(--primary)] px-3 py-2 text-sm text-[var(--primary-foreground)] disabled:opacity-50"
-                    >
-                      {t("Create {{count}} cards with AI", {
-                        count: preparedBrief.brief.desired_count,
-                      })}
-                    </button>
-                    <button
-                      onClick={() => {
-                        setPreparedBrief(null);
-                        setGroundedCreateStage("editing");
-                      }}
-                      disabled={busy}
-                      className="rounded-lg border border-[var(--border)] px-3 py-2 text-sm"
-                    >
-                      {t("Change request")}
-                    </button>
-                  </div>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setCreateMode("choose");
+                      setPreparedBrief(null);
+                      setGroundedCreateStage("editing");
+                      setActiveGenerationOperationId(null);
+                    }}
+                    className="rounded-lg border border-[var(--border)] px-3 py-2 text-sm disabled:opacity-50"
+                  >
+                    {t("Back")}
+                  </button>
                 </div>
-              ) : null}
-              </>
-              ) : groundedCreateStage === "generating" &&
-                activeGenerationOperation ? (
-                <div
-                  role="status"
-                  className="space-y-4 rounded-xl border border-[var(--border)] bg-[var(--secondary)]/30 p-5"
-                >
-                  <div className="flex items-start gap-3">
-                    <Loader2 className="mt-0.5 animate-spin" size={20} />
-                    <div>
-                      <h3 className="font-medium">
-                        {t(
-                          flashcardGenerationStatePresentation(
-                            activeGenerationOperation.state,
-                          ).label,
+                {proposalOrigin ? (
+                  <Notice>
+                    {proposalOrigin === "practice_remediation"
+                      ? t(
+                          "Prepared from your Practice results. Review it before generating cards.",
+                        )
+                      : proposalOrigin === "general_chat"
+                        ? t(
+                            "Based on this conversation. These cards are not Course-grounded.",
+                          )
+                        : t(
+                            "Prepared from Course Chat. Review it before generating cards.",
+                          )}
+                  </Notice>
+                ) : null}
+                {isConversationDraft ? (
+                  <label className="grid gap-1 text-sm">
+                    <span>{t("Save this deck to")}</span>
+                    <select
+                      aria-label={t("Flashcard destination")}
+                      value={activeCourse?.id ?? ""}
+                      onChange={(event) =>
+                        void moveConversationDraft(event.target.value)
+                      }
+                      disabled={busy}
+                      className="rounded-lg border border-[var(--border)] bg-[var(--background)] px-3 py-2"
+                    >
+                      {courses
+                        .filter(
+                          (course) =>
+                            course.state === "active" &&
+                            (course.workspace_kind === "general_study" ||
+                              course.workspace_kind === "academic_course"),
+                        )
+                        .map((course) => (
+                          <option key={course.id} value={course.id}>
+                            {course.workspace_kind === "general_study"
+                              ? t("General Study")
+                              : course.title}
+                          </option>
+                        ))}
+                    </select>
+                    <span className="text-xs text-[var(--muted-foreground)]">
+                      {t(
+                        "Changing the destination never turns conversation cards into Course-grounded cards.",
+                      )}
+                    </span>
+                  </label>
+                ) : null}
+                {groundedCreateStage === "editing" ||
+                groundedCreateStage === "confirming" ? (
+                  <>
+                    {activeFailure ? (
+                      <div
+                        role="alert"
+                        className="space-y-2 rounded-xl border border-red-500/40 bg-red-500/5 p-4"
+                      >
+                        <h3 className="font-medium">
+                          {t(activeFailure.title)}
+                        </h3>
+                        <p className="text-sm text-[var(--muted-foreground)]">
+                          {t(activeFailure.detail)}
+                        </p>
+                        <p className="text-xs text-[var(--muted-foreground)]">
+                          {t(
+                            "No cards were saved and your existing decks were not changed.",
+                          )}
+                        </p>
+                      </div>
+                    ) : null}
+                    {showCustomize || isConversationDraft ? (
+                      <label className="grid gap-1 text-sm">
+                        <span>{t("Deck name (optional)")}</span>
+                        <input
+                          aria-label={t("Generated deck title")}
+                          value={generatedTitle}
+                          onChange={(event) => {
+                            setGeneratedTitle(event.target.value);
+                            setPreparedBrief(null);
+                          }}
+                          placeholder={t("Example: Linear equations review")}
+                          disabled={
+                            !generationAvailable || !courseWritable || busy
+                          }
+                          className="w-full rounded-lg border border-[var(--border)] bg-[var(--background)] px-3 py-2 text-sm"
+                        />
+                      </label>
+                    ) : null}
+                    <label className="grid gap-1 text-sm">
+                      <span>{t("What should these cards teach you?")}</span>
+                      <textarea
+                        aria-label={t("Flashcard generation focus")}
+                        value={generationFocus}
+                        onChange={(event) => {
+                          setGenerationFocus(event.target.value);
+                          setPreparedBrief(null);
+                        }}
+                        placeholder={t(
+                          "Example: Use y = mx + b to identify slope and intercepts",
                         )}
+                        disabled={
+                          !generationAvailable || !courseWritable || busy
+                        }
+                        className="min-h-20 w-full rounded-lg border border-[var(--border)] bg-[var(--background)] p-3 text-sm"
+                      />
+                    </label>
+                    <div className="grid gap-3 sm:grid-cols-2">
+                      <label className="grid gap-1 text-sm">
+                        <span>{t("Card count")}</span>
+                        <input
+                          aria-label={t("Generated card count")}
+                          type="number"
+                          min={1}
+                          max={48}
+                          value={generationCount}
+                          onChange={(event) => {
+                            const raw = event.target.value;
+                            setGenerationCount(raw === "" ? "" : Number(raw));
+                            setPreparedBrief(null);
+                          }}
+                          onBlur={() => {
+                            if (generationCount === "") return;
+                            setGenerationCount(
+                              Math.max(
+                                1,
+                                Math.min(48, Math.trunc(generationCount)),
+                              ),
+                            );
+                          }}
+                          disabled={
+                            !generationAvailable || !courseWritable || busy
+                          }
+                          className="rounded-lg border border-[var(--border)] bg-[var(--background)] px-3 py-2"
+                        />
+                        <span className="text-xs text-[var(--muted-foreground)]">
+                          {generationCount === ""
+                            ? t("Enter between 1 and 48 cards.")
+                            : t(
+                                "Choose a shortcut or enter any number from 1 to 48.",
+                              )}
+                        </span>
+                        <span className="flex flex-wrap gap-1">
+                          {[5, 10, 20].map((count) => (
+                            <button
+                              key={count}
+                              type="button"
+                              onClick={() => {
+                                setGenerationCount(count);
+                                setPreparedBrief(null);
+                              }}
+                              disabled={
+                                !generationAvailable || !courseWritable || busy
+                              }
+                              className="rounded-md border border-[var(--border)] px-2 py-1 text-xs disabled:opacity-50"
+                            >
+                              {count}
+                            </button>
+                          ))}
+                        </span>
+                      </label>
+                      <div className="rounded-lg border border-[var(--border)] px-3 py-2 text-sm">
+                        <span className="text-[var(--muted-foreground)]">
+                          {isConversationDraft
+                            ? t("Based on")
+                            : t("Course materials")}
+                        </span>
+                        <p className="font-medium">
+                          {isConversationDraft
+                            ? conversationOrigin?.context_summary ||
+                              t("This conversation")
+                            : readySources.length === 1
+                              ? t("Using the ready material in this Course")
+                              : t("Using {{count}} ready materials", {
+                                  count: selectedSourceIds.length,
+                                })}
+                        </p>
+                      </div>
+                    </div>
+                    <button
+                      type="button"
+                      aria-expanded={showCustomize}
+                      onClick={() => setShowCustomize((shown) => !shown)}
+                      className="inline-flex items-center gap-2 text-sm font-medium"
+                    >
+                      {showCustomize ? (
+                        <ChevronUp size={16} />
+                      ) : (
+                        <ChevronDown size={16} />
+                      )}
+                      {showCustomize ? t("Hide customization") : t("Customize")}
+                    </button>
+                    {showCustomize ? (
+                      <>
+                        <div className="grid gap-3 sm:grid-cols-2">
+                          <label className="grid gap-1 text-sm">
+                            <span>{t("Difficulty")}</span>
+                            <select
+                              aria-label={t("Flashcard difficulty")}
+                              value={generationDifficulty}
+                              onChange={(event) => {
+                                setGenerationDifficulty(
+                                  event.target
+                                    .value as FlashcardGenerationOptions["difficulty"],
+                                );
+                                setPreparedBrief(null);
+                              }}
+                              disabled={
+                                !generationAvailable || !courseWritable || busy
+                              }
+                              className="rounded-lg border border-[var(--border)] bg-[var(--background)] px-3 py-2"
+                            >
+                              {[
+                                "introductory",
+                                "intermediate",
+                                "advanced",
+                                "mixed",
+                              ].map((value) => (
+                                <option key={value} value={value}>
+                                  {t(value)}
+                                </option>
+                              ))}
+                            </select>
+                          </label>
+                          <label className="grid gap-1 text-sm">
+                            <span>{t("Answer length")}</span>
+                            <select
+                              aria-label={t("Flashcard answer length")}
+                              value={generationAnswerLength}
+                              onChange={(event) => {
+                                setGenerationAnswerLength(
+                                  event.target
+                                    .value as FlashcardGenerationOptions["answer_length"],
+                                );
+                                setPreparedBrief(null);
+                              }}
+                              disabled={
+                                !generationAvailable || !courseWritable || busy
+                              }
+                              className="rounded-lg border border-[var(--border)] bg-[var(--background)] px-3 py-2"
+                            >
+                              <option value="short">{t("short")}</option>
+                              <option value="medium">{t("medium")}</option>
+                            </select>
+                          </label>
+                        </div>
+                        <fieldset className="space-y-2">
+                          <legend className="text-sm font-medium">
+                            {t("Card mix")}
+                          </legend>
+                          <div className="flex flex-wrap gap-2">
+                            {(
+                              [
+                                "definition",
+                                "concept",
+                                "comparison",
+                                "application",
+                                "process",
+                                "recall",
+                              ] as const
+                            ).map((cardType) => {
+                              const checked =
+                                generationCardTypes.includes(cardType);
+                              return (
+                                <label
+                                  key={cardType}
+                                  className="flex items-center gap-2 rounded-lg border border-[var(--border)] px-3 py-2 text-sm"
+                                >
+                                  <input
+                                    type="checkbox"
+                                    checked={checked}
+                                    disabled={
+                                      !generationAvailable ||
+                                      !courseWritable ||
+                                      busy ||
+                                      (checked &&
+                                        generationCardTypes.length === 1)
+                                    }
+                                    onChange={() => {
+                                      setGenerationCardTypes((types) =>
+                                        checked
+                                          ? types.filter(
+                                              (item) => item !== cardType,
+                                            )
+                                          : [...types, cardType],
+                                      );
+                                      setPreparedBrief(null);
+                                    }}
+                                  />
+                                  {t(cardType)}
+                                </label>
+                              );
+                            })}
+                            <label className="flex items-center gap-2 rounded-lg border border-[var(--border)] px-3 py-2 text-sm">
+                              <input
+                                type="checkbox"
+                                checked={generationHints}
+                                onChange={(event) => {
+                                  setGenerationHints(event.target.checked);
+                                  setPreparedBrief(null);
+                                }}
+                                disabled={
+                                  !generationAvailable ||
+                                  !courseWritable ||
+                                  busy
+                                }
+                              />
+                              {t("Include hints")}
+                            </label>
+                          </div>
+                        </fieldset>
+                        <p className="text-xs text-[var(--muted-foreground)]">
+                          {generationObjectives.trim()
+                            ? t(
+                                "Learning objectives from the prepared Course request will be applied automatically.",
+                              )
+                            : t(
+                                "Course learning objectives are applied automatically when available.",
+                              )}
+                        </p>
+                      </>
+                    ) : null}
+                    {!isConversationDraft && readySources.length > 1 ? (
+                      <button
+                        type="button"
+                        aria-expanded={showMaterials}
+                        onClick={() => setShowMaterials((shown) => !shown)}
+                        className="inline-flex items-center gap-2 text-sm font-medium"
+                      >
+                        {showMaterials ? (
+                          <ChevronUp size={16} />
+                        ) : (
+                          <ChevronDown size={16} />
+                        )}
+                        {showMaterials
+                          ? t("Hide materials")
+                          : t("Change materials")}
+                      </button>
+                    ) : null}
+                    {!isConversationDraft &&
+                    readySources.length > 1 &&
+                    showMaterials ? (
+                      <fieldset className="space-y-2">
+                        <legend className="sr-only">
+                          {t("Use these Course materials")}
+                        </legend>
+                        <div className="flex flex-wrap gap-2">
+                          {readySources.map((source) => {
+                            const checked = selectedSourceIds.includes(
+                              source.id,
+                            );
+                            const finalSelectedSource =
+                              checked && selectedSourceIds.length === 1;
+                            return (
+                              <label
+                                key={source.id}
+                                className="flex items-center gap-2 rounded-lg border border-[var(--border)] px-3 py-2 text-sm"
+                              >
+                                <input
+                                  type="checkbox"
+                                  checked={checked}
+                                  disabled={
+                                    !generationAvailable ||
+                                    !courseWritable ||
+                                    busy ||
+                                    finalSelectedSource
+                                  }
+                                  onChange={() => {
+                                    setSelectedSourceIds((ids) =>
+                                      checked
+                                        ? ids.filter((id) => id !== source.id)
+                                        : [...ids, source.id],
+                                    );
+                                    setPreparedBrief(null);
+                                  }}
+                                />
+                                {t(
+                                  flashcardCourseSourceLabel(
+                                    source.display_name,
+                                    source.kind,
+                                  ),
+                                )}
+                              </label>
+                            );
+                          })}
+                        </div>
+                        <p className="text-xs text-[var(--muted-foreground)]">
+                          {t(
+                            selectedSourceIds.length === 1
+                              ? "At least one Course material stays selected."
+                              : "Choose the materials TEEECHR should use for these cards.",
+                          )}
+                        </p>
+                      </fieldset>
+                    ) : null}
+                    {!isConversationDraft && !readySources.length ? (
+                      <p className="text-sm text-[var(--muted-foreground)]">
+                        {t(
+                          "Attach and finish processing a Course source before generation.",
+                        )}
+                      </p>
+                    ) : null}
+                    <div className="flex flex-wrap gap-2">
+                      <button
+                        onClick={() => void prepareGeneration(false)}
+                        disabled={
+                          !courseWritable ||
+                          !generationAvailable ||
+                          busy ||
+                          !generationFocus.trim() ||
+                          !normalizedGenerationCount ||
+                          (!isConversationDraft && !selectedSourceIds.length)
+                        }
+                        className="rounded-lg bg-[var(--primary)] px-3 py-2 text-sm text-[var(--primary-foreground)] disabled:opacity-50"
+                      >
+                        {isConversationDraft
+                          ? t("Review conversation plan")
+                          : t("Check Course coverage")}
+                      </button>
+                      {selectedDeck?.mode === "generated" &&
+                      selectedDeck.state === "ready" ? (
+                        <button
+                          onClick={() => void prepareGeneration(true)}
+                          disabled={
+                            !courseWritable ||
+                            !generationAvailable ||
+                            busy ||
+                            !generationFocus.trim() ||
+                            !normalizedGenerationCount ||
+                            (!isConversationDraft && !selectedSourceIds.length)
+                          }
+                          className="rounded-lg border border-[var(--border)] px-3 py-2 text-sm disabled:opacity-50"
+                        >
+                          {t("Create updated version")}
+                        </button>
+                      ) : null}
+                    </div>
+                    {preparedBrief ? (
+                      <div
+                        data-testid="flashcard-confirmation-overlay"
+                        className="fixed inset-0 z-50 flex items-center justify-center bg-black/65 p-4"
+                      >
+                        <section
+                          role="dialog"
+                          aria-modal="true"
+                          aria-labelledby="flashcard-confirmation-title"
+                          className={`max-h-[90vh] w-full max-w-2xl space-y-4 overflow-y-auto rounded-2xl border p-5 shadow-2xl ${
+                            preparedBrief.warnings.includes(
+                              "focus_not_supported",
+                            ) ||
+                            preparedBrief.warnings.includes(
+                              "material_unavailable",
+                            )
+                              ? "border-red-500/40 bg-[var(--card)]"
+                              : "border-emerald-500/40 bg-[var(--card)]"
+                          }`}
+                        >
+                          <div>
+                            <h3
+                              id="flashcard-confirmation-title"
+                              className="text-xl font-semibold"
+                            >
+                              {preparedBrief.warnings.includes(
+                                "focus_not_supported",
+                              )
+                                ? t(
+                                    "This topic is not in the selected Course materials",
+                                  )
+                                : preparedBrief.warnings.includes(
+                                      "material_unavailable",
+                                    )
+                                  ? t(
+                                      "The selected material is not ready to use",
+                                    )
+                                  : t("Ready to create")}
+                            </h3>
+                            <p className="text-sm text-[var(--muted-foreground)]">
+                              {preparedBrief.warnings.includes(
+                                "focus_not_supported",
+                              )
+                                ? t(
+                                    "Change the topic, choose different Course material, or create cards manually. No AI generation was started.",
+                                  )
+                                : preparedBrief.warnings.includes(
+                                      "material_unavailable",
+                                    )
+                                  ? t(
+                                      "Choose another ready Course source or try again after processing finishes. No AI generation was started.",
+                                    )
+                                  : isConversationDraft
+                                    ? t(
+                                        "TEEECHR will use only the bounded conversation shown here. After you confirm, it will create and save the cards, then open the first one.",
+                                      )
+                                    : t(
+                                        "TEEECHR found relevant Course material. After you confirm, it will create and save the cards, then open the first one.",
+                                      )}
+                            </p>
+                          </div>
+                          <dl className="grid gap-2 text-sm sm:grid-cols-2">
+                            <div>
+                              <dt className="text-[var(--muted-foreground)]">
+                                {t("Focus")}
+                              </dt>
+                              <dd>{preparedBrief.brief.focus}</dd>
+                            </div>
+                            {isConversationDraft &&
+                            preparedBrief.origin.context_topics?.length ? (
+                              <div>
+                                <dt className="text-[var(--muted-foreground)]">
+                                  {t("Covers")}
+                                </dt>
+                                <dd>
+                                  {preparedBrief.origin.context_topics.join(
+                                    ", ",
+                                  )}
+                                </dd>
+                              </div>
+                            ) : null}
+                            <div>
+                              <dt className="text-[var(--muted-foreground)]">
+                                {t("Plan")}
+                              </dt>
+                              <dd>
+                                {preparedBrief.brief.desired_count} {t("cards")}{" "}
+                                · {preparedBrief.brief.difficulty} ·{" "}
+                                {preparedBrief.brief.card_type_mix.join(", ")}
+                              </dd>
+                            </div>
+                            <div>
+                              <dt className="text-[var(--muted-foreground)]">
+                                {isConversationDraft
+                                  ? t("Basis")
+                                  : t("Sources")}
+                              </dt>
+                              <dd>
+                                {isConversationDraft
+                                  ? t(
+                                      "{{count}} selected messages from this conversation",
+                                      {
+                                        count:
+                                          preparedBrief.origin
+                                            .selected_message_ids?.length ?? 0,
+                                      },
+                                    )
+                                  : preparedBrief.source_snapshot.length}
+                              </dd>
+                            </div>
+                            <div>
+                              <dt className="text-[var(--muted-foreground)]">
+                                {t("Destination")}
+                              </dt>
+                              <dd>
+                                {activeCourse?.workspace_kind ===
+                                "general_study"
+                                  ? t("General Study")
+                                  : activeCourse?.title}
+                              </dd>
+                            </div>
+                            <div>
+                              <dt className="text-[var(--muted-foreground)]">
+                                {t("Provider")}
+                              </dt>
+                              <dd>
+                                {preparedBrief.provider_available
+                                  ? t("Available")
+                                  : t("Unavailable")}
+                              </dd>
+                            </div>
+                          </dl>
+                          <div className="flex flex-wrap gap-2">
+                            <button
+                              ref={modalChangeButtonRef}
+                              type="button"
+                              onClick={() => {
+                                setPreparedBrief(null);
+                                setGroundedCreateStage("editing");
+                              }}
+                              disabled={busy}
+                              className="rounded-lg border border-[var(--border)] px-3 py-2 text-sm"
+                            >
+                              {t("Change request")}
+                            </button>
+                            <button
+                              ref={modalCreateButtonRef}
+                              type="button"
+                              onClick={() => void confirmGeneration()}
+                              disabled={busy || preparedBriefBlocked}
+                              className="rounded-lg bg-[var(--primary)] px-3 py-2 text-sm text-[var(--primary-foreground)] disabled:opacity-50"
+                            >
+                              {t("Create {{count}} cards with AI", {
+                                count: preparedBrief.brief.desired_count,
+                              })}
+                            </button>
+                          </div>
+                        </section>
+                      </div>
+                    ) : null}
+                  </>
+                ) : groundedCreateStage === "generating" &&
+                  activeGenerationOperation ? (
+                  <div
+                    role="status"
+                    className="space-y-4 rounded-xl border border-[var(--border)] bg-[var(--secondary)]/30 p-5"
+                  >
+                    <div className="flex items-start gap-3">
+                      <Loader2 className="mt-0.5 animate-spin" size={20} />
+                      <div>
+                        <h3 className="font-medium">
+                          {t(
+                            flashcardGenerationStatePresentation(
+                              activeGenerationOperation.state,
+                            ).label,
+                          )}
+                        </h3>
+                        <p className="text-sm text-[var(--muted-foreground)]">
+                          {t(
+                            flashcardGenerationStatePresentation(
+                              activeGenerationOperation.state,
+                            ).description,
+                          )}
+                        </p>
+                      </div>
+                    </div>
+                    <p className="text-sm">
+                      {t("Topic")}: <strong>{generationFocus}</strong>
+                    </p>
+                    <div className="flex flex-wrap gap-2">
+                      <button
+                        type="button"
+                        onClick={() => void refreshGeneration()}
+                        disabled={busy}
+                        className="rounded-lg border border-[var(--border)] px-3 py-2 text-sm disabled:opacity-50"
+                      >
+                        {t("Refresh")}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() =>
+                          void cancelGeneration(activeGenerationOperation)
+                        }
+                        disabled={busy}
+                        className="rounded-lg border border-[var(--border)] px-3 py-2 text-sm disabled:opacity-50"
+                      >
+                        {t("Cancel creation")}
+                      </button>
+                    </div>
+                  </div>
+                ) : groundedCreateStage === "publishing" &&
+                  activeGenerationOperation ? (
+                  <div
+                    role="status"
+                    className="space-y-4 rounded-xl border border-[var(--border)] bg-[var(--secondary)]/30 p-5"
+                  >
+                    <div className="flex items-start gap-3">
+                      <Loader2 className="mt-0.5 animate-spin" size={20} />
+                      <div>
+                        <h3 className="font-medium">
+                          {t("Finishing your cards")}
+                        </h3>
+                        <p className="text-sm text-[var(--muted-foreground)]">
+                          {t(
+                            "Your cards passed validation. TEEECHR is saving them and opening your study session.",
+                          )}
+                        </p>
+                      </div>
+                    </div>
+                  </div>
+                ) : activeGenerationOperation &&
+                  activeCandidate &&
+                  legacyCandidateReviewEnabled ? (
+                  <div className="space-y-4 rounded-xl border border-[var(--border)] p-5">
+                    <div>
+                      <h3 className="text-lg font-semibold">
+                        {t("Review your cards")}
                       </h3>
                       <p className="text-sm text-[var(--muted-foreground)]">
                         {t(
-                          flashcardGenerationStatePresentation(
-                            activeGenerationOperation.state,
-                          ).description,
+                          "Keep only cards that are useful and accurate. Nothing is saved until you finish.",
                         )}
                       </p>
                     </div>
-                  </div>
-                  <p className="text-sm">
-                    {t("Topic")}: <strong>{generationFocus}</strong>
-                  </p>
-                  <div className="flex flex-wrap gap-2">
-                    <button
-                      type="button"
-                      onClick={() => void refreshGeneration()}
-                      disabled={busy}
-                      className="rounded-lg border border-[var(--border)] px-3 py-2 text-sm disabled:opacity-50"
-                    >
-                      {t("Refresh")}
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => void cancelGeneration(activeGenerationOperation)}
-                      disabled={busy}
-                      className="rounded-lg border border-[var(--border)] px-3 py-2 text-sm disabled:opacity-50"
-                    >
-                      {t("Cancel creation")}
-                    </button>
-                  </div>
-                </div>
-              ) : groundedCreateStage === "reviewing" &&
-                activeGenerationOperation &&
-                activeCandidate ? (
-                <div className="space-y-4 rounded-xl border border-[var(--border)] p-5">
-                  <div>
-                    <h3 className="text-lg font-semibold">{t("Review your cards")}</h3>
-                    <p className="text-sm text-[var(--muted-foreground)]">
-                      {t(
-                        "Keep only cards that are useful and accurate. Nothing is saved until you finish.",
-                      )}
-                    </p>
-                  </div>
-                  <div className="flex items-center justify-between text-sm text-[var(--muted-foreground)]">
-                    <span>
-                      {t("Card {{current}} of {{total}}", {
-                        current: activeCandidateIndex + 1,
-                        total: activeCandidateIds.length,
-                      })}
-                    </span>
-                    <span>
-                      {t("{{count}} kept", { count: activeCandidateIds.length })}
-                    </span>
-                  </div>
-                  <article className="space-y-4 rounded-xl bg-[var(--secondary)]/40 p-5">
-                    <div>
-                      <p className="text-xs font-medium uppercase tracking-wide text-[var(--muted-foreground)]">
-                        {t("Question")}
-                      </p>
-                      <p className="mt-1 text-lg font-medium">
-                        {activeCandidate.prompt}
-                      </p>
-                    </div>
-                    <div>
-                      <p className="text-xs font-medium uppercase tracking-wide text-[var(--muted-foreground)]">
-                        {t("Answer")}
-                      </p>
-                      <p className="mt-1">{activeCandidate.answer}</p>
-                    </div>
-                    {activeCandidate.hint ? (
-                      <p className="text-sm text-[var(--muted-foreground)]">
-                        {t("Hint")}: {activeCandidate.hint}
-                      </p>
-                    ) : null}
-                    {activeGenerationOperation.origin.kind === "general_chat" ? (
-                      <p className="text-sm text-[var(--muted-foreground)]">
-                        {t(
-                          "Based on the selected conversation context. This card is not Course-grounded.",
-                        )}
-                      </p>
-                    ) : (
-                    <details className="text-sm text-[var(--muted-foreground)]">
-                      <summary className="cursor-pointer font-medium">
-                        {t("Why this card is grounded")}
-                      </summary>
-                      <ul className="mt-2 space-y-1">
-                        {activeCandidate.citations.map((citation, index) => {
-                          const source = readySources.find(
-                            (item) =>
-                              item.id === String(citation.source_id ?? ""),
-                          );
-                          const locator =
-                            typeof citation.locator === "object" &&
-                            citation.locator !== null
-                              ? (citation.locator as Record<string, unknown>)
-                              : {};
-                          const evidence =
-                            typeof locator.evidence_quote === "string"
-                              ? locator.evidence_quote
-                              : null;
-                          return (
-                            <li key={`${String(citation.source_id)}-${index}`}>
-                              {source?.display_name ?? t("Course source")}
-                              {evidence ? ` — “${evidence}”` : ""}
-                            </li>
-                          );
+                    <div className="flex items-center justify-between text-sm text-[var(--muted-foreground)]">
+                      <span>
+                        {t("Card {{current}} of {{total}}", {
+                          current: activeCandidateIndex + 1,
+                          total: activeCandidateIds.length,
                         })}
-                      </ul>
-                    </details>
-                    )}
-                  </article>
-                  <div className="flex flex-wrap items-center justify-between gap-3">
-                    <div className="flex gap-2">
+                      </span>
+                      <span>
+                        {t("{{count}} kept", {
+                          count: activeCandidateIds.length,
+                        })}
+                      </span>
+                    </div>
+                    <article className="space-y-4 rounded-xl bg-[var(--secondary)]/40 p-5">
+                      <div>
+                        <p className="text-xs font-medium uppercase tracking-wide text-[var(--muted-foreground)]">
+                          {t("Question")}
+                        </p>
+                        <p className="mt-1 text-lg font-medium">
+                          {activeCandidate.prompt}
+                        </p>
+                      </div>
+                      <div>
+                        <p className="text-xs font-medium uppercase tracking-wide text-[var(--muted-foreground)]">
+                          {t("Answer")}
+                        </p>
+                        <p className="mt-1">{activeCandidate.answer}</p>
+                      </div>
+                      {activeCandidate.hint ? (
+                        <p className="text-sm text-[var(--muted-foreground)]">
+                          {t("Hint")}: {activeCandidate.hint}
+                        </p>
+                      ) : null}
+                      {activeGenerationOperation.origin.kind ===
+                      "general_chat" ? (
+                        <p className="text-sm text-[var(--muted-foreground)]">
+                          {t(
+                            "Based on the selected conversation context. This card is not Course-grounded.",
+                          )}
+                        </p>
+                      ) : (
+                        <details className="text-sm text-[var(--muted-foreground)]">
+                          <summary className="cursor-pointer font-medium">
+                            {t("Why this card is grounded")}
+                          </summary>
+                          <ul className="mt-2 space-y-1">
+                            {activeCandidate.citations.map(
+                              (citation, index) => {
+                                const source = readySources.find(
+                                  (item) =>
+                                    item.id ===
+                                    String(citation.source_id ?? ""),
+                                );
+                                const locator =
+                                  typeof citation.locator === "object" &&
+                                  citation.locator !== null
+                                    ? (citation.locator as Record<
+                                        string,
+                                        unknown
+                                      >)
+                                    : {};
+                                const evidence =
+                                  typeof locator.evidence_quote === "string"
+                                    ? locator.evidence_quote
+                                    : null;
+                                return (
+                                  <li
+                                    key={`${String(citation.source_id)}-${index}`}
+                                  >
+                                    {source?.display_name ?? t("Course source")}
+                                    {evidence ? ` — “${evidence}”` : ""}
+                                  </li>
+                                );
+                              },
+                            )}
+                          </ul>
+                        </details>
+                      )}
+                    </article>
+                    <div className="flex flex-wrap items-center justify-between gap-3">
+                      <div className="flex gap-2">
+                        <button
+                          type="button"
+                          disabled={activeCandidateIndex === 0}
+                          onClick={() =>
+                            setCandidateReviewIndex((indexes) => ({
+                              ...indexes,
+                              [activeGenerationOperation.id]:
+                                activeCandidateIndex - 1,
+                            }))
+                          }
+                          className="rounded-lg border border-[var(--border)] px-3 py-2 text-sm disabled:opacity-40"
+                        >
+                          {t("Previous")}
+                        </button>
+                        <button
+                          type="button"
+                          disabled={
+                            activeCandidateIndex >=
+                            activeCandidateIds.length - 1
+                          }
+                          onClick={() =>
+                            setCandidateReviewIndex((indexes) => ({
+                              ...indexes,
+                              [activeGenerationOperation.id]:
+                                activeCandidateIndex + 1,
+                            }))
+                          }
+                          className="rounded-lg border border-[var(--border)] px-3 py-2 text-sm disabled:opacity-40"
+                        >
+                          {t("Next")}
+                        </button>
+                      </div>
                       <button
                         type="button"
-                        disabled={activeCandidateIndex === 0}
-                        onClick={() =>
+                        onClick={() => {
+                          const nextIds = activeCandidateIds.filter(
+                            (id) => id !== activeCandidate.candidate_id,
+                          );
+                          setCandidateOrder((orders) => ({
+                            ...orders,
+                            [activeGenerationOperation.id]: nextIds,
+                          }));
                           setCandidateReviewIndex((indexes) => ({
                             ...indexes,
-                            [activeGenerationOperation.id]:
-                              activeCandidateIndex - 1,
-                          }))
-                        }
-                        className="rounded-lg border border-[var(--border)] px-3 py-2 text-sm disabled:opacity-40"
+                            [activeGenerationOperation.id]: Math.min(
+                              activeCandidateIndex,
+                              Math.max(0, nextIds.length - 1),
+                            ),
+                          }));
+                        }}
+                        className="rounded-lg border border-[var(--border)] px-3 py-2 text-sm"
                       >
-                        {t("Previous")}
-                      </button>
-                      <button
-                        type="button"
-                        disabled={
-                          activeCandidateIndex >= activeCandidateIds.length - 1
-                        }
-                        onClick={() =>
-                          setCandidateReviewIndex((indexes) => ({
-                            ...indexes,
-                            [activeGenerationOperation.id]:
-                              activeCandidateIndex + 1,
-                          }))
-                        }
-                        className="rounded-lg border border-[var(--border)] px-3 py-2 text-sm disabled:opacity-40"
-                      >
-                        {t("Next")}
+                        {t("Remove this card")}
                       </button>
                     </div>
-                    <button
-                      type="button"
-                      onClick={() => {
-                        const nextIds = activeCandidateIds.filter(
-                          (id) => id !== activeCandidate.candidate_id,
-                        );
-                        setCandidateOrder((orders) => ({
-                          ...orders,
-                          [activeGenerationOperation.id]: nextIds,
-                        }));
-                        setCandidateReviewIndex((indexes) => ({
-                          ...indexes,
-                          [activeGenerationOperation.id]: Math.min(
-                            activeCandidateIndex,
-                            Math.max(0, nextIds.length - 1),
-                          ),
-                        }));
-                      }}
-                      className="rounded-lg border border-[var(--border)] px-3 py-2 text-sm"
-                    >
-                      {t("Remove this card")}
-                    </button>
-                  </div>
-                  {activeGenerationOperation.candidates?.some(
-                    (candidate) =>
-                      !activeCandidateIds.includes(candidate.candidate_id),
-                  ) ? (
-                    <details className="rounded-lg border border-[var(--border)] p-3 text-sm">
-                      <summary className="cursor-pointer font-medium">
-                        {t("Removed cards")}
-                      </summary>
-                      <div className="mt-2 space-y-2">
-                        {activeGenerationOperation.candidates
-                          .filter(
-                            (candidate) =>
-                              !activeCandidateIds.includes(
-                                candidate.candidate_id,
-                              ),
-                          )
-                          .map((candidate) => (
-                            <button
-                              key={candidate.candidate_id}
-                              type="button"
-                              onClick={() =>
-                                setCandidateOrder((orders) => ({
-                                  ...orders,
-                                  [activeGenerationOperation.id]: [
-                                    ...(orders[activeGenerationOperation.id] ??
-                                      []),
-                                    candidate.candidate_id,
-                                  ],
-                                }))
-                              }
-                              className="block w-full rounded-lg border border-dashed border-[var(--border)] px-3 py-2 text-left"
-                            >
-                              {t("Restore")}: {candidate.prompt}
-                            </button>
-                          ))}
-                      </div>
-                    </details>
-                  ) : null}
-                  <div className="flex flex-wrap gap-2 border-t border-[var(--border)] pt-4">
-                    <button
-                      type="button"
-                      onClick={() => void publishCandidates(activeGenerationOperation)}
-                      disabled={busy || !activeCandidateIds.length}
-                      className="rounded-lg bg-[var(--primary)] px-4 py-2 text-sm text-[var(--primary-foreground)] disabled:opacity-50"
-                    >
-                      {t("Save {{count}} cards", {
-                        count: activeCandidateIds.length,
-                      })}
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => void cancelGeneration(activeGenerationOperation)}
-                      disabled={busy}
-                      className="rounded-lg border border-[var(--border)] px-3 py-2 text-sm disabled:opacity-50"
-                    >
-                      {t("Cancel draft")}
-                    </button>
-                  </div>
-                </div>
-              ) : (
-                <div className="space-y-3 rounded-xl border border-[var(--border)] p-5">
-                  <p className="font-medium">{t("No cards are selected")}</p>
-                  <p className="text-sm text-[var(--muted-foreground)]">
-                    {t("Restore a card, or cancel this draft and adjust the request.")}
-                  </p>
-                  {activeGenerationOperation?.candidates?.map((candidate) => (
-                    <button
-                      key={candidate.candidate_id}
-                      type="button"
-                      onClick={() => {
-                        setCandidateOrder((orders) => ({
-                          ...orders,
-                          [activeGenerationOperation.id]: [
-                            ...(orders[activeGenerationOperation.id] ?? []),
-                            candidate.candidate_id,
-                          ],
-                        }));
-                        setCandidateReviewIndex((indexes) => ({
-                          ...indexes,
-                          [activeGenerationOperation.id]: 0,
-                        }));
-                      }}
-                      className="block w-full rounded-lg border border-dashed border-[var(--border)] px-3 py-2 text-left text-sm"
-                    >
-                      {t("Restore")}: {candidate.prompt}
-                    </button>
-                  ))}
-                  {activeGenerationOperation ? (
-                    <button
-                      type="button"
-                      onClick={() => void cancelGeneration(activeGenerationOperation)}
-                      disabled={busy}
-                      className="rounded-lg border border-[var(--border)] px-3 py-2 text-sm disabled:opacity-50"
-                    >
-                      {t("Cancel draft")}
-                    </button>
-                  ) : null}
-                </div>
-              )}
-              {false && generationOperations.length ? (
-                <div className="grid gap-2 md:grid-cols-2">
-                  {generationOperations.slice(0, 6).map((operation) => (
-                    <div
-                      key={operation.id}
-                      className="space-y-3 rounded-lg border border-[var(--border)] px-3 py-3 text-sm"
-                    >
-                      <span className="font-medium">{operation.state}</span>
-                      <span className="ml-2 text-[var(--muted-foreground)]">
-                        {operation.source_snapshot.length} {t("sources")}
-                      </span>
-                      {operation.error_code ? (
-                        <p className="text-xs text-red-600">{operation.error_code}</p>
-                      ) : null}
-                      {operation.state === "awaiting_review" &&
-                      operation.candidates ? (
-                        <div className="space-y-2">
-                          <p className="text-xs text-[var(--muted-foreground)]">
-                            {t(
-                              "Choose and order candidates. Generated facts cannot be edited here.",
-                            )}
-                          </p>
-                          {(candidateOrder[operation.id] ?? []).map(
-                            (candidateId, index) => {
-                              const candidate = operation.candidates?.find(
-                                (item) => item.candidate_id === candidateId,
-                              );
-                              if (!candidate) return null;
-                              return (
-                                <article
-                                  key={candidateId}
-                                  className="rounded-lg bg-[var(--secondary)]/50 p-3"
-                                >
-                                  <div className="flex items-start justify-between gap-2">
-                                    <div>
-                                      <p className="font-medium">
-                                        {candidate.prompt}
-                                      </p>
-                                      <p className="mt-1 text-xs">
-                                        {candidate.answer}
-                                      </p>
-                                      <p className="mt-1 text-xs text-[var(--muted-foreground)]">
-                                        {candidate.card_type} ·{" "}
-                                        {candidate.citations.length} {t("citations")}
-                                      </p>
-                                      <ul className="mt-2 space-y-1 text-xs text-[var(--muted-foreground)]">
-                                        {candidate.citations.map(
-                                          (citation, citationIndex) => {
-                                            const locator =
-                                              typeof citation.locator ===
-                                                "object" &&
-                                              citation.locator !== null
-                                                ? (citation.locator as Record<
-                                                    string,
-                                                    unknown
-                                                  >)
-                                                : {};
-                                            const evidence =
-                                              typeof locator.evidence_quote ===
-                                              "string"
-                                                ? locator.evidence_quote
-                                                : null;
-                                            return (
-                                              <li
-                                                key={`${String(citation.source_id ?? "source")}-${citationIndex}`}
-                                              >
-                                                {t("Source")}{" "}
-                                                {String(
-                                                  citation.source_id ??
-                                                    citationIndex + 1,
-                                                )}
-                                                {evidence
-                                                  ? ` — “${evidence}”`
-                                                  : ""}
-                                              </li>
-                                            );
-                                          },
-                                        )}
-                                      </ul>
-                                    </div>
-                                    <button
-                                      aria-label={t("Exclude candidate")}
-                                      onClick={() =>
-                                        setCandidateOrder((orders) => ({
-                                          ...orders,
-                                          [operation.id]: (
-                                            orders[operation.id] ?? []
-                                          ).filter((id) => id !== candidateId),
-                                        }))
-                                      }
-                                      className="rounded border border-[var(--border)] px-2 py-1 text-xs"
-                                    >
-                                      {t("Exclude")}
-                                    </button>
-                                  </div>
-                                  <div className="mt-2 flex gap-2">
-                                    <button
-                                      disabled={index === 0}
-                                      onClick={() =>
-                                        setCandidateOrder((orders) => {
-                                          const next = [
-                                            ...(orders[operation.id] ?? []),
-                                          ];
-                                          [next[index - 1], next[index]] = [
-                                            next[index],
-                                            next[index - 1],
-                                          ];
-                                          return {
-                                            ...orders,
-                                            [operation.id]: next,
-                                          };
-                                        })
-                                      }
-                                      className="text-xs disabled:opacity-40"
-                                    >
-                                      {t("Move up")}
-                                    </button>
-                                    <button
-                                      disabled={
-                                        index ===
-                                        (candidateOrder[operation.id]?.length ?? 0) -
-                                          1
-                                      }
-                                      onClick={() =>
-                                        setCandidateOrder((orders) => {
-                                          const next = [
-                                            ...(orders[operation.id] ?? []),
-                                          ];
-                                          [next[index], next[index + 1]] = [
-                                            next[index + 1],
-                                            next[index],
-                                          ];
-                                          return {
-                                            ...orders,
-                                            [operation.id]: next,
-                                          };
-                                        })
-                                      }
-                                      className="text-xs disabled:opacity-40"
-                                    >
-                                      {t("Move down")}
-                                    </button>
-                                  </div>
-                                </article>
-                              );
-                            },
-                          )}
-                          {operation.candidates
+                    {activeGenerationOperation.candidates?.some(
+                      (candidate) =>
+                        !activeCandidateIds.includes(candidate.candidate_id),
+                    ) ? (
+                      <details className="rounded-lg border border-[var(--border)] p-3 text-sm">
+                        <summary className="cursor-pointer font-medium">
+                          {t("Removed cards")}
+                        </summary>
+                        <div className="mt-2 space-y-2">
+                          {activeGenerationOperation.candidates
                             .filter(
                               (candidate) =>
-                                !(candidateOrder[operation.id] ?? []).includes(
+                                !activeCandidateIds.includes(
                                   candidate.candidate_id,
                                 ),
                             )
                             .map((candidate) => (
                               <button
                                 key={candidate.candidate_id}
+                                type="button"
                                 onClick={() =>
                                   setCandidateOrder((orders) => ({
                                     ...orders,
-                                    [operation.id]: [
-                                      ...(orders[operation.id] ?? []),
+                                    [activeGenerationOperation.id]: [
+                                      ...(orders[
+                                        activeGenerationOperation.id
+                                      ] ?? []),
                                       candidate.candidate_id,
                                     ],
                                   }))
                                 }
-                                className="w-full rounded-lg border border-dashed border-[var(--border)] px-3 py-2 text-left text-xs text-[var(--muted-foreground)]"
+                                className="block w-full rounded-lg border border-dashed border-[var(--border)] px-3 py-2 text-left"
                               >
-                                {t("Include again")}: {candidate.prompt}
+                                {t("Restore")}: {candidate.prompt}
                               </button>
                             ))}
-                          <div className="flex gap-2">
-                            <button
-                              onClick={() => void publishCandidates(operation)}
-                              disabled={
-                                busy ||
-                                !(candidateOrder[operation.id] ?? []).length
-                              }
-                              className="rounded-lg bg-[var(--primary)] px-3 py-2 text-xs text-[var(--primary-foreground)] disabled:opacity-50"
-                            >
-                              {t("Publish selected cards")}
-                            </button>
-                            <button
-                              onClick={() => void cancelGeneration(operation)}
-                              disabled={busy}
-                              className="rounded-lg border border-[var(--border)] px-3 py-2 text-xs"
-                            >
-                              {t("Cancel draft")}
-                            </button>
-                          </div>
                         </div>
-                      ) : null}
-                      {["queued", "running", "cancelling"].includes(
-                        operation.state,
-                      ) ? (
-                        <button
-                          onClick={() => void cancelGeneration(operation)}
-                          disabled={busy}
-                          className="rounded-lg border border-[var(--border)] px-3 py-1 text-xs"
-                        >
-                          {t("Cancel generation")}
-                        </button>
-                      ) : null}
-                    </div>
-                  ))}
-                </div>
-              ) : null}
-            </section>
-            ) : null}
-
-            {pageView === "study" ||
-            (pageView === "create" && createMode === "manual") ? (
-            <div className="grid gap-5 lg:grid-cols-[280px_minmax(0,1fr)]">
-            <section className="rounded-xl border border-[var(--border)] bg-[var(--card)] p-4">
-              <h2 className="mb-3 font-medium">
-                {pageView === "study" ? t("Your decks") : t("Manual decks")}
-              </h2>
-              {pageView === "create" ? (
-                <button
-                  type="button"
-                  onClick={() => setCreateMode("choose")}
-                  className="mb-3 text-sm text-[var(--muted-foreground)] underline underline-offset-4"
-                >
-                  {t("Back to creation choices")}
-                </button>
-              ) : null}
-              {pageView === "create" ? (
-              <div className="mb-3 flex gap-2">
-                <input
-                  aria-label={t("New Flashcard deck title")}
-                  value={deckTitle}
-                  onChange={(event) => setDeckTitle(event.target.value)}
-                  placeholder={t("New deck title")}
-                  disabled={!courseWritable || busy}
-                  className="min-w-0 flex-1 rounded-lg border border-[var(--border)] bg-[var(--background)] px-2 py-1.5 text-sm"
-                />
-                <button
-                  onClick={() => void createDeck()}
-                  disabled={!courseWritable || busy || !deckTitle.trim()}
-                  className="rounded-lg border border-[var(--border)] px-3 py-1.5 text-sm disabled:opacity-50"
-                >
-                  {t("Create")}
-                </button>
-              </div>
-              ) : null}
-              <div className="space-y-1">
-                {(pageView === "study"
-                  ? activeDecks
-                  : activeDecks.filter((deck) => deck.mode === "manual")
-                ).map((deck) => (
-                  <button
-                    key={deck.id}
-                    onClick={() => void selectDeck(deck)}
-                    className={`w-full rounded-lg px-3 py-2 text-left text-sm ${
-                      selectedDeckId === deck.id
-                        ? "bg-[var(--secondary)]"
-                        : "hover:bg-[var(--secondary)]/60"
-                    }`}
-                  >
-                    <span className="block font-medium">{deck.title}</span>
-                    <span className="text-xs text-[var(--muted-foreground)]">
-                      {deck.state === "ready"
-                        ? t("Ready to study")
-                        : t("Still being built")}
-                    </span>
-                  </button>
-                ))}
-                {!activeDecks.length ? (
-                  <p className="px-2 py-3 text-sm text-[var(--muted-foreground)]">
-                    {t("No Flashcard decks yet.")}
-                  </p>
-                ) : null}
-                {decksHaveMore ? (
-                  <button
-                    type="button"
-                    disabled={busy}
-                    onClick={() => void loadMoreDecks()}
-                    className="w-full rounded-lg border border-[var(--border)] px-3 py-2 text-sm disabled:opacity-50"
-                  >
-                    {t("Load more decks")}
-                  </button>
-                ) : null}
-              </div>
-            </section>
-
-            <section className="rounded-xl border border-[var(--border)] bg-[var(--card)] p-5">
-              {selectedDeck && view ? (
-                <div className="space-y-5">
-                  <div className="flex flex-wrap items-start justify-between gap-3">
-                    <div>
-                      <h2 className="text-xl font-semibold">{selectedDeck.title}</h2>
-                      <p className="text-sm text-[var(--muted-foreground)]">
-                        {view.review_summary.due_cards > 0
-                          ? `${view.review_summary.due_cards} ${t("cards ready")}`
-                          : selectedDeck.state === "ready"
-                            ? t("You are caught up")
-                            : `${view.cards.length} ${t("cards")}`}
-                      </p>
-                      <p className="mt-1 text-xs font-medium text-[var(--muted-foreground)]">
-                        {selectedDeck.mode === "generated"
-                          ? selectedDeck.source_snapshot.length
-                            ? t("Grounded in the cited Course sources")
-                            : t("Based on a reviewed conversation")
-                          : t("Manual deck — not source-grounded")}
-                      </p>
-                    </div>
-                    <div className="flex flex-wrap gap-2">
-                      {selectedDeck.state === "draft" &&
-                      selectedDeck.mode === "manual" ? (
-                        <button
-                          onClick={() => void publishDeck()}
-                          disabled={!courseWritable || busy || !view.cards.length}
-                          className="inline-flex items-center gap-1 rounded-lg border border-[var(--border)] px-3 py-2 text-sm disabled:opacity-50"
-                        >
-                          <CheckCircle2 size={15} /> {t("Ready")}
-                        </button>
-                      ) : null}
-                      {selectedDeck.state === "ready" ? (
-                        <button
-                          onClick={() => void beginReview()}
-                          disabled={!courseWritable || busy}
-                          className="inline-flex items-center gap-1 rounded-lg bg-[var(--primary)] px-3 py-2 text-sm text-[var(--primary-foreground)] disabled:opacity-50"
-                        >
-                          <Play size={15} />{" "}
-                          {view.review_summary.due_cards > 0
-                            ? t("Start studying")
-                            : t("Check for cards")}
-                        </button>
-                      ) : null}
+                      </details>
+                    ) : null}
+                    <div className="flex flex-wrap gap-2 border-t border-[var(--border)] pt-4">
                       <button
-                        onClick={() => void archiveOrRestore()}
-                        disabled={!courseWritable || busy}
-                        className="inline-flex items-center gap-1 rounded-lg border border-[var(--border)] px-3 py-2 text-sm disabled:opacity-50"
+                        type="button"
+                        onClick={() =>
+                          void publishCandidates(activeGenerationOperation)
+                        }
+                        disabled={busy || !activeCandidateIds.length}
+                        className="rounded-lg bg-[var(--primary)] px-4 py-2 text-sm text-[var(--primary-foreground)] disabled:opacity-50"
                       >
-                        {selectedDeck.state === "archived" ? (
-                          <RotateCcw size={15} />
-                        ) : (
-                          <Archive size={15} />
-                        )}
-                        {selectedDeck.state === "archived" ? t("Restore") : t("Archive")}
+                        {t("Save {{count}} cards", {
+                          count: activeCandidateIds.length,
+                        })}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() =>
+                          void cancelGeneration(activeGenerationOperation)
+                        }
+                        disabled={busy}
+                        className="rounded-lg border border-[var(--border)] px-3 py-2 text-sm disabled:opacity-50"
+                      >
+                        {t("Cancel draft")}
                       </button>
                     </div>
                   </div>
-
-                  {selectedDeck.state === "draft" &&
-                  selectedDeck.mode === "manual" ? (
-                    <div className="space-y-3 rounded-lg border border-[var(--border)] p-4">
-                      <h3 className="font-medium">{t("Add a card")}</h3>
-                      <textarea
-                        aria-label={t("Flashcard prompt")}
-                        value={cardDraft.prompt}
-                        onChange={(event) =>
-                          setCardDraft((value) => ({ ...value, prompt: event.target.value }))
-                        }
-                        placeholder={t("Prompt")}
-                        disabled={!courseWritable || busy}
-                        className="min-h-20 w-full rounded-lg border border-[var(--border)] bg-[var(--background)] p-2 text-sm"
-                      />
-                      <textarea
-                        aria-label={t("Flashcard answer")}
-                        value={cardDraft.answer}
-                        onChange={(event) =>
-                          setCardDraft((value) => ({ ...value, answer: event.target.value }))
-                        }
-                        placeholder={t("Answer")}
-                        disabled={!courseWritable || busy}
-                        className="min-h-20 w-full rounded-lg border border-[var(--border)] bg-[var(--background)] p-2 text-sm"
-                      />
-                      <button
-                        onClick={() => void addCard()}
-                        disabled={
-                          busy ||
-                          !courseWritable ||
-                          !cardDraft.prompt.trim() ||
-                          !cardDraft.answer.trim()
-                        }
-                        className="inline-flex items-center gap-1 rounded-lg border border-[var(--border)] px-3 py-2 text-sm disabled:opacity-50"
-                      >
-                        <Save size={15} /> {t("Save card")}
-                      </button>
-                    </div>
-                  ) : null}
-
-                  {selectedDeck.state === "draft" &&
-                  selectedDeck.mode === "generated" ? (
-                    <Notice>
+                ) : (
+                  <div className="space-y-3 rounded-xl border border-[var(--border)] p-5">
+                    <p className="font-medium">{t("No cards are selected")}</p>
+                    <p className="text-sm text-[var(--muted-foreground)]">
                       {t(
-                        selectedDeck.source_snapshot.length
-                          ? "Grounded generation is still processing. Refresh status to load the immutable deck when it is ready."
-                          : "Conversation card generation is still processing. Refresh status when it is ready for review.",
+                        "Restore a card, or cancel this draft and adjust the request.",
                       )}
-                    </Notice>
-                  ) : null}
-
-                  <FlashcardStudySession
-                    card={currentCard}
-                    cardsLeft={Math.max(reviewCards.length - reviewIndex, 0)}
-                    reviewedCards={reviewedCards}
-                    answerVisible={answerVisible}
-                    hintVisible={hintVisible}
-                    sourceVisible={sourceVisible}
-                    sourceDisclosure={currentSourceDisclosure}
-                    busy={busy || !courseWritable}
-                    complete={!currentCard && reviewCards.length > 0}
-                    onReveal={() => setAnswerVisible(true)}
-                    onRate={(rating) => void rate(rating)}
-                    onHintVisibilityChange={setHintVisible}
-                    onSourceVisibilityChange={setSourceVisible}
-                    onDone={() => {
-                      setReviewCards([]);
-                      setReviewIndex(0);
-                      setReviewedCards(0);
-                    }}
-                    onKeepStudying={() => void beginReview()}
-                  />
-
-                  <div className="space-y-2">
-                    {view.cards.map((card) => (
-                      <div
-                        key={card.id}
-                        className="rounded-lg border border-[var(--border)] px-3 py-2"
+                    </p>
+                    {activeGenerationOperation?.candidates?.map((candidate) => (
+                      <button
+                        key={candidate.candidate_id}
+                        type="button"
+                        onClick={() => {
+                          setCandidateOrder((orders) => ({
+                            ...orders,
+                            [activeGenerationOperation.id]: [
+                              ...(orders[activeGenerationOperation.id] ?? []),
+                              candidate.candidate_id,
+                            ],
+                          }));
+                          setCandidateReviewIndex((indexes) => ({
+                            ...indexes,
+                            [activeGenerationOperation.id]: 0,
+                          }));
+                        }}
+                        className="block w-full rounded-lg border border-dashed border-[var(--border)] px-3 py-2 text-left text-sm"
                       >
-                        <p className="text-sm font-medium">{card.prompt}</p>
-                        {card.hint ? (
-                          <p className="mt-1 text-xs text-[var(--muted-foreground)]">
-                            {t("Includes a hint")}
+                        {t("Restore")}: {candidate.prompt}
+                      </button>
+                    ))}
+                    {activeGenerationOperation ? (
+                      <button
+                        type="button"
+                        onClick={() =>
+                          void cancelGeneration(activeGenerationOperation)
+                        }
+                        disabled={busy}
+                        className="rounded-lg border border-[var(--border)] px-3 py-2 text-sm disabled:opacity-50"
+                      >
+                        {t("Cancel draft")}
+                      </button>
+                    ) : null}
+                  </div>
+                )}
+                {false && generationOperations.length ? (
+                  <div className="grid gap-2 md:grid-cols-2">
+                    {generationOperations.slice(0, 6).map((operation) => (
+                      <div
+                        key={operation.id}
+                        className="space-y-3 rounded-lg border border-[var(--border)] px-3 py-3 text-sm"
+                      >
+                        <span className="font-medium">{operation.state}</span>
+                        <span className="ml-2 text-[var(--muted-foreground)]">
+                          {operation.source_snapshot.length} {t("sources")}
+                        </span>
+                        {operation.error_code ? (
+                          <p className="text-xs text-red-600">
+                            {operation.error_code}
                           </p>
+                        ) : null}
+                        {operation.state === "awaiting_review" &&
+                        operation.candidates ? (
+                          <div className="space-y-2">
+                            <p className="text-xs text-[var(--muted-foreground)]">
+                              {t(
+                                "Choose and order candidates. Generated facts cannot be edited here.",
+                              )}
+                            </p>
+                            {(candidateOrder[operation.id] ?? []).map(
+                              (candidateId, index) => {
+                                const candidate = operation.candidates?.find(
+                                  (item) => item.candidate_id === candidateId,
+                                );
+                                if (!candidate) return null;
+                                return (
+                                  <article
+                                    key={candidateId}
+                                    className="rounded-lg bg-[var(--secondary)]/50 p-3"
+                                  >
+                                    <div className="flex items-start justify-between gap-2">
+                                      <div>
+                                        <p className="font-medium">
+                                          {candidate.prompt}
+                                        </p>
+                                        <p className="mt-1 text-xs">
+                                          {candidate.answer}
+                                        </p>
+                                        <p className="mt-1 text-xs text-[var(--muted-foreground)]">
+                                          {candidate.card_type} ·{" "}
+                                          {candidate.citations.length}{" "}
+                                          {t("citations")}
+                                        </p>
+                                        <ul className="mt-2 space-y-1 text-xs text-[var(--muted-foreground)]">
+                                          {candidate.citations.map(
+                                            (citation, citationIndex) => {
+                                              const locator =
+                                                typeof citation.locator ===
+                                                  "object" &&
+                                                citation.locator !== null
+                                                  ? (citation.locator as Record<
+                                                      string,
+                                                      unknown
+                                                    >)
+                                                  : {};
+                                              const evidence =
+                                                typeof locator.evidence_quote ===
+                                                "string"
+                                                  ? locator.evidence_quote
+                                                  : null;
+                                              return (
+                                                <li
+                                                  key={`${String(citation.source_id ?? "source")}-${citationIndex}`}
+                                                >
+                                                  {t("Source")}{" "}
+                                                  {String(
+                                                    citation.source_id ??
+                                                      citationIndex + 1,
+                                                  )}
+                                                  {evidence
+                                                    ? ` — “${evidence}”`
+                                                    : ""}
+                                                </li>
+                                              );
+                                            },
+                                          )}
+                                        </ul>
+                                      </div>
+                                      <button
+                                        aria-label={t("Exclude candidate")}
+                                        onClick={() =>
+                                          setCandidateOrder((orders) => ({
+                                            ...orders,
+                                            [operation.id]: (
+                                              orders[operation.id] ?? []
+                                            ).filter(
+                                              (id) => id !== candidateId,
+                                            ),
+                                          }))
+                                        }
+                                        className="rounded border border-[var(--border)] px-2 py-1 text-xs"
+                                      >
+                                        {t("Exclude")}
+                                      </button>
+                                    </div>
+                                    <div className="mt-2 flex gap-2">
+                                      <button
+                                        disabled={index === 0}
+                                        onClick={() =>
+                                          setCandidateOrder((orders) => {
+                                            const next = [
+                                              ...(orders[operation.id] ?? []),
+                                            ];
+                                            [next[index - 1], next[index]] = [
+                                              next[index],
+                                              next[index - 1],
+                                            ];
+                                            return {
+                                              ...orders,
+                                              [operation.id]: next,
+                                            };
+                                          })
+                                        }
+                                        className="text-xs disabled:opacity-40"
+                                      >
+                                        {t("Move up")}
+                                      </button>
+                                      <button
+                                        disabled={
+                                          index ===
+                                          (candidateOrder[operation.id]
+                                            ?.length ?? 0) -
+                                            1
+                                        }
+                                        onClick={() =>
+                                          setCandidateOrder((orders) => {
+                                            const next = [
+                                              ...(orders[operation.id] ?? []),
+                                            ];
+                                            [next[index], next[index + 1]] = [
+                                              next[index + 1],
+                                              next[index],
+                                            ];
+                                            return {
+                                              ...orders,
+                                              [operation.id]: next,
+                                            };
+                                          })
+                                        }
+                                        className="text-xs disabled:opacity-40"
+                                      >
+                                        {t("Move down")}
+                                      </button>
+                                    </div>
+                                  </article>
+                                );
+                              },
+                            )}
+                            {operation.candidates
+                              .filter(
+                                (candidate) =>
+                                  !(
+                                    candidateOrder[operation.id] ?? []
+                                  ).includes(candidate.candidate_id),
+                              )
+                              .map((candidate) => (
+                                <button
+                                  key={candidate.candidate_id}
+                                  onClick={() =>
+                                    setCandidateOrder((orders) => ({
+                                      ...orders,
+                                      [operation.id]: [
+                                        ...(orders[operation.id] ?? []),
+                                        candidate.candidate_id,
+                                      ],
+                                    }))
+                                  }
+                                  className="w-full rounded-lg border border-dashed border-[var(--border)] px-3 py-2 text-left text-xs text-[var(--muted-foreground)]"
+                                >
+                                  {t("Include again")}: {candidate.prompt}
+                                </button>
+                              ))}
+                            <div className="flex gap-2">
+                              <button
+                                onClick={() =>
+                                  void publishCandidates(operation)
+                                }
+                                disabled={
+                                  busy ||
+                                  !(candidateOrder[operation.id] ?? []).length
+                                }
+                                className="rounded-lg bg-[var(--primary)] px-3 py-2 text-xs text-[var(--primary-foreground)] disabled:opacity-50"
+                              >
+                                {t("Publish selected cards")}
+                              </button>
+                              <button
+                                onClick={() => void cancelGeneration(operation)}
+                                disabled={busy}
+                                className="rounded-lg border border-[var(--border)] px-3 py-2 text-xs"
+                              >
+                                {t("Cancel draft")}
+                              </button>
+                            </div>
+                          </div>
+                        ) : null}
+                        {["queued", "running", "cancelling"].includes(
+                          operation.state,
+                        ) ? (
+                          <button
+                            onClick={() => void cancelGeneration(operation)}
+                            disabled={busy}
+                            className="rounded-lg border border-[var(--border)] px-3 py-1 text-xs"
+                          >
+                            {t("Cancel generation")}
+                          </button>
                         ) : null}
                       </div>
                     ))}
                   </div>
-                </div>
-              ) : (
-                <div className="space-y-3">
-                  <p className="text-sm text-[var(--muted-foreground)]">
-                    {archivedDecks.length
-                      ? t("No active decks. Restore an archived deck or create a new one.")
-                      : t("Create your first deck to start studying.")}
-                  </p>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setCreateMode("choose");
-                      setPageView("create");
-                    }}
-                    className="rounded-lg bg-[var(--primary)] px-3 py-2 text-sm text-[var(--primary-foreground)]"
-                  >
-                    {t("Create flashcards")}
-                  </button>
-                </div>
-              )}
-            </section>
-            </div>
+                ) : null}
+              </section>
             ) : null}
 
-            {pageView === "study" && archivedDecks.length ? (
+            {pageView === "study" ||
+            (pageView === "create" && createMode === "manual") ? (
+              <div
+                className={
+                  studySessionActive
+                    ? "mx-auto w-full max-w-5xl"
+                    : "grid gap-5 lg:grid-cols-[280px_minmax(0,1fr)]"
+                }
+              >
+                {!studySessionActive ? (
+                  <section className="rounded-xl border border-[var(--border)] bg-[var(--card)] p-4">
+                    <h2 className="mb-3 font-medium">
+                      {pageView === "study"
+                        ? t("Your decks")
+                        : t("Manual decks")}
+                    </h2>
+                    {pageView === "create" ? (
+                      <button
+                        type="button"
+                        onClick={() => setCreateMode("choose")}
+                        className="mb-3 text-sm text-[var(--muted-foreground)] underline underline-offset-4"
+                      >
+                        {t("Back to creation choices")}
+                      </button>
+                    ) : null}
+                    {pageView === "create" ? (
+                      <div className="mb-3 flex gap-2">
+                        <input
+                          aria-label={t("New Flashcard deck title")}
+                          value={deckTitle}
+                          onChange={(event) => setDeckTitle(event.target.value)}
+                          placeholder={t("New deck title")}
+                          disabled={!courseWritable || busy}
+                          className="min-w-0 flex-1 rounded-lg border border-[var(--border)] bg-[var(--background)] px-2 py-1.5 text-sm"
+                        />
+                        <button
+                          onClick={() => void createDeck()}
+                          disabled={
+                            !courseWritable || busy || !deckTitle.trim()
+                          }
+                          className="rounded-lg border border-[var(--border)] px-3 py-1.5 text-sm disabled:opacity-50"
+                        >
+                          {t("Create")}
+                        </button>
+                      </div>
+                    ) : null}
+                    <div className="space-y-1">
+                      {(pageView === "study"
+                        ? activeDecks
+                        : activeDecks.filter((deck) => deck.mode === "manual")
+                      ).map((deck) => (
+                        <button
+                          key={deck.id}
+                          onClick={() => void selectDeck(deck)}
+                          className={`w-full rounded-lg px-3 py-2 text-left text-sm ${
+                            selectedDeckId === deck.id
+                              ? "bg-[var(--secondary)]"
+                              : "hover:bg-[var(--secondary)]/60"
+                          }`}
+                        >
+                          <span className="block font-medium">
+                            {deck.title}
+                          </span>
+                          <span className="text-xs text-[var(--muted-foreground)]">
+                            {deck.state === "ready"
+                              ? t("Ready to study")
+                              : t("Still being built")}
+                          </span>
+                        </button>
+                      ))}
+                      {!activeDecks.length ? (
+                        <p className="px-2 py-3 text-sm text-[var(--muted-foreground)]">
+                          {t("No Flashcard decks yet.")}
+                        </p>
+                      ) : null}
+                      {decksHaveMore ? (
+                        <button
+                          type="button"
+                          disabled={busy}
+                          onClick={() => void loadMoreDecks()}
+                          className="w-full rounded-lg border border-[var(--border)] px-3 py-2 text-sm disabled:opacity-50"
+                        >
+                          {t("Load more decks")}
+                        </button>
+                      ) : null}
+                    </div>
+                  </section>
+                ) : null}
+
+                <section
+                  className={
+                    studySessionActive
+                      ? "rounded-2xl bg-[var(--card)] p-4 sm:p-7"
+                      : "rounded-xl border border-[var(--border)] bg-[var(--card)] p-5"
+                  }
+                >
+                  {selectedDeck && view ? (
+                    <div className="space-y-5">
+                      <div className="flex flex-wrap items-start justify-between gap-3">
+                        <div>
+                          <h2 className="text-xl font-semibold">
+                            {selectedDeck.title}
+                          </h2>
+                          <p className="text-sm text-[var(--muted-foreground)]">
+                            {view.review_summary.due_cards > 0
+                              ? `${view.review_summary.due_cards} ${t("cards ready")}`
+                              : selectedDeck.state === "ready"
+                                ? t("You are caught up")
+                                : `${view.cards.length} ${t("cards")}`}
+                          </p>
+                          <p className="mt-1 text-xs font-medium text-[var(--muted-foreground)]">
+                            {selectedDeck.mode === "generated"
+                              ? selectedDeck.source_snapshot.length
+                                ? t("Grounded in the cited Course sources")
+                                : t("Based on a reviewed conversation")
+                              : t("Manual deck — not source-grounded")}
+                          </p>
+                        </div>
+                        {!studySessionActive ? (
+                          <div className="flex flex-wrap gap-2">
+                            {selectedDeck.state === "draft" &&
+                            selectedDeck.mode === "manual" ? (
+                              <button
+                                onClick={() => void publishDeck()}
+                                disabled={
+                                  !courseWritable || busy || !view.cards.length
+                                }
+                                className="inline-flex items-center gap-1 rounded-lg border border-[var(--border)] px-3 py-2 text-sm disabled:opacity-50"
+                              >
+                                <CheckCircle2 size={15} /> {t("Ready")}
+                              </button>
+                            ) : null}
+                            {selectedDeck.state === "ready" ? (
+                              <button
+                                onClick={() => void beginReview()}
+                                disabled={!courseWritable || busy}
+                                className="inline-flex items-center gap-1 rounded-lg bg-[var(--primary)] px-3 py-2 text-sm text-[var(--primary-foreground)] disabled:opacity-50"
+                              >
+                                <Play size={15} />{" "}
+                                {view.review_summary.due_cards > 0
+                                  ? t("Start studying")
+                                  : t("Check for cards")}
+                              </button>
+                            ) : null}
+                            <button
+                              onClick={() => void archiveOrRestore()}
+                              disabled={!courseWritable || busy}
+                              className="inline-flex items-center gap-1 rounded-lg border border-[var(--border)] px-3 py-2 text-sm disabled:opacity-50"
+                            >
+                              {selectedDeck.state === "archived" ? (
+                                <RotateCcw size={15} />
+                              ) : (
+                                <Archive size={15} />
+                              )}
+                              {selectedDeck.state === "archived"
+                                ? t("Restore")
+                                : t("Archive")}
+                            </button>
+                          </div>
+                        ) : (
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setReviewCards([]);
+                              setReviewIndex(0);
+                              setReviewedCards(0);
+                              setCompletedReviewIndexes([]);
+                              setAnswerVisible(false);
+                              setHintVisible(false);
+                              setSourceVisible(false);
+                            }}
+                            className="text-sm text-[var(--muted-foreground)] underline underline-offset-4"
+                          >
+                            {t("Exit study")}
+                          </button>
+                        )}
+                      </div>
+
+                      {selectedDeck.state === "draft" &&
+                      selectedDeck.mode === "manual" ? (
+                        <div className="space-y-3 rounded-lg border border-[var(--border)] p-4">
+                          <h3 className="font-medium">{t("Add a card")}</h3>
+                          <textarea
+                            aria-label={t("Flashcard prompt")}
+                            value={cardDraft.prompt}
+                            onChange={(event) =>
+                              setCardDraft((value) => ({
+                                ...value,
+                                prompt: event.target.value,
+                              }))
+                            }
+                            placeholder={t("Prompt")}
+                            disabled={!courseWritable || busy}
+                            className="min-h-20 w-full rounded-lg border border-[var(--border)] bg-[var(--background)] p-2 text-sm"
+                          />
+                          <textarea
+                            aria-label={t("Flashcard answer")}
+                            value={cardDraft.answer}
+                            onChange={(event) =>
+                              setCardDraft((value) => ({
+                                ...value,
+                                answer: event.target.value,
+                              }))
+                            }
+                            placeholder={t("Answer")}
+                            disabled={!courseWritable || busy}
+                            className="min-h-20 w-full rounded-lg border border-[var(--border)] bg-[var(--background)] p-2 text-sm"
+                          />
+                          <button
+                            onClick={() => void addCard()}
+                            disabled={
+                              busy ||
+                              !courseWritable ||
+                              !cardDraft.prompt.trim() ||
+                              !cardDraft.answer.trim()
+                            }
+                            className="inline-flex items-center gap-1 rounded-lg border border-[var(--border)] px-3 py-2 text-sm disabled:opacity-50"
+                          >
+                            <Save size={15} /> {t("Save card")}
+                          </button>
+                        </div>
+                      ) : null}
+
+                      {selectedDeck.state === "draft" &&
+                      selectedDeck.mode === "generated" ? (
+                        <Notice>
+                          {t(
+                            selectedDeck.source_snapshot.length
+                              ? "Grounded generation is still processing. Refresh status to load the immutable deck when it is ready."
+                              : "Conversation card generation is still processing. Refresh status when it is ready for review.",
+                          )}
+                        </Notice>
+                      ) : null}
+
+                      <FlashcardStudySession
+                        card={currentCard}
+                        cardsLeft={Math.max(
+                          reviewCards.length - reviewIndex,
+                          0,
+                        )}
+                        reviewedCards={reviewedCards}
+                        currentIndex={reviewIndex}
+                        cardCount={reviewCards.length}
+                        completedIndexes={completedReviewIndexes}
+                        answerVisible={answerVisible}
+                        hintVisible={hintVisible}
+                        sourceVisible={sourceVisible}
+                        sourceDisclosure={currentSourceDisclosure}
+                        busy={busy || !courseWritable}
+                        complete={!currentCard && reviewCards.length > 0}
+                        onReveal={() => setAnswerVisible(true)}
+                        onRate={(rating) => void rate(rating)}
+                        onHintVisibilityChange={setHintVisible}
+                        onSourceVisibilityChange={setSourceVisible}
+                        onNavigate={(index) => {
+                          setReviewIndex(index);
+                          setAnswerVisible(false);
+                          setHintVisible(false);
+                          setSourceVisible(false);
+                        }}
+                        onDone={() => {
+                          setReviewCards([]);
+                          setReviewIndex(0);
+                          setReviewedCards(0);
+                          setCompletedReviewIndexes([]);
+                        }}
+                        onKeepStudying={() => void beginReview()}
+                      />
+
+                      {!studySessionActive ? (
+                        <div className="space-y-2">
+                          {view.cards.map((card) => (
+                            <div
+                              key={card.id}
+                              className="rounded-lg border border-[var(--border)] px-3 py-2"
+                            >
+                              <p className="text-sm font-medium">
+                                {card.prompt}
+                              </p>
+                              {card.hint ? (
+                                <p className="mt-1 text-xs text-[var(--muted-foreground)]">
+                                  {t("Includes a hint")}
+                                </p>
+                              ) : null}
+                            </div>
+                          ))}
+                        </div>
+                      ) : null}
+                    </div>
+                  ) : (
+                    <div className="space-y-3">
+                      <p className="text-sm text-[var(--muted-foreground)]">
+                        {archivedDecks.length
+                          ? t(
+                              "No active decks. Restore an archived deck or create a new one.",
+                            )
+                          : t("Create your first deck to start studying.")}
+                      </p>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setCreateMode("choose");
+                          setPageView("create");
+                        }}
+                        className="rounded-lg bg-[var(--primary)] px-3 py-2 text-sm text-[var(--primary-foreground)]"
+                      >
+                        {t("Create flashcards")}
+                      </button>
+                    </div>
+                  )}
+                </section>
+              </div>
+            ) : null}
+
+            {pageView === "study" &&
+            !studySessionActive &&
+            archivedDecks.length ? (
               <section className="rounded-xl border border-[var(--border)] bg-[var(--card)] p-4">
                 <button
                   type="button"
@@ -2457,8 +2830,14 @@ export default function FlashcardsWorkspace() {
                   onClick={() => setShowArchived((shown) => !shown)}
                   className="flex w-full items-center justify-between text-left font-medium"
                 >
-                  <span>{t("Archived decks")} ({archivedDecks.length})</span>
-                  {showArchived ? <ChevronUp size={16} /> : <ChevronDown size={16} />}
+                  <span>
+                    {t("Archived decks")} ({archivedDecks.length})
+                  </span>
+                  {showArchived ? (
+                    <ChevronUp size={16} />
+                  ) : (
+                    <ChevronDown size={16} />
+                  )}
                 </button>
                 {showArchived ? (
                   <div className="mt-3 grid gap-2 sm:grid-cols-2">
@@ -2484,9 +2863,13 @@ export default function FlashcardsWorkspace() {
               <section className="space-y-4 rounded-xl border border-[var(--border)] bg-[var(--card)] p-5">
                 <div className="flex flex-wrap items-start justify-between gap-3">
                   <div>
-                    <h2 className="text-xl font-semibold">{t("Card creation activity")}</h2>
+                    <h2 className="text-xl font-semibold">
+                      {t("Card creation activity")}
+                    </h2>
                     <p className="mt-1 text-sm text-[var(--muted-foreground)]">
-                      {t("Track active requests and review card drafts before publishing.")}
+                      {t(
+                        "Track active requests and review card drafts before publishing.",
+                      )}
                     </p>
                   </div>
                   <button
@@ -2533,7 +2916,8 @@ export default function FlashcardsWorkspace() {
                             {failure?.detail ?? t(presentation.description)}
                           </p>
                           <p className="mt-1 text-xs text-[var(--muted-foreground)]">
-                            {operation.source_snapshot.length} {t("Course materials")}
+                            {operation.source_snapshot.length}{" "}
+                            {t("Course materials")}
                           </p>
                         </div>
                         {operation.state === "failed" ? (
@@ -2542,7 +2926,9 @@ export default function FlashcardsWorkspace() {
                               type="button"
                               onClick={() => {
                                 setGeneratedTitle("Course flashcards");
-                                setGenerationFocus(operation.generation_brief.focus);
+                                setGenerationFocus(
+                                  operation.generation_brief.focus,
+                                );
                                 setGenerationCount(
                                   operation.generation_brief.desired_count,
                                 );
@@ -2596,124 +2982,138 @@ export default function FlashcardsWorkspace() {
                               {t("Candidate")} {reviewIndexForOperation + 1}{" "}
                               {t("of")} {operation.candidates.length}
                             </p>
-                            {operation.candidates.map((candidate, candidateIndex) => {
-                              if (candidateIndex !== reviewIndexForOperation) {
-                                return null;
-                              }
-                              const included = selected.includes(
-                                candidate.candidate_id,
-                              );
-                              const index = selected.indexOf(
-                                candidate.candidate_id,
-                              );
-                              const sourceNames = candidate.citations
-                                .map((citation) =>
-                                  readySources.find(
-                                    (source) =>
-                                      source.id ===
-                                      String(citation.source_id ?? ""),
-                                  ),
-                                )
-                                .filter(
-                                  (source): source is CourseSource =>
+                            {operation.candidates.map(
+                              (candidate, candidateIndex) => {
+                                if (
+                                  candidateIndex !== reviewIndexForOperation
+                                ) {
+                                  return null;
+                                }
+                                const included = selected.includes(
+                                  candidate.candidate_id,
+                                );
+                                const index = selected.indexOf(
+                                  candidate.candidate_id,
+                                );
+                                const sourceNames = candidate.citations
+                                  .map((citation) =>
+                                    readySources.find(
+                                      (source) =>
+                                        source.id ===
+                                        String(citation.source_id ?? ""),
+                                    ),
+                                  )
+                                  .filter((source): source is CourseSource =>
                                     Boolean(source),
-                                )
-                                .map((source) => source.display_name);
-                              return (
-                                <div
-                                  key={candidate.candidate_id}
-                                  className={`space-y-3 rounded-lg border p-4 ${
-                                    included
-                                      ? "border-[var(--border)]"
-                                      : "border-dashed border-[var(--border)] opacity-70"
-                                  }`}
-                                >
-                                  <div>
-                                    <p className="font-medium">{candidate.prompt}</p>
-                                    <p className="mt-2 text-sm">{candidate.answer}</p>
-                                  </div>
-                                  {sourceNames.length ? (
-                                    <details className="text-xs text-[var(--muted-foreground)]">
-                                      <summary className="cursor-pointer">
-                                        {t("Show sources")}
-                                      </summary>
-                                      <p className="mt-1">
-                                        {Array.from(new Set(sourceNames)).join(", ")}
+                                  )
+                                  .map((source) => source.display_name);
+                                return (
+                                  <div
+                                    key={candidate.candidate_id}
+                                    className={`space-y-3 rounded-lg border p-4 ${
+                                      included
+                                        ? "border-[var(--border)]"
+                                        : "border-dashed border-[var(--border)] opacity-70"
+                                    }`}
+                                  >
+                                    <div>
+                                      <p className="font-medium">
+                                        {candidate.prompt}
                                       </p>
-                                    </details>
-                                  ) : null}
-                                  <div className="flex flex-wrap gap-2">
-                                    <button
-                                      type="button"
-                                      onClick={() =>
-                                        setCandidateOrder((orders) => ({
-                                          ...orders,
-                                          [operation.id]: included
-                                            ? selected.filter(
-                                                (id) =>
-                                                  id !== candidate.candidate_id,
-                                              )
-                                            : [
-                                                ...selected,
-                                                candidate.candidate_id,
-                                              ],
-                                        }))
-                                      }
-                                      aria-label={`${
-                                        included ? t("Remove") : t("Keep")
-                                      }: ${candidate.prompt}`}
-                                      className="rounded-lg border border-[var(--border)] px-3 py-1.5 text-xs"
-                                    >
-                                      {included ? t("Remove") : t("Keep")}
-                                    </button>
-                                    {included ? (
-                                      <>
-                                        <button
-                                          type="button"
-                                          disabled={index === 0}
-                                          onClick={() =>
-                                            setCandidateOrder((orders) => {
-                                              const next = [...selected];
-                                              [next[index - 1], next[index]] = [
-                                                next[index],
-                                                next[index - 1],
-                                              ];
-                                              return {
-                                                ...orders,
-                                                [operation.id]: next,
-                                              };
-                                            })
-                                          }
-                                          className="text-xs disabled:opacity-40"
-                                        >
-                                          {t("Move up")}
-                                        </button>
-                                        <button
-                                          type="button"
-                                          disabled={index === selected.length - 1}
-                                          onClick={() =>
-                                            setCandidateOrder((orders) => {
-                                              const next = [...selected];
-                                              [next[index], next[index + 1]] = [
-                                                next[index + 1],
-                                                next[index],
-                                              ];
-                                              return {
-                                                ...orders,
-                                                [operation.id]: next,
-                                              };
-                                            })
-                                          }
-                                          className="text-xs disabled:opacity-40"
-                                        >
-                                          {t("Move down")}
-                                        </button>
-                                      </>
+                                      <p className="mt-2 text-sm">
+                                        {candidate.answer}
+                                      </p>
+                                    </div>
+                                    {sourceNames.length ? (
+                                      <details className="text-xs text-[var(--muted-foreground)]">
+                                        <summary className="cursor-pointer">
+                                          {t("Show sources")}
+                                        </summary>
+                                        <p className="mt-1">
+                                          {Array.from(
+                                            new Set(sourceNames),
+                                          ).join(", ")}
+                                        </p>
+                                      </details>
                                     ) : null}
+                                    <div className="flex flex-wrap gap-2">
+                                      <button
+                                        type="button"
+                                        onClick={() =>
+                                          setCandidateOrder((orders) => ({
+                                            ...orders,
+                                            [operation.id]: included
+                                              ? selected.filter(
+                                                  (id) =>
+                                                    id !==
+                                                    candidate.candidate_id,
+                                                )
+                                              : [
+                                                  ...selected,
+                                                  candidate.candidate_id,
+                                                ],
+                                          }))
+                                        }
+                                        aria-label={`${
+                                          included ? t("Remove") : t("Keep")
+                                        }: ${candidate.prompt}`}
+                                        className="rounded-lg border border-[var(--border)] px-3 py-1.5 text-xs"
+                                      >
+                                        {included ? t("Remove") : t("Keep")}
+                                      </button>
+                                      {included ? (
+                                        <>
+                                          <button
+                                            type="button"
+                                            disabled={index === 0}
+                                            onClick={() =>
+                                              setCandidateOrder((orders) => {
+                                                const next = [...selected];
+                                                [next[index - 1], next[index]] =
+                                                  [
+                                                    next[index],
+                                                    next[index - 1],
+                                                  ];
+                                                return {
+                                                  ...orders,
+                                                  [operation.id]: next,
+                                                };
+                                              })
+                                            }
+                                            className="text-xs disabled:opacity-40"
+                                          >
+                                            {t("Move up")}
+                                          </button>
+                                          <button
+                                            type="button"
+                                            disabled={
+                                              index === selected.length - 1
+                                            }
+                                            onClick={() =>
+                                              setCandidateOrder((orders) => {
+                                                const next = [...selected];
+                                                [next[index], next[index + 1]] =
+                                                  [
+                                                    next[index + 1],
+                                                    next[index],
+                                                  ];
+                                                return {
+                                                  ...orders,
+                                                  [operation.id]: next,
+                                                };
+                                              })
+                                            }
+                                            className="text-xs disabled:opacity-40"
+                                          >
+                                            {t("Move down")}
+                                          </button>
+                                        </>
+                                      ) : null}
+                                    </div>
                                   </div>
-                                </div>
-                              );
-                            })}
+                                );
+                              },
+                            )}
                             <div className="flex items-center justify-between gap-2">
                               <button
                                 type="button"
@@ -2770,7 +3170,9 @@ export default function FlashcardsWorkspace() {
                             <div className="flex flex-wrap gap-2">
                               <button
                                 type="button"
-                                onClick={() => void publishCandidates(operation)}
+                                onClick={() =>
+                                  void publishCandidates(operation)
+                                }
                                 disabled={busy || selected.length === 0}
                                 className="rounded-lg bg-[var(--primary)] px-3 py-2 text-sm text-[var(--primary-foreground)] disabled:opacity-50"
                               >
@@ -2817,9 +3219,7 @@ export default function FlashcardsWorkspace() {
                     <button
                       type="button"
                       aria-expanded={showPreviousActivity}
-                      onClick={() =>
-                        setShowPreviousActivity((shown) => !shown)
-                      }
+                      onClick={() => setShowPreviousActivity((shown) => !shown)}
                       className="inline-flex items-center gap-2 text-sm font-medium"
                     >
                       {showPreviousActivity ? (
@@ -2833,7 +3233,9 @@ export default function FlashcardsWorkspace() {
                       <ul className="mt-3 space-y-2">
                         {generationOperations
                           .filter((operation) =>
-                            ["completed", "cancelled"].includes(operation.state),
+                            ["completed", "cancelled"].includes(
+                              operation.state,
+                            ),
                           )
                           .map((operation) => {
                             const presentation =
@@ -2861,12 +3263,23 @@ export default function FlashcardsWorkspace() {
         ) : null}
 
         {busy ? (
-          <p role="status" className="flex items-center gap-2 text-sm text-[var(--muted-foreground)]">
+          <p
+            role="status"
+            className="flex items-center gap-2 text-sm text-[var(--muted-foreground)]"
+          >
             <Loader2 size={15} className="animate-spin" /> {t("Saving…")}
           </p>
         ) : null}
-        {status ? <p role="status" className="text-sm text-emerald-600">{status}</p> : null}
-        {error ? <p role="alert" className="text-sm text-red-600">{error}</p> : null}
+        {status ? (
+          <p role="status" className="text-sm text-emerald-600">
+            {status}
+          </p>
+        ) : null}
+        {error ? (
+          <p role="alert" className="text-sm text-red-600">
+            {error}
+          </p>
+        ) : null}
       </div>
     </main>
   );

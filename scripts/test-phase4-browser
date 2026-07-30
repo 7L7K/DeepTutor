@@ -162,7 +162,7 @@ import sys
 
 from deeptutor.courses.repository import CourseRepository
 from deeptutor.courses.service import source_kb_name
-from deeptutor.multi_user.paths import get_personal_path_service
+from deeptutor.multi_user.paths import get_admin_path_service, get_personal_path_service
 from deeptutor.services.session.sqlite_store import SQLiteSessionStore
 import asyncio
 
@@ -212,7 +212,12 @@ index_path.write_text(
 state["phase5SourceId"] = source.id
 
 async def seed_general_chat():
-    store = SQLiteSessionStore(db_path=paths.get_chat_history_db())
+    # The first registered beta account is the deployment administrator.
+    # Generic Chat keeps its established admin-workspace authority, while
+    # Courses and General Study remain in this person's private Course scope.
+    store = SQLiteSessionStore(
+        db_path=get_admin_path_service().get_chat_history_db()
+    )
     session_id = "unified_phase5_general_chat"
     await store.create_session(
         title="General Chat Flashcard proof",
@@ -244,9 +249,9 @@ PY
 deterministic_provider="true"
 assert_port_free "$backend_port"
 start_backend
-run_browser_proof "phase5 stages"
+run_browser_proof "phase5 confirms"
 stop_backend
 assert_port_free "$backend_port"
 start_backend
-run_browser_proof "phase5 publishes"
+run_browser_proof "phase5 keeps"
 run_browser_proof "phase5 General Chat"

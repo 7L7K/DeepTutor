@@ -50,7 +50,7 @@ test("Flashcard generation operation states use learner-facing copy", () => {
   });
   assert.equal(
     flashcardGenerationStatePresentation("awaiting_review").label,
-    "Ready for your review",
+    "Finishing your cards",
   );
   assert.equal(
     flashcardGenerationStatePresentation("failed").kind,

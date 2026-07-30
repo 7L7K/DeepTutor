@@ -153,6 +153,9 @@ export interface FlashcardGenerationOrigin {
   selected_message_ids?: number[];
   context_sha256?: string | null;
   context_summary?: string | null;
+  context_title?: string | null;
+  context_topics?: string[];
+  session_scope?: "personal" | "admin" | null;
 }
 
 export interface FlashcardProviderReceipt {

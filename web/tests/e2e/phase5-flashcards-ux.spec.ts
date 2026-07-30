@@ -115,6 +115,6 @@ test("phase5 study-first shell keeps provider machinery out of the learner journ
   );
   await page.getByRole("button", { name: "Activity", exact: true }).click();
   await expect(
-    page.getByText("Ready for your review", { exact: true }),
+    page.getByText("Finishing your cards", { exact: true }),
   ).toHaveCount(0);
 });

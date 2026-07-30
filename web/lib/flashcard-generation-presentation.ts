@@ -12,7 +12,7 @@ export type GroundedCreateStage =
   | "editing"
   | "confirming"
   | "generating"
-  | "reviewing";
+  | "publishing";
 
 export interface FlashcardsViewPresentation {
   label: string;
@@ -63,8 +63,8 @@ const GENERATION_STATE_PRESENTATION: Readonly<
     kind: "active",
   },
   awaiting_review: {
-    label: "Ready for your review",
-    description: "Your card drafts are ready to review.",
+    label: "Finishing your cards",
+    description: "Your cards passed validation and are being saved.",
     kind: "review",
   },
   completed: {
