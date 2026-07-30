@@ -95,7 +95,11 @@ def seed_phase3a_rows(conn: sqlite3.Connection, *, include_blueway: bool) -> Non
     conn.commit()
 
 
-def domain_digest(conn: sqlite3.Connection) -> str:
+def domain_digest(
+    conn: sqlite3.Connection,
+    *,
+    ignored_columns: dict[str, set[str]] | None = None,
+) -> str:
     """Return a canonical data digest excluding the migration ledger."""
 
     tables = [
@@ -113,6 +117,10 @@ def domain_digest(conn: sqlite3.Connection) -> str:
         # Adoption is allowed to add empty baseline tables.  The preservation
         # digest deliberately covers only existing domain rows and values.
         if rows:
-            payload[table] = [dict(row) for row in rows]
+            ignored = (ignored_columns or {}).get(table, set())
+            payload[table] = [
+                {key: value for key, value in dict(row).items() if key not in ignored}
+                for row in rows
+            ]
     encoded = json.dumps(payload, sort_keys=True, separators=(",", ":"))
     return hashlib.sha256(encoded.encode("utf-8")).hexdigest()

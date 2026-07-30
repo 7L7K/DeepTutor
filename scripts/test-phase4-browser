@@ -163,6 +163,8 @@ import sys
 from deeptutor.courses.repository import CourseRepository
 from deeptutor.courses.service import source_kb_name
 from deeptutor.multi_user.paths import get_personal_path_service
+from deeptutor.services.session.sqlite_store import SQLiteSessionStore
+import asyncio
 
 state_path = Path(sys.argv[1])
 state = json.loads(state_path.read_text(encoding="utf-8"))
@@ -208,6 +210,34 @@ index_path.write_text(
     encoding="utf-8",
 )
 state["phase5SourceId"] = source.id
+
+async def seed_general_chat():
+    store = SQLiteSessionStore(db_path=paths.get_chat_history_db())
+    session_id = "unified_phase5_general_chat"
+    await store.create_session(
+        title="General Chat Flashcard proof",
+        session_id=session_id,
+        course_id=None,
+    )
+    user_id = await store.add_message(
+        session_id,
+        "user",
+        "Explain how mitochondria turn nutrients into usable cellular energy.",
+    )
+    assistant_id = await store.add_message(
+        session_id,
+        "assistant",
+        (
+            "Mitochondria use cellular respiration to convert energy stored in "
+            "nutrients into ATP, a form cells can use."
+        ),
+        parent_message_id=user_id,
+    )
+    return session_id, assistant_id
+
+general_session_id, general_assistant_id = asyncio.run(seed_general_chat())
+state["phase5GeneralSessionId"] = general_session_id
+state["phase5GeneralAssistantId"] = general_assistant_id
 state_path.write_text(json.dumps(state), encoding="utf-8")
 state_path.chmod(0o600)
 PY
@@ -219,3 +249,4 @@ stop_backend
 assert_port_free "$backend_port"
 start_backend
 run_browser_proof "phase5 publishes"
+run_browser_proof "phase5 General Chat"

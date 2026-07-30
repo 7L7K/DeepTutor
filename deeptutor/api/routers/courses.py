@@ -180,7 +180,9 @@ class RecordFlashcardReviewRequest(_PracticeRequest):
 class CreateGeneratedFlashcardDeckRequest(_PracticeRequest):
     """No prompt/provider/KB authority reaches the generated-deck backend."""
     title: str = Field(min_length=1, max_length=160)
-    source_ids: list[Annotated[str, Field(min_length=1, max_length=80)]] = Field(min_length=1, max_length=32)
+    source_ids: list[Annotated[str, Field(min_length=1, max_length=80)]] = Field(
+        default_factory=list, max_length=32
+    )
     objective_ids: list[Annotated[str, Field(min_length=1, max_length=160)]] = Field(default_factory=list, max_length=64)
     focus: str = Field(default="Review the selected Course material", min_length=1, max_length=1000)
     card_type_mix: list[
@@ -191,23 +193,115 @@ class CreateGeneratedFlashcardDeckRequest(_PracticeRequest):
     include_hints: bool = True
     origin: dict[str, Any] | None = None
     expected_course_write_epoch: int = Field(ge=1)
-    item_limit: int = Field(default=8, ge=3, le=48)
+    item_limit: int = Field(default=8, ge=1, le=48)
     context_char_limit: int = Field(default=12_000, ge=1, le=48_000)
 
 
-async def _validated_flashcard_origin(
-    course_id: str, origin: dict[str, Any] | None
+async def _authoritative_flashcard_generation_arguments(
+    course_id: str,
+    body: CreateGeneratedFlashcardDeckRequest,
+    *,
+    allow_system_origin: bool = True,
 ) -> dict[str, Any]:
     from deeptutor.courses.flashcard_generation_models import (
         FlashcardGenerationOrigin,
     )
 
-    parsed = FlashcardGenerationOrigin.model_validate(
-        origin or {"kind": "workspace"}
-    )
+    try:
+        parsed = FlashcardGenerationOrigin.model_validate(
+            body.origin or {"kind": "workspace"}
+        )
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=422, detail="Flashcard generation origin is invalid"
+        ) from exc
+
+    def arguments(
+        *,
+        origin: FlashcardGenerationOrigin,
+        source_ids: list[str],
+        objective_ids: list[str],
+        focus: str,
+        item_limit: int,
+        card_type_mix: list[str],
+        difficulty: str,
+        answer_length: str,
+        include_hints: bool,
+        context_char_limit: int,
+    ) -> dict[str, Any]:
+        return {
+            "origin": origin.model_dump(mode="json"),
+            "source_ids": source_ids,
+            "objective_ids": objective_ids,
+            "focus": focus,
+            "item_limit": item_limit,
+            "card_type_mix": card_type_mix,
+            "difficulty": difficulty,
+            "answer_length": answer_length,
+            "include_hints": include_hints,
+            "context_char_limit": context_char_limit,
+        }
+
     if parsed.kind == "workspace":
-        return parsed.model_dump(mode="json")
+        if not body.source_ids:
+            raise HTTPException(
+                status_code=422, detail="Course generation requires ready materials"
+            )
+        return arguments(
+            origin=parsed,
+            source_ids=body.source_ids,
+            objective_ids=body.objective_ids,
+            focus=body.focus,
+            item_limit=body.item_limit,
+            card_type_mix=list(body.card_type_mix),
+            difficulty=body.difficulty,
+            answer_length=body.answer_length,
+            include_hints=body.include_hints,
+            context_char_limit=body.context_char_limit,
+        )
+    if not allow_system_origin:
+        raise HTTPException(
+            status_code=422,
+            detail="Successor generation requires a workspace request",
+        )
+
+    canonical: dict[str, Any] | None = None
     if (
+        parsed.kind == "general_chat"
+        and parsed.session_id
+        and parsed.message_id is not None
+        and parsed.practice_attempt_id is None
+    ):
+        destination = _service().get(course_id)
+        if destination.state != "active" or destination.workspace_kind not in {
+            "general_study",
+            "academic_course",
+        }:
+            raise HTTPException(status_code=404, detail="Flashcard workspace not found")
+        selected = await _resolve_general_chat_context(
+            session_id=parsed.session_id,
+            assistant_message_id=parsed.message_id,
+        )
+        canonical = arguments(
+            origin=FlashcardGenerationOrigin(
+                kind="general_chat",
+                session_id=parsed.session_id,
+                message_id=parsed.message_id,
+                selected_message_ids=list(selected.message_ids),
+                context_sha256=selected.context_sha256,
+                context_summary=selected.summary,
+            ),
+            source_ids=[],
+            objective_ids=[],
+            focus=body.focus,
+            item_limit=body.item_limit,
+            card_type_mix=list(body.card_type_mix),
+            difficulty=body.difficulty,
+            answer_length=body.answer_length,
+            include_hints=body.include_hints,
+            context_char_limit=body.context_char_limit,
+        )
+    elif (
         parsed.kind == "chat"
         and parsed.session_id
         and parsed.message_id is not None
@@ -218,27 +312,78 @@ async def _validated_flashcard_origin(
             session_id=parsed.session_id,
             assistant_message_id=parsed.message_id,
         )
-        return FlashcardGenerationOrigin(
-            kind="chat",
-            session_id=session_id,
-            message_id=message_id,
-        ).model_dump(mode="json")
-    if (
+        from deeptutor.courses.learner_actions import ready_current_source_ids
+
+        source_ids = ready_current_source_ids(_service().list_sources(course_id))
+        if not source_ids:
+            raise HTTPException(
+                status_code=409, detail="Course has no current ready sources"
+            )
+        canonical = arguments(
+            origin=FlashcardGenerationOrigin(
+                kind="chat",
+                session_id=session_id,
+                message_id=message_id,
+            ),
+            source_ids=source_ids,
+            objective_ids=[],
+            focus="Turn the selected Course answer into a reviewable study deck",
+            item_limit=8,
+            card_type_mix=["definition", "concept", "application"],
+            difficulty="mixed",
+            answer_length="short",
+            include_hints=True,
+            context_char_limit=12_000,
+        )
+    elif (
         parsed.kind == "practice_remediation"
         and parsed.practice_attempt_id
         and parsed.session_id is None
         and parsed.message_id is None
     ):
-        _practice_call(
+        _practice_set_id, objective_ids, source_ids = _practice_call(
             lambda: _practice_grading_service().remediation_scope(
                 course_id, parsed.practice_attempt_id or ""
             )
         )
-        return FlashcardGenerationOrigin(
-            kind="practice_remediation",
-            practice_attempt_id=parsed.practice_attempt_id,
-        ).model_dump(mode="json")
-    raise ValueError("Flashcard generation origin is invalid")
+        canonical = arguments(
+            origin=FlashcardGenerationOrigin(
+                kind="practice_remediation",
+                practice_attempt_id=parsed.practice_attempt_id,
+            ),
+            source_ids=source_ids,
+            objective_ids=objective_ids,
+            focus="Review the concepts missed in this quiz attempt",
+            item_limit=8,
+            card_type_mix=["recall", "application"],
+            difficulty="mixed",
+            answer_length="short",
+            include_hints=True,
+            context_char_limit=12_000,
+        )
+    if canonical is None:
+        raise HTTPException(
+            status_code=422, detail="Flashcard generation origin is invalid"
+        )
+
+    supplied = arguments(
+        origin=parsed,
+        source_ids=body.source_ids,
+        objective_ids=body.objective_ids,
+        focus=body.focus,
+        item_limit=body.item_limit,
+        card_type_mix=list(body.card_type_mix),
+        difficulty=body.difficulty,
+        answer_length=body.answer_length,
+        include_hints=body.include_hints,
+        context_char_limit=body.context_char_limit,
+    )
+    if supplied != canonical:
+        raise HTTPException(
+            status_code=422,
+            detail="Flashcard proposal does not match server authority",
+        )
+    return canonical
 
 
 class PublishFlashcardCandidatesRequest(_PracticeRequest):
@@ -263,6 +408,14 @@ class LearnerActionRequest(_PracticeRequest):
     idempotency_key: str = Field(min_length=8, max_length=160)
     expected_course_revision: int = Field(ge=1)
     expected_course_write_epoch: int = Field(ge=1)
+
+
+class GeneralStudyLearnerActionRequest(_PracticeRequest):
+    action: Literal["make_flashcards"]
+    session_id: str = Field(min_length=1, max_length=160)
+    assistant_message_id: int = Field(ge=1)
+    desired_count: int = Field(default=8, ge=1, le=48)
+    destination_course_id: str | None = Field(default=None, min_length=1, max_length=80)
 
 
 class LearnerActionResponse(_PracticeRequest):
@@ -334,6 +487,11 @@ def _generation_capabilities() -> dict[str, bool | str | None]:
         "grounded_generation": grounded,
         "practice_generation": practice,
         "flashcard_generation": flashcards,
+        "flashcard_generation_reason": (
+            None
+            if flashcards
+            else "Flashcard generation is not enabled on this server"
+        ),
         "grounded_generation_reason": (
             None if grounded else "Grounded generation is not enabled on this server"
         ),
@@ -354,6 +512,10 @@ async def list_courses(include_archived: bool = Query(default=True)):
         ],
         "capabilities": _generation_capabilities(),
     }
+
+@router.post("/general-study")
+async def get_or_create_general_study():
+    return _call(lambda: _service().general_study()).model_dump()
 
 
 @router.get("/{course_id}")
@@ -1020,21 +1182,21 @@ async def create_flashcard_deck(course_id: str, body: CreateFlashcardDeckRequest
 @router.post("/{course_id}/flashcard-generation", status_code=202)
 async def create_generated_flashcard_deck(course_id: str, body: CreateGeneratedFlashcardDeckRequest, background_tasks: BackgroundTasks, idempotency_key: str = Header(..., alias="Idempotency-Key", min_length=8, max_length=160)):
     """Queue a source-grounded generated deck; output is never a request body."""
-    origin = await _validated_flashcard_origin(course_id, body.origin)
+    authority = await _authoritative_flashcard_generation_arguments(course_id, body)
     async with course_operation_lock(course_id):
         request = _practice_call(lambda: _flashcard_generation_service().create_generated_deck(
-            course_id, title=body.title, source_ids=body.source_ids, objective_ids=body.objective_ids,
+            course_id, title=body.title, source_ids=authority["source_ids"], objective_ids=authority["objective_ids"],
             idempotency_key=idempotency_key, expected_course_write_epoch=body.expected_course_write_epoch,
-            item_limit=body.item_limit, context_char_limit=body.context_char_limit,
+            item_limit=authority["item_limit"], context_char_limit=authority["context_char_limit"],
             generation_brief={
-                "focus": body.focus,
-                "desired_count": body.item_limit,
-                "card_type_mix": body.card_type_mix,
-                "difficulty": body.difficulty,
-                "answer_length": body.answer_length,
-                "include_hints": body.include_hints,
+                "focus": authority["focus"],
+                "desired_count": authority["item_limit"],
+                "card_type_mix": authority["card_type_mix"],
+                "difficulty": authority["difficulty"],
+                "answer_length": authority["answer_length"],
+                "include_hints": authority["include_hints"],
             },
-            origin=origin,
+            origin=authority["origin"],
         ))
     from deeptutor.courses.flashcard_generation_service import register_live_flashcard_generation
     if (
@@ -1057,20 +1219,20 @@ async def prepare_flashcard_generation_brief(
     course_id: str,
     body: CreateGeneratedFlashcardDeckRequest,
 ):
-    origin = await _validated_flashcard_origin(course_id, body.origin)
+    authority = await _authoritative_flashcard_generation_arguments(course_id, body)
     receipt = _practice_call(
         lambda: _flashcard_generation_service().prepare_brief(
             course_id,
-            focus=body.focus,
-            source_ids=body.source_ids,
-            objective_ids=body.objective_ids,
+            focus=authority["focus"],
+            source_ids=authority["source_ids"],
+            objective_ids=authority["objective_ids"],
             expected_course_write_epoch=body.expected_course_write_epoch,
-            item_limit=body.item_limit,
-            card_type_mix=body.card_type_mix,
-            difficulty=body.difficulty,
-            answer_length=body.answer_length,
-            include_hints=body.include_hints,
-            origin=origin,
+            item_limit=authority["item_limit"],
+            card_type_mix=authority["card_type_mix"],
+            difficulty=authority["difficulty"],
+            answer_length=authority["answer_length"],
+            include_hints=authority["include_hints"],
+            origin=authority["origin"],
         )
     )
     return receipt.model_dump(mode="json")
@@ -1123,21 +1285,25 @@ async def cancel_flashcard_generation(course_id: str, operation_id: str):
 
 @router.post("/{course_id}/flashcards/{deck_id}/flashcard-generation", status_code=202)
 async def create_flashcard_generation_successor(course_id: str, deck_id: str, body: CreateGeneratedFlashcardDeckRequest, background_tasks: BackgroundTasks, idempotency_key: str = Header(..., alias="Idempotency-Key", min_length=8, max_length=160)):
-    origin = await _validated_flashcard_origin(course_id, body.origin)
+    authority = await _authoritative_flashcard_generation_arguments(
+        course_id,
+        body,
+        allow_system_origin=False,
+    )
     async with course_operation_lock(course_id):
         request = _practice_call(lambda: _flashcard_generation_service().request_successor(
-            course_id, deck_id, title=body.title, source_ids=body.source_ids, objective_ids=body.objective_ids,
+            course_id, deck_id, title=body.title, source_ids=authority["source_ids"], objective_ids=authority["objective_ids"],
             idempotency_key=idempotency_key, expected_course_write_epoch=body.expected_course_write_epoch,
-            item_limit=body.item_limit, context_char_limit=body.context_char_limit,
+            item_limit=authority["item_limit"], context_char_limit=authority["context_char_limit"],
             generation_brief={
-                "focus": body.focus,
-                "desired_count": body.item_limit,
-                "card_type_mix": body.card_type_mix,
-                "difficulty": body.difficulty,
-                "answer_length": body.answer_length,
-                "include_hints": body.include_hints,
+                "focus": authority["focus"],
+                "desired_count": authority["item_limit"],
+                "card_type_mix": authority["card_type_mix"],
+                "difficulty": authority["difficulty"],
+                "answer_length": authority["answer_length"],
+                "include_hints": authority["include_hints"],
             },
-            origin=origin,
+            origin=authority["origin"],
         ))
     from deeptutor.courses.flashcard_generation_service import register_live_flashcard_generation
     if (
@@ -1316,6 +1482,92 @@ async def _resolve_learner_action_binding(
     if message is None or str(message.get("role") or "") != "assistant":
         raise CourseNotFoundError("Course assistant message not found")
     return str(session["id"]), int(message["id"])
+
+
+async def _resolve_general_chat_context(
+    *,
+    session_id: str,
+    assistant_message_id: int,
+):
+    """Resolve one owner-scoped course-less branch into bounded provenance."""
+
+    from deeptutor.courses.conversation_flashcards import (
+        select_conversation_context,
+    )
+    from deeptutor.services.session import get_personal_sqlite_session_store
+
+    store = get_personal_sqlite_session_store()
+    session = await store.get_session(session_id)
+    if session is None or session.get("course_id") is not None:
+        raise CourseNotFoundError("General Chat session not found")
+    messages = await store.get_messages_for_context(
+        str(session["id"]), leaf_message_id=assistant_message_id
+    )
+    try:
+        return select_conversation_context(
+            messages,
+            assistant_message_id=assistant_message_id,
+        )
+    except ValueError as exc:
+        raise CourseNotFoundError("General Chat message not found") from exc
+
+
+@router.post("/general-study/learner-actions")
+async def prepare_general_study_learner_action(
+    body: GeneralStudyLearnerActionRequest,
+):
+    """Prepare an editable, provider-free General Chat Flashcard proposal."""
+
+    try:
+        selected = await _resolve_general_chat_context(
+            session_id=body.session_id,
+            assistant_message_id=body.assistant_message_id,
+        )
+        general = _service().general_study()
+        destination = (
+            general
+            if body.destination_course_id is None
+            else _service().get(body.destination_course_id)
+        )
+        if destination.state != "active":
+            raise CourseConflictError("Archived Courses cannot receive Flashcards")
+        focus = f"Create useful review cards about {selected.summary}"
+        receipt = _flashcard_generation_service().prepare_brief(
+            destination.id,
+            focus=focus,
+            source_ids=[],
+            objective_ids=[],
+            expected_course_write_epoch=destination.write_epoch,
+            item_limit=body.desired_count,
+            card_type_mix=["definition", "concept", "application"],
+            difficulty="mixed",
+            answer_length="short",
+            include_hints=True,
+            origin={
+                "kind": "general_chat",
+                "session_id": body.session_id,
+                "message_id": body.assistant_message_id,
+                "selected_message_ids": list(selected.message_ids),
+                "context_sha256": selected.context_sha256,
+                "context_summary": selected.summary,
+            },
+        )
+        return {
+            "action": body.action,
+            "destination": "flashcards",
+            "course_id": destination.id,
+            "course_revision": destination.revision,
+            "course_write_epoch": destination.write_epoch,
+            "session_id": body.session_id,
+            "parent_message_id": body.assistant_message_id,
+            "generation_brief": receipt.model_dump(mode="json"),
+        }
+    except CourseNotFoundError as exc:
+        raise HTTPException(
+            status_code=404, detail="General Chat learner action not found"
+        ) from exc
+    except CourseConflictError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
 
 
 def _learner_action_response(
@@ -1529,6 +1781,8 @@ def _course_learning_store(course_id: str, *, require_active: bool):
 
     service = _service()
     course = service.get(course_id)
+    if course.workspace_kind != "academic_course":
+        raise CourseConflictError("General Study does not have Course mastery")
     if require_active and course.state != "active":
         raise CourseConflictError("Archived courses cannot change learning state")
     install_personal_course_context()
@@ -1580,6 +1834,8 @@ async def get_course_learning(course_id: str):
         }
     except CourseNotFoundError as exc:
         raise HTTPException(status_code=404, detail="Course resource not found") from exc
+    except CourseConflictError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
     except LearningDataError as exc:
         raise HTTPException(
             status_code=409,

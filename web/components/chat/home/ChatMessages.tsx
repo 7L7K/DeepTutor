@@ -1137,6 +1137,7 @@ export const ChatMessageList = memo(function ChatMessageList({
   onSubmitUserReply,
   modelActionsEnabled = true,
   courseActionsEnabled = false,
+  generalFlashcardsEnabled = false,
   practiceGenerationEnabled = false,
   flashcardGenerationEnabled = false,
   learnerActionBusy = null,
@@ -1150,6 +1151,7 @@ export const ChatMessageList = memo(function ChatMessageList({
   onRegenerateMessage: () => void;
   modelActionsEnabled?: boolean;
   courseActionsEnabled?: boolean;
+  generalFlashcardsEnabled?: boolean;
   practiceGenerationEnabled?: boolean;
   flashcardGenerationEnabled?: boolean;
   learnerActionBusy?: CourseLearnerAction | null;
@@ -1390,7 +1392,8 @@ export const ChatMessageList = memo(function ChatMessageList({
         const showLearnerActions =
           Boolean(onLearnerAction) &&
           canShowCourseLearnerActions({
-            courseActionsEnabled,
+            courseActionsEnabled:
+              courseActionsEnabled || generalFlashcardsEnabled,
             isStreaming,
             isLastAssistant,
             role: msg.role,
@@ -1475,9 +1478,12 @@ export const ChatMessageList = memo(function ChatMessageList({
             })()}
             {showLearnerActions ? (
               <div className="mt-3 flex flex-wrap gap-2">
-                {visibleCourseLearnerActions(
-                  practiceGenerationEnabled,
-                  flashcardGenerationEnabled,
+                {(generalFlashcardsEnabled && !courseActionsEnabled
+                  ? (["make_flashcards"] as CourseLearnerAction[])
+                  : visibleCourseLearnerActions(
+                      practiceGenerationEnabled,
+                      flashcardGenerationEnabled,
+                    )
                 ).map(
                   (action) => {
                     const presentation: {

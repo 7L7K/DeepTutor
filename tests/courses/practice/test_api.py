@@ -231,7 +231,42 @@ def test_manual_practice_api_lifecycle_autosave_idempotency_and_results(
         "session_id": None,
         "message_id": None,
         "practice_attempt_id": view["attempt"]["id"],
+        "selected_message_ids": [],
+        "context_sha256": None,
+        "context_summary": None,
     }
+    assert "focus_not_supported" not in remediation.json()["warnings"]
+    forged = practice_client.post(
+        f"/api/v1/courses/{course_id}/flashcard-generation",
+        headers={**_auth("alice"), "Idempotency-Key": "forged-practice-focus"},
+        json={
+            "title": "Unrelated request",
+            "source_ids": [
+                item["source_id"]
+                for item in remediation.json()["source_snapshot"]
+            ],
+            "objective_ids": remediation.json()["objective_ids"],
+            "focus": "how to bake sourdough bread",
+            "card_type_mix": remediation.json()["brief"]["card_type_mix"],
+            "difficulty": remediation.json()["brief"]["difficulty"],
+            "answer_length": remediation.json()["brief"]["answer_length"],
+            "include_hints": remediation.json()["brief"]["include_hints"],
+            "origin": remediation.json()["origin"],
+            "expected_course_write_epoch": remediation.json()[
+                "course_write_epoch"
+            ],
+            "item_limit": remediation.json()["brief"]["desired_count"],
+            "context_char_limit": 12_000,
+        },
+    )
+    assert forged.status_code == 422
+    assert forged.json() == {
+        "detail": "Flashcard proposal does not match server authority"
+    }
+    assert practice_client.get(
+        f"/api/v1/courses/{course_id}/flashcard-generation",
+        headers=_auth("alice"),
+    ).json() == {"operations": []}
     assert practice_client.post(
         f"{endpoint}/flashcard-brief", headers=_auth("bob"), json={}
     ).status_code == 404

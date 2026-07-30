@@ -474,7 +474,7 @@ def test_0002_upgrade_applies_grading_and_generation_migrations_preserves_rows_a
     with sqlite3.connect(path) as conn:
         conn.execute("INSERT INTO courses (id, owner_user_id, title, state, revision, write_epoch, managed_kb_ref, created_at, updated_at, archived_at) VALUES ('crs_keep', 'u_alice', 'Keep', 'active', 1, 1, NULL, 1, 1, NULL)")
     monkeypatch.setattr(runner, "discover_migrations", lambda: artifacts)
-    assert ensure_course_schema(path) == (3, 4, 5, 6, 7, 8, 9)
+    assert ensure_course_schema(path) == (3, 4, 5, 6, 7, 8, 9, 10)
     with sqlite3.connect(path) as conn:
         assert conn.execute("SELECT title FROM courses WHERE id = 'crs_keep'").fetchone()[0] == "Keep"
 
@@ -528,13 +528,19 @@ def test_exact_p4_03_upgrade_applies_generation_and_flashcard_migrations_and_pre
         }
 
     monkeypatch.setattr(runner, "discover_migrations", lambda: artifacts)
-    assert ensure_course_schema(path) == (4, 5, 6, 7, 8, 9)
+    assert ensure_course_schema(path) == (4, 5, 6, 7, 8, 9, 10)
     assert ensure_course_schema(path) == ()
     with courses._connect() as conn:
         after = {
-            table: conn.execute(f'SELECT * FROM "{table}" ORDER BY rowid').fetchall()
+            table: conn.execute(
+                f"""SELECT {", ".join(f'"{column}"' for column in before[table][0].keys())}
+                    FROM "{table}" ORDER BY rowid"""
+            ).fetchall()
             for table in before
         }
+        assert conn.execute(
+            "SELECT workspace_kind FROM courses WHERE id = ?", (course.id,)
+        ).fetchone()[0] == "academic_course"
         assert conn.execute("SELECT COUNT(*) FROM practice_generation_operations").fetchone()[0] == 0
         assert conn.execute("SELECT COUNT(*) FROM flashcard_reviews").fetchone()[0] == 0
         effective_triggers = {
@@ -552,7 +558,7 @@ def test_exact_p4_03_upgrade_applies_generation_and_flashcard_migrations_and_pre
         } <= effective_triggers
         assert tuple(
             row[0] for row in conn.execute("SELECT version FROM schema_migrations ORDER BY version")
-        ) == (0, 1, 2, 3, 4, 5, 6, 7, 8, 9)
+        ) == (0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10)
     assert after == before
 
 

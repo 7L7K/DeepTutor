@@ -7,6 +7,7 @@ from typing import Any, Literal
 from pydantic import BaseModel, ConfigDict, Field
 
 CourseState = Literal["active", "archived"]
+CourseWorkspaceKind = Literal["academic_course", "general_study"]
 SourceState = Literal["processing", "ready", "failed", "archived"]
 
 
@@ -16,6 +17,7 @@ class Course(BaseModel):
     id: str
     owner_user_id: str
     title: str
+    workspace_kind: CourseWorkspaceKind = "academic_course"
     state: CourseState = "active"
     revision: int = 1
     write_epoch: int = 1

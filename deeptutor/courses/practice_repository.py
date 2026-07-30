@@ -97,6 +97,10 @@ class CoursePracticeRepository:
         if row is None:
             raise self._not_found()
         course = Course.model_validate(dict(row))
+        if course.workspace_kind != "academic_course":
+            raise CourseConflictError(
+                "General Study does not support Course Practice or mastery"
+            )
         if course.state != "active":
             raise CourseConflictError("Archived courses cannot author Practice")
         if course.write_epoch != expected_course_write_epoch:

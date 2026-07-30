@@ -21,6 +21,8 @@ test("Course capability status comes from the authenticated server", async (t) =
           grounded_generation: false,
           practice_generation: false,
           flashcard_generation: false,
+          flashcard_generation_reason:
+            "Flashcard generation is not enabled on this server",
           grounded_generation_reason:
             "Grounded generation is not enabled on this server",
         },
@@ -32,6 +34,8 @@ test("Course capability status comes from the authenticated server", async (t) =
     grounded_generation: false,
     practice_generation: false,
     flashcard_generation: false,
+    flashcard_generation_reason:
+      "Flashcard generation is not enabled on this server",
     grounded_generation_reason:
       "Grounded generation is not enabled on this server",
   });

@@ -5,6 +5,7 @@ export interface Course {
   id: string;
   owner_user_id: string;
   title: string;
+  workspace_kind: "academic_course" | "general_study";
   state: "active" | "archived";
   revision: number;
   write_epoch: number;
@@ -30,6 +31,7 @@ export interface CourseCapabilities {
   grounded_generation: boolean;
   practice_generation: boolean;
   flashcard_generation: boolean;
+  flashcard_generation_reason: string | null;
   grounded_generation_reason: string | null;
 }
 
@@ -59,6 +61,14 @@ export async function createCourse(title: string): Promise<Course> {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ title }),
+    }),
+  );
+}
+
+export async function getOrCreateGeneralStudy(): Promise<Course> {
+  return json<Course>(
+    await apiFetch(apiUrl("/api/v1/courses/general-study"), {
+      method: "POST",
     }),
   );
 }

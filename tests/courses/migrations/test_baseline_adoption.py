@@ -28,16 +28,22 @@ def test_exact_legacy_profiles_adopt_without_rewriting_domain_rows(
     path = tmp_path / "courses.db"
     with build_legacy_database(path, include_blueway=include_blueway) as conn:
         seed_phase3a_rows(conn, include_blueway=include_blueway)
-        before = domain_digest(conn)
+        before = domain_digest(
+            conn, ignored_columns={"courses": {"workspace_kind"}}
+        )
 
-    assert ensure_course_schema(path) == (0, 1, 2, 3, 4, 5, 6, 7, 8, 9)
+    assert ensure_course_schema(path) == (0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10)
     with sqlite3.connect(path) as conn:
         conn.row_factory = sqlite3.Row
-        assert domain_digest(conn) == before
-        assert conn.execute("SELECT COUNT(*) FROM schema_migrations").fetchone()[0] == 10
+        assert domain_digest(
+            conn, ignored_columns={"courses": {"workspace_kind"}}
+        ) == before
+        assert conn.execute("SELECT COUNT(*) FROM schema_migrations").fetchone()[0] == 11
         assert tuple(conn.execute(
-            "SELECT id, revision, write_epoch, managed_kb_ref FROM courses"
-        ).fetchone()) == ("crs_fixture", 3, 2, "personal:kb:fixture")
+            "SELECT id, revision, write_epoch, managed_kb_ref, workspace_kind FROM courses"
+        ).fetchone()) == (
+            "crs_fixture", 3, 2, "personal:kb:fixture", "academic_course"
+        )
         if include_blueway:
             assert tuple(conn.execute(
                 "SELECT connection_id, course_id, remote_hash FROM blueway_course_maps"

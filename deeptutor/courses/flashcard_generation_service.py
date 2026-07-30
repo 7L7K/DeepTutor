@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import threading
 from typing import Callable, ContextManager
 
@@ -11,12 +12,15 @@ from deeptutor.multi_user.models import LOCAL_ADMIN_ID
 from .flashcard_generation_models import (
     FlashcardCandidatePublication,
     FlashcardGenerationBriefReceipt,
+    FlashcardGenerationConversationText,
     FlashcardGenerationInput,
     FlashcardGenerationOperation,
     FlashcardGenerationRequest,
 )
+from .conversation_flashcards import select_conversation_context
 from .flashcard_generation_provider import (
     DeterministicIndexFlashcardSourceTextResolver,
+    FlashcardGenerationFocusUnsupported,
     FlashcardGenerationProvider,
     FlashcardGenerationProviderError,
     FlashcardGenerationProviderQuotaExceeded,
@@ -115,15 +119,110 @@ class CourseFlashcardGenerationService:
         # A successor is always a new deck: no previous ready deck, cards, or reviews are rewritten.
         return self.create_generated_deck(course_id, supersedes_deck_id=deck_id, **kwargs)
 
-    def prepare_brief(
-        self, course_id: str, **kwargs: object
-    ) -> FlashcardGenerationBriefReceipt:
+    def prepare_brief(self, course_id: str, **kwargs: object) -> FlashcardGenerationBriefReceipt:
         if not self._account_active(self.repository.owner_user_id):
             raise CourseConflictError("Generation account authority is no longer active")
-        return self.repository.prepare_brief(
+        receipt = self.repository.prepare_brief(
             course_id,
             provider_available=self.provider_available(),
             **kwargs,
+        )
+        warnings = list(receipt.warnings)
+        if receipt.origin.kind == "general_chat":
+            return receipt.model_copy(
+                update={"warnings": list(dict.fromkeys(warnings))}
+            )
+        resolve_for_focus = getattr(self.source_text_resolver, "resolve_for_focus", None)
+        if receipt.origin.kind == "workspace" and callable(resolve_for_focus):
+            try:
+                resolve_for_focus(
+                    owner_user_id=self.repository.owner_user_id,
+                    course_id=course_id,
+                    receipts=receipt.source_snapshot,
+                    context_char_limit=int(kwargs.get("context_char_limit", 12_000)),
+                    focus=receipt.brief.focus,
+                )
+            except FlashcardGenerationFocusUnsupported:
+                warnings.append("focus_not_supported")
+            except FlashcardGenerationProviderError:
+                warnings.append("material_unavailable")
+        else:
+            try:
+                self.source_text_resolver.resolve(
+                    owner_user_id=self.repository.owner_user_id,
+                    course_id=course_id,
+                    receipts=receipt.source_snapshot,
+                    context_char_limit=int(kwargs.get("context_char_limit", 12_000)),
+                )
+            except FlashcardGenerationProviderError:
+                warnings.append("material_unavailable")
+        return receipt.model_copy(update={"warnings": list(dict.fromkeys(warnings))})
+
+    def _resolve_material(self, operation: FlashcardGenerationOperation):
+        if operation.origin.kind == "general_chat":
+            return []
+        resolve_for_focus = getattr(self.source_text_resolver, "resolve_for_focus", None)
+        if operation.origin.kind == "workspace" and callable(resolve_for_focus):
+            return resolve_for_focus(
+                owner_user_id=operation.owner_user_id,
+                course_id=operation.course_id,
+                receipts=operation.source_snapshot,
+                context_char_limit=operation.context_char_limit,
+                focus=operation.generation_brief.focus,
+            )
+        return self.source_text_resolver.resolve(
+            owner_user_id=operation.owner_user_id,
+            course_id=operation.course_id,
+            receipts=operation.source_snapshot,
+            context_char_limit=operation.context_char_limit,
+        )
+
+    @staticmethod
+    def _resolve_conversation(
+        operation: FlashcardGenerationOperation,
+    ) -> FlashcardGenerationConversationText | None:
+        if operation.origin.kind != "general_chat":
+            return None
+        from deeptutor.multi_user.paths import get_personal_path_service
+        from deeptutor.services.session.sqlite_store import SQLiteSessionStore
+
+        origin = operation.origin
+        if not origin.session_id or origin.message_id is None:
+            raise CourseConflictError("Conversation generation authority is stale")
+        store = SQLiteSessionStore(
+            db_path=get_personal_path_service(
+                operation.owner_user_id
+            ).get_chat_history_db()
+        )
+
+        async def resolve():
+            session = await store.get_session(origin.session_id or "")
+            if session is None or session.get("course_id") is not None:
+                raise CourseNotFoundError("General Chat session not found")
+            return await store.get_messages_for_context(
+                origin.session_id or "", leaf_message_id=origin.message_id
+            )
+
+        messages = asyncio.run(resolve())
+        from deeptutor.courses.conversation_flashcards import (
+            resolve_frozen_conversation_context,
+        )
+
+        selected = resolve_frozen_conversation_context(
+            messages,
+            assistant_message_id=origin.message_id,
+            selected_message_ids=origin.selected_message_ids,
+            max_chars=operation.context_char_limit,
+        )
+        if (
+            list(selected.message_ids) != origin.selected_message_ids
+            or selected.context_sha256 != origin.context_sha256
+        ):
+            raise CourseConflictError("Conversation generation authority is stale")
+        return FlashcardGenerationConversationText(
+            selected_message_ids=list(selected.message_ids),
+            context_sha256=selected.context_sha256,
+            text=selected.text,
         )
 
     def _generate(self, request: FlashcardGenerationInput):
@@ -141,12 +240,8 @@ class CourseFlashcardGenerationService:
                 return operation
             if not self._account_active(self.repository.owner_user_id):
                 return self.repository.fail_operation(course_id, operation_id, "authority_changed")
-            material = self.source_text_resolver.resolve(
-                owner_user_id=operation.owner_user_id,
-                course_id=course_id,
-                receipts=operation.source_snapshot,
-                context_char_limit=operation.context_char_limit,
-            )
+            material = self._resolve_material(operation)
+            conversation = self._resolve_conversation(operation)
             # This is the final zero-call authority fence.  Source resolution
             # is intentionally before it so archive/revocation/replacement
             # races during retrieval stop before provider invocation.
@@ -161,7 +256,9 @@ class CourseFlashcardGenerationService:
                     owner_user_id=operation.owner_user_id,
                     course_id=course_id,
                     deck_id=operation.deck_id,
+                    origin=operation.origin,
                     source_material=material,
+                    conversation_context=conversation,
                     objective_ids=operation.objective_ids,
                     generation_brief=operation.generation_brief,
                     item_limit=operation.item_limit,
@@ -176,6 +273,11 @@ class CourseFlashcardGenerationService:
                     account_active=self._account_active(self.repository.owner_user_id),
                     material_receipts=[item.receipt for item in material],
                 )
+        except FlashcardGenerationFocusUnsupported:
+            # Preserve the existing durable failure-code contract. The provider-free
+            # brief preflight exposes the specific learner-facing coverage warning;
+            # a direct API bypass still fails closed without adding schema drift.
+            return self.repository.fail_operation(course_id, operation_id, "invalid_output")
         except FlashcardGenerationProviderUnavailable:
             return self.repository.fail_operation(course_id, operation_id, "provider_unavailable")
         except FlashcardGenerationProviderTimedOut:
@@ -238,9 +340,7 @@ class CourseFlashcardGenerationService:
                 account_active=self._account_active(self.repository.owner_user_id),
             )
 
-    def cancel_operation(
-        self, course_id: str, operation_id: str
-    ) -> FlashcardGenerationOperation:
+    def cancel_operation(self, course_id: str, operation_id: str) -> FlashcardGenerationOperation:
         return self.repository.cancel_operation(course_id, operation_id)
 
 

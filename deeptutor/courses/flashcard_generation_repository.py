@@ -96,6 +96,8 @@ class CourseFlashcardGenerationRepository:
     def _snapshot(
         self, conn: sqlite3.Connection, course_id: str, source_ids: list[str]
     ) -> list[FlashcardSourceReceipt]:
+        if not source_ids:
+            return []
         rows = conn.execute(
             f"SELECT id, revision, content_sha256, state FROM course_sources WHERE course_id=? AND id IN ({','.join('?' for _ in source_ids)})",
             [course_id, *source_ids],
@@ -199,15 +201,24 @@ class CourseFlashcardGenerationRepository:
         generation_brief: FlashcardGenerationBrief | dict[str, Any] | None = None,
         origin: FlashcardGenerationOrigin | dict[str, Any] | None = None,
     ) -> FlashcardGenerationRequest:
-        title, source_ids, objectives = (
+        generation_origin = FlashcardGenerationOrigin.model_validate(
+            origin or {"kind": "workspace"}
+        )
+        raw_source_ids = list(source_ids)
+        if generation_origin.kind == "general_chat":
+            if raw_source_ids:
+                raise ValueError("General Chat generation cannot claim Course sources")
+            source_ids = []
+        else:
+            source_ids = self._source_ids(raw_source_ids)
+        title, objectives = (
             self._clean(title, "Deck title", 160),
-            self._source_ids(source_ids),
             self._objectives(objective_ids),
         )
         idempotency_key = self._clean(idempotency_key, "Idempotency key", 160)
         if (
             not isinstance(item_limit, int)
-            or not 3 <= item_limit <= 48
+            or not 1 <= item_limit <= 48
             or not isinstance(context_char_limit, int)
             or not 1 <= context_char_limit <= 48_000
         ):
@@ -225,13 +236,31 @@ class CourseFlashcardGenerationRepository:
         )
         if brief.desired_count != item_limit:
             raise ValueError("generation brief count must match item_limit")
-        generation_origin = FlashcardGenerationOrigin.model_validate(
-            origin or {"kind": "workspace"}
-        )
+        if generation_origin.kind == "general_chat":
+            if (
+                not generation_origin.session_id
+                or generation_origin.message_id is None
+                or len(generation_origin.selected_message_ids) < 2
+                or not generation_origin.context_sha256
+                or not generation_origin.context_summary
+                or generation_origin.practice_attempt_id is not None
+            ):
+                raise ValueError("General Chat provenance is incomplete")
         deck_id, operation_id, now = _id("dck"), _id("ofg"), time.time()
         with self.course_repository._write_lock, self.course_repository._connect() as conn:
             conn.execute("BEGIN IMMEDIATE")
             self._course_for_write(conn, course_id, expected_course_write_epoch)
+            course = conn.execute(
+                "SELECT workspace_kind FROM courses WHERE id=? AND owner_user_id=?",
+                (course_id, self.owner_user_id),
+            ).fetchone()
+            allowed_kinds = (
+                {"general_study", "academic_course"}
+                if generation_origin.kind == "general_chat"
+                else {"academic_course"}
+            )
+            if course is None or course["workspace_kind"] not in allowed_kinds:
+                raise CourseConflictError("Flashcard generation workspace is invalid")
             prior = conn.execute(
                 "SELECT * FROM flashcard_generation_operations WHERE course_id=? AND idempotency_key=?",
                 (course_id, idempotency_key),
@@ -354,7 +383,16 @@ class CourseFlashcardGenerationRepository:
         origin: FlashcardGenerationOrigin | dict[str, Any] | None,
         provider_available: bool,
     ) -> FlashcardGenerationBriefReceipt:
-        sources = self._source_ids(source_ids)
+        generation_origin = FlashcardGenerationOrigin.model_validate(
+            origin or {"kind": "workspace"}
+        )
+        raw_source_ids = list(source_ids)
+        if generation_origin.kind == "general_chat":
+            if raw_source_ids:
+                raise ValueError("General Chat generation cannot claim Course sources")
+            sources = []
+        else:
+            sources = self._source_ids(raw_source_ids)
         objectives = self._objectives(objective_ids)
         brief = FlashcardGenerationBrief.model_validate(
             {
@@ -366,11 +404,19 @@ class CourseFlashcardGenerationRepository:
                 "include_hints": include_hints,
             }
         )
-        generation_origin = FlashcardGenerationOrigin.model_validate(
-            origin or {"kind": "workspace"}
-        )
         with self.course_repository._connect() as conn:
             self._course_for_write(conn, course_id, expected_course_write_epoch)
+            course = conn.execute(
+                "SELECT workspace_kind FROM courses WHERE id=? AND owner_user_id=?",
+                (course_id, self.owner_user_id),
+            ).fetchone()
+            allowed_kinds = (
+                {"general_study", "academic_course"}
+                if generation_origin.kind == "general_chat"
+                else {"academic_course"}
+            )
+            if course is None or course["workspace_kind"] not in allowed_kinds:
+                raise CourseConflictError("Flashcard generation workspace is invalid")
             snapshot = self._snapshot(conn, course_id, sources)
         warnings = [] if provider_available else ["provider_unavailable"]
         return FlashcardGenerationBriefReceipt(
@@ -484,12 +530,16 @@ class CourseFlashcardGenerationRepository:
             material = {
                 (x.source_id, x.source_revision, x.content_sha256) for x in material_receipts
             }
+            conversation_generation = operation.origin.kind == "general_chat"
             if (
                 len(encoded) > 48_000
                 or not output.cards
                 or len(output.cards) > operation.item_limit
-                or not material
-                or not material.issubset(snapshot)
+                or (
+                    not conversation_generation
+                    and (not material or not material.issubset(snapshot))
+                )
+                or (conversation_generation and material)
             ):
                 raise ValueError("Generated output is invalid")
             for card in output.cards:
@@ -497,14 +547,34 @@ class CourseFlashcardGenerationRepository:
                     raise ValueError("Generated objective is invalid")
                 if card.card_type not in operation.generation_brief.card_type_mix:
                     raise ValueError("Generated card type is invalid")
-                if any(
-                    (c.source_id, c.source_revision, c.content_sha256) not in snapshot
-                    or (c.source_id, c.source_revision, c.content_sha256) not in material
-                    for c in card.citations
+                if conversation_generation and card.citations:
+                    raise ValueError("Conversation cards cannot claim Course citations")
+                if not conversation_generation and (
+                    not card.citations
+                    or any(
+                        (c.source_id, c.source_revision, c.content_sha256) not in snapshot
+                        or (c.source_id, c.source_revision, c.content_sha256) not in material
+                        for c in card.citations
+                    )
                 ):
                     raise ValueError("Generated citation is invalid")
             valid_cards: list[GeneratedFlashcard] = []
-            seen_prompts: set[str] = set()
+            existing_rows = conn.execute(
+                """SELECT f.prompt, f.answer
+                   FROM flashcards f
+                   JOIN flashcard_decks d ON d.id=f.deck_id
+                   WHERE d.course_id=? AND d.owner_user_id=?
+                     AND d.id!=? AND d.state='ready' AND f.state='active'""",
+                (course_id, self.owner_user_id, operation.deck_id),
+            ).fetchall()
+            seen_prompts = {
+                " ".join(str(row["prompt"]).casefold().split())
+                for row in existing_rows
+            }
+            seen_answers = {
+                " ".join(str(row["answer"]).casefold().split())
+                for row in existing_rows
+            }
             meaningless_answers = {
                 "n/a",
                 "na",
@@ -518,6 +588,7 @@ class CourseFlashcardGenerationRepository:
                 normalized_answer = " ".join(card.answer.casefold().split())
                 if (
                     normalized_prompt in seen_prompts
+                    or normalized_answer in seen_answers
                     or normalized_answer in meaningless_answers
                     or (
                         len(normalized_answer) >= 4
@@ -526,8 +597,9 @@ class CourseFlashcardGenerationRepository:
                 ):
                     continue
                 seen_prompts.add(normalized_prompt)
+                seen_answers.add(normalized_answer)
                 valid_cards.append(card)
-            minimum_valid = max(3, math.ceil(operation.item_limit * 0.6))
+            minimum_valid = max(1, math.ceil(operation.item_limit * 0.6))
             if len(valid_cards) < minimum_valid:
                 raise FlashcardGenerationInsufficientCandidates(
                     "Generated output has insufficient valid cards"

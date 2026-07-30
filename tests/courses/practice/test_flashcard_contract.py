@@ -293,6 +293,46 @@ def test_archived_draft_restores_as_draft_without_implicit_publication(tmp_path:
     assert restored.ready_at is None
 
 
+def test_general_study_archive_restore_preserves_ready_deck_review_history(
+    tmp_path: Path,
+) -> None:
+    courses, service = _service(tmp_path / "courses.db", "u_alice")
+    general = courses.get_or_create_general_study()
+    deck, card = _ready_deck(service, courses, general.id, title="Conversation cards")
+    _review, schedule, summary = service.record_review(
+        general.id,
+        deck.id,
+        card_id=card.id,
+        rating="good",
+        idempotency_key="general-study-review",
+        expected_deck_revision=deck.revision,
+        expected_card_revision=card.revision,
+        expected_course_write_epoch=general.write_epoch,
+        now=1_000,
+    )
+    current = service.get_deck(general.id, deck.id, at=1_000).deck
+    archived = service.archive_deck(
+        general.id,
+        deck.id,
+        expected_revision=current.revision,
+        expected_course_write_epoch=general.write_epoch,
+    )
+    restored = service.restore_deck(
+        general.id,
+        deck.id,
+        expected_revision=archived.revision,
+        expected_course_write_epoch=general.write_epoch,
+    )
+    restored_view = service.get_deck(general.id, deck.id, at=1_000)
+
+    assert restored.state == "ready"
+    assert restored_view.review_summary.review_count == summary.review_count == 1
+    restored_schedule = next(
+        item for item in restored_view.schedules if item.card_id == card.id
+    )
+    assert restored_schedule.next_review_at == schedule.next_review_at
+
+
 def test_sqlite_rejects_forged_review_delete_and_non_owned_state(tmp_path: Path) -> None:
     courses, service = _service(tmp_path / "courses.db", "u_alice")
     course = courses.create_course("Geology")
@@ -322,11 +362,11 @@ def test_upgrade_from_exact_p4_05_receipts_applies_flashcards_then_generation(tm
     monkeypatch.setattr(runner, "discover_migrations", lambda: artifacts[:7])
     assert ensure_course_schema(path) == (6,)
     monkeypatch.setattr(runner, "discover_migrations", lambda: artifacts)
-    assert ensure_course_schema(path) == (7, 8, 9)
+    assert ensure_course_schema(path) == (7, 8, 9, 10)
     assert ensure_course_schema(path) == ()
     with sqlite3.connect(path) as conn:
         ledger = conn.execute("SELECT version FROM schema_migrations ORDER BY version").fetchall()
-        assert [row[0] for row in ledger] == [0, 1, 2, 3, 4, 5, 6, 7, 8, 9]
+        assert [row[0] for row in ledger] == [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10]
         assert conn.execute("SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'flashcard_reviews'").fetchone()[0] == 1
         triggers = {row[0] for row in conn.execute("SELECT name FROM sqlite_master WHERE type = 'trigger' AND name LIKE 'flashcard_%'")}
     assert {"flashcard_reviews_require_owned_ready_card", "flashcard_reviews_no_delete", "flashcard_review_state_requires_matching_review", "flashcard_generation_complete_requires_ready_deck"} <= triggers

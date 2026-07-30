@@ -146,10 +146,13 @@ export interface FlashcardGenerationBrief {
 }
 
 export interface FlashcardGenerationOrigin {
-  kind: "workspace" | "chat" | "practice_remediation";
+  kind: "workspace" | "chat" | "practice_remediation" | "general_chat";
   session_id: string | null;
   message_id: number | null;
   practice_attempt_id: string | null;
+  selected_message_ids?: number[];
+  context_sha256?: string | null;
+  context_summary?: string | null;
 }
 
 export interface FlashcardProviderReceipt {

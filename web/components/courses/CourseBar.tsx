@@ -32,8 +32,16 @@ export function CourseBar({ onCourseChange }: { onCourseChange?: () => void }) {
   const [restoreId, setRestoreId] = useState("");
   const [sources, setSources] = useState<CourseSource[]>([]);
   const [sourcesOpen, setSourcesOpen] = useState(false);
-  const active = courses.filter((course) => course.state === "active");
-  const archived = courses.filter((course) => course.state === "archived");
+  const active = courses.filter(
+    (course) =>
+      course.workspace_kind === "academic_course" && course.state === "active",
+  );
+  const archived = courses.filter(
+    (course) =>
+      course.workspace_kind === "academic_course" && course.state === "archived",
+  );
+  const generalStudy =
+    activeCourse?.workspace_kind === "general_study" ? activeCourse : null;
 
   const refreshSources = useCallback(async () => {
     if (!activeCourse) {
@@ -156,7 +164,9 @@ export function CourseBar({ onCourseChange }: { onCourseChange?: () => void }) {
 
   return (
     <div className="mx-auto flex w-full max-w-[960px] flex-wrap items-center gap-2 px-6 pt-2 text-xs">
-      <span className="font-medium text-[var(--muted-foreground)]">{t("Course")}</span>
+      <span className="font-medium text-[var(--muted-foreground)]">
+        {generalStudy ? t("Study space") : t("Course")}
+      </span>
       <select
         value={activeCourse?.id || ""}
         disabled={loading || busy}
@@ -168,6 +178,9 @@ export function CourseBar({ onCourseChange }: { onCourseChange?: () => void }) {
         aria-label={t("Active course")}
       >
         <option value="">{t("General chat (no course)")}</option>
+        {generalStudy ? (
+          <option value={generalStudy.id}>{t("General Study")}</option>
+        ) : null}
         {active.map((course) => (
           <option key={course.id} value={course.id}>{course.title}</option>
         ))}
@@ -218,7 +231,7 @@ export function CourseBar({ onCourseChange }: { onCourseChange?: () => void }) {
           </button>
         </form>
       ) : null}
-      {activeCourse ? (
+      {activeCourse?.workspace_kind === "academic_course" ? (
         <>
           <input ref={fileRef} type="file" className="hidden" onChange={(event) => void attach(event.target.files?.[0])} />
           <button
@@ -271,7 +284,7 @@ export function CourseBar({ onCourseChange }: { onCourseChange?: () => void }) {
         </>
       ) : null}
       {status || error ? <span role={error ? "alert" : "status"} className="truncate text-[var(--muted-foreground)]">{status || error}</span> : null}
-      {activeCourse && sourcesOpen ? (
+      {activeCourse?.workspace_kind === "academic_course" && sourcesOpen ? (
         <section className="basis-full rounded-lg border border-[var(--border)] bg-[var(--card)] p-3" aria-label={t("Course sources")}>
           <div className="mb-2 flex items-center justify-between gap-2">
             <div>

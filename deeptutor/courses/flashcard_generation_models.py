@@ -10,7 +10,7 @@ from __future__ import annotations
 import time
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 CardType = Literal["definition", "concept", "comparison", "application", "process", "recall"]
 GenerationState = Literal[
@@ -41,7 +41,7 @@ class FlashcardGenerationBrief(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     focus: str = Field(min_length=1, max_length=1000)
-    desired_count: int = Field(ge=3, le=48)
+    desired_count: int = Field(ge=1, le=48)
     card_type_mix: list[CardType] = Field(min_length=1, max_length=6)
     difficulty: Literal["introductory", "intermediate", "advanced", "mixed"] = "mixed"
     answer_length: Literal["short", "medium"] = "short"
@@ -58,10 +58,51 @@ class FlashcardGenerationBrief(BaseModel):
 class FlashcardGenerationOrigin(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    kind: Literal["workspace", "chat", "practice_remediation"]
+    kind: Literal["workspace", "chat", "practice_remediation", "general_chat"]
     session_id: str | None = Field(default=None, max_length=160)
     message_id: int | None = Field(default=None, ge=1)
     practice_attempt_id: str | None = Field(default=None, max_length=80)
+    selected_message_ids: list[int] = Field(default_factory=list, max_length=32)
+    context_sha256: str | None = Field(default=None, max_length=64)
+    context_summary: str | None = Field(default=None, max_length=160)
+
+    @field_validator("selected_message_ids")
+    @classmethod
+    def unique_message_ids(cls, value: list[int]) -> list[int]:
+        if any(item < 1 for item in value) or len(value) != len(set(value)):
+            raise ValueError("selected_message_ids are invalid")
+        return value
+
+    @field_validator("context_sha256")
+    @classmethod
+    def context_digest(cls, value: str | None) -> str | None:
+        if value is not None and (
+            len(value) != 64 or any(c not in "0123456789abcdef" for c in value)
+        ):
+            raise ValueError("context_sha256 must be a SHA-256 digest")
+        return value
+
+    @model_validator(mode="after")
+    def provenance_matches_kind(self) -> "FlashcardGenerationOrigin":
+        if self.kind == "general_chat":
+            if (
+                not self.session_id
+                or self.message_id is None
+                or len(self.selected_message_ids) < 2
+                or not self.context_sha256
+                or not (self.context_summary or "").strip()
+                or self.practice_attempt_id is not None
+            ):
+                raise ValueError("General Chat provenance is incomplete")
+        elif (
+            self.selected_message_ids
+            or self.context_sha256 is not None
+            or self.context_summary is not None
+        ):
+            raise ValueError(
+                "Conversation context provenance is reserved for General Chat"
+            )
+        return self
 
 
 class FlashcardProviderReceipt(BaseModel):
@@ -79,7 +120,7 @@ class FlashcardProviderReceipt(BaseModel):
     response_status: str | None = Field(default=None, max_length=80)
     service_tier: str | None = Field(default=None, max_length=80)
     prompt_version: str = Field(
-        default="course-flashcards-v1", min_length=1, max_length=80
+        default="course-flashcards-v2", min_length=1, max_length=80
     )
     store: Literal[False] = False
     latency_ms: int | None = Field(default=None, ge=0)
@@ -179,7 +220,7 @@ class GeneratedFlashcard(BaseModel):
     hint: str | None = Field(default=None, max_length=2_000)
     card_type: CardType = "recall"
     objective_ids: list[str] = Field(default_factory=list, max_length=64)
-    citations: list[FlashcardCitation] = Field(min_length=1, max_length=3)
+    citations: list[FlashcardCitation] = Field(default_factory=list, max_length=3)
 
 
 class FlashcardCandidate(GeneratedFlashcard):
@@ -209,7 +250,7 @@ class GeneratedFlashcardOutput(BaseModel):
     response_status: str | None = Field(default=None, max_length=80)
     service_tier: str | None = Field(default=None, max_length=80)
     prompt_version: str = Field(
-        default="course-flashcards-v1", min_length=1, max_length=80
+        default="course-flashcards-v2", min_length=1, max_length=80
     )
     store: Literal[False] = False
     latency_ms: int | None = Field(default=None, ge=0)
@@ -224,6 +265,15 @@ class FlashcardGenerationSourceText(BaseModel):
     text: str = Field(min_length=1, max_length=12_000)
 
 
+class FlashcardGenerationConversationText(BaseModel):
+    """Ephemeral owner-scoped conversation context, never persisted as text."""
+
+    model_config = ConfigDict(extra="forbid")
+    selected_message_ids: list[int] = Field(min_length=2, max_length=32)
+    context_sha256: str = Field(min_length=64, max_length=64)
+    text: str = Field(min_length=1, max_length=12_000)
+
+
 class FlashcardGenerationInput(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -231,7 +281,11 @@ class FlashcardGenerationInput(BaseModel):
     owner_user_id: str = Field(min_length=1, max_length=160)
     course_id: str
     deck_id: str
-    source_material: list[FlashcardGenerationSourceText] = Field(min_length=1, max_length=64)
+    origin: FlashcardGenerationOrigin
+    source_material: list[FlashcardGenerationSourceText] = Field(
+        default_factory=list, max_length=64
+    )
+    conversation_context: FlashcardGenerationConversationText | None = None
     objective_ids: list[str] = Field(default_factory=list, max_length=64)
     generation_brief: FlashcardGenerationBrief
     item_limit: int = Field(ge=1, le=48)
@@ -251,7 +305,7 @@ class FlashcardGenerationBriefReceipt(BaseModel):
     course_id: str
     course_write_epoch: int = Field(ge=1)
     brief: FlashcardGenerationBrief
-    source_snapshot: list[FlashcardSourceReceipt] = Field(min_length=1, max_length=64)
+    source_snapshot: list[FlashcardSourceReceipt] = Field(default_factory=list, max_length=64)
     objective_ids: list[str] = Field(default_factory=list, max_length=64)
     origin: FlashcardGenerationOrigin
     provider_available: bool

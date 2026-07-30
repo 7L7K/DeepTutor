@@ -86,6 +86,10 @@ def prepare_source_upload(
     install_personal_course_context()
     service = get_current_course_service()
     course = service.get(course_id)
+    if course.workspace_kind != "academic_course":
+        raise CourseConflictError(
+            "General Study cannot accept Course sources or Knowledge"
+        )
     if course.state != "active":
         raise CourseConflictError("Archived courses cannot accept sources")
 

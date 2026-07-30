@@ -4,10 +4,21 @@ import test from "node:test";
 import {
   canShowCourseLearnerActions,
   isCurrentCourseLearnerAction,
+  requestedFlashcardCount,
   requestCourseLearnerAction,
+  requestGeneralStudyFlashcards,
   type CourseLearnerActionScope,
   visibleCourseLearnerActions,
 } from "../lib/course-actions-api";
+
+test("general Chat Flashcard intent is explicit, bounded, and defaults to eight", () => {
+  assert.equal(requestedFlashcardCount("Explain linear equations"), null);
+  assert.equal(requestedFlashcardCount("I use flashcards to study"), null);
+  assert.equal(requestedFlashcardCount("Turn this into 10 flashcards"), 10);
+  assert.equal(requestedFlashcardCount("Make flashcards from this"), 8);
+  assert.equal(requestedFlashcardCount("Create 48 flashcards about mitosis"), 48);
+  assert.equal(requestedFlashcardCount("Create 49 flashcards about mitosis"), 8);
+});
 
 const scope = (
   userId: string | null,
@@ -166,4 +177,55 @@ test("learner-action request carries identity bindings but no prompt or source a
   ]) {
     assert.equal(forbidden in body, false);
   }
+});
+
+test("general Study request carries only the frozen conversation authority", async (t) => {
+  const originalFetch = globalThis.fetch;
+  let requestedUrl = "";
+  let requestedInit: RequestInit | undefined;
+  t.after(() => {
+    globalThis.fetch = originalFetch;
+  });
+  globalThis.fetch = (async (
+    input: RequestInfo | URL,
+    init?: RequestInit,
+  ) => {
+    requestedUrl = String(input);
+    requestedInit = init;
+    return new Response(
+      JSON.stringify({
+        action: "make_flashcards",
+        course_id: "crs_general",
+        course_revision: 1,
+        course_write_epoch: 1,
+        destination: "flashcards",
+        session_id: "ses_general",
+        parent_message_id: 44,
+        objective_ids: [],
+        source_ids: [],
+        reason_code: "conversation_context",
+        operation_id: null,
+      }),
+      { status: 200, headers: { "Content-Type": "application/json" } },
+    );
+  }) as typeof fetch;
+
+  await requestGeneralStudyFlashcards({
+    sessionId: "ses_general",
+    assistantMessageId: 44,
+    desiredCount: 5,
+    destinationCourseId: "crs_biology",
+  });
+
+  assert.equal(
+    requestedUrl,
+    "/api/v1/courses/general-study/learner-actions",
+  );
+  assert.deepEqual(JSON.parse(String(requestedInit?.body)), {
+    action: "make_flashcards",
+    session_id: "ses_general",
+    assistant_message_id: 44,
+    desired_count: 5,
+    destination_course_id: "crs_biology",
+  });
 });

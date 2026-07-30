@@ -201,3 +201,20 @@ export function flashcardGenerationUnavailableCopy(
   }
   return `${normalized}. ${MANUAL_FALLBACK}`;
 }
+
+/** Keep import implementation names out of the learner-facing source picker. */
+export function flashcardCourseSourceLabel(
+  displayName: string | null | undefined,
+  kind: string | null | undefined,
+): string {
+  const name = displayName?.trim() ?? "";
+  const technicalIdentity = `${kind ?? ""} ${name}`.toLowerCase();
+  if (
+    technicalIdentity.includes("blueway") &&
+    technicalIdentity.includes("course") &&
+    technicalIdentity.includes("bundle")
+  ) {
+    return "Imported BlueWay Course material";
+  }
+  return name || "Course material";
+}

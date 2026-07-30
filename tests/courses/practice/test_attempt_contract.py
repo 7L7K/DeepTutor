@@ -842,7 +842,7 @@ def test_database_freezes_answers_after_submit_or_parent_archive_and_receipts_ca
 
 def test_migration_0002_replay_tamper_and_rollback_are_transactional(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     path = tmp_path / "courses.db"
-    assert ensure_course_schema(path) == (0, 1, 2, 3, 4, 5, 6, 7, 8, 9)
+    assert ensure_course_schema(path) == (0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10)
     assert ensure_course_schema(path) == ()
     artifacts = runner.discover_migrations()
     assessment = artifacts[2]
@@ -891,19 +891,25 @@ def test_upgrade_from_exact_p4_02b_state_applies_generation_migrations_and_prese
         }
 
     monkeypatch.setattr(runner, "discover_migrations", lambda: artifacts)
-    assert ensure_course_schema(path) == (3, 4, 5, 6, 7, 8, 9)
+    assert ensure_course_schema(path) == (3, 4, 5, 6, 7, 8, 9, 10)
     assert ensure_course_schema(path) == ()
     with courses._connect() as conn:
         after = {
-            table: conn.execute(f'SELECT * FROM "{table}" ORDER BY rowid').fetchall()
+            table: conn.execute(
+                f"""SELECT {", ".join(f'"{column}"' for column in before[table][0].keys())}
+                    FROM "{table}" ORDER BY rowid"""
+            ).fetchall()
             for table in before
         }
+        assert conn.execute(
+            "SELECT workspace_kind FROM courses WHERE id = ?", (course.id,)
+        ).fetchone()[0] == "academic_course"
         assert conn.execute("SELECT COUNT(*) FROM quiz_attempts").fetchone()[0] == 0
         assert tuple(
             row[0]
             for row in conn.execute(
                 "SELECT version FROM schema_migrations ORDER BY version"
             )
-        ) == (0, 1, 2, 3, 4, 5, 6, 7, 8, 9)
+        ) == (0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10)
     assert before == after
     assert practice_set.id and revision.id and len(questions) == 2

@@ -46,7 +46,9 @@ import {
 import { getCourseCapabilities } from "@/lib/course-api";
 import {
   isCurrentCourseLearnerAction,
+  requestedFlashcardCount,
   requestCourseLearnerAction,
+  requestGeneralStudyFlashcards,
   type CourseLearnerAction,
   type CourseLearnerActionScope,
 } from "@/lib/course-actions-api";
@@ -343,6 +345,7 @@ export default function ChatPage() {
     loading: coursesLoading,
     restoreCourse,
     selectCourse,
+    openGeneralStudy,
   } = useCourses();
 
   const {
@@ -376,7 +379,9 @@ export default function ChatPage() {
   const effectiveCourseId = courseIdForChatSession(
     state.sessionId,
     state.courseId,
-    activeCourse?.id || null,
+    activeCourse?.workspace_kind === "academic_course"
+      ? activeCourse.id
+      : null,
   );
   const courseMode = Boolean(effectiveCourseId);
   const courseSessionReadOnly = sessionCourseView.readOnly;
@@ -394,6 +399,7 @@ export default function ChatPage() {
   const [flashcardGenerationEnabled, setFlashcardGenerationEnabled] =
     useState(false);
   const learnerActionEpochRef = useRef(0);
+  const naturalFlashcardTurnRef = useRef(false);
   const learnerActionScopeRef = useRef<CourseLearnerActionScope>({
     userId: courseIdentity,
     courseId: effectiveCourseId,
@@ -418,7 +424,7 @@ export default function ChatPage() {
     let active = true;
     setPracticeGenerationEnabled(false);
     setFlashcardGenerationEnabled(false);
-    if (!courseIdentity || !effectiveCourseId) return () => {
+    if (!courseIdentity) return () => {
       active = false;
     };
     void getCourseCapabilities()
@@ -1672,20 +1678,23 @@ export default function ChatPage() {
   );
 
   const handleLearnerAction = useCallback(
-    async (action: CourseLearnerAction, assistantMessageId: number) => {
+    async (
+      action: CourseLearnerAction,
+      assistantMessageId: number,
+      desiredCount?: number,
+    ) => {
       if (
         learnerActionBusy ||
-        !actionCourse ||
         !courseIdentity ||
-        actionCourse.state !== "active" ||
         !state.sessionId ||
-        state.isStreaming
+        state.isStreaming ||
+        (actionCourse ? actionCourse.state !== "active" : action !== "make_flashcards")
       ) {
         return;
       }
       const requested: CourseLearnerActionScope = {
         userId: courseIdentity,
-        courseId: actionCourse.id,
+        courseId: actionCourse?.id ?? null,
         sessionId: state.sessionId,
         messageId: assistantMessageId,
         epoch: ++learnerActionEpochRef.current,
@@ -1694,25 +1703,32 @@ export default function ChatPage() {
       setLearnerActionBusy(action);
       setLearnerActionError(null);
       try {
-        const plan = await requestCourseLearnerAction(actionCourse.id, {
-          action,
-          sessionId: state.sessionId,
-          assistantMessageId,
-          idempotencyKey: [
-            "learner-action",
-            state.sessionId,
-            assistantMessageId,
-            action,
-          ].join(":"),
-          expectedCourseRevision: actionCourse.revision,
-          expectedCourseWriteEpoch: actionCourse.write_epoch,
-        });
+        const plan = actionCourse
+          ? await requestCourseLearnerAction(actionCourse.id, {
+              action,
+              sessionId: state.sessionId,
+              assistantMessageId,
+              idempotencyKey: [
+                "learner-action",
+                state.sessionId,
+                assistantMessageId,
+                action,
+              ].join(":"),
+              expectedCourseRevision: actionCourse.revision,
+              expectedCourseWriteEpoch: actionCourse.write_epoch,
+            })
+          : await requestGeneralStudyFlashcards({
+              sessionId: state.sessionId,
+              assistantMessageId,
+              desiredCount,
+            });
         if (
           !isCurrentCourseLearnerAction(
             requested,
             learnerActionScopeRef.current,
           ) ||
-          plan.course_id !== requested.courseId ||
+          (requested.courseId != null &&
+            plan.course_id !== requested.courseId) ||
           plan.session_id !== requested.sessionId ||
           plan.parent_message_id !== requested.messageId
         ) {
@@ -1725,7 +1741,8 @@ export default function ChatPage() {
           await handleSend(plan.followup_text);
           return;
         }
-        selectCourse(plan.course_id);
+        if (actionCourse) selectCourse(plan.course_id);
+        else await openGeneralStudy();
         if (plan.destination === "practice") router.push("/practice");
         else if (plan.destination === "flashcards") {
           if (!plan.generation_brief) {
@@ -1758,12 +1775,49 @@ export default function ChatPage() {
       courseIdentity,
       handleSend,
       learnerActionBusy,
+      openGeneralStudy,
       router,
       selectCourse,
       state.isStreaming,
       state.sessionId,
     ],
   );
+
+  useEffect(() => {
+    if (courseMode) {
+      naturalFlashcardTurnRef.current = false;
+      return;
+    }
+    if (state.isStreaming) {
+      naturalFlashcardTurnRef.current = true;
+      return;
+    }
+    if (!naturalFlashcardTurnRef.current || learnerActionBusy) return;
+    naturalFlashcardTurnRef.current = false;
+    const assistantIndex = [...state.messages]
+      .map((message, index) => ({ message, index }))
+      .reverse()
+      .find(({ message }) => message.role === "assistant" && message.id != null)
+      ?.index;
+    if (assistantIndex == null) return;
+    const assistant = state.messages[assistantIndex];
+    const user = [...state.messages.slice(0, assistantIndex)]
+      .reverse()
+      .find((message) => message.role === "user");
+    const desiredCount = requestedFlashcardCount(user?.content ?? "");
+    if (desiredCount == null || assistant.id == null) return;
+    void handleLearnerAction(
+      "make_flashcards",
+      Number(assistant.id),
+      desiredCount,
+    );
+  }, [
+    courseMode,
+    handleLearnerAction,
+    learnerActionBusy,
+    state.isStreaming,
+    state.messages,
+  ]);
 
   const handleConfirmOutline = useCallback(
     (
@@ -2156,6 +2210,11 @@ export default function ChatPage() {
                       !courseSessionReadOnly &&
                       Boolean(actionCourse) &&
                       hasLlm
+                    }
+                    generalFlashcardsEnabled={
+                      !courseMode &&
+                      Boolean(courseIdentity) &&
+                      flashcardGenerationEnabled
                     }
                     practiceGenerationEnabled={practiceGenerationEnabled}
                     flashcardGenerationEnabled={flashcardGenerationEnabled}

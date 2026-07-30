@@ -17,6 +17,9 @@ from deeptutor.courses.flashcard_generation_models import (
     GeneratedFlashcard,
     GeneratedFlashcardOutput,
 )
+from deeptutor.courses.flashcard_generation_provider import (
+    FlashcardGenerationFocusUnsupported,
+)
 from deeptutor.courses.flashcard_generation_repository import (
     CourseFlashcardGenerationRepository,
     FlashcardGenerationInsufficientCandidates,
@@ -60,6 +63,136 @@ def _output(source) -> GeneratedFlashcardOutput:
             for ordinal in range(8)
         ],
     )
+
+
+def test_unsupported_focus_fails_before_any_provider_call(tmp_path: Path) -> None:
+    _courses, course, source, repository = _setup(tmp_path / "unsupported-focus.db")
+    request = repository.create_generated_deck(
+        course.id,
+        title="Bread",
+        source_ids=[source.id],
+        idempotency_key="unsupported-focus",
+        expected_course_write_epoch=course.write_epoch,
+        generation_brief={
+            "focus": "how to bake sourdough bread",
+            "desired_count": 8,
+            "card_type_mix": ["concept"],
+            "difficulty": "mixed",
+            "answer_length": "short",
+            "include_hints": True,
+        },
+    )
+
+    class UnsupportedResolver:
+        def resolve_for_focus(self, **_kwargs):
+            raise FlashcardGenerationFocusUnsupported("not covered")
+
+    class CountingProvider:
+        calls = 0
+
+        def generate(self, _request):
+            self.calls += 1
+            return _output(source)
+
+    provider = CountingProvider()
+    service = CourseFlashcardGenerationService(
+        repository,
+        provider=provider,
+        source_text_resolver=UnsupportedResolver(),
+        account_active=lambda _owner: True,
+        identity_lock=lambda: nullcontext(),
+    )
+
+    result = service.run_operation(course.id, request.operation.id)
+
+    assert result.state == "failed"
+    assert result.error_code == "invalid_output"
+    assert provider.calls == 0
+
+
+@pytest.mark.parametrize(
+    "origin",
+    [
+        {"kind": "chat", "session_id": "session-a", "message_id": 1},
+        {
+            "kind": "practice_remediation",
+            "practice_attempt_id": "att_" + ("a" * 32),
+        },
+    ],
+)
+def test_system_proposals_use_owned_material_without_wrapper_focus_blocking(
+    tmp_path: Path,
+    origin: dict[str, object],
+) -> None:
+    _courses, course, source, repository = _setup(
+        tmp_path / f"{origin['kind']}.db"
+    )
+    request = repository.create_generated_deck(
+        course.id,
+        title="Prepared review",
+        source_ids=[source.id],
+        idempotency_key=f"prepared-{origin['kind']}",
+        expected_course_write_epoch=course.write_epoch,
+        origin=origin,
+        generation_brief={
+            "focus": (
+                "Turn the selected Course answer into a reviewable study deck"
+                if origin["kind"] == "chat"
+                else "Review the concepts missed in this quiz attempt"
+            ),
+            "desired_count": 8,
+            "card_type_mix": ["recall"],
+            "difficulty": "mixed",
+            "answer_length": "short",
+            "include_hints": True,
+        },
+    )
+
+    class OriginAwareResolver:
+        focused_calls = 0
+        availability_calls = 0
+
+        def resolve_for_focus(self, **_kwargs):
+            self.focused_calls += 1
+            raise FlashcardGenerationFocusUnsupported("wrapper is not a topic")
+
+        def resolve(self, *, receipts, **_kwargs):
+            self.availability_calls += 1
+            from deeptutor.courses.flashcard_generation_models import (
+                FlashcardGenerationSourceText,
+            )
+
+            return [
+                FlashcardGenerationSourceText(
+                    receipt=receipt,
+                    text="ATP stores cellular energy.",
+                )
+                for receipt in receipts
+            ]
+
+    class CountingProvider:
+        calls = 0
+
+        def generate(self, _request):
+            self.calls += 1
+            return _output(source)
+
+    resolver = OriginAwareResolver()
+    provider = CountingProvider()
+    service = CourseFlashcardGenerationService(
+        repository,
+        provider=provider,
+        source_text_resolver=resolver,
+        account_active=lambda _owner: True,
+        identity_lock=lambda: nullcontext(),
+    )
+
+    result = service.run_operation(course.id, request.operation.id)
+
+    assert result.state == "awaiting_review"
+    assert resolver.focused_calls == 0
+    assert resolver.availability_calls == 1
+    assert provider.calls == 1
 
 
 def _complete(repo, course, source, request):
@@ -376,9 +509,7 @@ def test_source_change_during_resolution_is_fenced_before_provider_call(
 def test_final_preflight_blocks_revocation_and_cancellation_before_provider(
     tmp_path: Path, race: str
 ) -> None:
-    courses, course, source, repository = _setup(
-        tmp_path / f"{race}.db"
-    )
+    courses, course, source, repository = _setup(tmp_path / f"{race}.db")
     request = repository.create_generated_deck(
         course.id,
         title="Terms",
@@ -394,9 +525,7 @@ def test_final_preflight_blocks_revocation_and_cancellation_before_provider(
                 authority["active"] = False
             else:
                 assert (
-                    repository.cancel_operation(
-                        course.id, request.operation.id
-                    ).state
+                    repository.cancel_operation(course.id, request.operation.id).state
                     == "cancelled"
                 )
             from deeptutor.courses.flashcard_generation_models import (
@@ -404,9 +533,7 @@ def test_final_preflight_blocks_revocation_and_cancellation_before_provider(
             )
 
             return [
-                FlashcardGenerationSourceText(
-                    receipt=receipt, text="ATP stores energy."
-                )
+                FlashcardGenerationSourceText(receipt=receipt, text="ATP stores energy.")
                 for receipt in receipts
             ]
 
@@ -454,10 +581,7 @@ def test_cancel_archives_unpublished_draft_and_running_cancel_wins(
         expected_course_write_epoch=course.write_epoch,
     )
     repo.claim_operation(course.id, pre_admission.operation.id)
-    assert (
-        repo.cancel_operation(course.id, pre_admission.operation.id).state
-        == "cancelled"
-    )
+    assert repo.cancel_operation(course.id, pre_admission.operation.id).state == "cancelled"
 
     admitted = repo.create_generated_deck(
         course.id,
@@ -467,14 +591,10 @@ def test_cancel_archives_unpublished_draft_and_running_cancel_wins(
         expected_course_write_epoch=course.write_epoch,
     )
     repo.claim_operation(course.id, admitted.operation.id)
-    invoked = repo.preflight_provider_call(
-        course.id, admitted.operation.id, account_active=True
-    )
+    invoked = repo.preflight_provider_call(course.id, admitted.operation.id, account_active=True)
     assert invoked.provider_invoked_at is not None
     assert repo.cancel_operation(course.id, admitted.operation.id).state == "cancelling"
-    cancelled = repo.fail_operation(
-        course.id, admitted.operation.id, "provider_failed"
-    )
+    cancelled = repo.fail_operation(course.id, admitted.operation.id, "provider_failed")
     assert cancelled.state == "cancelled"
     assert cancelled.error_code == "cancelled"
 
@@ -486,9 +606,12 @@ def test_cancel_archives_unpublished_draft_and_running_cancel_wins(
                 (queued.deck_id, pre_admission.deck_id),
             ).fetchall()
         } == {"archived"}
-        assert conn.execute(
-            "SELECT state FROM flashcard_decks WHERE id=?", (admitted.deck_id,)
-        ).fetchone()[0] == "archived"
+        assert (
+            conn.execute(
+                "SELECT state FROM flashcard_decks WHERE id=?", (admitted.deck_id,)
+            ).fetchone()[0]
+            == "archived"
+        )
 
 
 def test_cancel_after_provider_admission_is_truthful_and_discards_output(
@@ -510,9 +633,7 @@ def test_cancel_after_provider_admission_is_truthful_and_discards_output(
             )
 
             return [
-                FlashcardGenerationSourceText(
-                    receipt=receipt, text="ATP stores energy."
-                )
+                FlashcardGenerationSourceText(receipt=receipt, text="ATP stores energy.")
                 for receipt in receipts
             ]
 
@@ -522,10 +643,7 @@ def test_cancel_after_provider_admission_is_truthful_and_discards_output(
         def generate(self, _request):
             self.calls += 1
             assert (
-                repository.cancel_operation(
-                    course.id, request.operation.id
-                ).state
-                == "cancelling"
+                repository.cancel_operation(course.id, request.operation.id).state == "cancelling"
             )
             return _output(source)
 
@@ -552,9 +670,7 @@ def test_cancel_after_provider_admission_is_truthful_and_discards_output(
     assert deck is not None and deck["state"] == "archived"
 
 
-def test_expired_candidate_review_is_cancelled_and_archived(
-    tmp_path: Path, monkeypatch
-) -> None:
+def test_expired_candidate_review_is_cancelled_and_archived(tmp_path: Path, monkeypatch) -> None:
     from deeptutor.courses import flashcard_generation_repository as module
 
     path = tmp_path / "courses.db"
@@ -589,13 +705,17 @@ def test_expired_candidate_review_is_cancelled_and_archived(
     assert repo.expire_review_candidates(course.id) == 1
     assert repo.get_operation(course.id, operation.id).state == "cancelled"
     with sqlite3.connect(path) as conn:
-        assert conn.execute(
-            "SELECT state FROM flashcard_decks WHERE id=?", (request.deck_id,)
-        ).fetchone()[0] == "archived"
+        assert (
+            conn.execute(
+                "SELECT state FROM flashcard_decks WHERE id=?", (request.deck_id,)
+            ).fetchone()[0]
+            == "archived"
+        )
 
 
 def test_course_archive_reconciles_expired_candidate_review(
-    tmp_path: Path, monkeypatch,
+    tmp_path: Path,
+    monkeypatch,
 ) -> None:
     from deeptutor.courses import flashcard_generation_repository as generation_module
     from deeptutor.courses import repository as course_module
@@ -717,9 +837,7 @@ def test_semantic_validation_filters_duplicates_and_answer_leakage(
     staged = repo.stage_candidates(
         course.id,
         operation.id,
-        GeneratedFlashcardOutput(
-            provider_label="deterministic-local", cards=cards
-        ),
+        GeneratedFlashcardOutput(provider_label="deterministic-local", cards=cards),
         account_active=True,
         material_receipts=[receipt],
     )
@@ -743,9 +861,7 @@ def test_semantic_validation_fails_when_too_few_candidates_survive(
         expected_course_write_epoch=course.write_epoch,
         item_limit=5,
     )
-    operation, _claimed = repo.claim_operation(
-        course.id, request.operation.id
-    )
+    operation, _claimed = repo.claim_operation(course.id, request.operation.id)
     receipt = FlashcardSourceReceipt(
         source_id=source.id,
         source_revision=source.revision,

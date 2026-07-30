@@ -13,6 +13,8 @@ interface Phase4BrowserState {
   bobCourseId: string;
   bobIdentity: string;
   phase5SourceId?: string;
+  phase5GeneralSessionId?: string;
+  phase5GeneralAssistantId?: number;
 }
 
 async function signIn(page: Page, username: string, password: string) {
@@ -341,7 +343,7 @@ test("manual Practice and Flashcard learner flows remain usable without a provid
   await page.getByRole("button", { name: "Create", exact: true }).click();
   await expect(
     page.getByText(
-      "Grounded generation is not enabled on this server. Manual Flashcards remain available.",
+      "Flashcard generation is not enabled on this server. Manual Flashcards remain available.",
     ),
   ).toBeVisible();
   await expect(page.getByLabel("Generated deck title")).toHaveCount(0);
@@ -401,26 +403,75 @@ test("phase5 stages grounded candidates behind review", async ({ page }) => {
   await page
     .getByRole("button", { name: "Generate from Course materials" })
     .click();
+  await expect(
+    page.getByText("Using the ready material in this Course", { exact: true }),
+  ).toBeVisible();
+  await expect(
+    page.getByRole("button", { name: "Change materials" }),
+  ).toHaveCount(0);
+  await expect(
+    page.getByRole("group", { name: "Use these Course materials" }),
+  ).toHaveCount(0);
+  await expect(
+    page.getByText("What should these cards teach you?", { exact: true }),
+  ).toBeVisible();
   await expect(page.getByLabel("Generated deck title")).toHaveCount(0);
+  const count = page.getByLabel("Generated card count");
+  await expect(count).toHaveValue("8");
+  await count.fill("");
+  await expect(count).toHaveValue("");
+  await expect(page.getByText("Enter between 1 and 48 cards.")).toBeVisible();
+  await expect(
+    page.getByRole("button", { name: "Check Course coverage" }),
+  ).toBeDisabled();
+  await count.fill("0");
+  await count.blur();
+  await expect(count).toHaveValue("1");
+  await count.fill("49");
+  await count.blur();
+  await expect(count).toHaveValue("48");
+  for (const preset of ["5", "10", "20"]) {
+    await page.getByRole("button", { name: preset, exact: true }).click();
+    await expect(count).toHaveValue(preset);
+  }
+  await page
+    .getByLabel("Flashcard generation focus")
+    .fill("how to bake sourdough bread");
+  await page
+    .getByRole("button", { name: "Check Course coverage" })
+    .click();
+  await expect(
+    page.getByRole("heading", {
+      name: "This topic is not in the selected Course materials",
+    }),
+  ).toBeVisible();
+  await expect(
+    page.getByText("No AI generation was started.", { exact: false }),
+  ).toBeVisible();
+  await expect(
+    page.getByRole("button", { name: "Create 20 cards with AI" }),
+  ).toBeDisabled();
   await page
     .getByLabel("Flashcard generation focus")
     .fill("Review cellular energy from the selected notes");
   await page.getByLabel("Generated card count").fill("3");
   await page
-    .getByRole("button", { name: "Review request" })
+    .getByRole("button", { name: "Check Course coverage" })
     .click();
   await expect(
-    page.getByRole("heading", { name: "Confirm provider use" }),
+    page.getByRole("heading", { name: "Ready to create" }),
   ).toBeVisible();
   await page
-    .getByRole("button", { name: "Generate cards" })
+    .getByRole("button", { name: "Create 3 cards with AI" })
     .click();
   await expect(
-    page.getByText("Grounded Flashcard generation queued.", { exact: true }),
+    page.getByText("Creating your cards. You can leave this page.", {
+      exact: true,
+    }),
   ).toBeVisible();
   await expect
     .poll(async () => {
-      return page.getByText("Ready for your review", { exact: true }).count();
+      return page.getByRole("heading", { name: "Review your cards" }).count();
     })
     .toBe(1);
   await expect(
@@ -429,6 +480,68 @@ test("phase5 stages grounded candidates behind review", async ({ page }) => {
       .filter({ hasText: /What bounded fact 1 is represented by source/ }),
   ).toBeVisible();
   await expect(page.getByText(/provider_failed/)).toHaveCount(0);
+
+  await page.route(
+    `**/api/v1/courses/${state.aliceCourseId}/sources`,
+    async (route) => {
+      const response = await route.fetch();
+      const payload = (await response.json()) as {
+        sources: Array<Record<string, unknown>>;
+      };
+      const readySource = payload.sources.find(
+        (source) => source.state === "ready",
+      );
+      if (!readySource) {
+        await route.fulfill({ response });
+        return;
+      }
+      await route.fulfill({
+        response,
+        json: {
+          ...payload,
+          sources: [
+            ...payload.sources,
+            {
+              ...readySource,
+              id: `${String(readySource.id)}-second-material`,
+              display_name: "Second ready material",
+            },
+          ],
+        },
+      });
+    },
+  );
+  await page.reload();
+  await page.getByLabel("Active course").selectOption(state.aliceCourseId);
+  await page.getByRole("button", { name: "Create", exact: true }).click();
+  await page
+    .getByRole("button", { name: "Generate from Course materials" })
+    .click();
+  await expect(
+    page.getByText("Using 2 ready materials", { exact: true }),
+  ).toBeVisible();
+  const changeMaterials = page.getByRole("button", {
+    name: "Change materials",
+    exact: true,
+  });
+  await expect(changeMaterials).toHaveAttribute("aria-expanded", "false");
+  await expect(
+    page.getByRole("group", { name: "Use these Course materials" }),
+  ).toHaveCount(0);
+  await changeMaterials.click();
+  const hideMaterials = page.getByRole("button", {
+    name: "Hide materials",
+    exact: true,
+  });
+  const materialPicker = page.getByRole("group", {
+    name: "Use these Course materials",
+  });
+  await expect(hideMaterials).toHaveAttribute("aria-expanded", "true");
+  await expect(materialPicker.getByRole("checkbox")).toHaveCount(2);
+  await materialPicker.getByRole("checkbox").nth(1).uncheck();
+  await expect(
+    page.getByText("Using 1 ready materials", { exact: true }),
+  ).toBeVisible();
 });
 
 test("phase5 publishes persisted reviewed candidates after restart", async ({
@@ -452,7 +565,7 @@ test("phase5 publishes persisted reviewed candidates after restart", async ({
   await page.getByRole("button", { name: /^Keep:/ }).click();
   await page.getByRole("button", { name: /Publish 3 cards/ }).click();
   await expect(
-    page.getByText("3 cards published and ready to study.", {
+    page.getByText("3 cards saved and ready to study.", {
       exact: true,
     }),
   ).toBeVisible();
@@ -463,4 +576,99 @@ test("phase5 publishes persisted reviewed candidates after restart", async ({
   await expect(
     page.getByText(/What bounded fact 1 is represented by source/),
   ).toBeVisible();
+});
+
+test("phase5 General Chat prepares before generation and publishes reviewed cards", async ({
+  page,
+}) => {
+  test.skip(
+    !alicePassword ||
+      !stateFile ||
+      process.env.P4_PHASE5_DETERMINISTIC !== "true",
+    "Run through scripts/test-phase4-browser deterministic Phase 5 lane.",
+  );
+  const state = JSON.parse(
+    readFileSync(stateFile!, "utf8"),
+  ) as Phase4BrowserState;
+  expect(state.phase5GeneralSessionId).toBeTruthy();
+  expect(state.phase5GeneralAssistantId).toBeTruthy();
+  await signIn(page, "alice", alicePassword!);
+
+  let generationPosts = 0;
+  const generationCourseIds: string[] = [];
+  page.on("request", (request) => {
+    if (
+      request.method() === "POST" &&
+      /\/flashcard-generation$/.test(new URL(request.url()).pathname)
+    ) {
+      generationPosts += 1;
+      const match = new URL(request.url()).pathname.match(
+        /\/courses\/([^/]+)\/flashcard-generation$/,
+      );
+      if (match) generationCourseIds.push(match[1]);
+    }
+  });
+
+  await page.goto(`/home/${state.phase5GeneralSessionId}`);
+  await expect(
+    page.getByText(/Mitochondria use cellular respiration/),
+  ).toBeVisible();
+  await page.getByRole("button", { name: "Make flashcards" }).click();
+  await expect(page).toHaveURL(/\/flashcards$/);
+  await expect(page.getByText("Based on this conversation.")).toBeVisible();
+  expect(generationPosts).toBe(0);
+
+  await expect(page.getByLabel("Flashcard destination")).toHaveValue(
+    /crs_/,
+  );
+  await page
+    .getByLabel("Flashcard destination")
+    .selectOption(state.aliceCourseId);
+  await expect(page.getByLabel("Flashcard destination")).toHaveValue(
+    state.aliceCourseId,
+  );
+  await expect(
+    page.getByText(
+      "Changing the destination never turns conversation cards into Course-grounded cards.",
+      { exact: true },
+    ),
+  ).toBeVisible();
+  await page
+    .getByLabel("Flashcard generation focus")
+    .fill("How mitochondria produce usable ATP");
+  await page.getByLabel("Generated card count").fill("3");
+  await page
+    .getByRole("button", { name: "Review conversation plan" })
+    .click();
+  await expect(
+    page.getByRole("heading", { name: "Ready to create" }),
+  ).toBeVisible();
+  await expect(
+    page.getByText("2 selected messages from this conversation"),
+  ).toBeVisible();
+  expect(generationPosts).toBe(0);
+
+  await page
+    .getByRole("button", { name: "Create 3 cards with AI" })
+    .click();
+  await expect.poll(() => generationPosts).toBe(1);
+  expect(generationCourseIds).toEqual([state.aliceCourseId]);
+  await expect
+    .poll(async () =>
+      page.getByRole("heading", { name: "Review your cards" }).count(),
+    )
+    .toBe(1);
+  await expect(
+    page.getByText("Based on the selected conversation context", {
+      exact: false,
+    }),
+  ).toBeVisible();
+
+  await page.getByRole("button", { name: "Remove this card" }).click();
+  await page.getByRole("button", { name: "Save 2 cards" }).click();
+  await expect(
+    page.getByText("2 cards saved and ready to study.", { exact: true }),
+  ).toBeVisible();
+  await page.getByRole("button", { name: "Start studying" }).click();
+  await expect(page.getByRole("button", { name: "Show answer" })).toBeVisible();
 });

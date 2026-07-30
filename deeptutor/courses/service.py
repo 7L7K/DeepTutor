@@ -67,6 +67,9 @@ class CourseService:
     def create(self, title: str) -> Course:
         return self.repository.create_course(title)
 
+    def general_study(self) -> Course:
+        return self.repository.get_or_create_general_study()
+
     def list(self, *, include_archived: bool = True) -> list[Course]:
         return self.repository.list_courses(include_archived=include_archived)
 
@@ -74,6 +77,10 @@ class CourseService:
         return self.repository.get_course(course_id)
 
     def rename(self, course_id: str, title: str, expected_revision: int) -> Course:
+        if self.get(course_id).workspace_kind == "general_study":
+            from .repository import CourseConflictError
+
+            raise CourseConflictError("General Study cannot be renamed")
         return self.repository.update_course_title(course_id, title, expected_revision)
 
     def _reconcile_abandoned_sources(
@@ -104,6 +111,10 @@ class CourseService:
         )
 
         async with course_operation_lock(course_id):
+            if self.get(course_id).workspace_kind == "general_study":
+                from .repository import CourseConflictError
+
+                raise CourseConflictError("General Study cannot be archived")
             self._reconcile_abandoned_sources(course_id)
             store = get_personal_sqlite_session_store()
             runtime = get_turn_runtime_manager(personal=True)
@@ -214,6 +225,8 @@ def resolve_course_turn_payload(
     """Resolve all course resources server-side before the generic turn runtime."""
     service = get_current_course_service()
     course = service.get(course_id)
+    if course.workspace_kind != "academic_course":
+        raise CourseUnavailableError("General Study cannot be used as Course Chat")
     if course.state != "active":
         raise CourseUnavailableError("Archived courses cannot start or regenerate turns")
 

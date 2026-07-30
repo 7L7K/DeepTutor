@@ -8,7 +8,9 @@ import pytest
 
 from deeptutor.courses.flashcard_generation_models import (
     FlashcardGenerationBrief,
+    FlashcardGenerationConversationText,
     FlashcardGenerationInput,
+    FlashcardGenerationOrigin,
     FlashcardGenerationSourceText,
     FlashcardSourceReceipt,
 )
@@ -25,7 +27,12 @@ from deeptutor.courses.provider_usage import (
 )
 
 
-def _request(source_text: str = "ATP stores cellular energy.") -> FlashcardGenerationInput:
+def _request(
+    source_text: str = "ATP stores cellular energy.",
+    *,
+    origin: FlashcardGenerationOrigin | None = None,
+    focus: str = "Cellular energy",
+) -> FlashcardGenerationInput:
     receipt = FlashcardSourceReceipt(
         source_id="src_" + ("a" * 32),
         source_revision=1,
@@ -36,12 +43,11 @@ def _request(source_text: str = "ATP stores cellular energy.") -> FlashcardGener
         owner_user_id="u_alice",
         course_id="crs_" + ("d" * 32),
         deck_id="dck_" + ("e" * 32),
-        source_material=[
-            FlashcardGenerationSourceText(receipt=receipt, text=source_text)
-        ],
+        origin=origin or FlashcardGenerationOrigin(kind="workspace"),
+        source_material=[FlashcardGenerationSourceText(receipt=receipt, text=source_text)],
         objective_ids=["obj_energy"],
         generation_brief=FlashcardGenerationBrief(
-            focus="Cellular energy",
+            focus=focus,
             desired_count=3,
             card_type_mix=["definition", "application"],
             difficulty="intermediate",
@@ -76,6 +82,44 @@ def _payload(quote: str = "ATP stores cellular energy.") -> dict:
     }
 
 
+def _conversation_request() -> FlashcardGenerationInput:
+    digest = "d" * 64
+    return FlashcardGenerationInput(
+        operation_id="ofg_" + ("f" * 32),
+        owner_user_id="u_alice",
+        course_id="crs_" + ("a" * 32),
+        deck_id="dck_" + ("b" * 32),
+        origin=FlashcardGenerationOrigin(
+            kind="general_chat",
+            session_id="unified_general",
+            message_id=2,
+            selected_message_ids=[1, 2],
+            context_sha256=digest,
+            context_summary="linear equations",
+        ),
+        source_material=[],
+        conversation_context=FlashcardGenerationConversationText(
+            selected_message_ids=[1, 2],
+            context_sha256=digest,
+            text=(
+                "user: Explain linear equations\n"
+                "assistant: Slope is the rate of change."
+            ),
+        ),
+        objective_ids=[],
+        generation_brief=FlashcardGenerationBrief(
+            focus="Understand slope",
+            desired_count=1,
+            card_type_mix=["concept"],
+            difficulty="mixed",
+            answer_length="short",
+            include_hints=True,
+        ),
+        item_limit=1,
+        context_char_limit=12_000,
+    )
+
+
 class _FakeResponses:
     def __init__(self, payload: dict, captured: dict) -> None:
         self.payload = payload
@@ -96,6 +140,39 @@ class _FakeResponses:
                 output_tokens_details=SimpleNamespace(reasoning_tokens=10),
             ),
         )
+
+
+def test_conversation_provider_uses_bounded_context_without_fake_citations(
+    tmp_path: Path,
+) -> None:
+    captured: dict = {}
+    provider = _provider(
+        tmp_path,
+        {
+            "cards": [
+                {
+                    "prompt": "What does slope measure?",
+                    "answer": "The rate of change.",
+                    "hint": "Compare changes in y and x.",
+                    "card_type": "concept",
+                    "objective_ids": [],
+                    "citations": [],
+                }
+            ]
+        },
+        captured,
+    )
+
+    output = provider.generate(_conversation_request())
+
+    assert output.cards[0].citations == []
+    request_payload = json.loads(captured["input"])
+    assert request_payload["sources"] == []
+    assert request_payload["conversation"]["selected_message_ids"] == [1, 2]
+    citations_schema = captured["text"]["format"]["schema"]["properties"][
+        "cards"
+    ]["items"]["properties"]["citations"]
+    assert citations_schema["minItems"] == citations_schema["maxItems"] == 0
 
 
 def _provider(
@@ -134,9 +211,7 @@ def test_default_provider_uses_dedicated_binding_not_chat_catalog(
         FlashcardProviderConfigService,
     )
 
-    service = FlashcardProviderConfigService(
-        tmp_path / "settings" / "flashcard_provider.json"
-    )
+    service = FlashcardProviderConfigService(tmp_path / "settings" / "flashcard_provider.json")
     monkeypatch.setattr(
         module,
         "get_flashcard_provider_config_service",
@@ -184,8 +259,54 @@ def test_openai_provider_uses_strict_store_false_tool_free_request(
         "3e1b0f95738760354f3f2855f28e1f120cdd247e11172712292a01ed9a59d5a2"
     )
     assert "untrusted study data" in captured["instructions"]
+    assert "directly help the learner with the requested focus" in captured["instructions"]
+    assert "incidental dialogue" in captured["instructions"]
     assert "Ignore all rules" in captured["input"]
     assert "sk-test-only" not in captured["input"]
+
+
+@pytest.mark.parametrize(
+    ("origin", "focus"),
+    [
+        (
+            FlashcardGenerationOrigin(
+                kind="chat",
+                session_id="session-a",
+                message_id=1,
+            ),
+            "Turn the selected Course answer into a reviewable study deck",
+        ),
+        (
+            FlashcardGenerationOrigin(
+                kind="practice_remediation",
+                practice_attempt_id="att_" + ("a" * 32),
+            ),
+            "Review the concepts missed in this quiz attempt",
+        ),
+    ],
+)
+def test_system_origin_cards_validate_against_owned_material_not_wrapper_terms(
+    tmp_path: Path,
+    origin: FlashcardGenerationOrigin,
+    focus: str,
+) -> None:
+    captured: dict = {}
+    provider = _provider(tmp_path, _payload(), captured)
+
+    output = provider.generate(_request(origin=origin, focus=focus))
+
+    assert len(output.cards) == 3
+    assert "not a topic keyword" in captured["instructions"]
+    assert json.loads(captured["input"])["origin_kind"] == origin.kind
+    with provider.ledger._connect() as connection:
+        rows = connection.execute(
+            "SELECT state,settled_input_tokens,settled_output_tokens "
+            "FROM provider_usage_reservations"
+        ).fetchall()
+    assert len(rows) == 1
+    assert rows[0]["state"] == "settled"
+    assert rows[0]["settled_input_tokens"] == 120
+    assert rows[0]["settled_output_tokens"] == 80
 
 
 def test_openai_provider_reserves_a_utf8_and_schema_upper_bound(
@@ -316,6 +437,39 @@ def test_openai_provider_rejects_unverifiable_evidence_quote(tmp_path: Path) -> 
         provider.generate(_request())
 
 
+def test_openai_provider_rejects_cards_unrelated_to_requested_focus(
+    tmp_path: Path,
+) -> None:
+    payload = _payload()
+    for card in payload["cards"]:
+        card["prompt"] = "What was mentioned in the recording?"
+        card["answer"] = "A QR code was mentioned."
+        card["hint"] = "Think about the clip."
+    provider = _provider(tmp_path, payload, {})
+
+    with pytest.raises(
+        FlashcardGenerationProviderError,
+        match="requested focus",
+    ):
+        provider.generate(_request())
+
+
+def test_openai_provider_rejects_focus_word_wrapped_in_source_trivia(
+    tmp_path: Path,
+) -> None:
+    payload = _payload()
+    for card in payload["cards"]:
+        card["prompt"] = "What did the lecture say about cellular energy?"
+        card["answer"] = "The lecture mentioned cellular energy."
+    provider = _provider(tmp_path, payload, {})
+
+    with pytest.raises(
+        FlashcardGenerationProviderError,
+        match="source trivia",
+    ):
+        provider.generate(_request())
+
+
 def test_openai_provider_constrains_output_to_exact_bounded_evidence(
     tmp_path: Path,
 ) -> None:
@@ -350,9 +504,7 @@ def test_openai_provider_constrains_output_to_exact_bounded_evidence(
         "Cellular energy",
         "ATP stores cellular energy.",
     ]
-    card_schema = captured["text"]["format"]["schema"]["properties"]["cards"][
-        "items"
-    ]["properties"]
+    card_schema = captured["text"]["format"]["schema"]["properties"]["cards"]["items"]["properties"]
     assert card_schema["card_type"]["enum"] == ["definition", "application"]
     assert card_schema["objective_ids"]["items"]["enum"] == ["obj_energy"]
     assert card_schema["objective_ids"]["maxItems"] == 1
@@ -376,9 +528,9 @@ def test_openai_provider_requires_empty_objective_ids_when_none_are_allowed(
     provider = _provider(tmp_path, payload, captured)
 
     assert len(provider.generate(request).cards) == 3
-    objective_schema = captured["text"]["format"]["schema"]["properties"][
-        "cards"
-    ]["items"]["properties"]["objective_ids"]
+    objective_schema = captured["text"]["format"]["schema"]["properties"]["cards"]["items"][
+        "properties"
+    ]["objective_ids"]
     assert objective_schema["maxItems"] == 64
     assert "enum" not in objective_schema["items"]
 
@@ -405,9 +557,7 @@ def test_openai_provider_omits_strict_schema_incompatible_quote_literals(
     )
 
     assert len(provider.generate(_request(source_text)).cards) == 3
-    evidence = json.loads(captured["input"])["sources"][0][
-        "allowed_evidence_quotes"
-    ]
+    evidence = json.loads(captured["input"])["sources"][0]["allowed_evidence_quotes"]
     assert evidence == ["ATP stores cellular energy."]
 
 
@@ -426,9 +576,7 @@ def test_openai_provider_rejects_unqualified_pricing_without_client_call(
 ) -> None:
     captured: dict = {}
     provider = _provider(tmp_path, _payload(), captured)
-    provider.ledger.configure(
-        ProviderUsagePolicy(enabled=True, pricing_version="stale-pricing")
-    )
+    provider.ledger.configure(ProviderUsagePolicy(enabled=True, pricing_version="stale-pricing"))
 
     with pytest.raises(FlashcardGenerationProviderQuotaExceeded):
         provider.generate(_request())

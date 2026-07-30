@@ -61,6 +61,7 @@ def learner_action_client(tmp_path, monkeypatch) -> TestClient:
             "grounded_generation": True,
             "practice_generation": True,
             "flashcard_generation": True,
+            "flashcard_generation_reason": None,
             "grounded_generation_reason": None,
         },
     )
@@ -243,7 +244,39 @@ def test_flashcard_action_returns_a_zero_call_review_brief_without_allocating_wo
         "session_id": binding[0],
         "message_id": binding[1],
         "practice_attempt_id": None,
+        "selected_message_ids": [],
+        "context_sha256": None,
+        "context_summary": None,
     }
+    assert (
+        "focus_not_supported"
+        not in first_payload["generation_brief"]["warnings"]
+    )
+    prepared = first_payload["generation_brief"]
+    canonical_confirmation = {
+        "title": "Prepared review",
+        "source_ids": [
+            item["source_id"] for item in prepared["source_snapshot"]
+        ],
+        "objective_ids": prepared["objective_ids"],
+        "focus": prepared["brief"]["focus"],
+        "card_type_mix": prepared["brief"]["card_type_mix"],
+        "difficulty": prepared["brief"]["difficulty"],
+        "answer_length": prepared["brief"]["answer_length"],
+        "include_hints": prepared["brief"]["include_hints"],
+        "origin": prepared["origin"],
+        "expected_course_write_epoch": prepared["course_write_epoch"],
+        "item_limit": prepared["brief"]["desired_count"],
+        "context_char_limit": 12_000,
+    }
+    confirmed = learner_action_client.post(
+        f"/api/v1/courses/{course['id']}/flashcard-generation/brief",
+        headers=_auth("alice"),
+        json=canonical_confirmation,
+    )
+    assert confirmed.status_code == 200, confirmed.text
+    assert confirmed.json()["origin"] == prepared["origin"]
+
     # Availability is deliberately re-evaluated for each confirmation screen.
     # Removing the deterministic provider between requests must not allocate
     # durable work or alter the server-resolved authority snapshot.
@@ -252,6 +285,21 @@ def test_flashcard_action_returns_a_zero_call_review_brief_without_allocating_wo
         replay_payload["generation_brief"]["source_snapshot"]
         == first_payload["generation_brief"]["source_snapshot"]
     )
+    assert worker_calls == []
+
+    forged = learner_action_client.post(
+        f"/api/v1/courses/{course['id']}/flashcard-generation",
+        headers={**_auth("alice"), "Idempotency-Key": "forged-chat-focus"},
+        json={
+            **canonical_confirmation,
+            "title": "Unrelated request",
+            "focus": "how to bake sourdough bread",
+        },
+    )
+    assert forged.status_code == 422
+    assert forged.json() == {
+        "detail": "Flashcard proposal does not match server authority"
+    }
     assert worker_calls == []
 
     operations = learner_action_client.get(
@@ -283,6 +331,9 @@ def test_unavailable_provider_rejects_before_allocation_without_becoming_an_id_o
             "grounded_generation": False,
             "practice_generation": False,
             "flashcard_generation": False,
+            "flashcard_generation_reason": (
+                "Flashcard generation is not enabled on this server"
+            ),
             "grounded_generation_reason": "Grounded generation is not enabled on this server",
         },
     )

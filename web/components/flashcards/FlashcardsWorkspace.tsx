@@ -13,9 +13,11 @@ import {
   Sparkles,
 } from "lucide-react";
 import { useTranslation } from "react-i18next";
+import Link from "next/link";
 import { CourseBar } from "@/components/courses/CourseBar";
 import { useCourses } from "@/context/CourseContext";
 import { fetchAuthStatus } from "@/lib/auth";
+import { requestGeneralStudyFlashcards } from "@/lib/course-actions-api";
 import {
   getCourseCapabilities,
   listCourseSources,
@@ -42,22 +44,26 @@ import {
   readyFlashcardDeck,
   requeueAgainCard,
   reviewFlashcard,
+  storeFlashcardProposal,
   type Flashcard,
   type FlashcardDeck,
   type FlashcardDeckView,
   type FlashcardGenerationOperation,
   type FlashcardGenerationBriefReceipt,
+  type FlashcardGenerationOrigin,
   type FlashcardGenerationOptions,
   type FlashcardRating,
   type FlashcardRequestScope,
 } from "@/lib/flashcards-api";
 import {
   FLASHCARDS_VIEW_PRESENTATION,
+  flashcardCourseSourceLabel,
   flashcardGenerationFailurePresentation,
   flashcardGenerationStatePresentation,
   flashcardGenerationUnavailableCopy,
   type FlashcardCreateMode,
   type FlashcardsView,
+  type GroundedCreateStage,
 } from "@/lib/flashcard-generation-presentation";
 import { FlashcardStudySession } from "@/components/flashcards/study/FlashcardStudySession";
 
@@ -86,7 +92,12 @@ function errorText(cause: unknown): string {
 
 export default function FlashcardsWorkspace() {
   const { t } = useTranslation();
-  const { activeCourse, refresh: refreshCourses } = useCourses();
+  const {
+    activeCourse,
+    courses,
+    refresh: refreshCourses,
+    selectCourse,
+  } = useCourses();
   const [identity, setIdentity] = useState<string | null>(null);
   const [decks, setDecks] = useState<FlashcardDeck[]>([]);
   const [decksHaveMore, setDecksHaveMore] = useState(false);
@@ -95,7 +106,7 @@ export default function FlashcardsWorkspace() {
   const [deckTitle, setDeckTitle] = useState("");
   const [generatedTitle, setGeneratedTitle] = useState("");
   const [generationFocus, setGenerationFocus] = useState("");
-  const [generationCount, setGenerationCount] = useState(8);
+  const [generationCount, setGenerationCount] = useState<number | "">(8);
   const [generationDifficulty, setGenerationDifficulty] =
     useState<FlashcardGenerationOptions["difficulty"]>("mixed");
   const [generationAnswerLength, setGenerationAnswerLength] =
@@ -131,12 +142,19 @@ export default function FlashcardsWorkspace() {
   const [reviewedCards, setReviewedCards] = useState(0);
   const [pageView, setPageView] = useState<FlashcardsView>("study");
   const [createMode, setCreateMode] = useState<FlashcardCreateMode>("choose");
+  const [groundedCreateStage, setGroundedCreateStage] =
+    useState<GroundedCreateStage>("editing");
+  const [activeGenerationOperationId, setActiveGenerationOperationId] =
+    useState<string | null>(null);
   const [showCustomize, setShowCustomize] = useState(false);
+  const [showMaterials, setShowMaterials] = useState(false);
   const [showArchived, setShowArchived] = useState(false);
   const [showPreviousActivity, setShowPreviousActivity] = useState(false);
   const [proposalOrigin, setProposalOrigin] = useState<
-    "chat" | "practice_remediation" | null
+    "chat" | "practice_remediation" | "general_chat" | null
   >(null);
+  const [conversationOrigin, setConversationOrigin] =
+    useState<FlashcardGenerationOrigin | null>(null);
   const [courseLoaded, setCourseLoaded] = useState(false);
   const [busy, setBusy] = useState(false);
   const [status, setStatus] = useState<string | null>(null);
@@ -153,6 +171,16 @@ export default function FlashcardsWorkspace() {
     () => decks.find((deck) => deck.id === selectedDeckId) ?? view?.deck ?? null,
     [decks, selectedDeckId, view?.deck],
   );
+  const normalizedGenerationCount =
+    typeof generationCount === "number" &&
+    Number.isInteger(generationCount) &&
+    generationCount >= 1 &&
+    generationCount <= 48
+      ? generationCount
+      : null;
+  const isConversationDraft =
+    proposalOrigin === "general_chat" ||
+    conversationOrigin?.kind === "general_chat";
   const courseId = activeCourse?.id ?? null;
   const scopeReady = Boolean(
     identity &&
@@ -173,6 +201,13 @@ export default function FlashcardsWorkspace() {
   const archivedDecks = useMemo(
     () => decks.filter((deck) => deck.state === "archived"),
     [decks],
+  );
+  const activeGenerationOperation = useMemo(
+    () =>
+      generationOperations.find(
+        (operation) => operation.id === activeGenerationOperationId,
+      ) ?? null,
+    [activeGenerationOperationId, generationOperations],
   );
   const currentSourceDisclosure = useMemo(() => {
     if (!currentCard?.citations.length) return null;
@@ -243,10 +278,14 @@ export default function FlashcardsWorkspace() {
       setReviewedCards(0);
       setPageView("study");
       setCreateMode("choose");
+      setGroundedCreateStage("editing");
+      setActiveGenerationOperationId(null);
       setShowCustomize(false);
+      setShowMaterials(false);
       setShowArchived(false);
       setShowPreviousActivity(false);
       setProposalOrigin(null);
+      setConversationOrigin(null);
       setCourseLoaded(false);
       setBusy(false);
       setStatus(null);
@@ -292,9 +331,14 @@ export default function FlashcardsWorkspace() {
       setDecksHaveMore(listed.length === 50);
       const ready = sources.filter((source) => source.state === "ready");
       setReadySources(ready);
-      setSelectedSourceIds((selected) =>
-        selected.filter((id) => ready.some((source) => source.id === id)),
-      );
+      setSelectedSourceIds((selected) => {
+        const stillReady = selected.filter((id) =>
+          ready.some((source) => source.id === id),
+        );
+        return stillReady.length
+          ? stillReady
+          : ready.map((source) => source.id);
+      });
       setGenerationOperations(operations);
       setCandidateOrder(
         Object.fromEntries(
@@ -316,7 +360,7 @@ export default function FlashcardsWorkspace() {
       );
       setGenerationAvailable(capabilities.flashcard_generation);
       setGenerationUnavailableReason(
-        capabilities.grounded_generation_reason,
+        capabilities.flashcard_generation_reason,
       );
       if (scope.identity) {
         const proposal = consumeFlashcardProposal(
@@ -324,7 +368,11 @@ export default function FlashcardsWorkspace() {
           scope.courseId,
         );
         if (proposal) {
-          setGeneratedTitle("Course flashcards");
+          setGeneratedTitle(
+            proposal.origin.kind === "general_chat"
+              ? "Conversation flashcards"
+              : "Course flashcards",
+          );
           setGenerationFocus(proposal.brief.focus);
           setGenerationCount(proposal.brief.desired_count);
           setGenerationDifficulty(proposal.brief.difficulty);
@@ -338,14 +386,20 @@ export default function FlashcardsWorkspace() {
               .filter((id) => ready.some((source) => source.id === id)),
           );
           setPreparedBrief(proposal);
+          setConversationOrigin(
+            proposal.origin.kind === "general_chat" ? proposal.origin : null,
+          );
           setPreparedSuccessor(false);
           setProposalOrigin(
             proposal.origin.kind === "practice_remediation"
               ? "practice_remediation"
-              : "chat",
+              : proposal.origin.kind === "general_chat"
+                ? "general_chat"
+                : "chat",
           );
           setPageView("create");
           setCreateMode("grounded");
+          setGroundedCreateStage("confirming");
           setStatus("Your flashcard request is ready to review.");
         }
       }
@@ -476,21 +530,23 @@ export default function FlashcardsWorkspace() {
   const generationOptions = useCallback(
     (): FlashcardGenerationOptions => ({
       focus: generationFocus.trim() || generatedTitle.trim(),
-      desired_count: generationCount,
+      desired_count: normalizedGenerationCount ?? 8,
       card_type_mix: generationCardTypes,
       difficulty: generationDifficulty,
       answer_length: generationAnswerLength,
       include_hints: generationHints,
       context_char_limit: 12_000,
+      origin: conversationOrigin ?? undefined,
     }),
     [
       generatedTitle,
       generationAnswerLength,
       generationCardTypes,
-      generationCount,
       generationDifficulty,
       generationFocus,
       generationHints,
+      normalizedGenerationCount,
+      conversationOrigin,
     ],
   );
 
@@ -500,7 +556,8 @@ export default function FlashcardsWorkspace() {
         !activeCourse ||
         !courseWritable ||
         !generationAvailable ||
-        !selectedSourceIds.length ||
+        !normalizedGenerationCount ||
+        (!isConversationDraft && !selectedSourceIds.length) ||
         (successor &&
           (!selectedDeck ||
             selectedDeck.mode !== "generated" ||
@@ -526,7 +583,12 @@ export default function FlashcardsWorkspace() {
         if (!current(scope)) return;
         setPreparedBrief(brief);
         setPreparedSuccessor(successor);
-        setStatus("Review the generation brief before confirming provider use.");
+        setGroundedCreateStage("confirming");
+        setStatus(
+          brief.warnings.includes("focus_not_supported")
+            ? "Choose a topic covered by the selected Course materials."
+            : "Your request is ready. Confirm once to create the cards.",
+        );
       } catch (cause) {
         if (current(scope)) setError(errorText(cause));
       } finally {
@@ -541,8 +603,54 @@ export default function FlashcardsWorkspace() {
       generationObjectives,
       generationAvailable,
       generationOptions,
+      normalizedGenerationCount,
+      isConversationDraft,
       selectedDeck,
       selectedSourceIds,
+    ],
+  );
+
+  const moveConversationDraft = useCallback(
+    async (destinationCourseId: string) => {
+      if (
+        !identity ||
+        !conversationOrigin?.session_id ||
+        conversationOrigin.message_id == null ||
+        !normalizedGenerationCount ||
+        destinationCourseId === activeCourse?.id
+      ) {
+        return;
+      }
+      setBusy(true);
+      setError(null);
+      try {
+        const plan = await requestGeneralStudyFlashcards({
+          sessionId: conversationOrigin.session_id,
+          assistantMessageId: conversationOrigin.message_id,
+          desiredCount: normalizedGenerationCount,
+          destinationCourseId,
+        });
+        if (!plan.generation_brief) {
+          throw new Error("Conversation Flashcard plan is unavailable");
+        }
+        storeFlashcardProposal(
+          identity,
+          plan.course_id,
+          plan.generation_brief,
+        );
+        selectCourse(plan.course_id);
+      } catch (cause) {
+        setError(errorText(cause));
+      } finally {
+        setBusy(false);
+      }
+    },
+    [
+      activeCourse?.id,
+      conversationOrigin,
+      identity,
+      normalizedGenerationCount,
+      selectCourse,
     ],
   );
 
@@ -578,16 +686,12 @@ export default function FlashcardsWorkspace() {
           requested.operation,
           ...operations.filter((item) => item.id !== requested.operation.id),
         ]);
+        setActiveGenerationOperationId(requested.operation.id);
+        setGroundedCreateStage("generating");
         setGeneratedTitle("");
-        setGenerationFocus("");
-        setGenerationObjectives("");
         setPreparedBrief(null);
-        setPageView("activity");
-        setStatus(
-          preparedSuccessor
-            ? "Grounded successor generation queued."
-            : "Grounded Flashcard generation queued.",
-        );
+        setPageView("create");
+        setStatus("Creating your cards. You can leave this page.");
       } catch (cause) {
         if (current(scope)) setError(errorText(cause));
       } finally {
@@ -633,8 +737,12 @@ export default function FlashcardsWorkspace() {
           await loadDeck(scope, published);
         }
         if (current(scope)) {
+          setGroundedCreateStage("editing");
+          setActiveGenerationOperationId(null);
+          setGenerationFocus("");
+          setGenerationObjectives("");
           setPageView("study");
-          setStatus(`${selected.length} cards published and ready to study.`);
+          setStatus(`${selected.length} cards saved and ready to study.`);
         }
       } catch (cause) {
         if (current(scope)) setError(errorText(cause));
@@ -733,6 +841,25 @@ export default function FlashcardsWorkspace() {
     }, 3_000);
     return () => window.clearInterval(timer);
   }, [activeCourse, busy, generationOperations, refreshGeneration]);
+
+  useEffect(() => {
+    if (!activeGenerationOperation) return;
+    if (activeGenerationOperation.state === "awaiting_review") {
+      setGroundedCreateStage("reviewing");
+      return;
+    }
+    if (
+      ["queued", "running", "cancelling"].includes(
+        activeGenerationOperation.state,
+      )
+    ) {
+      setGroundedCreateStage("generating");
+      return;
+    }
+    if (activeGenerationOperation.state === "failed") {
+      setGroundedCreateStage("editing");
+    }
+  }, [activeGenerationOperation]);
 
   const addCard = useCallback(async () => {
     if (
@@ -935,6 +1062,26 @@ export default function FlashcardsWorkspace() {
     selectedDeck,
   ]);
 
+  const activeCandidateIds = activeGenerationOperation
+    ? (candidateOrder[activeGenerationOperation.id] ?? [])
+    : [];
+  const activeCandidateIndex = activeGenerationOperation
+    ? Math.min(
+        candidateReviewIndex[activeGenerationOperation.id] ?? 0,
+        Math.max(0, activeCandidateIds.length - 1),
+      )
+    : 0;
+  const activeCandidate = activeGenerationOperation?.candidates?.find(
+    (candidate) => candidate.candidate_id === activeCandidateIds[activeCandidateIndex],
+  );
+  const activeFailure =
+    activeGenerationOperation?.state === "failed"
+      ? flashcardGenerationFailurePresentation(
+          activeGenerationOperation.error_code,
+          false,
+        )
+      : null;
+
   return (
     <main
       data-testid="flashcards-scroll-container"
@@ -946,7 +1093,9 @@ export default function FlashcardsWorkspace() {
           <div>
             <h1 className="text-2xl font-semibold">{t("Flashcards")}</h1>
             <p className="text-sm text-[var(--muted-foreground)]">
-              {t("Study and create private Flashcards for this Course.")}
+              {activeCourse?.workspace_kind === "general_study"
+                ? t("Study private Flashcards created from your conversations.")
+                : t("Study and create private Flashcards for this Course.")}
             </p>
           </div>
         </div>
@@ -993,11 +1142,27 @@ export default function FlashcardsWorkspace() {
                   </p>
                 </div>
                 <div className="grid gap-3 md:grid-cols-2">
-                  {generationAvailable ? (
+                  {activeCourse.workspace_kind === "general_study" ? (
+                    <Link
+                      href="/home"
+                      className="rounded-xl border border-[var(--border)] p-5 text-left hover:bg-[var(--secondary)]/50"
+                    >
+                      <span className="flex items-center gap-2 font-medium">
+                        <Sparkles size={18} /> {t("Create from a conversation")}
+                      </span>
+                      <span className="mt-2 block text-sm text-[var(--muted-foreground)]">
+                        {t(
+                          "Open General Chat, ask a question, then choose Make flashcards beneath the answer.",
+                        )}
+                      </span>
+                    </Link>
+                  ) : generationAvailable ? (
                     <button
                       type="button"
                       onClick={() => {
                         setCreateMode("grounded");
+                        setGroundedCreateStage("editing");
+                        setActiveGenerationOperationId(null);
                         setSelectedSourceIds(readySources.map((source) => source.id));
                       }}
                       className="rounded-xl border border-[var(--border)] p-5 text-left hover:bg-[var(--secondary)]/50"
@@ -1038,10 +1203,15 @@ export default function FlashcardsWorkspace() {
               <div className="flex flex-wrap items-start justify-between gap-3">
                 <div>
                   <h2 className="flex items-center gap-2 font-medium">
-                    <Sparkles size={16} /> {t("Generate from Course materials")}
+                    <Sparkles size={16} />{" "}
+                    {isConversationDraft
+                      ? t("Create from this conversation")
+                      : t("Generate from Course materials")}
                   </h2>
                   <p className="text-sm text-[var(--muted-foreground)]">
-                    {t("Tell TEEECHR what these cards should help you understand.")}
+                    {isConversationDraft
+                      ? t("Review what the cards will cover before using AI.")
+                      : t("Tell TEEECHR what these cards should help you understand.")}
                   </p>
                 </div>
                 <button
@@ -1049,6 +1219,8 @@ export default function FlashcardsWorkspace() {
                   onClick={() => {
                     setCreateMode("choose");
                     setPreparedBrief(null);
+                    setGroundedCreateStage("editing");
+                    setActiveGenerationOperationId(null);
                   }}
                   className="rounded-lg border border-[var(--border)] px-3 py-2 text-sm disabled:opacity-50"
                 >
@@ -1059,58 +1231,151 @@ export default function FlashcardsWorkspace() {
                 <Notice>
                   {proposalOrigin === "practice_remediation"
                     ? t("Prepared from your Practice results. Review it before generating cards.")
+                    : proposalOrigin === "general_chat"
+                      ? t("Based on this conversation. These cards are not Course-grounded.")
                     : t("Prepared from Course Chat. Review it before generating cards.")}
                 </Notice>
               ) : null}
-              {showCustomize ? (
-              <input
-                aria-label={t("Generated deck title")}
-                value={generatedTitle}
-                onChange={(event) => {
-                  setGeneratedTitle(event.target.value);
-                  setPreparedBrief(null);
-                }}
-                placeholder={t("Deck name")}
-                disabled={!generationAvailable || !courseWritable || busy}
-                className="w-full rounded-lg border border-[var(--border)] bg-[var(--background)] px-3 py-2 text-sm"
-              />
+              {isConversationDraft ? (
+                <label className="grid gap-1 text-sm">
+                  <span>{t("Save this deck to")}</span>
+                  <select
+                    aria-label={t("Flashcard destination")}
+                    value={activeCourse?.id ?? ""}
+                    onChange={(event) =>
+                      void moveConversationDraft(event.target.value)
+                    }
+                    disabled={busy}
+                    className="rounded-lg border border-[var(--border)] bg-[var(--background)] px-3 py-2"
+                  >
+                    {courses
+                      .filter(
+                        (course) =>
+                          course.state === "active" &&
+                          (course.workspace_kind === "general_study" ||
+                            course.workspace_kind === "academic_course"),
+                      )
+                      .map((course) => (
+                        <option key={course.id} value={course.id}>
+                          {course.workspace_kind === "general_study"
+                            ? t("General Study")
+                            : course.title}
+                        </option>
+                      ))}
+                  </select>
+                  <span className="text-xs text-[var(--muted-foreground)]">
+                    {t(
+                      "Changing the destination never turns conversation cards into Course-grounded cards.",
+                    )}
+                  </span>
+                </label>
               ) : null}
-              <textarea
-                aria-label={t("Flashcard generation focus")}
-                value={generationFocus}
-                onChange={(event) => {
-                  setGenerationFocus(event.target.value);
-                  setPreparedBrief(null);
-                }}
-                placeholder={t(
-                  "What should these cards help you learn or compare?",
-                )}
-                disabled={!generationAvailable || !courseWritable || busy}
-                className="min-h-20 w-full rounded-lg border border-[var(--border)] bg-[var(--background)] p-3 text-sm"
-              />
+              {groundedCreateStage === "editing" ||
+              groundedCreateStage === "confirming" ? (
+              <>
+              {activeFailure ? (
+                <div
+                  role="alert"
+                  className="space-y-2 rounded-xl border border-red-500/40 bg-red-500/5 p-4"
+                >
+                  <h3 className="font-medium">{t(activeFailure.title)}</h3>
+                  <p className="text-sm text-[var(--muted-foreground)]">
+                    {t(activeFailure.detail)}
+                  </p>
+                  <p className="text-xs text-[var(--muted-foreground)]">
+                    {t("No cards were saved and your existing decks were not changed.")}
+                  </p>
+                </div>
+              ) : null}
+              {showCustomize || isConversationDraft ? (
+              <label className="grid gap-1 text-sm">
+                <span>{t("Deck name (optional)")}</span>
+                <input
+                  aria-label={t("Generated deck title")}
+                  value={generatedTitle}
+                  onChange={(event) => {
+                    setGeneratedTitle(event.target.value);
+                    setPreparedBrief(null);
+                  }}
+                  placeholder={t("Example: Linear equations review")}
+                  disabled={!generationAvailable || !courseWritable || busy}
+                  className="w-full rounded-lg border border-[var(--border)] bg-[var(--background)] px-3 py-2 text-sm"
+                />
+              </label>
+              ) : null}
+              <label className="grid gap-1 text-sm">
+                <span>{t("What should these cards teach you?")}</span>
+                <textarea
+                  aria-label={t("Flashcard generation focus")}
+                  value={generationFocus}
+                  onChange={(event) => {
+                    setGenerationFocus(event.target.value);
+                    setPreparedBrief(null);
+                  }}
+                  placeholder={t(
+                    "Example: Use y = mx + b to identify slope and intercepts",
+                  )}
+                  disabled={!generationAvailable || !courseWritable || busy}
+                  className="min-h-20 w-full rounded-lg border border-[var(--border)] bg-[var(--background)] p-3 text-sm"
+                />
+              </label>
               <div className="grid gap-3 sm:grid-cols-2">
                 <label className="grid gap-1 text-sm">
                   <span>{t("Card count")}</span>
                   <input
                     aria-label={t("Generated card count")}
                     type="number"
-                    min={3}
+                    min={1}
                     max={48}
                     value={generationCount}
                     onChange={(event) => {
-                      setGenerationCount(
-                        Math.max(3, Math.min(48, Number(event.target.value) || 3)),
-                      );
+                      const raw = event.target.value;
+                      setGenerationCount(raw === "" ? "" : Number(raw));
                       setPreparedBrief(null);
+                    }}
+                    onBlur={() => {
+                      if (generationCount === "") return;
+                      setGenerationCount(
+                        Math.max(1, Math.min(48, Math.trunc(generationCount))),
+                      );
                     }}
                     disabled={!generationAvailable || !courseWritable || busy}
                     className="rounded-lg border border-[var(--border)] bg-[var(--background)] px-3 py-2"
                   />
+                  <span className="text-xs text-[var(--muted-foreground)]">
+                    {generationCount === ""
+                      ? t("Enter between 1 and 48 cards.")
+                      : t("Choose a shortcut or enter any number from 1 to 48.")}
+                  </span>
+                  <span className="flex flex-wrap gap-1">
+                    {[5, 10, 20].map((count) => (
+                      <button
+                        key={count}
+                        type="button"
+                        onClick={() => {
+                          setGenerationCount(count);
+                          setPreparedBrief(null);
+                        }}
+                        disabled={!generationAvailable || !courseWritable || busy}
+                        className="rounded-md border border-[var(--border)] px-2 py-1 text-xs disabled:opacity-50"
+                      >
+                        {count}
+                      </button>
+                    ))}
+                  </span>
                 </label>
                 <div className="rounded-lg border border-[var(--border)] px-3 py-2 text-sm">
-                  <span className="text-[var(--muted-foreground)]">{t("Course materials")}</span>
+                  <span className="text-[var(--muted-foreground)]">
+                    {isConversationDraft ? t("Based on") : t("Course materials")}
+                  </span>
                   <p className="font-medium">
-                    {selectedSourceIds.length} {t("selected")}
+                    {isConversationDraft
+                      ? t("This conversation")
+                      : readySources.length === 1
+                      ? t("Using the ready material in this Course")
+                      : t("Using {{count}} ready materials", {
+                          count: selectedSourceIds.length,
+                        })}
                   </p>
                 </div>
               </div>
@@ -1232,9 +1497,27 @@ export default function FlashcardsWorkspace() {
               </p>
               </>
               ) : null}
-              <div className="flex flex-wrap gap-2">
+              {!isConversationDraft && readySources.length > 1 ? (
+                <button
+                  type="button"
+                  aria-expanded={showMaterials}
+                  onClick={() => setShowMaterials((shown) => !shown)}
+                  className="inline-flex items-center gap-2 text-sm font-medium"
+                >
+                  {showMaterials ? <ChevronUp size={16} /> : <ChevronDown size={16} />}
+                  {showMaterials ? t("Hide materials") : t("Change materials")}
+                </button>
+              ) : null}
+              {!isConversationDraft && readySources.length > 1 && showMaterials ? (
+              <fieldset className="space-y-2">
+                <legend className="sr-only">
+                  {t("Use these Course materials")}
+                </legend>
+                <div className="flex flex-wrap gap-2">
                 {readySources.map((source) => {
                   const checked = selectedSourceIds.includes(source.id);
+                  const finalSelectedSource =
+                    checked && selectedSourceIds.length === 1;
                   return (
                     <label
                       key={source.id}
@@ -1243,7 +1526,12 @@ export default function FlashcardsWorkspace() {
                       <input
                         type="checkbox"
                         checked={checked}
-                        disabled={!generationAvailable || !courseWritable || busy}
+                        disabled={
+                          !generationAvailable ||
+                          !courseWritable ||
+                          busy ||
+                          finalSelectedSource
+                        }
                         onChange={() =>
                           {
                             setSelectedSourceIds((ids) =>
@@ -1255,16 +1543,30 @@ export default function FlashcardsWorkspace() {
                           }
                         }
                       />
-                      {source.display_name}
+                      {t(
+                        flashcardCourseSourceLabel(
+                          source.display_name,
+                          source.kind,
+                        ),
+                      )}
                     </label>
                   );
                 })}
-                {!readySources.length ? (
-                  <p className="text-sm text-[var(--muted-foreground)]">
-                    {t("Attach and finish processing a Course source before generation.")}
-                  </p>
-                ) : null}
-              </div>
+                </div>
+                <p className="text-xs text-[var(--muted-foreground)]">
+                  {t(
+                    selectedSourceIds.length === 1
+                      ? "At least one Course material stays selected."
+                      : "Choose the materials TEEECHR should use for these cards.",
+                  )}
+                </p>
+              </fieldset>
+              ) : null}
+              {!isConversationDraft && !readySources.length ? (
+                <p className="text-sm text-[var(--muted-foreground)]">
+                  {t("Attach and finish processing a Course source before generation.")}
+                </p>
+              ) : null}
               <div className="flex flex-wrap gap-2">
                 <button
                   onClick={() => void prepareGeneration(false)}
@@ -1273,36 +1575,66 @@ export default function FlashcardsWorkspace() {
                     !generationAvailable ||
                     busy ||
                     !generationFocus.trim() ||
-                    !selectedSourceIds.length
+                    !normalizedGenerationCount ||
+                    (!isConversationDraft && !selectedSourceIds.length)
                   }
                   className="rounded-lg bg-[var(--primary)] px-3 py-2 text-sm text-[var(--primary-foreground)] disabled:opacity-50"
                 >
-                  {t("Review request")}
+                  {isConversationDraft
+                    ? t("Review conversation plan")
+                    : t("Check Course coverage")}
                 </button>
-                <button
-                  onClick={() => void prepareGeneration(true)}
-                  disabled={
-                    !courseWritable ||
-                    !generationAvailable ||
-                    busy ||
-                    !generationFocus.trim() ||
-                    !selectedSourceIds.length ||
-                    selectedDeck?.mode !== "generated" ||
-                    selectedDeck?.state !== "ready"
-                  }
-                  className="rounded-lg border border-[var(--border)] px-3 py-2 text-sm disabled:opacity-50"
-                >
-                  {t("Create updated version")}
-                </button>
+                {selectedDeck?.mode === "generated" &&
+                selectedDeck.state === "ready" ? (
+                  <button
+                    onClick={() => void prepareGeneration(true)}
+                    disabled={
+                      !courseWritable ||
+                      !generationAvailable ||
+                      busy ||
+                      !generationFocus.trim() ||
+                      !normalizedGenerationCount ||
+                      (!isConversationDraft && !selectedSourceIds.length)
+                    }
+                    className="rounded-lg border border-[var(--border)] px-3 py-2 text-sm disabled:opacity-50"
+                  >
+                    {t("Create updated version")}
+                  </button>
+                ) : null}
               </div>
               {preparedBrief ? (
-                <div className="space-y-3 rounded-xl border border-amber-500/50 bg-amber-500/5 p-4">
+                <div
+                  className={`space-y-3 rounded-xl border p-4 ${
+                    preparedBrief.warnings.includes("focus_not_supported") ||
+                    preparedBrief.warnings.includes("material_unavailable")
+                      ? "border-red-500/40 bg-red-500/5"
+                      : "border-emerald-500/40 bg-emerald-500/5"
+                  }`}
+                >
                   <div>
-                    <h3 className="font-medium">{t("Confirm provider use")}</h3>
+                    <h3 className="font-medium">
+                      {preparedBrief.warnings.includes("focus_not_supported")
+                        ? t("This topic is not in the selected Course materials")
+                        : preparedBrief.warnings.includes("material_unavailable")
+                          ? t("The selected material is not ready to use")
+                          : t("Ready to create")}
+                    </h3>
                     <p className="text-sm text-[var(--muted-foreground)]">
-                      {t(
-                        "This sends only the bounded brief and selected Course source excerpts to the configured provider. Nothing publishes until you review the candidates.",
-                      )}
+                      {preparedBrief.warnings.includes("focus_not_supported")
+                        ? t(
+                            "Change the topic, choose different Course material, or create cards manually. No AI generation was started.",
+                          )
+                        : preparedBrief.warnings.includes("material_unavailable")
+                          ? t(
+                              "Choose another ready Course source or try again after processing finishes. No AI generation was started.",
+                            )
+                          : isConversationDraft
+                            ? t(
+                                "TEEECHR will use only the bounded conversation shown in this plan. Nothing is saved until you review the cards.",
+                              )
+                          : t(
+                              "TEEECHR found relevant Course material. Only bounded excerpts will be sent, and nothing is saved until you review the cards.",
+                            )}
                     </p>
                   </div>
                   <dl className="grid gap-2 text-sm sm:grid-cols-2">
@@ -1319,8 +1651,28 @@ export default function FlashcardsWorkspace() {
                       </dd>
                     </div>
                     <div>
-                      <dt className="text-[var(--muted-foreground)]">{t("Sources")}</dt>
-                      <dd>{preparedBrief.source_snapshot.length}</dd>
+                      <dt className="text-[var(--muted-foreground)]">
+                        {isConversationDraft ? t("Basis") : t("Sources")}
+                      </dt>
+                      <dd>
+                        {isConversationDraft
+                          ? t("{{count}} selected messages from this conversation", {
+                              count:
+                                preparedBrief.origin.selected_message_ids
+                                  ?.length ?? 0,
+                            })
+                          : preparedBrief.source_snapshot.length}
+                      </dd>
+                    </div>
+                    <div>
+                      <dt className="text-[var(--muted-foreground)]">
+                        {t("Destination")}
+                      </dt>
+                      <dd>
+                        {activeCourse?.workspace_kind === "general_study"
+                          ? t("General Study")
+                          : activeCourse?.title}
+                      </dd>
                     </div>
                     <div>
                       <dt className="text-[var(--muted-foreground)]">{t("Provider")}</dt>
@@ -1334,13 +1686,23 @@ export default function FlashcardsWorkspace() {
                   <div className="flex flex-wrap gap-2">
                     <button
                       onClick={() => void confirmGeneration()}
-                      disabled={busy || !preparedBrief.provider_available}
+                      disabled={
+                        busy ||
+                        !preparedBrief.provider_available ||
+                        preparedBrief.warnings.includes("focus_not_supported") ||
+                        preparedBrief.warnings.includes("material_unavailable")
+                      }
                       className="rounded-lg bg-[var(--primary)] px-3 py-2 text-sm text-[var(--primary-foreground)] disabled:opacity-50"
                     >
-                      {t("Generate cards")}
+                      {t("Create {{count}} cards with AI", {
+                        count: preparedBrief.brief.desired_count,
+                      })}
                     </button>
                     <button
-                      onClick={() => setPreparedBrief(null)}
+                      onClick={() => {
+                        setPreparedBrief(null);
+                        setGroundedCreateStage("editing");
+                      }}
                       disabled={busy}
                       className="rounded-lg border border-[var(--border)] px-3 py-2 text-sm"
                     >
@@ -1349,6 +1711,289 @@ export default function FlashcardsWorkspace() {
                   </div>
                 </div>
               ) : null}
+              </>
+              ) : groundedCreateStage === "generating" &&
+                activeGenerationOperation ? (
+                <div
+                  role="status"
+                  className="space-y-4 rounded-xl border border-[var(--border)] bg-[var(--secondary)]/30 p-5"
+                >
+                  <div className="flex items-start gap-3">
+                    <Loader2 className="mt-0.5 animate-spin" size={20} />
+                    <div>
+                      <h3 className="font-medium">
+                        {t(
+                          flashcardGenerationStatePresentation(
+                            activeGenerationOperation.state,
+                          ).label,
+                        )}
+                      </h3>
+                      <p className="text-sm text-[var(--muted-foreground)]">
+                        {t(
+                          flashcardGenerationStatePresentation(
+                            activeGenerationOperation.state,
+                          ).description,
+                        )}
+                      </p>
+                    </div>
+                  </div>
+                  <p className="text-sm">
+                    {t("Topic")}: <strong>{generationFocus}</strong>
+                  </p>
+                  <div className="flex flex-wrap gap-2">
+                    <button
+                      type="button"
+                      onClick={() => void refreshGeneration()}
+                      disabled={busy}
+                      className="rounded-lg border border-[var(--border)] px-3 py-2 text-sm disabled:opacity-50"
+                    >
+                      {t("Refresh")}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => void cancelGeneration(activeGenerationOperation)}
+                      disabled={busy}
+                      className="rounded-lg border border-[var(--border)] px-3 py-2 text-sm disabled:opacity-50"
+                    >
+                      {t("Cancel creation")}
+                    </button>
+                  </div>
+                </div>
+              ) : groundedCreateStage === "reviewing" &&
+                activeGenerationOperation &&
+                activeCandidate ? (
+                <div className="space-y-4 rounded-xl border border-[var(--border)] p-5">
+                  <div>
+                    <h3 className="text-lg font-semibold">{t("Review your cards")}</h3>
+                    <p className="text-sm text-[var(--muted-foreground)]">
+                      {t(
+                        "Keep only cards that are useful and accurate. Nothing is saved until you finish.",
+                      )}
+                    </p>
+                  </div>
+                  <div className="flex items-center justify-between text-sm text-[var(--muted-foreground)]">
+                    <span>
+                      {t("Card {{current}} of {{total}}", {
+                        current: activeCandidateIndex + 1,
+                        total: activeCandidateIds.length,
+                      })}
+                    </span>
+                    <span>
+                      {t("{{count}} kept", { count: activeCandidateIds.length })}
+                    </span>
+                  </div>
+                  <article className="space-y-4 rounded-xl bg-[var(--secondary)]/40 p-5">
+                    <div>
+                      <p className="text-xs font-medium uppercase tracking-wide text-[var(--muted-foreground)]">
+                        {t("Question")}
+                      </p>
+                      <p className="mt-1 text-lg font-medium">
+                        {activeCandidate.prompt}
+                      </p>
+                    </div>
+                    <div>
+                      <p className="text-xs font-medium uppercase tracking-wide text-[var(--muted-foreground)]">
+                        {t("Answer")}
+                      </p>
+                      <p className="mt-1">{activeCandidate.answer}</p>
+                    </div>
+                    {activeCandidate.hint ? (
+                      <p className="text-sm text-[var(--muted-foreground)]">
+                        {t("Hint")}: {activeCandidate.hint}
+                      </p>
+                    ) : null}
+                    {activeGenerationOperation.origin.kind === "general_chat" ? (
+                      <p className="text-sm text-[var(--muted-foreground)]">
+                        {t(
+                          "Based on the selected conversation context. This card is not Course-grounded.",
+                        )}
+                      </p>
+                    ) : (
+                    <details className="text-sm text-[var(--muted-foreground)]">
+                      <summary className="cursor-pointer font-medium">
+                        {t("Why this card is grounded")}
+                      </summary>
+                      <ul className="mt-2 space-y-1">
+                        {activeCandidate.citations.map((citation, index) => {
+                          const source = readySources.find(
+                            (item) =>
+                              item.id === String(citation.source_id ?? ""),
+                          );
+                          const locator =
+                            typeof citation.locator === "object" &&
+                            citation.locator !== null
+                              ? (citation.locator as Record<string, unknown>)
+                              : {};
+                          const evidence =
+                            typeof locator.evidence_quote === "string"
+                              ? locator.evidence_quote
+                              : null;
+                          return (
+                            <li key={`${String(citation.source_id)}-${index}`}>
+                              {source?.display_name ?? t("Course source")}
+                              {evidence ? ` — “${evidence}”` : ""}
+                            </li>
+                          );
+                        })}
+                      </ul>
+                    </details>
+                    )}
+                  </article>
+                  <div className="flex flex-wrap items-center justify-between gap-3">
+                    <div className="flex gap-2">
+                      <button
+                        type="button"
+                        disabled={activeCandidateIndex === 0}
+                        onClick={() =>
+                          setCandidateReviewIndex((indexes) => ({
+                            ...indexes,
+                            [activeGenerationOperation.id]:
+                              activeCandidateIndex - 1,
+                          }))
+                        }
+                        className="rounded-lg border border-[var(--border)] px-3 py-2 text-sm disabled:opacity-40"
+                      >
+                        {t("Previous")}
+                      </button>
+                      <button
+                        type="button"
+                        disabled={
+                          activeCandidateIndex >= activeCandidateIds.length - 1
+                        }
+                        onClick={() =>
+                          setCandidateReviewIndex((indexes) => ({
+                            ...indexes,
+                            [activeGenerationOperation.id]:
+                              activeCandidateIndex + 1,
+                          }))
+                        }
+                        className="rounded-lg border border-[var(--border)] px-3 py-2 text-sm disabled:opacity-40"
+                      >
+                        {t("Next")}
+                      </button>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const nextIds = activeCandidateIds.filter(
+                          (id) => id !== activeCandidate.candidate_id,
+                        );
+                        setCandidateOrder((orders) => ({
+                          ...orders,
+                          [activeGenerationOperation.id]: nextIds,
+                        }));
+                        setCandidateReviewIndex((indexes) => ({
+                          ...indexes,
+                          [activeGenerationOperation.id]: Math.min(
+                            activeCandidateIndex,
+                            Math.max(0, nextIds.length - 1),
+                          ),
+                        }));
+                      }}
+                      className="rounded-lg border border-[var(--border)] px-3 py-2 text-sm"
+                    >
+                      {t("Remove this card")}
+                    </button>
+                  </div>
+                  {activeGenerationOperation.candidates?.some(
+                    (candidate) =>
+                      !activeCandidateIds.includes(candidate.candidate_id),
+                  ) ? (
+                    <details className="rounded-lg border border-[var(--border)] p-3 text-sm">
+                      <summary className="cursor-pointer font-medium">
+                        {t("Removed cards")}
+                      </summary>
+                      <div className="mt-2 space-y-2">
+                        {activeGenerationOperation.candidates
+                          .filter(
+                            (candidate) =>
+                              !activeCandidateIds.includes(
+                                candidate.candidate_id,
+                              ),
+                          )
+                          .map((candidate) => (
+                            <button
+                              key={candidate.candidate_id}
+                              type="button"
+                              onClick={() =>
+                                setCandidateOrder((orders) => ({
+                                  ...orders,
+                                  [activeGenerationOperation.id]: [
+                                    ...(orders[activeGenerationOperation.id] ??
+                                      []),
+                                    candidate.candidate_id,
+                                  ],
+                                }))
+                              }
+                              className="block w-full rounded-lg border border-dashed border-[var(--border)] px-3 py-2 text-left"
+                            >
+                              {t("Restore")}: {candidate.prompt}
+                            </button>
+                          ))}
+                      </div>
+                    </details>
+                  ) : null}
+                  <div className="flex flex-wrap gap-2 border-t border-[var(--border)] pt-4">
+                    <button
+                      type="button"
+                      onClick={() => void publishCandidates(activeGenerationOperation)}
+                      disabled={busy || !activeCandidateIds.length}
+                      className="rounded-lg bg-[var(--primary)] px-4 py-2 text-sm text-[var(--primary-foreground)] disabled:opacity-50"
+                    >
+                      {t("Save {{count}} cards", {
+                        count: activeCandidateIds.length,
+                      })}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => void cancelGeneration(activeGenerationOperation)}
+                      disabled={busy}
+                      className="rounded-lg border border-[var(--border)] px-3 py-2 text-sm disabled:opacity-50"
+                    >
+                      {t("Cancel draft")}
+                    </button>
+                  </div>
+                </div>
+              ) : (
+                <div className="space-y-3 rounded-xl border border-[var(--border)] p-5">
+                  <p className="font-medium">{t("No cards are selected")}</p>
+                  <p className="text-sm text-[var(--muted-foreground)]">
+                    {t("Restore a card, or cancel this draft and adjust the request.")}
+                  </p>
+                  {activeGenerationOperation?.candidates?.map((candidate) => (
+                    <button
+                      key={candidate.candidate_id}
+                      type="button"
+                      onClick={() => {
+                        setCandidateOrder((orders) => ({
+                          ...orders,
+                          [activeGenerationOperation.id]: [
+                            ...(orders[activeGenerationOperation.id] ?? []),
+                            candidate.candidate_id,
+                          ],
+                        }));
+                        setCandidateReviewIndex((indexes) => ({
+                          ...indexes,
+                          [activeGenerationOperation.id]: 0,
+                        }));
+                      }}
+                      className="block w-full rounded-lg border border-dashed border-[var(--border)] px-3 py-2 text-left text-sm"
+                    >
+                      {t("Restore")}: {candidate.prompt}
+                    </button>
+                  ))}
+                  {activeGenerationOperation ? (
+                    <button
+                      type="button"
+                      onClick={() => void cancelGeneration(activeGenerationOperation)}
+                      disabled={busy}
+                      className="rounded-lg border border-[var(--border)] px-3 py-2 text-sm disabled:opacity-50"
+                    >
+                      {t("Cancel draft")}
+                    </button>
+                  ) : null}
+                </div>
+              )}
               {false && generationOperations.length ? (
                 <div className="grid gap-2 md:grid-cols-2">
                   {generationOperations.slice(0, 6).map((operation) => (
@@ -1649,7 +2294,9 @@ export default function FlashcardsWorkspace() {
                       </p>
                       <p className="mt-1 text-xs font-medium text-[var(--muted-foreground)]">
                         {selectedDeck.mode === "generated"
-                          ? t("Grounded in the cited Course sources")
+                          ? selectedDeck.source_snapshot.length
+                            ? t("Grounded in the cited Course sources")
+                            : t("Based on a reviewed conversation")
                           : t("Manual deck — not source-grounded")}
                       </p>
                     </div>
@@ -1734,7 +2381,9 @@ export default function FlashcardsWorkspace() {
                   selectedDeck.mode === "generated" ? (
                     <Notice>
                       {t(
-                        "Grounded generation is still processing. Refresh status to load the immutable deck when it is ready.",
+                        selectedDeck.source_snapshot.length
+                          ? "Grounded generation is still processing. Refresh status to load the immutable deck when it is ready."
+                          : "Conversation card generation is still processing. Refresh status when it is ready for review.",
                       )}
                     </Notice>
                   ) : null}

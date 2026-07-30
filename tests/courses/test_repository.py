@@ -8,7 +8,12 @@ from types import SimpleNamespace
 
 import pytest
 
-from deeptutor.courses.repository import CourseConflictError, CourseRepository
+from deeptutor.courses.repository import (
+    CourseConflictError,
+    CourseNotFoundError,
+    CourseRepository,
+)
+from deeptutor.courses.practice_repository import CoursePracticeRepository
 from deeptutor.courses.service import CourseService, course_operation_lock
 
 
@@ -247,6 +252,135 @@ def test_same_titles_in_separate_owner_databases_never_collide(tmp_path) -> None
     assert a.id != b.id
     assert alice.list_courses()[0].owner_user_id == "u_alice"
     assert bob.list_courses()[0].owner_user_id == "u_bob"
+
+
+@pytest.mark.asyncio
+async def test_general_study_is_lazy_singleton_private_and_permanent(tmp_path) -> None:
+    """General Study is one durable non-academic workspace per owner."""
+
+    db_path = tmp_path / "courses.db"
+    alice = CourseRepository(db_path, "u_alice")
+    bob = CourseRepository(db_path, "u_bob")
+
+    assert alice.list_courses() == []
+    first = CourseService(alice).general_study()
+    second = CourseService(alice).general_study()
+    bobs = CourseService(bob).general_study()
+
+    assert first == second
+    assert first.id != bobs.id
+    assert first.owner_user_id == "u_alice"
+    assert first.title == "General Study"
+    assert first.workspace_kind == "general_study"
+    assert first.state == "active"
+    assert bobs.owner_user_id == "u_bob"
+    assert bobs.workspace_kind == "general_study"
+    assert [
+        course.id
+        for course in alice.list_courses()
+        if course.workspace_kind == "general_study"
+    ] == [first.id]
+
+    academic = alice.create_course("Biology")
+    assert academic.workspace_kind == "academic_course"
+    with pytest.raises(CourseNotFoundError):
+        bob.get_course(first.id)
+    with pytest.raises(CourseConflictError, match="cannot be renamed"):
+        CourseService(alice).rename(first.id, "My notes", first.revision)
+    with pytest.raises(CourseConflictError, match="cannot be archived"):
+        await CourseService(alice).archive(first.id, first.revision)
+
+    persisted = CourseRepository(db_path, "u_alice").get_or_create_general_study()
+    assert persisted == first
+
+    practice = CoursePracticeRepository(alice)
+    with pytest.raises(CourseConflictError, match="does not support Course Practice"):
+        practice.create_practice_set(
+            first.id,
+            title="Must not exist",
+            expected_course_write_epoch=first.write_epoch,
+        )
+    with pytest.raises(CourseConflictError, match="cannot accept Course sources"):
+        alice.create_source(
+            first.id,
+            kind="notes",
+            display_name="must-not-exist.txt",
+            manifest=[],
+            content_sha256="0" * 64,
+        )
+    with pytest.raises(CourseConflictError, match="cannot accept Course sources"):
+        alice.ensure_managed_kb_ref(first.id, "personal:kb:forbidden")
+
+    academic_source = alice.create_source(
+        academic.id,
+        kind="notes",
+        display_name="biology.txt",
+        manifest=[],
+        content_sha256="1" * 64,
+    )
+    academic_practice = practice.create_practice_set(
+        academic.id,
+        title="Biology review",
+        expected_course_write_epoch=academic.write_epoch,
+    )
+
+    # The database itself enforces the boundary if a caller bypasses services.
+    with sqlite3.connect(db_path) as conn:
+        with pytest.raises(sqlite3.IntegrityError, match="system-managed identity"):
+            conn.execute(
+                """INSERT INTO courses
+                   (id, owner_user_id, title, state, revision, write_epoch,
+                    managed_kb_ref, workspace_kind, created_at, updated_at,
+                    archived_at)
+                   VALUES ('crs_forged_general', 'u_mallory', 'Forged notes',
+                           'active', 1, 1, 'forbidden', 'general_study',
+                           1.0, 1.0, NULL)"""
+            )
+        with pytest.raises(sqlite3.IntegrityError, match="academic Course"):
+            conn.execute(
+                """INSERT INTO course_sources
+                   (id, course_id, kind, display_name, state, manifest_json,
+                    content_sha256, revision, created_at, updated_at)
+                   VALUES ('src_forbidden', ?, 'notes', 'forbidden', 'processing',
+                           '[]', ?, 1, 1.0, 1.0)""",
+                (first.id, "0" * 64),
+            )
+        with pytest.raises(sqlite3.IntegrityError, match="academic Course"):
+            conn.execute(
+                """INSERT INTO practice_sets
+                   (id, owner_user_id, course_id, title, mode, state,
+                    current_revision_id, revision, write_epoch, created_at,
+                    updated_at, archived_at)
+                   VALUES ('prc_forbidden', 'u_alice', ?, 'forbidden', 'manual',
+                           'draft', NULL, 1, 1, 1.0, 1.0, NULL)""",
+                (first.id,),
+            )
+        with pytest.raises(sqlite3.IntegrityError, match="academic Course"):
+            conn.execute(
+                "UPDATE course_sources SET course_id=? WHERE id=?",
+                (first.id, academic_source.id),
+            )
+        with pytest.raises(sqlite3.IntegrityError, match="academic Course"):
+            conn.execute(
+                "UPDATE practice_sets SET course_id=? WHERE id=?",
+                (first.id, academic_practice.id),
+            )
+        with pytest.raises(sqlite3.IntegrityError, match="Course Knowledge"):
+            conn.execute(
+                "UPDATE courses SET managed_kb_ref='forbidden' WHERE id=?",
+                (first.id,),
+            )
+
+    with sqlite3.connect(db_path) as conn:
+        assert conn.execute(
+            "SELECT count(*) FROM course_sources WHERE course_id=?", (first.id,)
+        ).fetchone()[0] == 0
+        assert conn.execute(
+            "SELECT count(*) FROM practice_sets WHERE course_id=?", (first.id,)
+        ).fetchone()[0] == 0
+        assert conn.execute(
+            "SELECT managed_kb_ref FROM courses WHERE id=?", (first.id,)
+        ).fetchone()[0] is None
 
 
 def test_source_manifest_revision_and_crash_reconciliation(tmp_path) -> None:

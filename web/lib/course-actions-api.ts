@@ -7,6 +7,23 @@ export type CourseLearnerAction =
   | "make_flashcards"
   | "review_weak_topics";
 
+/**
+ * Recognize an explicit learner request to create Flashcards from a general
+ * conversation. This is intentionally narrow: ordinary mentions of studying
+ * or Flashcards must not trigger a provider-backed workflow.
+ */
+export function requestedFlashcardCount(value: string): number | null {
+  if (
+    !/\b(?:make|create|turn|generate)\b[\s\S]{0,100}\bflashcards?\b|\bflashcards?\b[\s\S]{0,100}\b(?:from|about|on|of)\b/i.test(
+      value,
+    )
+  ) {
+    return null;
+  }
+  const numeric = value.match(/\b([1-9]|[1-3][0-9]|4[0-8])\b/);
+  return numeric ? Number(numeric[1]) : 8;
+}
+
 export function visibleCourseLearnerActions(
   practiceGenerationEnabled: boolean,
   flashcardGenerationEnabled: boolean,
@@ -47,6 +64,29 @@ export interface CourseLearnerActionPlan {
   deck_id?: string | null;
   generation_brief?: FlashcardGenerationBriefReceipt | null;
   followup_text?: string | null;
+}
+
+export async function requestGeneralStudyFlashcards(input: {
+  sessionId: string;
+  assistantMessageId: number;
+  desiredCount?: number;
+  destinationCourseId?: string;
+}): Promise<CourseLearnerActionPlan> {
+  return responseJson<CourseLearnerActionPlan>(
+    await apiFetch(apiUrl("/api/v1/courses/general-study/learner-actions"), {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        action: "make_flashcards",
+        session_id: input.sessionId,
+        assistant_message_id: input.assistantMessageId,
+        desired_count: input.desiredCount ?? 8,
+        ...(input.destinationCourseId
+          ? { destination_course_id: input.destinationCourseId }
+          : {}),
+      }),
+    }),
+  );
 }
 
 export interface CourseLearnerActionScope {

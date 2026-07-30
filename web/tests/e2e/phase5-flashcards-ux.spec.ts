@@ -11,6 +11,7 @@ interface Phase5BrowserState {
 }
 
 async function signIn(page: Page, username: string, password: string) {
+  await page.context().clearCookies();
   await page.goto("/login");
   await page.getByLabel("Email or username").fill(username);
   await page.getByLabel("Password").fill(password);

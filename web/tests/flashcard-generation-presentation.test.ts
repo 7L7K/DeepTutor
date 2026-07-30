@@ -3,12 +3,28 @@ import test from "node:test";
 
 import {
   FLASHCARDS_VIEW_PRESENTATION,
+  flashcardCourseSourceLabel,
   flashcardGenerationFailureCategory,
   flashcardGenerationFailurePresentation,
   flashcardGenerationStatePresentation,
   flashcardGenerationUnavailableCopy,
   flashcardsViewFromQuery,
 } from "../lib/flashcard-generation-presentation";
+
+test("Course source labels hide internal BlueWay bundle terminology", () => {
+  assert.equal(
+    flashcardCourseSourceLabel(
+      "BlueWay verified course bundle",
+      "blueway_course_bundle",
+    ),
+    "Imported BlueWay Course material",
+  );
+  assert.equal(
+    flashcardCourseSourceLabel("Lecture 4 notes.pdf", "document"),
+    "Lecture 4 notes.pdf",
+  );
+  assert.equal(flashcardCourseSourceLabel("  ", "notes"), "Course material");
+});
 
 test("Flashcard views are typed learner navigation with Study as the safe default", () => {
   assert.equal(flashcardsViewFromQuery(null), "study");

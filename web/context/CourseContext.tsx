@@ -13,6 +13,7 @@ import { fetchAuthStatus } from "@/lib/auth";
 import {
   archiveCourse as archiveCourseApi,
   createCourse as createCourseApi,
+  getOrCreateGeneralStudy,
   listCourses,
   restoreCourse as restoreCourseApi,
   type Course,
@@ -34,6 +35,7 @@ interface CourseContextValue {
   error: string | null;
   refresh: () => Promise<void>;
   createCourse: (title: string) => Promise<Course>;
+  openGeneralStudy: () => Promise<Course>;
   selectCourse: (courseId: string | null) => void;
   archiveCourse: (course: Course) => Promise<void>;
   restoreCourse: (course: Course) => Promise<void>;
@@ -171,6 +173,36 @@ export function CourseProvider({ children }: { children: React.ReactNode }) {
     [resolveIdentity],
   );
 
+  const openGeneralStudy = useCallback(async () => {
+    const requestedIdentity = identityRef.current || (await resolveIdentity());
+    if (!requestedIdentity) {
+      throw new Error("Sign in before opening General Study");
+    }
+    const general = await getOrCreateGeneralStudy();
+    const responseEpoch = ++requestEpochRef.current;
+    if (
+      !isCurrentCourseRequest(
+        responseEpoch,
+        requestEpochRef.current,
+        requestedIdentity,
+        identityRef.current,
+      )
+    ) {
+      throw new Error("Authentication changed while opening General Study");
+    }
+    setCourses((previous) => [
+      general,
+      ...previous.filter((course) => course.id !== general.id),
+    ]);
+    setRuntimeActiveCourseId(general.id);
+    setActiveCourseId(general.id);
+    window.localStorage.setItem(
+      courseSelectionStorageKey(requestedIdentity),
+      general.id,
+    );
+    return general;
+  }, [resolveIdentity]);
+
   const archiveCourse = useCallback(
     async (course: Course) => {
       const requestedIdentity = identityRef.current;
@@ -236,6 +268,7 @@ export function CourseProvider({ children }: { children: React.ReactNode }) {
       error,
       refresh,
       createCourse,
+      openGeneralStudy,
       selectCourse,
       archiveCourse,
       restoreCourse,
@@ -248,6 +281,7 @@ export function CourseProvider({ children }: { children: React.ReactNode }) {
       error,
       refresh,
       createCourse,
+      openGeneralStudy,
       selectCourse,
       archiveCourse,
       restoreCourse,

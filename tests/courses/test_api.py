@@ -79,6 +79,86 @@ def test_course_api_isolates_users_and_admin_personal_profiles(course_client) ->
     ).json()["courses"]] == [carol.json()["id"]]
 
 
+def test_general_study_api_is_lazy_private_permanent_and_has_no_mastery(
+    course_client,
+) -> None:
+    """General Study cannot be repurposed as an academic Course aggregate."""
+
+    first = course_client.post("/api/v1/courses/general-study", headers=_auth("bob"))
+    second = course_client.post("/api/v1/courses/general-study", headers=_auth("bob"))
+    alice = course_client.post("/api/v1/courses/general-study", headers=_auth("alice"))
+
+    assert first.status_code == second.status_code == alice.status_code == 200
+    general = first.json()
+    assert second.json()["id"] == general["id"]
+    assert general["id"] != alice.json()["id"]
+    assert general["workspace_kind"] == "general_study"
+    assert general["title"] == "General Study"
+    assert general["state"] == "active"
+    assert course_client.get(
+        f"/api/v1/courses/{general['id']}", headers=_auth("alice")
+    ).status_code == 404
+
+    courses = course_client.get("/api/v1/courses", headers=_auth("bob")).json()["courses"]
+    assert [course["id"] for course in courses if course["workspace_kind"] == "general_study"] == [
+        general["id"]
+    ]
+
+    academic = course_client.post(
+        "/api/v1/courses", headers=_auth("bob"), json={"title": "Biology"}
+    )
+    assert academic.status_code == 200
+    assert academic.json()["workspace_kind"] == "academic_course"
+
+    renamed = course_client.patch(
+        f"/api/v1/courses/{general['id']}",
+        headers=_auth("bob"),
+        json={"title": "My notes", "expected_revision": general["revision"]},
+    )
+    archived = course_client.post(
+        f"/api/v1/courses/{general['id']}/archive",
+        headers=_auth("bob"),
+        json={"expected_revision": general["revision"]},
+    )
+    assert renamed.status_code == archived.status_code == 409
+    assert renamed.json()["detail"] == "General Study cannot be renamed"
+    assert archived.json()["detail"] == "General Study cannot be archived"
+
+    # Keep this isolated from TestClient's exception re-raise behavior: the
+    # public contract is a safe conflict, never a server error or a new
+    # learning-path record for General Study.
+    with TestClient(course_client.app, raise_server_exceptions=False) as client:
+        learning = client.get(
+            f"/api/v1/courses/{general['id']}/learning", headers=_auth("bob")
+        )
+    assert learning.status_code == 409
+    assert learning.json()["detail"] == "General Study does not have Course mastery"
+
+    practice = course_client.post(
+        f"/api/v1/courses/{general['id']}/practice",
+        headers=_auth("bob"),
+        json={
+            "title": "Must not exist",
+            "expected_course_write_epoch": general["write_epoch"],
+        },
+    )
+    assert practice.status_code == 409
+    assert practice.json()["detail"] == (
+        "General Study does not support Course Practice or mastery"
+    )
+
+    source = course_client.post(
+        f"/api/v1/courses/{general['id']}/sources",
+        headers={**_auth("bob"), "Idempotency-Key": "general-source-denied"},
+        data={"kind": "notes", "display_name": "must-not-exist.txt"},
+        files={"files": ("must-not-exist.txt", b"private", "text/plain")},
+    )
+    assert source.status_code == 409
+    assert source.json()["detail"] == (
+        "General Study cannot accept Course sources or Knowledge"
+    )
+
+
 def test_course_api_reports_generation_capability_truthfully(
     course_client, monkeypatch
 ) -> None:
@@ -89,6 +169,9 @@ def test_course_api_reports_generation_capability_truthfully(
         "grounded_generation": False,
         "practice_generation": False,
         "flashcard_generation": False,
+        "flashcard_generation_reason": (
+            "Flashcard generation is not enabled on this server"
+        ),
         "grounded_generation_reason": (
             "Grounded generation is not enabled on this server"
         ),
@@ -101,8 +184,102 @@ def test_course_api_reports_generation_capability_truthfully(
         "grounded_generation": True,
         "practice_generation": True,
         "flashcard_generation": True,
+        "flashcard_generation_reason": None,
         "grounded_generation_reason": None,
     }
+
+
+def test_general_chat_flashcard_plan_is_private_bounded_and_not_course_grounded(
+    course_client, monkeypatch
+) -> None:
+    class Store:
+        async def get_session(self, session_id: str):
+            return (
+                {"id": session_id, "course_id": None}
+                if session_id == "unified_general"
+                else None
+            )
+
+        async def get_messages_for_context(
+            self, session_id: str, leaf_message_id: int | None = None
+        ):
+            assert session_id == "unified_general"
+            assert leaf_message_id == 2
+            return [
+                {"id": 1, "role": "user", "content": "Explain linear equations"},
+                {
+                    "id": 2,
+                    "role": "assistant",
+                    "content": "Slope is the rate of change in y for a change in x.",
+                },
+            ]
+
+    monkeypatch.setattr(
+        "deeptutor.services.session.get_personal_sqlite_session_store",
+        lambda: Store(),
+    )
+    response = course_client.post(
+        "/api/v1/courses/general-study/learner-actions",
+        headers=_auth("bob"),
+        json={
+            "action": "make_flashcards",
+            "session_id": "unified_general",
+            "assistant_message_id": 2,
+            "desired_count": 5,
+        },
+    )
+
+    assert response.status_code == 200, response.text
+    payload = response.json()
+    assert payload["destination"] == "flashcards"
+    assert payload["generation_brief"]["brief"]["desired_count"] == 5
+    assert payload["generation_brief"]["source_snapshot"] == []
+    origin = payload["generation_brief"]["origin"]
+    assert origin["kind"] == "general_chat"
+    assert origin["selected_message_ids"] == [1, 2]
+    assert len(origin["context_sha256"]) == 64
+    assert origin["context_summary"] == "Explain linear equations"
+
+    alice_general = course_client.post(
+        "/api/v1/courses/general-study", headers=_auth("alice")
+    ).json()
+    assert alice_general["id"] != payload["course_id"]
+
+    destination = course_client.post(
+        "/api/v1/courses",
+        headers=_auth("bob"),
+        json={"title": "Algebra"},
+    ).json()
+    saved_to_course = course_client.post(
+        "/api/v1/courses/general-study/learner-actions",
+        headers=_auth("bob"),
+        json={
+            "action": "make_flashcards",
+            "session_id": "unified_general",
+            "assistant_message_id": 2,
+            "desired_count": 3,
+            "destination_course_id": destination["id"],
+        },
+    )
+    assert saved_to_course.status_code == 200
+    course_payload = saved_to_course.json()
+    assert course_payload["course_id"] == destination["id"]
+    assert course_payload["generation_brief"]["source_snapshot"] == []
+    assert course_payload["generation_brief"]["objective_ids"] == []
+    assert course_payload["generation_brief"]["origin"]["kind"] == "general_chat"
+
+    foreign_destination = course_client.post(
+        "/api/v1/courses/general-study/learner-actions",
+        headers=_auth("alice"),
+        json={
+            "action": "make_flashcards",
+            "session_id": "unified_general",
+            "assistant_message_id": 2,
+            "destination_course_id": destination["id"],
+        },
+    )
+    # Alice does not own Bob's session or Course; neither identifier is exposed.
+    assert foreign_destination.status_code == 404
 
 
 def test_course_api_revision_archive_restore_and_no_delete(course_client) -> None:

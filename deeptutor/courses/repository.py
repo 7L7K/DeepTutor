@@ -138,6 +138,35 @@ class CourseRepository:
         assert row is not None
         return self._course_from_row(row)
 
+    def get_or_create_general_study(self) -> Course:
+        """Return this owner's one permanent private General Study workspace."""
+
+        now = time.time()
+        with self._write_lock, self._connect() as conn:
+            conn.execute("BEGIN IMMEDIATE")
+            row = conn.execute(
+                """SELECT * FROM courses
+                   WHERE owner_user_id = ? AND workspace_kind = 'general_study'""",
+                (self.owner_user_id,),
+            ).fetchone()
+            if row is None:
+                course_id = _course_id()
+                conn.execute(
+                    """INSERT INTO courses
+                       (id, owner_user_id, title, workspace_kind, state, revision,
+                        write_epoch, managed_kb_ref, created_at, updated_at,
+                        archived_at)
+                       VALUES (?, ?, 'General Study', 'general_study', 'active',
+                               1, 1, NULL, ?, ?, NULL)""",
+                    (course_id, self.owner_user_id, now, now),
+                )
+                row = conn.execute(
+                    "SELECT * FROM courses WHERE id = ?",
+                    (course_id,),
+                ).fetchone()
+        assert row is not None
+        return self._course_from_row(row)
+
     def list_courses(self, *, include_archived: bool = True) -> list[Course]:
         sql = "SELECT * FROM courses WHERE owner_user_id = ?"
         params: list[Any] = [self.owner_user_id]
@@ -324,7 +353,8 @@ class CourseRepository:
                 """UPDATE courses
                    SET managed_kb_ref = ?, revision = revision + 1, updated_at = ?
                    WHERE id = ? AND owner_user_id = ? AND revision = ?
-                     AND state = 'active' AND managed_kb_ref IS NULL""",
+                     AND state = 'active' AND workspace_kind = 'academic_course'
+                     AND managed_kb_ref IS NULL""",
                 (kb_ref, now, course_id, self.owner_user_id, expected_revision),
             )
             if result.rowcount != 1:
@@ -341,6 +371,7 @@ class CourseRepository:
                 """UPDATE courses
                    SET managed_kb_ref = ?, revision = revision + 1, updated_at = ?
                    WHERE id = ? AND owner_user_id = ? AND state = 'active'
+                     AND workspace_kind = 'academic_course'
                      AND managed_kb_ref IS NULL""",
                 (kb_ref, now, course_id, self.owner_user_id),
             )
@@ -351,6 +382,10 @@ class CourseRepository:
         if row is None:
             raise CourseNotFoundError("Course not found")
         course = self._course_from_row(row)
+        if course.workspace_kind != "academic_course":
+            raise CourseConflictError(
+                "General Study cannot accept Course sources or Knowledge"
+            )
         if course.state != "active":
             raise CourseConflictError("Archived courses cannot accept sources")
         if course.managed_kb_ref != kb_ref:
@@ -370,6 +405,10 @@ class CourseRepository:
         idempotency_key: str | None = None,
     ) -> CourseSource:
         course = self.get_course(course_id)
+        if course.workspace_kind != "academic_course":
+            raise CourseConflictError(
+                "General Study cannot accept Course sources or Knowledge"
+            )
         if course.state != "active":
             raise CourseConflictError("Archived courses cannot accept sources")
         if supersedes_source_id is not None:
@@ -381,13 +420,18 @@ class CourseRepository:
         now = time.time()
         with self._write_lock, self._connect() as conn:
             current = conn.execute(
-                "SELECT state FROM courses WHERE id = ? AND owner_user_id = ?",
+                """SELECT state, workspace_kind FROM courses
+                   WHERE id = ? AND owner_user_id = ?""",
                 (course_id, self.owner_user_id),
             ).fetchone()
             if current is None:
                 raise CourseNotFoundError("Course not found")
             if str(current["state"]) != "active":
                 raise CourseConflictError("Archived courses cannot accept sources")
+            if str(current["workspace_kind"]) != "academic_course":
+                raise CourseConflictError(
+                    "General Study cannot accept Course sources or Knowledge"
+                )
             try:
                 conn.execute(
                     """INSERT INTO course_sources

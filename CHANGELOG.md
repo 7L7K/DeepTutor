@@ -4,6 +4,26 @@
 
 ### Added
 
+- Added private General Study and conversation-drafted Flashcards. General Chat
+  can now prepare an editable, no-spend Flashcard plan from a bounded relevant
+  message branch, freeze exact message receipts, save to General Study by
+  default or an explicitly selected Course without claiming Course grounding,
+  then generate once, review candidates, publish an exact selection, and study
+  the preserved deck. General Study is blocked from Course sources, Knowledge,
+  Practice, learning, and mastery; generated counts support 1 through 48; one
+  ready Course source is automatic while multiple sources remain learner
+  selectable; and changed conversation authority fails before provider use.
+- Made grounded Course Flashcards reject unsupported topics before any paid
+  provider call, rank individual imported BlueWay records by the learner's
+  focus with an explicit policy for every exported record kind, validate
+  workspace card relevance without mistaking Chat or Practice workflow copy
+  for a learner topic, re-derive every Chat/Practice confirmation from its
+  owned server binding, and keep coverage check, confirmation, progress,
+  review, and save in one continuous Create journey.
+- Made the creation form select ready Course material by default, prevent the
+  final grounding source from being silently removed, replace internal BlueWay
+  bundle names with learner-facing copy, and visibly label the optional deck
+  name and required learning topic.
 - Reorganized Course Flashcards into a study-first Study, Create, and Activity
   experience. Provider-off Courses now present a direct manual path instead of
   disabled generation controls; grounded requests keep advanced choices
