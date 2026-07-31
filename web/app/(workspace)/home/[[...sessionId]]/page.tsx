@@ -53,6 +53,7 @@ import {
   type CourseLearnerActionScope,
 } from "@/lib/course-actions-api";
 import { storeFlashcardProposal } from "@/lib/flashcards-api";
+import { storePracticePlanHandoff } from "@/lib/practice-api";
 // Imported eagerly so the drawer shell is always mounted off-screen —
 // clicking a chip becomes a single CSS class flip, no chunk fetch + double
 // render. The heavy renderers inside still load lazily.
@@ -1743,7 +1744,17 @@ export default function ChatPage() {
         }
         if (actionCourse) selectCourse(plan.course_id);
         else await openGeneralStudy();
-        if (plan.destination === "practice") router.push("/practice");
+        if (plan.destination === "practice") {
+          if (!plan.generation_plan || !plan.plan_id) {
+            throw new Error("The Course action did not return an editable quiz plan.");
+          }
+          storePracticePlanHandoff(
+            courseIdentity,
+            plan.course_id,
+            plan.plan_id,
+          );
+          router.push("/practice");
+        }
         else if (plan.destination === "flashcards") {
           if (!plan.generation_brief) {
             throw new Error("The Course action did not return a generation brief.");

@@ -1,11 +1,16 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Archive, CheckCircle2, ClipboardCheck, Loader2, Play, RotateCcw, Save, Send, XCircle } from "lucide-react";
+import { Archive, CheckCircle2, ClipboardCheck, Loader2, Play, RotateCcw, Save, Send, Sparkles, XCircle } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { CourseBar } from "@/components/courses/CourseBar";
 import { useCourses } from "@/context/CourseContext";
 import { fetchAuthStatus } from "@/lib/auth";
+import {
+  getCourseCapabilities,
+  listCourseSources,
+  type CourseSource,
+} from "@/lib/course-api";
 import {
   abandonPracticeAttempt,
   addPracticeQuestion,
@@ -14,15 +19,22 @@ import {
   autosavePracticeAnswer,
   createPracticeRevision,
   createPracticeSet,
+  createPracticeGenerationPlan,
+  cancelPracticeGenerationOperation,
+  confirmPracticeGenerationPlan,
+  consumePracticePlanHandoff,
   formatPracticeScore,
   getPracticeAttempt,
   getPracticeSet,
   getPracticeResults,
   getPracticeRevision,
+  getPracticeGenerationOperation,
+  getPracticeGenerationPlan,
   gradePracticeAttempt,
   hasUnsavedPracticeAnswers,
   isCurrentPracticeResponse,
   learnerSafePracticeQuestions,
+  listPracticeGenerationOperations,
   listPracticeAttempts,
   listPracticeQuestions,
   listPracticeSets,
@@ -32,6 +44,8 @@ import {
   startPracticeAttempt,
   submitPracticeAttempt,
   type PracticeQuestion,
+  type PracticeGenerationOperation,
+  type PracticeGenerationPlan,
   type PracticeRequestScope,
   type PracticeRevision,
   type PracticeSet,
@@ -39,6 +53,7 @@ import {
   type QuizAttemptAnswer,
   type QuizAttemptView,
   type QuizResult,
+  updatePracticeGenerationPlan,
 } from "@/lib/practice-api";
 import { storeFlashcardProposal } from "@/lib/flashcards-api";
 
@@ -57,6 +72,28 @@ type QuestionDraft = {
   objectiveIds: string;
 };
 
+type PracticeTab = "study" | "create" | "activity";
+
+type PlanDraft = {
+  title: string;
+  focus: string;
+  sourceIds: string[];
+  objectiveIds: string;
+  itemLimit: number;
+  difficulty: PracticeGenerationPlan["difficulty"];
+  timingMode: PracticeGenerationPlan["timing_mode"];
+};
+
+const emptyPlanDraft: PlanDraft = {
+  title: "",
+  focus: "",
+  sourceIds: [],
+  objectiveIds: "",
+  itemLimit: 5,
+  difficulty: "mixed",
+  timingMode: "untimed",
+};
+
 const emptyQuestion: QuestionDraft = {
   prompt: "",
   answer: "",
@@ -64,7 +101,7 @@ const emptyQuestion: QuestionDraft = {
   objectiveIds: "",
 };
 
-/** Minimal manual Course Practice workspace. No generated content or local quiz cache. */
+/** Private Course Practice workspace with durable manual and grounded quiz flows. */
 export default function PracticeWorkspace() {
   const router = useRouter();
   const { activeCourse, refresh: refreshCourses } = useCourses();
@@ -82,12 +119,27 @@ export default function PracticeWorkspace() {
   const [busy, setBusy] = useState(false);
   const [status, setStatus] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [activeTab, setActiveTab] = useState<PracticeTab>("study");
+  const [courseSources, setCourseSources] = useState<CourseSource[]>([]);
+  const [generationEnabled, setGenerationEnabled] = useState(false);
+  const [plan, setPlan] = useState<PracticeGenerationPlan | null>(null);
+  const [planDraft, setPlanDraft] = useState<PlanDraft>(emptyPlanDraft);
+  const [planOpen, setPlanOpen] = useState(false);
+  const [generationOperation, setGenerationOperation] =
+    useState<PracticeGenerationOperation | null>(null);
+  const launchedOperationIdRef = useRef<string | null>(null);
+  const reviewPlanButtonRef = useRef<HTMLButtonElement | null>(null);
+  const planDialogRef = useRef<HTMLElement | null>(null);
   const epochRef = useRef(0);
   const scopeRef = useRef<PracticeRequestScope>({ identity: null, courseId: null, epoch: 0, viewEpoch: 0 });
 
   const selectedSet = useMemo(
     () => sets.find((item) => item.id === selectedSetId) ?? null,
     [sets, selectedSetId],
+  );
+  const sourceNames = useMemo(
+    () => new Map(courseSources.map((source) => [source.id, source.display_name])),
+    [courseSources],
   );
   const courseId = activeCourse?.id ?? null;
   const scopeReady = Boolean(
@@ -115,6 +167,14 @@ export default function PracticeWorkspace() {
     setBusy(false);
     setStatus(null);
     setError(null);
+    setActiveTab("study");
+    setCourseSources([]);
+    setGenerationEnabled(false);
+    setPlan(null);
+    setPlanDraft(emptyPlanDraft);
+    setPlanOpen(false);
+    setGenerationOperation(null);
+    launchedOperationIdRef.current = null;
     return scope;
   }, []);
 
@@ -145,14 +205,70 @@ export default function PracticeWorkspace() {
     const loadedQuestions = await listPracticeQuestions(practiceSet.course_id, practiceSet.id, loadedRevision.id);
     if (!current(scope)) return;
     setQuestions(loadedQuestions);
+    const inProgress = history.find(
+      (attempt) =>
+        attempt.state === "in_progress" &&
+        attempt.practice_set_revision_id === loadedRevision.id,
+    );
+    if (!inProgress) {
+      setAttemptView(null);
+      setResultView(null);
+      return;
+    }
+    const resumed = await getPracticeAttempt(
+      practiceSet.course_id,
+      practiceSet.id,
+      inProgress.id,
+    );
+    if (!current(scope)) return;
+    setAttemptView(resumed);
+    setResultView(null);
   }, [current]);
 
   const loadCourse = useCallback(async (scope: PracticeRequestScope) => {
     if (!scope.courseId) return;
-    const listed = await listPracticeSets(scope.courseId);
+    const [listed, sources, capabilities, operations] = await Promise.all([
+      listPracticeSets(scope.courseId),
+      listCourseSources(scope.courseId).catch(() => [] as CourseSource[]),
+      getCourseCapabilities().catch(() => null),
+      listPracticeGenerationOperations(scope.courseId).catch(
+        () => [] as PracticeGenerationOperation[],
+      ),
+    ]);
     if (!current(scope)) return;
     setSets(listed);
-    const usable = listed.find((set) => set.state === "draft") ?? null;
+    const readySources = sources.filter((source) => source.state === "ready");
+    setCourseSources(readySources);
+    setGenerationEnabled(Boolean(capabilities?.practice_generation));
+    const activeOperation =
+      operations.find((operation) =>
+        ["queued", "running"].includes(operation.state),
+      ) ?? null;
+    const latestFailure =
+      operations.find((operation) => operation.state === "failed") ?? null;
+    const visibleOperation = activeOperation ?? latestFailure;
+    setGenerationOperation(visibleOperation);
+    if (
+      activeOperation
+    ) {
+      setActiveTab("activity");
+    }
+    setPlanDraft((previous) => ({
+      ...previous,
+      sourceIds: previous.sourceIds.length
+        ? previous.sourceIds.filter((sourceId) =>
+            readySources.some((source) => source.id === sourceId),
+          )
+        : readySources.map((source) => source.id),
+    }));
+    const generated = activeOperation
+      ? listed.find((item) => item.id === activeOperation.practice_set_id)
+      : null;
+    const usable =
+      (generated?.state !== "archived" ? generated : null) ??
+      listed.find((set) => set.state === "draft" && set.current_revision_id) ??
+      listed.find((set) => set.state === "draft") ??
+      null;
     setSelectedSetId(usable?.id ?? null);
     if (usable) {
       const detailScope = advanceView();
@@ -202,6 +318,264 @@ export default function PracticeWorkspace() {
     return () => window.removeEventListener("dt:auth-changed", onAuthChanged);
   }, [activeCourse?.id, current, invalidate, loadCourse]);
 
+  useEffect(() => {
+    if (!identity || !activeCourse || !scopeReady) return;
+    const planId = consumePracticePlanHandoff(identity, activeCourse.id);
+    if (!planId) return;
+    const scope = scopeRef.current;
+    setBusy(true);
+    setError(null);
+    void getPracticeGenerationPlan(activeCourse.id, planId)
+      .then((loaded) => {
+        if (!current(scope)) return;
+        setPlan(loaded);
+        setPlanDraft({
+          title: loaded.title,
+          focus: loaded.focus,
+          sourceIds: loaded.source_snapshot.map((item) => item.source_id),
+          objectiveIds: loaded.objective_ids.join(", "),
+          itemLimit: loaded.item_limit,
+          difficulty: loaded.difficulty,
+          timingMode: loaded.timing_mode,
+        });
+        setActiveTab("create");
+        setPlanOpen(true);
+      })
+      .catch((cause) => {
+        if (current(scope)) setError(errorText(cause));
+      })
+      .finally(() => {
+        if (current(scope)) setBusy(false);
+      });
+  }, [activeCourse, current, identity, scopeReady]);
+
+  const openPlanReview = useCallback(async () => {
+    if (
+      !activeCourse ||
+      !courseWritable ||
+      !planDraft.title.trim() ||
+      !planDraft.focus.trim() ||
+      !planDraft.sourceIds.length
+    ) {
+      return;
+    }
+    const scope = scopeRef.current;
+    setBusy(true);
+    setError(null);
+    try {
+      const body = {
+        title: planDraft.title.trim(),
+        focus: planDraft.focus.trim(),
+        source_ids: planDraft.sourceIds,
+        objective_ids: planDraft.objectiveIds
+          .split(",")
+          .map((value) => value.trim())
+          .filter(Boolean),
+        expected_course_write_epoch: activeCourse.write_epoch,
+        item_limit: planDraft.itemLimit,
+        difficulty: planDraft.difficulty,
+        timing_mode: planDraft.timingMode,
+      };
+      const created =
+        plan?.state === "draft"
+          ? await updatePracticeGenerationPlan(activeCourse.id, plan, body)
+          : await createPracticeGenerationPlan(
+              activeCourse.id,
+              body,
+              newIdempotencyKey(),
+            );
+      if (!current(scope)) return;
+      setPlan(created);
+      setPlanOpen(true);
+      setStatus("Review the quiz plan before creating questions.");
+    } catch (cause) {
+      if (current(scope)) setError(errorText(cause));
+    } finally {
+      if (current(scope)) setBusy(false);
+    }
+  }, [activeCourse, courseWritable, current, plan, planDraft]);
+
+  const closePlanReview = useCallback(() => {
+    setPlanOpen(false);
+    window.requestAnimationFrame(() => reviewPlanButtonRef.current?.focus());
+  }, []);
+
+  const handlePlanDialogKeyDown = useCallback(
+    (event: React.KeyboardEvent<HTMLDivElement>) => {
+      if (event.key === "Escape" && !busy) {
+        event.preventDefault();
+        closePlanReview();
+        return;
+      }
+      if (event.key !== "Tab") return;
+      const focusable = Array.from(
+        planDialogRef.current?.querySelectorAll<HTMLElement>(
+          'button:not([disabled]), [href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])',
+        ) ?? [],
+      );
+      if (!focusable.length) return;
+      const first = focusable[0];
+      const last = focusable[focusable.length - 1];
+      if (event.shiftKey && document.activeElement === first) {
+        event.preventDefault();
+        last?.focus();
+      } else if (!event.shiftKey && document.activeElement === last) {
+        event.preventDefault();
+        first?.focus();
+      }
+    },
+    [busy, closePlanReview],
+  );
+
+  const confirmPlan = useCallback(async () => {
+    if (!activeCourse || !plan || plan.state !== "draft" || !courseWritable) {
+      return;
+    }
+    const scope = scopeRef.current;
+    setBusy(true);
+    setError(null);
+    try {
+      const confirmation = await confirmPracticeGenerationPlan(
+        activeCourse.id,
+        plan,
+        newIdempotencyKey(),
+      );
+      if (!current(scope)) return;
+      setPlan(confirmation.plan);
+      setGenerationOperation(confirmation.request.operation);
+      setPlanOpen(false);
+      setActiveTab("activity");
+      setStatus("Creating your quiz from the selected Course materials.");
+    } catch (cause) {
+      if (current(scope)) setError(errorText(cause));
+    } finally {
+      if (current(scope)) setBusy(false);
+    }
+  }, [activeCourse, courseWritable, current, plan]);
+
+  const launchGeneratedQuiz = useCallback(
+    async (operation: PracticeGenerationOperation) => {
+      if (
+        !activeCourse ||
+        launchedOperationIdRef.current === operation.id
+      ) {
+        return;
+      }
+      launchedOperationIdRef.current = operation.id;
+      const scope = advanceView();
+      setBusy(true);
+      setError(null);
+      try {
+        const generatedSet = await getPracticeSet(
+          activeCourse.id,
+          operation.practice_set_id,
+        );
+        const generatedRevision = await getPracticeRevision(
+          activeCourse.id,
+          generatedSet.id,
+          operation.practice_set_revision_id,
+        );
+        const generatedQuestions = await listPracticeQuestions(
+          activeCourse.id,
+          generatedSet.id,
+          generatedRevision.id,
+        );
+        const view = await startPracticeAttempt(
+          activeCourse.id,
+          generatedSet,
+          generatedRevision.id,
+          activeCourse.write_epoch,
+        );
+        if (!current(scope)) return;
+        const listed = await listPracticeSets(activeCourse.id);
+        if (!current(scope)) return;
+        setSets(listed);
+        setSelectedSetId(generatedSet.id);
+        setRevision(generatedRevision);
+        setQuestions(generatedQuestions);
+        setAttemptView(view);
+        setResultView(null);
+        setGenerationOperation(operation);
+        setActiveTab("study");
+        setStatus("Your quiz is ready.");
+      } catch (cause) {
+        launchedOperationIdRef.current = null;
+        if (current(scope)) setError(errorText(cause));
+      } finally {
+        if (current(scope)) setBusy(false);
+      }
+    },
+    [activeCourse, advanceView, current],
+  );
+
+  const cancelGeneration = useCallback(async () => {
+    if (!activeCourse || !generationOperation) return;
+    const scope = scopeRef.current;
+    setBusy(true);
+    setError(null);
+    try {
+      const cancelled = await cancelPracticeGenerationOperation(
+        activeCourse.id,
+        generationOperation.id,
+      );
+      if (!current(scope)) return;
+      setGenerationOperation(cancelled);
+      setStatus("Quiz creation stopped. No quiz was published.");
+    } catch (cause) {
+      if (current(scope)) setError(errorText(cause));
+    } finally {
+      if (current(scope)) setBusy(false);
+    }
+  }, [activeCourse, current, generationOperation]);
+
+  useEffect(() => {
+    if (
+      !activeCourse ||
+      !generationOperation ||
+      !["queued", "running"].includes(generationOperation.state)
+    ) {
+      return;
+    }
+    let cancelled = false;
+    const poll = async () => {
+      try {
+        const next = await getPracticeGenerationOperation(
+          activeCourse.id,
+          generationOperation.id,
+        );
+        if (cancelled) return;
+        setGenerationOperation(next);
+        if (next.state === "completed") {
+          await launchGeneratedQuiz(next);
+        } else if (next.state === "failed") {
+          setError(
+            "Quiz generation did not finish. No quiz was published and your existing Practice was not changed.",
+          );
+          setActiveTab("activity");
+        }
+      } catch (cause) {
+        if (!cancelled) setError(errorText(cause));
+      }
+    };
+    const timer = window.setInterval(() => void poll(), 800);
+    void poll();
+    return () => {
+      cancelled = true;
+      window.clearInterval(timer);
+    };
+  }, [activeCourse, generationOperation, launchGeneratedQuiz]);
+
+  useEffect(() => {
+    if (
+      !generationOperation ||
+      generationOperation.state !== "completed" ||
+      launchedOperationIdRef.current === generationOperation.id
+    ) {
+      return;
+    }
+    void launchGeneratedQuiz(generationOperation);
+  }, [generationOperation, launchGeneratedQuiz]);
+
   const selectSet = useCallback(async (practiceSet: PracticeSet) => {
     const scope = advanceView();
     setSelectedSetId(practiceSet.id);
@@ -221,7 +595,7 @@ export default function PracticeWorkspace() {
     } catch (cause) {
       if (current(scope)) setError(errorText(cause));
     }
-  }, [advanceView, loadSetDetail]);
+  }, [advanceView, current, loadSetDetail]);
 
   const createSet = useCallback(async () => {
     if (!activeCourse || !setTitle.trim() || !courseWritable) return;
@@ -471,14 +845,45 @@ export default function PracticeWorkspace() {
         <div className="mb-5 flex flex-wrap items-start justify-between gap-3">
           <div>
             <h1 className="text-2xl font-semibold">Practice</h1>
-            <p className="mt-1 text-sm text-[var(--muted-foreground)]">Manual Course quizzes. Questions, answers, and results stay private to this Course.</p>
+            <p className="mt-1 text-sm text-[var(--muted-foreground)]">Create, take, and review private quizzes grounded in this Course.</p>
           </div>
           {activeCourse ? <div className="rounded-lg border border-[var(--border)] bg-[var(--card)] px-3 py-2 text-sm"><span className="text-[var(--muted-foreground)]">Active Course: </span><strong>{activeCourse.title}</strong></div> : null}
         </div>
 
         {!identity ? <p className="rounded-lg border border-[var(--border)] p-4 text-sm text-[var(--muted-foreground)]">Sign in to use private Course Practice.</p> : null}
         {identity && !activeCourse ? <p className="rounded-lg border border-[var(--border)] p-4 text-sm text-[var(--muted-foreground)]">Select or create a Course above to create private Practice sets.</p> : null}
-        {activeCourse ? <div className="grid gap-5 lg:grid-cols-[260px_minmax(0,1fr)]">
+        {identity && activeCourse ? <nav aria-label="Practice sections" role="tablist" className="mb-5 grid grid-cols-3 rounded-xl border border-[var(--border)] bg-[var(--card)] p-1">
+          {(["study", "create", "activity"] as PracticeTab[]).map((tab) => <button key={tab} type="button" role="tab" aria-selected={activeTab === tab} onClick={() => setActiveTab(tab)} className={`rounded-lg px-4 py-2.5 text-sm font-medium capitalize ${activeTab === tab ? "bg-[var(--primary)] text-[var(--primary-foreground)]" : "text-[var(--muted-foreground)] hover:bg-[var(--muted)]"}`}>{tab}</button>)}
+        </nav> : null}
+
+        {activeCourse && activeTab === "create" ? <section className="rounded-xl border border-[var(--border)] bg-[var(--card)] p-5">
+          <div className="mb-5">
+            <h2 className="text-lg font-semibold">Create a quiz</h2>
+            <p className="mt-1 text-sm text-[var(--muted-foreground)]">Choose what you want to practice. You will review the plan before any questions are generated.</p>
+          </div>
+          {generationEnabled ? <div className="grid gap-4">
+            <label className="grid gap-1 text-sm"><span>Quiz name</span><input aria-label="Generated quiz title" value={planDraft.title} onChange={(event) => setPlanDraft((value) => ({ ...value, title: event.target.value }))} placeholder={`${activeCourse.title} review`} className="rounded-lg border border-[var(--border)] bg-[var(--background)] px-3 py-2" /></label>
+            <label className="grid gap-1 text-sm"><span>What should this quiz help you understand?</span><textarea aria-label="Quiz focus" value={planDraft.focus} onChange={(event) => setPlanDraft((value) => ({ ...value, focus: event.target.value }))} placeholder="For example: compare the main ideas from this week's lectures" className="min-h-24 rounded-lg border border-[var(--border)] bg-[var(--background)] p-3" /></label>
+            <div className="grid gap-4 sm:grid-cols-3">
+              <label className="grid gap-1 text-sm"><span>Questions</span><input aria-label="Question count" type="number" min={1} max={12} value={planDraft.itemLimit} onChange={(event) => setPlanDraft((value) => ({ ...value, itemLimit: Math.max(1, Math.min(12, Number(event.target.value) || 1)) }))} className="rounded-lg border border-[var(--border)] bg-[var(--background)] px-3 py-2" /></label>
+              <label className="grid gap-1 text-sm"><span>Difficulty</span><select aria-label="Quiz difficulty" value={planDraft.difficulty} onChange={(event) => setPlanDraft((value) => ({ ...value, difficulty: event.target.value as PlanDraft["difficulty"] }))} className="rounded-lg border border-[var(--border)] bg-[var(--background)] px-3 py-2"><option value="foundation">Foundation</option><option value="mixed">Mixed</option><option value="challenge">Challenge</option></select></label>
+              <label className="grid gap-1 text-sm"><span>Timing</span><select aria-label="Quiz timing" value={planDraft.timingMode} onChange={(event) => setPlanDraft((value) => ({ ...value, timingMode: event.target.value as PlanDraft["timingMode"] }))} className="rounded-lg border border-[var(--border)] bg-[var(--background)] px-3 py-2"><option value="untimed">Untimed</option><option value="practice_timer">Show practice timer</option></select></label>
+            </div>
+            {courseSources.length > 1 ? <fieldset className="rounded-lg border border-[var(--border)] p-3"><legend className="px-1 text-sm font-medium">Course materials</legend><div className="grid gap-2 sm:grid-cols-2">{courseSources.map((source) => <label key={source.id} className="flex items-center gap-2 text-sm"><input type="checkbox" checked={planDraft.sourceIds.includes(source.id)} onChange={(event) => setPlanDraft((value) => ({ ...value, sourceIds: event.target.checked ? [...value.sourceIds, source.id] : value.sourceIds.filter((item) => item !== source.id) }))} />{source.display_name}</label>)}</div></fieldset> : <p className="text-sm text-[var(--muted-foreground)]">{courseSources.length === 1 ? `Using ${courseSources[0]?.display_name}` : "Attach a ready Course source before generating a quiz."}</p>}
+            <button ref={reviewPlanButtonRef} type="button" disabled={busy || !courseWritable || !planDraft.title.trim() || !planDraft.focus.trim() || !planDraft.sourceIds.length} onClick={() => void openPlanReview()} className="inline-flex w-fit items-center gap-2 rounded-lg bg-[var(--primary)] px-4 py-2 text-sm text-[var(--primary-foreground)] disabled:opacity-50"><Sparkles size={16} />Review quiz plan</button>
+          </div> : <div className="rounded-lg border border-[var(--border)] p-4"><h3 className="font-medium">AI quiz creation is unavailable right now</h3><p className="mt-1 text-sm text-[var(--muted-foreground)]">Manual Practice remains available in Study. No provider call was attempted.</p><button type="button" onClick={() => setActiveTab("study")} className="mt-3 rounded-lg border border-[var(--border)] px-3 py-2 text-sm">Create manually</button></div>}
+        </section> : null}
+
+        {activeCourse && activeTab === "activity" ? <section className="rounded-xl border border-[var(--border)] bg-[var(--card)] p-5">
+          <h2 className="text-lg font-semibold">Quiz activity</h2>
+          {generationOperation ? <div className="mt-4 rounded-lg border border-[var(--border)] p-4">
+            <div className="flex items-center gap-2">{["queued", "running"].includes(generationOperation.state) ? <Loader2 className="animate-spin" size={18} /> : generationOperation.state === "completed" ? <CheckCircle2 size={18} /> : <XCircle size={18} />}<strong>{generationOperation.state === "queued" ? "Waiting to start" : generationOperation.state === "running" ? "Creating your quiz" : generationOperation.state === "completed" ? "Quiz ready" : "Quiz generation did not finish"}</strong></div>
+            <p className="mt-2 text-sm text-[var(--muted-foreground)]">{generationOperation.cancelled_at ? "Quiz creation was stopped. No quiz was published." : generationOperation.state === "failed" ? "No quiz was published and your existing Practice was not changed." : "The selected Course source versions are frozen for this quiz."}</p>
+            {["queued", "running"].includes(generationOperation.state) && !generationOperation.cancel_requested_at ? <button type="button" disabled={busy} onClick={() => void cancelGeneration()} className="mt-3 rounded-lg border border-[var(--border)] px-3 py-2 text-sm disabled:opacity-50">Stop creating</button> : null}
+          </div> : <p className="mt-4 text-sm text-[var(--muted-foreground)]">No quiz generation activity in this session.</p>}
+        </section> : null}
+
+        {activeCourse && activeTab === "study" ? <div className="grid gap-5 lg:grid-cols-[260px_minmax(0,1fr)]">
           <aside className="rounded-xl border border-[var(--border)] bg-[var(--card)] p-3">
             <h2 className="mb-3 font-medium">Practice library</h2>
             <div className="mb-3 flex gap-2">
@@ -523,20 +928,27 @@ export default function PracticeWorkspace() {
               </div> : null}
               {revision?.state === "ready" && !readOnly ? <div className="mb-5 flex flex-wrap gap-2">{revision.id === selectedSet.current_revision_id ? <button disabled={busy} onClick={() => void startOrResume()} className="inline-flex items-center gap-1 rounded-lg bg-[var(--primary)] px-3 py-2 text-sm text-[var(--primary-foreground)]"><Play size={15} />Start or resume quiz</button> : <span className="self-center text-sm text-[var(--muted-foreground)]">Historical revision — attempts are read-only.</span>}<button disabled={busy} onClick={() => void createSuccessor()} className="rounded-lg border border-[var(--border)] px-3 py-2 text-sm">Create successor revision</button></div> : null}
               {questions.length ? <ol className="mb-6 space-y-3">{questions.map((question) => <li key={question.id} className="rounded-lg border border-[var(--border)] p-3"><span className="mr-2 text-xs text-[var(--muted-foreground)]">{question.ordinal}.</span>{question.prompt}{revision?.state === "ready" ? null : <p className="mt-2 text-xs text-[var(--muted-foreground)]">Answer: {question.answer_contract?.answer ?? "Stored server-side"}</p>}</li>)}</ol> : null}
-              {attemptView ? <AttemptRunner key={attemptView.attempt.id} view={attemptView} questions={questions} readOnly={readOnly || busy} answerFor={answerFor} onSave={(item, value) => void saveAnswer(item, value)} onTransition={(action) => void transitionAttempt(action)} onReviewMisses={() => void reviewMissesAsFlashcards()} resultView={resultView} /> : null}
+              {attemptView ? <AttemptRunner key={attemptView.attempt.id} view={attemptView} questions={questions} sourceNames={sourceNames} readOnly={readOnly || busy} answerFor={answerFor} onSave={(item, value) => void saveAnswer(item, value)} onTransition={(action) => void transitionAttempt(action)} onReviewMisses={() => void reviewMissesAsFlashcards()} resultView={resultView} /> : null}
               <AttemptHistory attempts={attempts} onOpen={(item) => void openAttempt(item)} busy={busy} hasMore={attemptsHaveMore} onLoadMore={() => void loadMoreAttempts()} />
             </> : <p className="text-sm text-[var(--muted-foreground)]">Choose a Practice set or create one.</p>}
           </section>
         </div> : null}
         {status ? <p role="status" className="mt-4 text-sm text-emerald-600">{status}</p> : null}
         {error ? <p role="alert" className="mt-4 text-sm text-red-600">{error}</p> : null}
+        {planOpen && plan ? <div role="dialog" aria-modal="true" aria-labelledby="quiz-plan-title" onKeyDown={handlePlanDialogKeyDown} className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4">
+          <section ref={planDialogRef} className="max-h-[90vh] w-full max-w-2xl overflow-y-auto rounded-2xl border border-[var(--border)] bg-[var(--background)] p-6 shadow-2xl">
+            <div className="flex items-start justify-between gap-4"><div><h2 id="quiz-plan-title" className="text-xl font-semibold">Ready to create your quiz?</h2><p className="mt-1 text-sm text-[var(--muted-foreground)]">Review this summary. Choose Keep editing to make changes. Questions are generated only after you confirm.</p></div><button type="button" autoFocus aria-label="Close quiz plan" onClick={closePlanReview} className="rounded-lg p-2 hover:bg-[var(--muted)]"><XCircle size={20} /></button></div>
+            <dl className="mt-5 grid gap-3 rounded-xl border border-[var(--border)] p-4 text-sm sm:grid-cols-2"><div><dt className="text-[var(--muted-foreground)]">Quiz</dt><dd className="font-medium">{planDraft.title}</dd></div><div><dt className="text-[var(--muted-foreground)]">Questions</dt><dd className="font-medium">{planDraft.itemLimit}</dd></div><div className="sm:col-span-2"><dt className="text-[var(--muted-foreground)]">What it covers</dt><dd className="font-medium">{planDraft.focus}</dd></div><div><dt className="text-[var(--muted-foreground)]">Difficulty</dt><dd className="font-medium capitalize">{planDraft.difficulty}</dd></div><div><dt className="text-[var(--muted-foreground)]">Timing</dt><dd className="font-medium">{planDraft.timingMode === "untimed" ? "Untimed" : "Practice timer"}</dd></div><div className="sm:col-span-2"><dt className="text-[var(--muted-foreground)]">Course materials</dt><dd className="font-medium">{planDraft.sourceIds.length} selected</dd></div></dl>
+            <div className="mt-5 flex flex-wrap justify-end gap-2"><button type="button" disabled={busy} onClick={closePlanReview} className="rounded-lg border border-[var(--border)] px-4 py-2 text-sm">Keep editing</button><button type="button" disabled={busy} onClick={() => void confirmPlan()} className="inline-flex items-center gap-2 rounded-lg bg-[var(--primary)] px-4 py-2 text-sm text-[var(--primary-foreground)] disabled:opacity-50">{busy ? <Loader2 className="animate-spin" size={16} /> : <Sparkles size={16} />}Create quiz</button></div>
+          </section>
+        </div> : null}
       </main>
     </div>
   );
 }
 
-function AttemptRunner({ view, questions, readOnly, answerFor, onSave, onTransition, onReviewMisses, resultView }: {
-  view: QuizAttemptView; questions: PracticeQuestion[]; readOnly: boolean; answerFor: (itemId: string) => QuizAttemptAnswer | null; onSave: (itemId: string, value: string) => void; onTransition: (action: "submit" | "abandon" | "grade") => void; onReviewMisses: () => void; resultView: QuizResult | null;
+function AttemptRunner({ view, questions, sourceNames, readOnly, answerFor, onSave, onTransition, onReviewMisses, resultView }: {
+  view: QuizAttemptView; questions: PracticeQuestion[]; sourceNames: Map<string, string>; readOnly: boolean; answerFor: (itemId: string) => QuizAttemptAnswer | null; onSave: (itemId: string, value: string) => void; onTransition: (action: "submit" | "abandon" | "grade") => void; onReviewMisses: () => void; resultView: QuizResult | null;
 }) {
   const byId = useMemo(() => new Map((resultView?.questions ?? questions).map((question) => [question.id, question])), [questions, resultView?.questions]);
   const [values, setValues] = useState<Record<string, string>>(() =>
@@ -549,11 +961,25 @@ function AttemptRunner({ view, questions, readOnly, answerFor, onSave, onTransit
     typeof score?.correct === "number" &&
     typeof score?.total === "number" &&
     score.correct < score.total;
-  return <div className="mb-6 rounded-xl border border-[var(--border)] p-4"><div className="mb-4 flex flex-wrap items-center justify-between gap-2"><h3 className="font-semibold">Quiz attempt</h3><span className="rounded-full bg-[var(--muted)] px-2 py-1 text-xs">{view.attempt.state}{formatPracticeScore(view.attempt.score) ? ` · ${formatPracticeScore(view.attempt.score)}` : ""}</span></div>
-    <div className="space-y-4">{view.items.map((item) => { const question = byId.get(item.question_id); const answer = answerFor(item.id); const dirty = (values[item.id] ?? "") !== (answer?.response?.answer ?? ""); return <article key={item.id} className="rounded-lg border border-[var(--border)] p-3"><p className="font-medium">{item.display_ordinal}. {question?.prompt ?? "Question unavailable"}</p><div className="mt-3 flex gap-2"><input aria-label={`Answer for question ${item.display_ordinal}`} value={values[item.id] ?? ""} disabled={!active || readOnly} onChange={(event) => setValues((previous) => ({ ...previous, [item.id]: event.target.value }))} className="min-w-0 flex-1 rounded-lg border border-[var(--border)] bg-[var(--background)] px-2 py-2 text-sm disabled:opacity-60" placeholder="Your answer" /><button disabled={!active || readOnly || !dirty} onClick={() => onSave(item.id, values[item.id] ?? "")} className="rounded-lg border border-[var(--border)] px-3 text-sm disabled:opacity-50">Save</button></div>{answer ? <p className="mt-1 text-xs text-[var(--muted-foreground)]">Saved revision {answer.revision}{dirty ? " · unsaved changes" : ""}</p> : null}{item.grading ? <p className="mt-2 text-sm">{String(item.grading.is_correct) === "true" ? "Correct" : "Review this answer"}{question?.explanation ? ` — ${question.explanation}` : ""}{resultView?.attempt.state === "graded" && question?.answer_contract ? ` Expected answer: ${question.answer_contract.answer}` : ""}</p> : null}</article>; })}</div>
+  return <div className="mb-6 rounded-xl border border-[var(--border)] p-4"><div className="mb-4 flex flex-wrap items-center justify-between gap-2"><div><h3 className="font-semibold">Quiz attempt</h3>{view.attempt.timing_mode === "practice_timer" ? <AdvisoryPracticeTimer startedAt={view.attempt.started_at} /> : null}</div><span className="rounded-full bg-[var(--muted)] px-2 py-1 text-xs">{view.attempt.state}{formatPracticeScore(view.attempt.score) ? ` · ${formatPracticeScore(view.attempt.score)}` : ""}</span></div>
+    <div className="space-y-4">{view.items.map((item) => { const question = byId.get(item.question_id); const answer = answerFor(item.id); const dirty = (values[item.id] ?? "") !== (answer?.response?.answer ?? ""); return <article key={item.id} className="rounded-lg border border-[var(--border)] p-3"><p className="font-medium">{item.display_ordinal}. {question?.prompt ?? "Question unavailable"}</p><div className="mt-3 flex gap-2"><input aria-label={`Answer for question ${item.display_ordinal}`} value={values[item.id] ?? ""} disabled={!active || readOnly} onChange={(event) => setValues((previous) => ({ ...previous, [item.id]: event.target.value }))} className="min-w-0 flex-1 rounded-lg border border-[var(--border)] bg-[var(--background)] px-2 py-2 text-sm disabled:opacity-60" placeholder="Your answer" /><button disabled={!active || readOnly || !dirty} onClick={() => onSave(item.id, values[item.id] ?? "")} className="rounded-lg border border-[var(--border)] px-3 text-sm disabled:opacity-50">Save</button></div>{answer ? <p className="mt-1 text-xs text-[var(--muted-foreground)]">Saved revision {answer.revision}{dirty ? " · unsaved changes" : ""}</p> : null}{item.grading ? <p className="mt-2 text-sm">{String(item.grading.is_correct) === "true" ? "Correct" : "Review this answer"}{question?.explanation ? ` — ${question.explanation}` : ""}{resultView?.attempt.state === "graded" && question?.answer_contract ? ` Expected answer: ${question.answer_contract.answer}` : ""}</p> : null}{resultView?.attempt.state === "graded" && question?.citations.length ? <ul aria-label={`Sources for question ${item.display_ordinal}`} className="mt-2 flex flex-wrap gap-2 text-xs text-[var(--muted-foreground)]">{question.citations.map((citation, index) => { const sourceId = typeof citation.source_id === "string" ? citation.source_id : ""; return <li key={`${sourceId}-${index}`} className="rounded-full bg-[var(--muted)] px-2 py-1">{sourceNames.get(sourceId) ?? `Course source ${index + 1}`}</li>; })}</ul> : null}</article>; })}</div>
     <div className="mt-4 flex flex-wrap gap-2">{active ? <><button disabled={readOnly || hasUnsaved} onClick={() => onTransition("submit")} className="inline-flex items-center gap-1 rounded-lg bg-[var(--primary)] px-3 py-2 text-sm text-[var(--primary-foreground)] disabled:opacity-50"><Send size={15} />Submit</button><button disabled={readOnly} onClick={() => onTransition("abandon")} className="inline-flex items-center gap-1 rounded-lg border border-[var(--border)] px-3 py-2 text-sm"><XCircle size={15} />Abandon</button>{hasUnsaved ? <span className="self-center text-xs text-[var(--muted-foreground)]">Save every changed answer before submitting.</span> : null}</> : null}{view.attempt.state === "submitted" ? <button disabled={readOnly} onClick={() => onTransition("grade")} className="inline-flex items-center gap-1 rounded-lg bg-[var(--primary)] px-3 py-2 text-sm text-[var(--primary-foreground)]"><ClipboardCheck size={15} />Grade</button> : null}</div>
     {resultView?.attempt.state === "graded" ? <div className="mt-4 rounded-lg bg-[var(--muted)] p-3 text-sm"><p>Results are server-authoritative. Score: {formatPracticeScore(resultView.attempt.score) ?? "available"}.</p>{hasMisses ? <button type="button" disabled={readOnly} onClick={onReviewMisses} className="mt-3 rounded-lg border border-[var(--border)] bg-[var(--background)] px-3 py-2 text-sm disabled:opacity-50">Review misses as Flashcards</button> : <p className="mt-2 text-[var(--muted-foreground)]">No missed answers need a remediation deck.</p>}</div> : null}
   </div>;
+}
+
+function AdvisoryPracticeTimer({ startedAt }: { startedAt: number }) {
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    const interval = window.setInterval(() => setNow(Date.now()), 1_000);
+    return () => window.clearInterval(interval);
+  }, []);
+  const elapsed = Math.max(0, Math.floor(now / 1_000 - startedAt));
+  const minutes = Math.floor(elapsed / 60);
+  const seconds = elapsed % 60;
+  return <p role="timer" aria-live="off" className="mt-1 text-xs text-[var(--muted-foreground)]">
+    Elapsed {minutes}:{String(seconds).padStart(2, "0")} · advisory only
+  </p>;
 }
 
 function AttemptHistory({ attempts, onOpen, busy, hasMore, onLoadMore }: { attempts: QuizAttempt[]; onOpen: (attempt: QuizAttempt) => void; busy: boolean; hasMore: boolean; onLoadMore: () => void }) {

@@ -42,6 +42,111 @@ export interface PracticeRevision {
   ready_at: number | null;
 }
 
+export type PracticeGenerationState = "queued" | "running" | "completed" | "failed";
+
+export interface PracticeSourceReceipt {
+  source_id: string;
+  source_revision: number;
+  content_sha256: string;
+}
+
+export interface PracticeGenerationPlan {
+  id: string;
+  owner_user_id: string;
+  course_id: string;
+  title: string;
+  focus: string;
+  source_snapshot: PracticeSourceReceipt[];
+  objective_ids: string[];
+  item_limit: number;
+  difficulty: "foundation" | "mixed" | "challenge";
+  timing_mode: "untimed" | "practice_timer";
+  origin: {
+    kind: "practice" | "course_chat";
+    session_id: string | null;
+    assistant_message_id: number | null;
+  };
+  course_write_epoch: number;
+  revision: number;
+  state: "draft" | "confirmed" | "expired";
+  confirmed_operation_id: string | null;
+  created_at: number;
+  updated_at: number;
+  confirmed_at: number | null;
+}
+
+export interface PracticeGenerationOperation {
+  id: string;
+  owner_user_id: string;
+  course_id: string;
+  practice_set_id: string;
+  practice_set_revision_id: string;
+  source_snapshot: PracticeSourceReceipt[];
+  objective_ids: string[];
+  item_limit: number;
+  context_char_limit: number;
+  focus: string;
+  difficulty: "foundation" | "mixed" | "challenge";
+  timing_mode: "untimed" | "practice_timer";
+  state: PracticeGenerationState;
+  error_code: string | null;
+  cancel_requested_at: number | null;
+  cancelled_at: number | null;
+  created_at: number;
+  updated_at: number;
+}
+
+export interface PracticeGenerationConfirmation {
+  plan: PracticeGenerationPlan;
+  request: {
+    practice_set_id: string;
+    practice_set_revision_id: string;
+    operation: PracticeGenerationOperation;
+  };
+}
+
+const PRACTICE_PLAN_HANDOFF_PREFIX = "teeechr:practice-plan:v1";
+
+function planHandoffKey(identity: string, courseId: string): string {
+  return `${PRACTICE_PLAN_HANDOFF_PREFIX}:${identity}:${courseId}`;
+}
+
+/** Keep only an opaque durable plan ID in the browser handoff. */
+export function storePracticePlanHandoff(
+  identity: string,
+  courseId: string,
+  planId: string,
+): void {
+  sessionStorage.setItem(
+    planHandoffKey(identity, courseId),
+    JSON.stringify({ planId, createdAt: Date.now() }),
+  );
+}
+
+export function consumePracticePlanHandoff(
+  identity: string,
+  courseId: string,
+): string | null {
+  const key = planHandoffKey(identity, courseId);
+  const raw = sessionStorage.getItem(key);
+  sessionStorage.removeItem(key);
+  if (!raw) return null;
+  try {
+    const parsed = JSON.parse(raw) as { planId?: unknown; createdAt?: unknown };
+    if (
+      typeof parsed.planId !== "string" ||
+      !parsed.planId.startsWith("pln_") ||
+      typeof parsed.createdAt !== "number" ||
+      Date.now() - parsed.createdAt > 15 * 60_000
+    ) {
+      return null;
+    }
+    return parsed.planId;
+  } catch {
+    return null;
+  }
+}
+
 export interface PracticeQuestion {
   id: string;
   practice_set_revision_id: string;
@@ -63,6 +168,7 @@ export interface QuizAttempt {
   course_id: string;
   practice_set_id: string;
   practice_set_revision_id: string;
+  timing_mode: "untimed" | "practice_timer";
   state: QuizAttemptState;
   score: { correct?: number; total?: number; fraction?: number } | null;
   revision: number;
@@ -183,6 +289,10 @@ function path(courseId: string, suffix = ""): string {
   return `/api/v1/courses/${encodeURIComponent(courseId)}/practice${suffix}`;
 }
 
+function generationPath(courseId: string, suffix = ""): string {
+  return `/api/v1/courses/${encodeURIComponent(courseId)}/practice-generation${suffix}`;
+}
+
 function mutation(body: unknown, idempotencyKey?: string): RequestInit {
   return {
     method: "POST",
@@ -199,6 +309,129 @@ export async function listPracticeSets(courseId: string): Promise<PracticeSet[]>
     await apiFetch(apiUrl(path(courseId)), { cache: "no-store" }),
   );
   return body.practice_sets ?? body.sets ?? [];
+}
+
+export function createPracticeGenerationPlan(
+  courseId: string,
+  body: {
+    title: string;
+    focus: string;
+    source_ids: string[];
+    objective_ids: string[];
+    expected_course_write_epoch: number;
+    item_limit: number;
+    difficulty: PracticeGenerationPlan["difficulty"];
+    timing_mode: PracticeGenerationPlan["timing_mode"];
+  },
+  idempotencyKey: string,
+) {
+  return json<PracticeGenerationPlan>(
+    apiFetch(
+      apiUrl(generationPath(courseId, "/plans")),
+      mutation(body, idempotencyKey),
+    ),
+  );
+}
+
+export function getPracticeGenerationPlan(courseId: string, planId: string) {
+  return json<PracticeGenerationPlan>(
+    apiFetch(
+      apiUrl(
+        generationPath(courseId, `/plans/${encodeURIComponent(planId)}`),
+      ),
+      { cache: "no-store" },
+    ),
+  );
+}
+
+export function updatePracticeGenerationPlan(
+  courseId: string,
+  plan: PracticeGenerationPlan,
+  body: {
+    title: string;
+    focus: string;
+    source_ids: string[];
+    objective_ids: string[];
+    item_limit: number;
+    difficulty: PracticeGenerationPlan["difficulty"];
+    timing_mode: PracticeGenerationPlan["timing_mode"];
+  },
+) {
+  const updateBody = {
+    title: body.title,
+    focus: body.focus,
+    source_ids: body.source_ids,
+    objective_ids: body.objective_ids,
+    item_limit: body.item_limit,
+    difficulty: body.difficulty,
+    timing_mode: body.timing_mode,
+    expected_revision: plan.revision,
+  };
+  return json<PracticeGenerationPlan>(
+    apiFetch(
+      apiUrl(
+        generationPath(courseId, `/plans/${encodeURIComponent(plan.id)}`),
+      ),
+      {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(updateBody),
+      },
+    ),
+  );
+}
+
+export function confirmPracticeGenerationPlan(
+  courseId: string,
+  plan: PracticeGenerationPlan,
+  idempotencyKey: string,
+) {
+  return json<PracticeGenerationConfirmation>(
+    apiFetch(
+      apiUrl(
+        generationPath(
+          courseId,
+          `/plans/${encodeURIComponent(plan.id)}/confirm`,
+        ),
+      ),
+      mutation({ expected_revision: plan.revision }, idempotencyKey),
+    ),
+  );
+}
+
+export function getPracticeGenerationOperation(
+  courseId: string,
+  operationId: string,
+) {
+  return json<PracticeGenerationOperation>(
+    apiFetch(
+      apiUrl(generationPath(courseId, `/${encodeURIComponent(operationId)}`)),
+      { cache: "no-store" },
+    ),
+  );
+}
+
+export async function listPracticeGenerationOperations(
+  courseId: string,
+): Promise<PracticeGenerationOperation[]> {
+  const body = await json<{ operations?: PracticeGenerationOperation[] }>(
+    apiFetch(apiUrl(generationPath(courseId)), { cache: "no-store" }),
+  );
+  return body.operations ?? [];
+}
+
+export function cancelPracticeGenerationOperation(
+  courseId: string,
+  operationId: string,
+) {
+  return json<PracticeGenerationOperation>(
+    apiFetch(
+      apiUrl(
+        generationPath(courseId, `/${encodeURIComponent(operationId)}/cancel`),
+      ),
+      mutation({}),
+    ),
+  );
 }
 
 export function createPracticeSet(courseId: string, title: string, courseWriteEpoch: number) {

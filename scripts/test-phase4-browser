@@ -243,6 +243,31 @@ async def seed_general_chat():
 general_session_id, general_assistant_id = asyncio.run(seed_general_chat())
 state["phase5GeneralSessionId"] = general_session_id
 state["phase5GeneralAssistantId"] = general_assistant_id
+
+async def seed_course_chat():
+    store = SQLiteSessionStore(db_path=paths.get_chat_history_db())
+    session_id = "unified_phase6_course_chat"
+    await store.create_session(
+        title="Course Chat quiz proof",
+        session_id=session_id,
+        course_id=course.id,
+    )
+    user_id = await store.add_message(
+        session_id,
+        "user",
+        "Help me review how cells store usable energy.",
+    )
+    assistant_id = await store.add_message(
+        session_id,
+        "assistant",
+        "ATP is a molecule cells use to store and transfer usable energy.",
+        parent_message_id=user_id,
+    )
+    return session_id, assistant_id
+
+course_session_id, course_assistant_id = asyncio.run(seed_course_chat())
+state["phase6CourseSessionId"] = course_session_id
+state["phase6CourseAssistantId"] = course_assistant_id
 state_path.write_text(json.dumps(state), encoding="utf-8")
 state_path.chmod(0o600)
 PY
@@ -255,3 +280,5 @@ assert_port_free "$backend_port"
 start_backend
 run_browser_proof "phase5 keeps"
 run_browser_proof "phase5 General Chat"
+run_browser_proof "phase6 reviews once"
+run_browser_proof "phase6 Course Chat"

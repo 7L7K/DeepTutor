@@ -9,6 +9,8 @@ import {
   learnerSafePracticeQuestions,
   listPracticeAttempts,
   preparePracticeRemediationFlashcards,
+  updatePracticeGenerationPlan,
+  type PracticeGenerationPlan,
   type PracticeRequestScope,
 } from "../lib/practice-api";
 
@@ -135,4 +137,50 @@ test("Practice attempt history requests bounded pages", async (t) => {
     requested,
     "/api/v1/courses/crs%2Fbio/practice/pst%2Fone/attempts?limit=50&offset=50",
   );
+});
+
+test("Practice plan updates serialize only the strict update contract", async (t) => {
+  const originalFetch = globalThis.fetch;
+  let requestedBody: Record<string, unknown> = {};
+  t.after(() => {
+    globalThis.fetch = originalFetch;
+  });
+  globalThis.fetch = (async (
+    _input: RequestInfo | URL,
+    init?: RequestInit,
+  ) => {
+    requestedBody = JSON.parse(String(init?.body));
+    return new Response(JSON.stringify({}), {
+      status: 200,
+      headers: { "Content-Type": "application/json" },
+    });
+  }) as typeof fetch;
+
+  const body = {
+    title: "Cellular energy",
+    focus: "Review ATP",
+    source_ids: ["src_notes"],
+    objective_ids: [],
+    item_limit: 4,
+    difficulty: "mixed" as const,
+    timing_mode: "practice_timer" as const,
+    expected_course_write_epoch: 99,
+  };
+  await updatePracticeGenerationPlan(
+    "crs_biology",
+    { id: "pln_owned", revision: 3 } as PracticeGenerationPlan,
+    body,
+  );
+
+  assert.deepEqual(requestedBody, {
+    title: "Cellular energy",
+    focus: "Review ATP",
+    source_ids: ["src_notes"],
+    objective_ids: [],
+    item_limit: 4,
+    difficulty: "mixed",
+    timing_mode: "practice_timer",
+    expected_revision: 3,
+  });
+  assert.equal("expected_course_write_epoch" in requestedBody, false);
 });
