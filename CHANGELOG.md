@@ -4,6 +4,10 @@
 
 ### Added
 
+- Accelerated direct `deeptutor start` launches by deferring unrelated Chat,
+  Knowledge, OpenAI, Anthropic, memory, notebook, and other CLI command imports.
+  The full command tree still loads for ordinary CLI commands and root help,
+  while the web launcher can print status and begin backend startup immediately.
 - Closed the current-beta Practice/Quiz quality checklist. Course switches now
   clear stale Practice state and show an exact-Course loading state; ready,
   archived, and failed-generation history have distinct learner surfaces; and

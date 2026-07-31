@@ -3,28 +3,20 @@
 from __future__ import annotations
 
 from pathlib import Path
+import sys
 
 import typer
 
 from deeptutor.logging import configure_logging
 from deeptutor.runtime.mode import RunMode, set_mode
 
-from .book import register as register_book
-from .chat import register as register_chat
-from .common import build_turn_request, console, maybe_run
-from .config_cmd import register as register_config
-from .init_cmd import register as register_init
-from .kb import register as register_kb
-from .memory import register as register_memory
-from .notebook import register as register_notebook
-from .partner import register as register_partner
-from .plugin import register as register_plugin
-from .provider_cmd import register as register_provider
-from .session_cmd import register as register_session
-from .skill import register as register_skill
-
 set_mode(RunMode.CLI)
 configure_logging()
+
+# Starting the web app should not import every unrelated CLI command and its
+# OpenAI, Anthropic, Knowledge, memory, and notebook dependencies first. Keep
+# the complete command tree for every other invocation, including root help.
+_FAST_START = len(sys.argv) > 1 and sys.argv[1] == "start"
 
 app = typer.Typer(
     name="deeptutor",
@@ -33,43 +25,57 @@ app = typer.Typer(
     add_completion=False,
 )
 
-partner_app = typer.Typer(help="Manage partners (IM-connected companions).")
-chat_app = typer.Typer(help="Interactive chat REPL.")
-kb_app = typer.Typer(help="Manage knowledge bases.")
-skill_app = typer.Typer(help="Manage skills and install from hubs (ClawHub, …).")
-memory_app = typer.Typer(help="View and manage lightweight memory.")
-plugin_app = typer.Typer(help="List plugins.")
-config_app = typer.Typer(help="Inspect configuration.")
-session_app = typer.Typer(help="Manage shared sessions.")
-notebook_app = typer.Typer(help="Manage notebooks and imported markdown records.")
-provider_app = typer.Typer(help="Manage provider OAuth login.")
-book_app = typer.Typer(help="Manage interactive Books (BookEngine).")
+if not _FAST_START:
+    from .book import register as register_book
+    from .chat import register as register_chat
+    from .config_cmd import register as register_config
+    from .init_cmd import register as register_init
+    from .kb import register as register_kb
+    from .memory import register as register_memory
+    from .notebook import register as register_notebook
+    from .partner import register as register_partner
+    from .plugin import register as register_plugin
+    from .provider_cmd import register as register_provider
+    from .session_cmd import register as register_session
+    from .skill import register as register_skill
 
-app.add_typer(partner_app, name="partner")
-app.add_typer(chat_app, name="chat")
-app.add_typer(kb_app, name="kb")
-app.add_typer(skill_app, name="skill")
-app.add_typer(skill_app, name="skills")  # alias: `deeptutor skills …`
-app.add_typer(memory_app, name="memory")
-app.add_typer(plugin_app, name="plugin")
-app.add_typer(config_app, name="config")
-app.add_typer(session_app, name="session")
-app.add_typer(notebook_app, name="notebook")
-app.add_typer(provider_app, name="provider")
-app.add_typer(book_app, name="book")
+    partner_app = typer.Typer(help="Manage partners (IM-connected companions).")
+    chat_app = typer.Typer(help="Interactive chat REPL.")
+    kb_app = typer.Typer(help="Manage knowledge bases.")
+    skill_app = typer.Typer(help="Manage skills and install from hubs (ClawHub, …).")
+    memory_app = typer.Typer(help="View and manage lightweight memory.")
+    plugin_app = typer.Typer(help="List plugins.")
+    config_app = typer.Typer(help="Inspect configuration.")
+    session_app = typer.Typer(help="Manage shared sessions.")
+    notebook_app = typer.Typer(help="Manage notebooks and imported markdown records.")
+    provider_app = typer.Typer(help="Manage provider OAuth login.")
+    book_app = typer.Typer(help="Manage interactive Books (BookEngine).")
 
-register_partner(partner_app)
-register_chat(chat_app)
-register_kb(kb_app)
-register_skill(skill_app)
-register_memory(memory_app)
-register_plugin(plugin_app)
-register_config(config_app)
-register_session(session_app)
-register_notebook(notebook_app)
-register_provider(provider_app)
-register_book(book_app)
-register_init(app)
+    app.add_typer(partner_app, name="partner")
+    app.add_typer(chat_app, name="chat")
+    app.add_typer(kb_app, name="kb")
+    app.add_typer(skill_app, name="skill")
+    app.add_typer(skill_app, name="skills")  # alias: `deeptutor skills …`
+    app.add_typer(memory_app, name="memory")
+    app.add_typer(plugin_app, name="plugin")
+    app.add_typer(config_app, name="config")
+    app.add_typer(session_app, name="session")
+    app.add_typer(notebook_app, name="notebook")
+    app.add_typer(provider_app, name="provider")
+    app.add_typer(book_app, name="book")
+
+    register_partner(partner_app)
+    register_chat(chat_app)
+    register_kb(kb_app)
+    register_skill(skill_app)
+    register_memory(memory_app)
+    register_plugin(plugin_app)
+    register_config(config_app)
+    register_session(session_app)
+    register_notebook(notebook_app)
+    register_provider(provider_app)
+    register_book(book_app)
+    register_init(app)
 
 
 @app.command("run")
@@ -97,7 +103,7 @@ def run_capability(
     """Run any capability in a single turn (agent-first entry point)."""
     from deeptutor.app import DeepTutorApp
 
-    from .common import run_turn_and_render
+    from .common import build_turn_request, maybe_run, run_turn_and_render
 
     request = build_turn_request(
         content=message,
@@ -149,6 +155,8 @@ def serve(
     try:
         import uvicorn
     except ImportError:
+        from .common import console
+
         console.print(
             "[bold red]Error:[/] API server dependencies not installed.\n"
             "Run: pip install -U deeptutor"
