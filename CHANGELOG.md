@@ -4,6 +4,20 @@
 
 ### Added
 
+- Added the Phase 6 private Course Practice intelligence journey. Learners can
+  create a durable provider-free quiz plan from Practice or the exact owned
+  Course Chat message, edit and review its title, focus, sources, count,
+  difficulty, and timing, then explicitly confirm one idempotent grounded
+  generation operation. Generated quizzes open directly into a resumable
+  attempt, preserve an untimed or reload-safe advisory timer, grade through the
+  existing deterministic server authority, display learner-facing Course
+  source citations, and prepare missed-answer Flashcard remediation. SQLite
+  migration 0011 adds owner-bound revisioned plans, immutable timing receipts,
+  cancellation/write-epoch fences, and replay-safe confirmation bindings.
+  Manual Practice remains available when provider use is disabled; malformed
+  provider output, missing evidence, stale sources, archive, revocation,
+  cancellation, and uncertain usage accounting fail without publishing a
+  ready quiz or changing mastery.
 - Refined active Flashcard study into a focused notecard surface: deck
   management and neighboring prompts are hidden after study begins, while
   private numbered navigation lets learners move between unfinished cards
