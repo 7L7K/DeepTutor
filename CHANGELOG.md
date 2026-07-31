@@ -4,6 +4,17 @@
 
 ### Added
 
+- Closed the current-beta Practice/Quiz quality checklist. Course switches now
+  clear stale Practice state and show an exact-Course loading state; ready,
+  archived, and failed-generation history have distinct learner surfaces; and
+  Courses with no ready source offer a direct manual fallback. Quiz attempts
+  now use a focused one-question layout with numbered navigation, keyboard
+  focus, guarded save/submit/abandon actions, mobile-width containment, and
+  clearer `correct out of total` results, explanations, citations, retry, and
+  missed-answer Flashcard actions. Exact-answer autosave rejects malformed and
+  oversized payloads before persistence, while tests explicitly preserve the
+  immutable `exact-v1` Unicode/trim/case behavior and park punctuation, number,
+  and accepted-variant changes behind a future `exact-v2` evidence contract.
 - Added the Phase 6 private Course Practice intelligence journey. Learners can
   create a durable provider-free quiz plan from Practice or the exact owned
   Course Chat message, edit and review its title, focus, sources, count,
@@ -251,6 +262,15 @@
   Chat, and explicit no-model learning initialization in the web app.
 - Added an explicitly opt-in, local-only deterministic Course provider for CI and
   browser integration proof without paid embedding or model calls.
+
+### Fixed
+
+- Removed the unsupported `uniqueItems` keyword from the strict OpenAI
+  Structured Outputs schema used by Practice generation. Duplicate objective
+  IDs remain rejected by TEEECHR before publication. Provider request failures
+  now emit only bounded status, category, opaque operation-ID, and opaque
+  request-ID diagnostics; learner content and raw upstream error messages are
+  never logged.
 
 ### Changed
 

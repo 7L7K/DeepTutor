@@ -1,6 +1,6 @@
 # TEEECHR v1.5.2 Phase 6 Closeout — Practice Intelligence and Product Parity
 
-Status: **implemented, qualified, and locally closed**
+Status: **implemented, qualified, and locally closed for the current beta**
 
 Date: 2026-07-30
 
@@ -419,29 +419,118 @@ upstream integration is part of this receipt.
 
 - Full Course backend suite: `322 passed`, `6 warnings`.
 - Focused migration/generation replay and adversarial SQL suite: `42 passed`.
-- Frontend Node contract suite: `209 passed`.
+- Frontend Node contract suite: `210 passed`.
 - TypeScript: passed.
 - Focused ESLint: `0 errors`, `85 warnings`; warnings are the existing literal
   localization debt plus an existing image warning, not correctness failures.
 - Next production build: passed, `54` routes.
-- Authenticated deterministic browser campaign: `9` journeys passed, including
+- Authenticated deterministic browser campaign: `10` journeys passed, including
   exact one confirmation, no legacy direct-generation call, generated quiz
   launch, advisory timer, reload resume without a second attempt, grading,
-  Course source labels, and Course Chat handoff.
+  Course source labels, multiple/no-source selection behavior, mobile focused
+  quiz-taking, and Course Chat handoff.
 - Ruff, shell syntax, migration replay, and diff integrity: passed.
 - Three independent read-only Luna reviews covered database integrity,
   provider/security, and learner UI. Their must-fix SQL authority and stale
   operation replay findings were repaired and regression-tested.
 - No paid provider call was made during Phase 6 qualification.
 
+### Bounded paid-provider follow-up — 2026-07-31
+
+- The user authorized a total Practice investigation ceiling of 300,000
+  microusd ($0.30). Each attempt retained a separate 10,000-microusd ($0.01)
+  admission cap. All requests used the same owned ready source for one private
+  Course, `store=false`, no tools, no SDK retries, three questions, and one
+  explicit confirmation.
+- Attempt A terminated `failed/provider_failed` without settleable usage. Its
+  6,278-microusd reservation remains `uncertain`; no quiz was published.
+- A content-free diagnostic boundary was added and tested before the second
+  request. Attempt B proved an HTTP 400 `invalid_request` at the provider
+  boundary. Its 6,277-microusd reservation remains `uncertain`; no quiz was
+  published. Raw provider messages and learner material were not logged.
+- OpenAI's Structured Outputs contract confirmed that arrays support
+  `minItems` and `maxItems`, but not the Practice schema's `uniqueItems`
+  keyword. The keyword was removed while TEEECHR's existing normalization
+  retained duplicate-objective rejection. Focused provider, generation, and
+  governance tests passed before another request was admitted.
+- Repaired attempt C completed and atomically published three grounded
+  questions. Its ledger row settled with 922 input tokens, 509 output tokens,
+  and an actual cost of 1,249 microusd ($0.001249), against a 6,273-microusd
+  reservation. A real local API journey then started the quiz, autosaved all
+  three responses, submitted, deterministically graded, and returned three
+  result questions. Raw Course and operation identifiers remain only in the
+  governed private runtime stores, not in this repository receipt.
+- An authenticated Chrome journey then opened that exact paid-generated quiz
+  through the normal learner UI, started one new attempt, saved an answer,
+  reloaded the page, and recovered the same attempt and answer without creating
+  a replacement. It completed the remaining answers, submitted, graded, showed
+  the three Course-source labels, persisted the 67% result in attempt history,
+  and opened the missed-answer Flashcard review handoff. The 67% result also
+  re-proved the locked deterministic exact-answer contract: two exact answers
+  passed, while a semantically similar but non-exact third answer remained a
+  miss. Semantic or model-based grading is not part of Phase 6.
+- In the same browser session, provider-disabled Create showed the manual
+  fallback and made no provider request. Activity presented the retained failed
+  operation with learner-safe copy and no raw provider error. A later beta-
+  quality follow-up removed unpublished failed generated shells from the normal
+  Study library while retaining their private Activity recovery history. A
+  recovered failed shell with a ready revision remains visible.
+- Total Practice accounting exposure from this follow-up is 13,804 microusd
+  ($0.013804): 12,555 microusd retained conservatively as two uncertain
+  reservations plus 1,249 microusd settled usage. The shared provider and paid
+  usage policy were disabled after every attempt and are disabled at closeout.
+- Post-repair validation passed the focused provider suite (`11 passed`) and
+  the complete Practice suite (`192 passed`, one existing warning), plus Ruff,
+  diff integrity, and the independent read-only closeout review.
+
+### Practice/Quiz beta-quality follow-up — 2026-07-31
+
+- Course changes now clear the prior Course's sets, sources, attempts, and
+  operations immediately and show an exact-Course loading state until the new
+  owner-scoped data is complete. A stable load epoch prevents the view-epoch
+  change performed by successful loading from leaving the page permanently
+  busy.
+- The Study library prioritizes ready quizzes, separates archived quizzes, and
+  keeps failed unpublished generation shells in Activity rather than presenting
+  them as normal learner work. Failed and cancelled operations expose safe
+  review/retry and manual actions.
+- Starting a quiz now enters a focused, one-question surface with numbered
+  navigation, previous/next controls, answer autofocus, explicit saved-state
+  requirements, guarded Submit, abandonment confirmation, and responsive
+  390x844 behavior. Results lead with `correct out of total`, explain misses,
+  preserve Course source labels, and offer retry or missed-answer Flashcards
+  only when appropriate.
+- The answer persistence boundary now rejects malformed, extra-field, non-text,
+  and overlong exact-answer payloads before they can be written. Current
+  `exact-v1` behavior is explicitly proven as Unicode NFC, trim, and case-fold
+  equivalence; extra wording, punctuation changes, and simple-number formatting
+  remain intentionally unequal.
+- Fairer variants are parked for a new `exact-v2` schema/evidence contract.
+  Changing `exact-v1` grading in place would make already-persisted immutable
+  grading evidence non-reproducible.
+- Provider-free closeout passed `216` Practice/Course backend tests, `52`
+  focused grading/persistence tests, `210` frontend Node tests, TypeScript, and
+  `10` authenticated browser journeys. No paid provider call was made in this
+  follow-up.
+- Current-tree production builds compiled and typechecked; Turbopack generated
+  all 54 routes. Both the default Turbopack command and a Webpack discriminator
+  then failed to terminate their local worker processes, so a clean build exit
+  is not claimed for this follow-up. This is parked as build-tool shutdown proof,
+  not converted into browser, deployment, or release authority.
+
 ### Deliberately separate or unproved
 
 - Browser-level cancel during a live queued/running worker and browser failure
   presentation are not claimed; cancellation, late-result discard, and
   provider failures are covered at repository/service/API contract level.
-- A real Phase 6 generated quiz through the paid provider is not claimed. The
-  adapter is covered with fake clients; the earlier bounded GPT-5 Mini
-  credential smoke remains a separate provider proof.
+- Browser UI proof of the paid generation *confirmation and in-flight operation*
+  is not claimed. The repaired provider request and publication were proved
+  through the authenticated local API, and the resulting real quiz was then
+  proved through the authenticated Chrome learner lifecycle. The existing
+  provider-free browser suite remains a separate repeatable surface.
+- A clean current-tree production-build process exit is unproved because local
+  Next.js worker processes remained alive after compilation/finalization. The
+  source compiled and typechecked, but that is not recorded as a passed build.
 - Historical learner-data migration, upstream reconciliation, staging,
   production, multi-server coordination, product-shell redesign, strict exam
   mode, and PDF/exam mimic remain parked.

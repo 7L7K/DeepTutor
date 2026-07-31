@@ -300,10 +300,18 @@ test("manual Practice and Flashcard learner flows remain usable without a provid
 
   await signIn(page, "alice", alicePassword!);
   await page.goto("/practice");
+  await page.route(
+    `**/api/v1/courses/${state.aliceCourseId}/sources`,
+    async (route) => {
+      await new Promise((resolve) => setTimeout(resolve, 350));
+      await route.continue();
+    },
+  );
   // Deliberately create immediately after selection. Both dependent writes
   // must survive the Course/auth hydration race.
   await page.getByLabel("Active course").selectOption(state.aliceCourseId);
-
+  await expect(page.getByText("Loading Shared Biology Practice…")).toBeVisible();
+  await expect(page.getByLabel("New Practice title")).toHaveCount(0);
   await page.getByLabel("New Practice title").fill("Visible manual quiz");
   const practiceCreateResponse = page.waitForResponse(
     (response) =>
@@ -336,29 +344,52 @@ test("manual Practice and Flashcard learner flows remain usable without a provid
     .fill("browser_manual_math");
   await page.getByRole("button", { name: "Add question" }).click();
   await expect(page.getByRole("status")).toContainText("Question added.");
+  await page
+    .getByPlaceholder("What should the learner answer?")
+    .fill("What color is a clear daytime sky?");
+  await page.getByPlaceholder("Exact accepted answer").fill("blue");
+  await page
+    .getByPlaceholder("Shown after grading")
+    .fill("A clear daytime sky usually appears blue.");
+  await page.getByRole("button", { name: "Add question" }).click();
   await page.getByRole("button", { name: "Mark ready" }).click();
   await expect(
     page.getByRole("button", { name: "Start or resume quiz" }),
   ).toBeVisible();
+  await page.setViewportSize({ width: 390, height: 844 });
   await page.getByRole("button", { name: "Start or resume quiz" }).click();
+  await expect(page.getByText("Question 1 of 2")).toBeVisible();
+  await expect(
+    page.getByRole("button", { name: "Archive", exact: true }),
+  ).toHaveCount(0);
+  await expect(page.getByLabel("Answer for question 1")).toBeFocused();
   await page.getByLabel("Answer for question 1").fill("4");
-  await page.getByRole("button", { name: "Save", exact: true }).click();
-  await expect(page.getByText(/Saved revision/)).toBeVisible();
-  await page.getByRole("button", { name: "Submit", exact: true }).click();
+  await page.keyboard.press("Enter");
+  await expect(page.getByRole("button", { name: "Go to question 1, answered" })).toBeVisible();
+  await expect(page.getByText("Question 2 of 2")).toBeVisible();
+  await expect(page.getByLabel("Answer for question 2")).toBeFocused();
+  await page.getByLabel("Answer for question 2").fill("BLUE");
+  await page.getByRole("button", { name: "Save answer" }).click();
+  const answerBox = await page.getByLabel("Answer for question 2").boundingBox();
+  expect(answerBox).not.toBeNull();
+  expect((answerBox?.x ?? 0) + (answerBox?.width ?? 0)).toBeLessThanOrEqual(390);
+  await expect(page.getByRole("button", { name: "Submit quiz" })).toBeVisible();
+  await page.getByRole("button", { name: "Submit quiz" }).click();
   const gradeResponsePromise = page.waitForResponse(
     (response) =>
       response.url().endsWith("/grade") &&
       response.request().method() === "POST",
   );
-  await page.getByRole("button", { name: "Grade", exact: true }).click();
+  await page.getByRole("button", { name: "Grade quiz" }).click();
   const gradeResponse = await gradeResponsePromise;
   expect(gradeResponse.status()).toBe(200);
   expect((await gradeResponse.json()).score).toEqual({
-    correct: 1,
-    total: 1,
+    correct: 2,
+    total: 2,
     fraction: 1,
   });
-  await expect(page.getByText(/Score: 100%/)).toBeVisible();
+  await expect(page.getByText("2 correct out of 2")).toBeVisible();
+  await expect(page.getByText("You got every question correct.")).toBeVisible();
 
   await page.goto("/flashcards");
   await expect(page.getByLabel("Active course")).toHaveValue(
@@ -842,6 +873,9 @@ test("phase6 reviews once, generates a grounded quiz, survives reload, and shows
   await expect(page.getByRole("dialog")).toContainText(
     "Questions are generated only after you confirm.",
   );
+  await expect(page.getByRole("dialog")).toContainText("Shared Biology");
+  await expect(page.getByRole("dialog")).toContainText("Private Practice library");
+  await expect(page.getByRole("dialog")).toContainText("AI starts only after confirmation");
   const closePlanButton = page.getByRole("button", {
     name: "Close quiz plan",
   });
@@ -938,15 +972,68 @@ test("phase6 reviews once, generates a grounded quiz, survives reload, and shows
     .digest("hex")
     .slice(0, 16)}`;
   await page.getByLabel("Answer for question 1").fill(answer);
-  await page.getByRole("button", { name: "Save", exact: true }).click();
-  await page.getByRole("button", { name: "Submit", exact: true }).click();
-  await page.getByRole("button", { name: "Grade", exact: true }).click();
-  await expect(page.getByText(/Score: 100%/)).toBeVisible();
+  await page.getByRole("button", { name: "Save answer" }).click();
+  await page.getByRole("button", { name: "Submit quiz" }).click();
+  await page.getByRole("button", { name: "Grade quiz" }).click();
+  await expect(page.getByText("1 correct out of 1")).toBeVisible();
   await expect(
     page
       .getByLabel("Sources for question 1")
       .getByText("Phase 5 browser notes", { exact: true }),
   ).toBeVisible();
+});
+
+test("phase6 source choices distinguish multiple materials from manual-only fallback", async ({
+  page,
+}) => {
+  test.skip(
+    !alicePassword || !stateFile,
+    "Run through scripts/test-phase4-browser so disposable credentials are provided.",
+  );
+  const state = JSON.parse(readFileSync(stateFile!, "utf8")) as Phase4BrowserState;
+  await signIn(page, "alice", alicePassword!);
+  let sourceMode: "multiple" | "empty" = "multiple";
+  await page.route(
+    `**/api/v1/courses/${state.aliceCourseId}/sources`,
+    async (route) => {
+      const response = await route.fetch();
+      const payload = (await response.json()) as {
+        sources: Array<Record<string, unknown>>;
+      };
+      const ready = payload.sources.find((item) => item.state === "ready");
+      await route.fulfill({
+        response,
+        json: {
+          ...payload,
+          sources: sourceMode === "empty" || !ready
+            ? []
+            : [
+                ready,
+                {
+                  ...ready,
+                  id: "src_browser_second_material",
+                  display_name: "Second Course handout",
+                },
+              ],
+        },
+      });
+    },
+  );
+  await page.goto("/practice");
+  await page.getByLabel("Active course").selectOption(state.aliceCourseId);
+  await page.getByRole("tab", { name: "Create" }).click();
+  await expect(page.getByRole("group", { name: "Course materials" })).toBeVisible();
+  await expect(page.getByRole("checkbox")).toHaveCount(2);
+  await expect(page.getByText("Second Course handout")).toBeVisible();
+
+  sourceMode = "empty";
+  await page.reload();
+  await page.getByRole("tab", { name: "Create" }).click();
+  await expect(
+    page.getByText("Attach a ready Course source before generating a quiz."),
+  ).toBeVisible();
+  await expect(page.getByRole("button", { name: "Review quiz plan" })).toBeDisabled();
+  await expect(page.getByRole("button", { name: "Create manually" })).toBeVisible();
 });
 
 test("phase6 Course Chat opens the same provider-free editable quiz plan", async ({

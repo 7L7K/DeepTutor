@@ -105,6 +105,23 @@ export interface PracticeGenerationConfirmation {
   };
 }
 
+/** Keep failed unpublished generation shells out of the learner's Study list. */
+export function practiceLibrarySets(
+  sets: PracticeSet[],
+  operations: PracticeGenerationOperation[],
+): PracticeSet[] {
+  const failedSetIds = new Set(
+    operations
+      .filter((operation) => operation.state === "failed")
+      .map((operation) => operation.practice_set_id),
+  );
+  return sets.filter(
+    (practiceSet) =>
+      Boolean(practiceSet.current_revision_id) ||
+      !failedSetIds.has(practiceSet.id),
+  );
+}
+
 const PRACTICE_PLAN_HANDOFF_PREFIX = "teeechr:practice-plan:v1";
 
 function planHandoffKey(identity: string, courseId: string): string {

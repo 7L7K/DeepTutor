@@ -490,6 +490,51 @@ def test_autosave_is_compare_and_swap_and_replay_is_idempotent(tmp_path: Path) -
     assert _answer_row(courses, item_id)["revision"] == 2
 
 
+@pytest.mark.parametrize(
+    "response, message",
+    [
+        ("not-an-object", "exactly"),
+        ({"answer": "yes", "extra": True}, "exactly"),
+        ({"answer": 7}, "exactly"),
+        ({"answer": "x" * 4_001}, "too large"),
+    ],
+)
+def test_autosave_rejects_malformed_or_oversized_exact_answers_before_persistence(
+    tmp_path: Path, response, message: str,
+) -> None:
+    courses, practice, attempts = _services(tmp_path / "courses.db", "u_alice")
+    course = courses.create_course("Biology")
+    practice_set, revision, _ = _ready_practice(
+        courses, practice, course.id, question_count=1,
+    )
+    attempt = _start(
+        attempts,
+        courses,
+        course.id,
+        practice_set.id,
+        practice_set_revision_id=revision.id,
+    )
+    item_id = _item_ids(courses, attempt.id)[0]
+    with pytest.raises(ValueError, match=message):
+        attempts.autosave_answer(
+            course.id,
+            practice_set.id,
+            attempt.id,
+            item_id,
+            response=response,
+            expected_answer_revision=1,
+            idempotency_token="invalid-answer-token",
+            expected_course_write_epoch=_epoch(courses, course.id),
+            expected_practice_set_write_epoch=2,
+        )
+    assert _answer_row(courses, item_id)["response_json"] is None
+    with courses._connect() as conn:
+        assert conn.execute(
+            "SELECT COUNT(*) FROM quiz_attempt_autosave_receipts WHERE attempt_id = ?",
+            (attempt.id,),
+        ).fetchone()[0] == 0
+
+
 def test_old_autosave_token_replays_its_original_result_after_a_newer_save(
     tmp_path: Path,
 ) -> None:

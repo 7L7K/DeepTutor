@@ -8,10 +8,13 @@ import {
   isCurrentPracticeResponse,
   learnerSafePracticeQuestions,
   listPracticeAttempts,
+  practiceLibrarySets,
   preparePracticeRemediationFlashcards,
   updatePracticeGenerationPlan,
   type PracticeGenerationPlan,
+  type PracticeGenerationOperation,
   type PracticeRequestScope,
+  type PracticeSet,
 } from "../lib/practice-api";
 
 const scope = (identity: string | null, courseId: string | null, epoch: number): PracticeRequestScope => ({
@@ -116,6 +119,41 @@ test("publishing clears draft answer contracts from the learner-side question st
   }]);
   assert.equal(published[0].answer_contract, undefined);
   assert.equal(published[0].prompt, "Question");
+});
+
+test("failed unpublished generation shells stay in Activity instead of the Practice library", () => {
+  const baseSet: PracticeSet = {
+    id: "pst_failed", owner_user_id: "usr_alice", course_id: "crs_biology",
+    title: "Unfinished generated quiz", mode: "generated", state: "draft",
+    current_revision_id: null, revision: 1, write_epoch: 1,
+    created_at: 1, updated_at: 1, archived_at: null,
+  };
+  const operation: PracticeGenerationOperation = {
+    id: "opg_failed", owner_user_id: "usr_alice", course_id: "crs_biology",
+    practice_set_id: baseSet.id, practice_set_revision_id: "prv_failed",
+    source_snapshot: [], objective_ids: [], item_limit: 3,
+    context_char_limit: 1_000, focus: "Review", difficulty: "mixed",
+    timing_mode: "untimed", state: "failed", error_code: "provider_failed",
+    cancel_requested_at: null, cancelled_at: null, created_at: 1, updated_at: 2,
+  };
+  const readySet: PracticeSet = {
+    ...baseSet, id: "pst_ready", title: "Ready quiz",
+    current_revision_id: "prv_ready",
+  };
+  const recoveredSet: PracticeSet = {
+    ...baseSet, id: "pst_recovered", title: "Recovered quiz",
+    current_revision_id: "prv_recovered",
+  };
+  const recoveredFailure = {
+    ...operation, id: "opg_recovered", practice_set_id: recoveredSet.id,
+  };
+  assert.deepEqual(
+    practiceLibrarySets(
+      [baseSet, readySet, recoveredSet],
+      [operation, recoveredFailure],
+    ).map((item) => item.id),
+    ["pst_ready", "pst_recovered"],
+  );
 });
 
 test("Practice attempt history requests bounded pages", async (t) => {

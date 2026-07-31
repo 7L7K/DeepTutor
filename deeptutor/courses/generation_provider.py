@@ -10,7 +10,9 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
 from pathlib import Path
+import re
 import time
 from typing import Any, Callable, Protocol
 from urllib.parse import urlparse
@@ -39,6 +41,58 @@ from .provider_usage import (
 
 _MAX_SOURCE_EXCERPT_CHARS = 12_000
 _MAX_INDEX_BYTES = 256_000
+
+logger = logging.getLogger(__name__)
+
+
+def _provider_request_diagnostic(exc: Exception) -> tuple[str, int | None, str | None]:
+    """Return a bounded, content-free provider failure classification.
+
+    Provider exception messages may contain request bodies, upstream details,
+    or credentials.  Never log them.  The exception type, a validated HTTP
+    status, and an opaque provider request ID are enough to distinguish the
+    operational failure boundary without retaining learner content.
+    """
+
+    raw_status = getattr(exc, "status_code", None)
+    status_code = (
+        raw_status
+        if isinstance(raw_status, int)
+        and not isinstance(raw_status, bool)
+        and 100 <= raw_status <= 599
+        else None
+    )
+    raw_request_id = getattr(exc, "request_id", None)
+    request_id = (
+        raw_request_id
+        if isinstance(raw_request_id, str)
+        and re.fullmatch(r"[A-Za-z0-9_-]{1,128}", raw_request_id)
+        else None
+    )
+    name = type(exc).__name__.lower()
+    if status_code in {408, 504} or "timeout" in name:
+        category = "timeout"
+    elif "connection" in name:
+        category = "connection"
+    elif status_code == 400:
+        category = "invalid_request"
+    elif status_code == 401:
+        category = "authentication"
+    elif status_code == 403:
+        category = "permission"
+    elif status_code == 404:
+        category = "not_found"
+    elif status_code == 409:
+        category = "conflict"
+    elif status_code == 429:
+        category = "rate_limit"
+    elif status_code is not None and status_code >= 500:
+        category = "provider_server"
+    elif status_code is not None:
+        category = "http_error"
+    else:
+        category = "provider_exception"
+    return category, status_code, request_id
 
 
 class PracticeGenerationProviderError(RuntimeError):
@@ -194,7 +248,6 @@ class OpenAIPracticeGenerationProvider:
                             "objective_ids": {
                                 "type": "array",
                                 "maxItems": len(request.objective_ids),
-                                "uniqueItems": True,
                                 "items": objective_items,
                             },
                             "citations": {
@@ -476,6 +529,15 @@ class OpenAIPracticeGenerationProvider:
             )
         except Exception as exc:
             self.ledger.mark_uncertain(request.operation_id)
+            category, status_code, request_id = _provider_request_diagnostic(exc)
+            logger.warning(
+                "Practice provider request failed operation_id=%s category=%s "
+                "status_code=%s request_id=%s",
+                request.operation_id,
+                category,
+                status_code if status_code is not None else "none",
+                request_id if request_id is not None else "none",
+            )
             raise PracticeGenerationProviderError("provider request failed") from exc
         try:
             usage = getattr(response, "usage", None)

@@ -67,6 +67,19 @@ class CourseAssessmentRepository:
         return encoded
 
     @staticmethod
+    def _exact_answer_response(value: Any) -> dict[str, str]:
+        """Validate the current answer contract at the persistence boundary."""
+        if not (
+            isinstance(value, dict)
+            and set(value) == {"answer"}
+            and isinstance(value["answer"], str)
+        ):
+            raise ValueError("Exact-answer response must be exactly {'answer': string}")
+        if len(value["answer"]) > 4_000:
+            raise ValueError("Exact-answer response is too large")
+        return value
+
+    @staticmethod
     def _page(*, limit: int | None, offset: int) -> tuple[int, int]:
         if limit is None:
             limit = _DEFAULT_PAGE_SIZE
@@ -408,6 +421,7 @@ class CourseAssessmentRepository:
     ) -> QuizAttemptAnswer:
         if not isinstance(idempotency_token, str) or not idempotency_token.strip() or len(idempotency_token) > 160:
             raise ValueError("idempotency_token is required and bounded")
+        response = self._exact_answer_response(response)
         response_json = self._json(response, field="response")
         payload_sha256 = hashlib.sha256(
             self._json({"attempt_item_id": attempt_item_id, "response": response, "expected_answer_revision": expected_answer_revision}, field="autosave payload").encode()

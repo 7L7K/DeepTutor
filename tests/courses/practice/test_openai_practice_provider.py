@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import logging
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -93,6 +94,15 @@ class _Responses:
         )
 
 
+class _FailingResponses:
+    def __init__(self, error: Exception) -> None:
+        self.error = error
+
+    def create(self, **kwargs):
+        del kwargs
+        raise self.error
+
+
 def _provider(
     tmp_path: Path,
     payload: dict,
@@ -175,6 +185,21 @@ def test_practice_provider_rejects_schema_bypass_payloads(
         provider.generate(_request())
 
 
+def test_practice_provider_rejects_duplicate_objectives_after_schema_validation(
+    tmp_path: Path,
+) -> None:
+    provider = _provider(
+        tmp_path,
+        _payload(objective_ids=["obj_energy", "obj_energy"]),
+        {},
+    )
+
+    with pytest.raises(
+        PracticeGenerationProviderError, match="provider output is invalid"
+    ):
+        provider.generate(_request())
+
+
 def test_practice_provider_rejects_missing_evidence_before_cost_or_network(
     tmp_path: Path,
 ) -> None:
@@ -240,3 +265,62 @@ def test_practice_provider_marks_settlement_failure_uncertain(
             "SELECT state FROM provider_usage_reservations"
         ).fetchone()
     assert row is not None and row["state"] == "uncertain"
+
+
+def test_practice_provider_logs_only_bounded_request_diagnostics(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    class SyntheticRateLimitError(RuntimeError):
+        status_code = 429
+        request_id = "req_safe_123"
+
+    secret_message = "credential-never-log private learner source text"
+    provider = _provider(tmp_path, _payload(), {})
+    provider._client_factory = lambda **kwargs: SimpleNamespace(
+        responses=_FailingResponses(SyntheticRateLimitError(secret_message))
+    )
+
+    with caplog.at_level(
+        logging.WARNING, logger="deeptutor.courses.generation_provider"
+    ):
+        with pytest.raises(
+            PracticeGenerationProviderError, match="provider request failed"
+        ):
+            provider.generate(_request())
+
+    rendered = "\n".join(caplog.messages)
+    assert "category=rate_limit" in rendered
+    assert "status_code=429" in rendered
+    assert "request_id=req_safe_123" in rendered
+    assert secret_message not in rendered
+    with provider.ledger._connect() as connection:
+        row = connection.execute(
+            "SELECT state FROM provider_usage_reservations"
+        ).fetchone()
+    assert row is not None and row["state"] == "uncertain"
+
+
+def test_practice_provider_schema_uses_supported_array_constraints(
+    tmp_path: Path,
+) -> None:
+    captured: dict = {}
+    provider = _provider(tmp_path, _payload(), captured)
+    provider.generate(_request())
+
+    schema = captured["text"]["format"]["schema"]
+    objective_schema = schema["properties"]["questions"]["items"]["properties"][
+        "objective_ids"
+    ]
+    assert objective_schema["maxItems"] == 1
+    assert objective_schema["items"]["enum"] == ["obj_energy"]
+    assert "uniqueItems" not in json.dumps(schema, sort_keys=True)
+
+    empty_objectives = _request().model_copy(update={"objective_ids": []})
+    evidence = provider._evidence_by_receipt(empty_objectives)
+    empty_schema = provider._schema(empty_objectives, evidence)
+    empty_objective_schema = empty_schema["properties"]["questions"]["items"][
+        "properties"
+    ]["objective_ids"]
+    assert empty_objective_schema["maxItems"] == 0
+    assert "enum" not in empty_objective_schema["items"]
+    assert "uniqueItems" not in json.dumps(empty_schema, sort_keys=True)

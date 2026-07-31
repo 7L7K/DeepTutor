@@ -119,6 +119,36 @@ def test_exact_grading_is_server_contract_driven_for_correct_wrong_and_blank(tmp
         assert progress.review_queue[0].knowledge_point_id == "kp_one"
 
 
+@pytest.mark.parametrize(
+    "expected, response, correct",
+    [
+        ("Caf\u00e9", {"answer": "  CAF\u0045\u0301  "}, True),
+        ("yes", {"answer": "  yes  "}, True),
+        ("yes", {"answer": "The answer is yes"}, False),
+        ("1,000", {"answer": "1000"}, False),
+        ("ATP", {"answer": "ATP."}, False),
+    ],
+)
+def test_exact_v1_normalization_is_explicit_and_does_not_accept_extra_wording(
+    tmp_path: Path, expected: str, response: dict[str, str], correct: bool,
+) -> None:
+    courses, practice, attempts, adapter, grading = _services(tmp_path)
+    course = courses.create_course("Normalization")
+    _init_objectives(adapter, course.id, "kp_one")
+    practice_set, revision, _ = _practice(
+        courses, practice, course.id, answer=expected,
+    )
+    attempt_id, _ = _submitted(
+        courses, attempts, course.id, practice_set, revision, response,
+    )
+    result = _grade(grading, courses, course.id, practice_set.id, attempt_id)
+    assert result.score == {
+        "correct": int(correct),
+        "total": 1,
+        "fraction": float(correct),
+    }
+
+
 def test_unsupported_contract_fails_closed_before_any_evidence(tmp_path: Path) -> None:
     courses, practice, attempts, adapter, grading = _services(tmp_path)
     course = courses.create_course("Chemistry")
@@ -140,12 +170,22 @@ def test_response_must_be_the_exact_answer_object_before_any_grading_receipt(tmp
     course = courses.create_course("Linguistics")
     _init_objectives(adapter, course.id, "kp_one")
     practice_set, revision, _ = _practice(courses, practice, course.id)
-    attempt_id, _ = _submitted(courses, attempts, course.id, practice_set, revision, "yes")
+    view = attempts.start_or_resume_attempt(
+        course.id, practice_set.id, revision.id,
+        expected_course_write_epoch=_epoch(courses, course.id),
+        expected_practice_set_write_epoch=2,
+    )
     with pytest.raises(ValueError, match="response"):
-        _grade(grading, courses, course.id, practice_set.id, attempt_id)
+        attempts.autosave_answer(
+            course.id, practice_set.id, view.attempt.id, view.items[0].id,
+            response="yes", expected_answer_revision=1,
+            idempotency_token="malformed-answer-token",
+            expected_course_write_epoch=_epoch(courses, course.id),
+            expected_practice_set_write_epoch=2,
+        )
     with courses._connect() as conn:
         assert conn.execute(
-            "SELECT COUNT(*) FROM quiz_item_grading_evidence WHERE attempt_id = ?", (attempt_id,)
+            "SELECT COUNT(*) FROM quiz_item_grading_evidence WHERE attempt_id = ?", (view.attempt.id,)
         ).fetchone()[0] == 0
 
 
