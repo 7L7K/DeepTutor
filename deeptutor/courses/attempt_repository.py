@@ -81,6 +81,11 @@ class CourseAssessmentRepository:
         payload = dict(row)
         score_json = payload.pop("score_json")
         payload["score"] = json.loads(score_json) if score_json else None
+        # Exact historical upgrade fixtures intentionally exercise the
+        # accepted pre-0011 schema with current repository code. Production
+        # startup applies 0011 first; this fallback keeps the no-rewrite
+        # migration proof honest and maps those legacy attempts to untimed.
+        payload.setdefault("timing_mode", "untimed")
         return QuizAttempt.model_validate(payload)
 
     @staticmethod
@@ -258,12 +263,28 @@ class CourseAssessmentRepository:
             if practice_set.current_revision_id != practice_set_revision_id:
                 raise self._not_found()
             revision = conn.execute(
-                """SELECT id, state FROM practice_set_revisions
+                """SELECT id, state, generation_receipt_json FROM practice_set_revisions
                    WHERE id = ? AND practice_set_id = ?""",
                 (practice_set_revision_id, practice_set_id),
             ).fetchone()
             if revision is None or str(revision["state"]) != "ready":
                 raise self._not_found()
+            timing_mode = "untimed"
+            raw_generation_receipt = revision["generation_receipt_json"]
+            if raw_generation_receipt:
+                try:
+                    generation_receipt = json.loads(str(raw_generation_receipt))
+                except (TypeError, ValueError, json.JSONDecodeError) as exc:
+                    raise CourseConflictError(
+                        "Practice generation receipt is invalid"
+                    ) from exc
+                if not isinstance(generation_receipt, dict):
+                    raise CourseConflictError("Practice generation receipt is invalid")
+                timing_mode = str(
+                    generation_receipt.get("timing_mode", "untimed")
+                )
+                if timing_mode not in {"untimed", "practice_timer"}:
+                    raise CourseConflictError("Practice timing mode is invalid")
             existing = conn.execute(
                 """SELECT * FROM quiz_attempts WHERE owner_user_id = ?
                    AND practice_set_revision_id = ? AND state = 'in_progress'""",
@@ -295,15 +316,30 @@ class CourseAssessmentRepository:
                 raise CourseConflictError("Ready Practice revision has no questions")
             presentations = self._presentations(questions, item_presentations)
             attempt_id = _attempt_id()
-            conn.execute(
-                """INSERT INTO quiz_attempts
-                   (id, owner_user_id, course_id, practice_set_id, practice_set_revision_id,
-                    state, score_json, revision, course_write_epoch, practice_set_write_epoch,
-                    started_at, submitted_at, graded_at, archived_at, updated_at)
-                   VALUES (?, ?, ?, ?, ?, 'in_progress', NULL, 1, ?, ?, ?, NULL, NULL, NULL, ?)""",
-                (attempt_id, self.owner_user_id, course_id, practice_set_id, practice_set_revision_id,
-                 expected_course_write_epoch, expected_practice_set_write_epoch, now, now),
-            )
+            attempt_columns = {
+                str(row["name"])
+                for row in conn.execute("PRAGMA table_info(quiz_attempts)").fetchall()
+            }
+            if "timing_mode" in attempt_columns:
+                conn.execute(
+                    """INSERT INTO quiz_attempts
+                       (id, owner_user_id, course_id, practice_set_id, practice_set_revision_id,
+                        timing_mode, state, score_json, revision, course_write_epoch, practice_set_write_epoch,
+                        started_at, submitted_at, graded_at, archived_at, updated_at)
+                       VALUES (?, ?, ?, ?, ?, ?, 'in_progress', NULL, 1, ?, ?, ?, NULL, NULL, NULL, ?)""",
+                    (attempt_id, self.owner_user_id, course_id, practice_set_id, practice_set_revision_id,
+                     timing_mode, expected_course_write_epoch, expected_practice_set_write_epoch, now, now),
+                )
+            else:
+                conn.execute(
+                    """INSERT INTO quiz_attempts
+                       (id, owner_user_id, course_id, practice_set_id, practice_set_revision_id,
+                        state, score_json, revision, course_write_epoch, practice_set_write_epoch,
+                        started_at, submitted_at, graded_at, archived_at, updated_at)
+                       VALUES (?, ?, ?, ?, ?, 'in_progress', NULL, 1, ?, ?, ?, NULL, NULL, NULL, ?)""",
+                    (attempt_id, self.owner_user_id, course_id, practice_set_id, practice_set_revision_id,
+                     expected_course_write_epoch, expected_practice_set_write_epoch, now, now),
+                )
             for presentation in presentations:
                 item_id = _attempt_item_id()
                 option_order_json = self._json(presentation.option_order, field="option_order") if presentation.option_order is not None else None

@@ -191,13 +191,134 @@ def _operation_schema() -> set[str]:
         "practice_set_write_epoch",
         "item_limit",
         "context_char_limit",
+        "focus",
+        "difficulty",
+        "timing_mode",
         "state",
         "error_code",
+        "cancel_requested_at",
+        "cancelled_at",
         "created_at",
         "started_at",
         "completed_at",
         "updated_at",
     }
+
+
+def test_plan_api_is_provider_free_idempotent_revisioned_and_confirmed_once(
+    generation_client: TestClient, monkeypatch
+) -> None:
+    from deeptutor.api.routers import courses as course_router
+
+    monkeypatch.setattr(
+        course_router, "_run_practice_generation", _leave_generation_queued
+    )
+    course = _create_course(generation_client)
+    source = _ready_source(generation_client, course)
+    body = {
+        "title": "Cell energy check",
+        "focus": "Understand how ATP stores energy",
+        "source_ids": [source["id"]],
+        "objective_ids": ["obj_cell_respiration"],
+        "expected_course_write_epoch": course["write_epoch"],
+        "item_limit": 4,
+        "difficulty": "mixed",
+        "timing_mode": "practice_timer",
+    }
+    endpoint = f"/api/v1/courses/{course['id']}/practice-generation/plans"
+
+    missing_key = generation_client.post(
+        endpoint, headers=_auth("alice"), json=body
+    )
+    assert missing_key.status_code == 422
+    first = generation_client.post(
+        endpoint,
+        headers=_headers("alice", "plan-create-once"),
+        json=body,
+    )
+    assert first.status_code == 201, first.text
+    plan = first.json()
+    assert plan["id"].startswith("pln_")
+    assert plan["state"] == "draft"
+    assert plan["timing_mode"] == "practice_timer"
+    assert generation_client.get(
+        f"/api/v1/courses/{course['id']}/practice",
+        headers=_auth("alice"),
+    ).json()["practice_sets"] == []
+
+    replay = generation_client.post(
+        endpoint,
+        headers=_headers("alice", "plan-create-once"),
+        json=body,
+    )
+    assert replay.status_code == 201
+    assert replay.json() == plan
+    changed = generation_client.post(
+        endpoint,
+        headers=_headers("alice", "plan-create-once"),
+        json={**body, "focus": "A different request"},
+    )
+    assert changed.status_code == 409
+
+    update_body = {
+        key: value
+        for key, value in body.items()
+        if key != "expected_course_write_epoch"
+    }
+    updated = generation_client.patch(
+        f"{endpoint}/{plan['id']}",
+        headers=_auth("alice"),
+        json={
+            **update_body,
+            "title": "Cell energy quiz",
+            "expected_revision": plan["revision"],
+        },
+    )
+    assert updated.status_code == 200, updated.text
+    updated_plan = updated.json()
+    stale = generation_client.patch(
+        f"{endpoint}/{plan['id']}",
+        headers=_auth("alice"),
+        json={
+            **update_body,
+            "expected_revision": plan["revision"],
+        },
+    )
+    assert stale.status_code == 409
+
+    confirm_endpoint = f"{endpoint}/{plan['id']}/confirm"
+    confirmed = generation_client.post(
+        confirm_endpoint,
+        headers=_headers("alice", "plan-confirm-once"),
+        json={"expected_revision": updated_plan["revision"]},
+    )
+    assert confirmed.status_code == 202, confirmed.text
+    confirmation = confirmed.json()
+    assert confirmation["plan"]["state"] == "confirmed"
+    assert confirmation["request"]["operation"]["state"] == "queued"
+    assert (
+        confirmation["request"]["operation"]["timing_mode"]
+        == "practice_timer"
+    )
+    confirm_replay = generation_client.post(
+        confirm_endpoint,
+        headers=_headers("alice", "plan-confirm-once"),
+        json={"expected_revision": updated_plan["revision"]},
+    )
+    assert confirm_replay.status_code == 202
+    assert (
+        confirm_replay.json()["request"]["operation"]["id"]
+        == confirmation["request"]["operation"]["id"]
+    )
+
+    foreign = generation_client.get(
+        f"{endpoint}/{plan['id']}", headers=_auth("bob")
+    )
+    missing = generation_client.get(
+        f"{endpoint}/pln_missing", headers=_auth("alice")
+    )
+    assert foreign.status_code == missing.status_code == 404
+    assert foreign.json() == missing.json()
 
 
 def _flashcard_generation_body(course: dict, source: dict, **overrides: object) -> dict:
@@ -610,6 +731,7 @@ def test_generation_api_background_completion_uses_only_server_resolved_source_s
     )
     assert revision.status_code == 200
     assert revision.json()["state"] == "ready"
+    assert "generation_receipt" not in revision.json()
     questions = generation_client.get(
         f"/api/v1/courses/{course['id']}/practice/{created['practice_set_id']}/revisions/"
         f"{created['practice_set_revision_id']}/questions",

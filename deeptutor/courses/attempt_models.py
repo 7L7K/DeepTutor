@@ -7,6 +7,7 @@ from typing import Any, Literal
 from pydantic import BaseModel, ConfigDict, Field
 
 QuizAttemptState = Literal["in_progress", "submitted", "graded", "abandoned", "archived"]
+QuizAttemptTimingMode = Literal["untimed", "practice_timer"]
 
 
 class QuizAttempt(BaseModel):
@@ -17,6 +18,7 @@ class QuizAttempt(BaseModel):
     course_id: str
     practice_set_id: str
     practice_set_revision_id: str
+    timing_mode: QuizAttemptTimingMode
     state: QuizAttemptState
     score: dict[str, Any] | None = None
     revision: int = Field(ge=1)

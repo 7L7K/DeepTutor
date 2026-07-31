@@ -180,12 +180,17 @@ def test_quiz_action_is_server_grounded_bounded_and_replays(
     payload = response.json()
     assert payload["destination"] == "practice"
     assert payload["source_ids"] == [source["id"]]
-    assert payload["operation_id"].startswith("opg_")
+    assert payload["operation_id"] is None
+    assert payload["operation_state"] is None
+    assert payload["plan_id"].startswith("pln_")
+    assert payload["generation_plan"]["id"] == payload["plan_id"]
+    assert payload["generation_plan"]["state"] == "draft"
     assert payload["objective_ids"] == []
     assert set(payload) == {
         "action", "destination", "course_id", "course_revision", "course_write_epoch",
         "session_id", "parent_message_id", "objective_ids", "source_ids", "reason_code",
         "operation_id", "operation_state", "practice_set_id", "practice_set_revision_id",
+        "plan_id", "generation_plan",
         "deck_id", "generation_brief", "followup_text",
     }
     assert payload["reason_code"] == "course_sources"
@@ -201,7 +206,7 @@ def test_quiz_action_is_server_grounded_bounded_and_replays(
     )
     assert replay.status_code == 202
     assert replay.json() == payload
-    assert worker_calls == [payload["operation_id"]]
+    assert worker_calls == []
 
 
 def test_flashcard_action_returns_a_zero_call_review_brief_without_allocating_work(
@@ -344,8 +349,9 @@ def test_unavailable_provider_rejects_before_allocation_without_becoming_an_id_o
         headers=_auth("alice"),
         json=_body(course, "quiz_me", binding),
     )
-    assert owned.status_code == 409
-    assert owned.json() == {"detail": "Generation provider is unavailable"}
+    assert owned.status_code == 202
+    assert owned.json()["generation_plan"]["state"] == "draft"
+    assert owned.json()["operation_id"] is None
     practice = learner_action_client.get(
         f"/api/v1/courses/{course['id']}/practice",
         headers=_auth("alice"),

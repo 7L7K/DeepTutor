@@ -272,7 +272,7 @@ class ProviderUsageLedger:
         estimated_cost_microusd: int,
     ) -> ProviderUsageReservation:
         if (
-            not operation_id.startswith("ofg_")
+            not operation_id.startswith(("ofg_", "opg_"))
             or not owner_user_id
             or not provider
             or not requested_model

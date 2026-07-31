@@ -32,13 +32,13 @@ def test_exact_legacy_profiles_adopt_without_rewriting_domain_rows(
             conn, ignored_columns={"courses": {"workspace_kind"}}
         )
 
-    assert ensure_course_schema(path) == (0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10)
+    assert ensure_course_schema(path) == (0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11)
     with sqlite3.connect(path) as conn:
         conn.row_factory = sqlite3.Row
         assert domain_digest(
             conn, ignored_columns={"courses": {"workspace_kind"}}
         ) == before
-        assert conn.execute("SELECT COUNT(*) FROM schema_migrations").fetchone()[0] == 11
+        assert conn.execute("SELECT COUNT(*) FROM schema_migrations").fetchone()[0] == 12
         assert tuple(conn.execute(
             "SELECT id, revision, write_epoch, managed_kb_ref, workspace_kind FROM courses"
         ).fetchone()) == (

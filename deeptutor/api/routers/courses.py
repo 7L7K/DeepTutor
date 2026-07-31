@@ -119,6 +119,40 @@ class CreateGeneratedPracticeRequest(_PracticeRequest):
     context_char_limit: int = Field(default=12_000, ge=1, le=48_000)
 
 
+class CreatePracticeGenerationPlanRequest(_PracticeRequest):
+    title: str = Field(min_length=1, max_length=160)
+    focus: str = Field(min_length=1, max_length=4_000)
+    source_ids: list[Annotated[str, Field(min_length=1, max_length=80)]] = Field(
+        default_factory=list, max_length=32
+    )
+    objective_ids: list[Annotated[str, Field(min_length=1, max_length=160)]] = Field(
+        default_factory=list, max_length=64
+    )
+    expected_course_write_epoch: int = Field(ge=1)
+    item_limit: int = Field(default=5, ge=1, le=12)
+    difficulty: Literal["foundation", "mixed", "challenge"] = "mixed"
+    timing_mode: Literal["untimed", "practice_timer"] = "untimed"
+
+
+class UpdatePracticeGenerationPlanRequest(_PracticeRequest):
+    title: str = Field(min_length=1, max_length=160)
+    focus: str = Field(min_length=1, max_length=4_000)
+    source_ids: list[Annotated[str, Field(min_length=1, max_length=80)]] = Field(
+        default_factory=list, max_length=32
+    )
+    objective_ids: list[Annotated[str, Field(min_length=1, max_length=160)]] = Field(
+        default_factory=list, max_length=64
+    )
+    item_limit: int = Field(default=5, ge=1, le=12)
+    difficulty: Literal["foundation", "mixed", "challenge"] = "mixed"
+    timing_mode: Literal["untimed", "practice_timer"] = "untimed"
+    expected_revision: int = Field(ge=1)
+
+
+class ConfirmPracticeGenerationPlanRequest(_PracticeRequest):
+    expected_revision: int = Field(ge=1)
+
+
 class GeneratePracticeRevisionRequest(_PracticeRequest):
     """Bounded successor-generation request for an existing generated set."""
 
@@ -455,6 +489,8 @@ class LearnerActionResponse(_PracticeRequest):
     ] | None = None
     practice_set_id: str | None = None
     practice_set_revision_id: str | None = None
+    plan_id: str | None = None
+    generation_plan: dict[str, Any] | None = None
     deck_id: str | None = None
     generation_brief: dict[str, Any] | None = None
     followup_text: str | None = Field(default=None, max_length=280)
@@ -685,6 +721,14 @@ def _practice_question_payload(question, *, include_answer_contract: bool) -> di
     return payload
 
 
+def _learner_practice_revision_payload(revision) -> dict:
+    """Return revision authority without exposing provider/operator metadata."""
+
+    payload = revision.model_dump(mode="json")
+    payload.pop("generation_receipt", None)
+    return payload
+
+
 @router.post("/{course_id}/practice")
 async def create_practice_set(course_id: str, body: CreatePracticeSetRequest):
     async with course_operation_lock(course_id):
@@ -762,6 +806,132 @@ async def create_generated_practice(
     return request.model_dump(mode="json")
 
 
+def _resolved_practice_plan_source_ids(course_id: str, requested: list[str]) -> list[str]:
+    from deeptutor.courses.learner_actions import ready_current_source_ids
+
+    service = _service()
+    ready_ids = ready_current_source_ids(service.list_sources(course_id))
+    if not ready_ids:
+        raise CourseConflictError("Course has no current ready sources")
+    if not requested:
+        return ready_ids
+    if any(source_id not in ready_ids for source_id in requested):
+        raise CourseNotFoundError("Practice generation source not found")
+    return requested
+
+
+@router.post("/{course_id}/practice-generation/plans", status_code=201)
+async def create_practice_generation_plan(
+    course_id: str,
+    body: CreatePracticeGenerationPlanRequest,
+    idempotency_key: str = Header(
+        ..., alias="Idempotency-Key", min_length=8, max_length=160
+    ),
+):
+    async with course_operation_lock(course_id):
+        generation = _practice_generation_service()
+        source_ids = _practice_call(
+            lambda: _resolved_practice_plan_source_ids(course_id, body.source_ids)
+        )
+        return _practice_call(
+            lambda: generation.create_plan(
+                course_id,
+                title=body.title,
+                focus=body.focus,
+                source_ids=source_ids,
+                objective_ids=body.objective_ids,
+                expected_course_write_epoch=body.expected_course_write_epoch,
+                item_limit=body.item_limit,
+                difficulty=body.difficulty,
+                timing_mode=body.timing_mode,
+                origin={"kind": "practice"},
+                idempotency_key=idempotency_key,
+            )
+        ).model_dump(mode="json")
+
+
+@router.get("/{course_id}/practice-generation/plans")
+async def list_practice_generation_plans(course_id: str):
+    generation = _practice_generation_service()
+    return {
+        "plans": [
+            item.model_dump(mode="json")
+            for item in _practice_call(lambda: generation.list_plans(course_id))
+        ]
+    }
+
+
+@router.get("/{course_id}/practice-generation/plans/{plan_id}")
+async def get_practice_generation_plan(course_id: str, plan_id: str):
+    generation = _practice_generation_service()
+    return _practice_call(
+        lambda: generation.get_plan(course_id, plan_id)
+    ).model_dump(mode="json")
+
+
+@router.patch("/{course_id}/practice-generation/plans/{plan_id}")
+async def update_practice_generation_plan(
+    course_id: str, plan_id: str, body: UpdatePracticeGenerationPlanRequest
+):
+    async with course_operation_lock(course_id):
+        generation = _practice_generation_service()
+        source_ids = _practice_call(
+            lambda: _resolved_practice_plan_source_ids(course_id, body.source_ids)
+        )
+        return _practice_call(
+            lambda: generation.update_plan(
+                course_id,
+                plan_id,
+                title=body.title,
+                focus=body.focus,
+                source_ids=source_ids,
+                objective_ids=body.objective_ids,
+                item_limit=body.item_limit,
+                difficulty=body.difficulty,
+                timing_mode=body.timing_mode,
+                expected_revision=body.expected_revision,
+            )
+        ).model_dump(mode="json")
+
+
+@router.post(
+    "/{course_id}/practice-generation/plans/{plan_id}/confirm",
+    status_code=202,
+)
+async def confirm_practice_generation_plan(
+    course_id: str,
+    plan_id: str,
+    body: ConfirmPracticeGenerationPlanRequest,
+    background_tasks: BackgroundTasks,
+    idempotency_key: str = Header(
+        ..., alias="Idempotency-Key", min_length=8, max_length=160
+    ),
+):
+    async with course_operation_lock(course_id):
+        generation = _practice_generation_service()
+        confirmation = _practice_call(
+            lambda: generation.confirm_plan(
+                course_id,
+                plan_id,
+                expected_revision=body.expected_revision,
+                idempotency_key=idempotency_key,
+            )
+        )
+    operation = confirmation.request.operation
+    from deeptutor.courses.generation_service import register_live_practice_generation
+
+    if operation.state == "queued" and register_live_practice_generation(
+        operation.owner_user_id, course_id, operation.id
+    ):
+        background_tasks.add_task(
+            _run_practice_generation,
+            operation.owner_user_id,
+            course_id,
+            operation.id,
+        )
+    return confirmation.model_dump(mode="json")
+
+
 @router.get("/{course_id}/practice-generation")
 async def list_practice_generation_operations(course_id: str):
     generation = _practice_generation_service()
@@ -779,6 +949,17 @@ async def get_practice_generation_operation(course_id: str, operation_id: str):
     return _practice_call(
         lambda: generation.get_operation(course_id, operation_id)
     ).model_dump(mode="json")
+
+
+@router.post("/{course_id}/practice-generation/{operation_id}/cancel")
+async def cancel_practice_generation_operation(
+    course_id: str, operation_id: str
+):
+    async with course_operation_lock(course_id):
+        generation = _practice_generation_service()
+        return _practice_call(
+            lambda: generation.cancel_operation(course_id, operation_id)
+        ).model_dump(mode="json")
 
 
 @router.post("/{course_id}/practice/{practice_set_id}/generation", status_code=202)
@@ -871,13 +1052,14 @@ async def create_practice_revision(
 ):
     async with course_operation_lock(course_id):
         practice, _attempts = _practice_services()
-        return _practice_call(
+        revision = _practice_call(
             lambda: practice.create_draft_revision(
                 course_id,
                 practice_set_id,
                 expected_course_write_epoch=body.expected_course_write_epoch,
             )
-        ).model_dump(mode="json")
+        )
+        return _learner_practice_revision_payload(revision)
 
 
 @router.post("/{course_id}/practice/{practice_set_id}/revisions/successor")
@@ -886,13 +1068,14 @@ async def create_practice_successor_revision(
 ):
     async with course_operation_lock(course_id):
         practice, _attempts = _practice_services()
-        return _practice_call(
+        revision = _practice_call(
             lambda: practice.create_successor_revision(
                 course_id,
                 practice_set_id,
                 expected_course_write_epoch=body.expected_course_write_epoch,
             )
-        ).model_dump(mode="json")
+        )
+        return _learner_practice_revision_payload(revision)
 
 
 @router.get("/{course_id}/practice/{practice_set_id}/revisions/{revision_id}")
@@ -900,9 +1083,10 @@ async def get_practice_revision(
     course_id: str, practice_set_id: str, revision_id: str
 ):
     practice, _attempts = _practice_services()
-    return _practice_call(
+    revision = _practice_call(
         lambda: practice.get_revision(course_id, practice_set_id, revision_id)
-    ).model_dump(mode="json")
+    )
+    return _learner_practice_revision_payload(revision)
 
 
 @router.post(
@@ -962,14 +1146,15 @@ async def ready_practice_revision(
 ):
     async with course_operation_lock(course_id):
         practice, _attempts = _practice_services()
-        return _practice_call(
+        revision = _practice_call(
             lambda: practice.ready_revision(
                 course_id,
                 practice_set_id,
                 revision_id,
                 expected_course_write_epoch=body.expected_course_write_epoch,
             )
-        ).model_dump(mode="json")
+        )
+        return _learner_practice_revision_payload(revision)
 
 
 @router.post("/{course_id}/practice/{practice_set_id}/attempts")
@@ -1602,6 +1787,7 @@ def _learner_action_response(
     operation=None,
     practice_set_id: str | None = None,
     practice_set_revision_id: str | None = None,
+    plan=None,
     deck_id: str | None = None,
     generation_brief: dict[str, Any] | None = None,
     followup_text: str | None = None,
@@ -1623,6 +1809,12 @@ def _learner_action_response(
         operation_state=getattr(operation, "state", None),
         practice_set_id=practice_set_id,
         practice_set_revision_id=practice_set_revision_id,
+        plan_id=getattr(plan, "id", None),
+        generation_plan=(
+            plan.model_dump(mode="json", exclude={"owner_user_id"})
+            if plan is not None
+            else None
+        ),
         deck_id=deck_id,
         generation_brief=generation_brief,
         followup_text=followup_text,
@@ -1714,31 +1906,28 @@ async def create_course_learner_action(
                     if body.action == "quiz_me"
                     else "Weak-topic Course review"
                 )
-                request = _practice_generation_service().create_generated_practice(
+                plan = _practice_generation_service().create_plan(
                     course.id,
                     title=title,
+                    focus=(
+                        "Create a grounded quiz from the selected Course answer and "
+                        "the most relevant current Course materials"
+                        if body.action == "quiz_me"
+                        else "Create a focused review quiz for the current weak objectives"
+                    ),
                     source_ids=source_ids,
                     objective_ids=objective_ids,
-                    idempotency_key=body.idempotency_key,
                     expected_course_write_epoch=course.write_epoch,
                     item_limit=5,
-                    context_char_limit=12_000,
+                    difficulty="mixed",
+                    timing_mode="untimed",
+                    origin={
+                        "kind": "course_chat",
+                        "session_id": session_id,
+                        "assistant_message_id": assistant_message_id,
+                    },
+                    idempotency_key=body.idempotency_key,
                 )
-                operation = request.operation
-                from deeptutor.courses.generation_service import register_live_practice_generation
-
-                if (
-                    operation.state == "queued"
-                    and register_live_practice_generation(
-                        operation.owner_user_id, course.id, operation.id
-                    )
-                ):
-                    background_tasks.add_task(
-                        _run_practice_generation,
-                        operation.owner_user_id,
-                        course.id,
-                        operation.id,
-                    )
                 return _learner_action_response(
                     action=body.action,
                     destination="practice",
@@ -1752,9 +1941,7 @@ async def create_course_learner_action(
                         if body.action == "quiz_me"
                         else weak_objective_reason_code(progress)
                     ),
-                    operation=operation,
-                    practice_set_id=request.practice_set_id,
-                    practice_set_revision_id=request.practice_set_revision_id,
+                    plan=plan,
                 )
 
             brief = _flashcard_generation_service().prepare_brief(

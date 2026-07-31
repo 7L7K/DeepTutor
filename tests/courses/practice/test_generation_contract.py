@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from contextlib import nullcontext
+import json
 from pathlib import Path
 import sqlite3
 import time
@@ -10,6 +11,7 @@ from typing import Callable
 
 import pytest
 
+from deeptutor.courses.attempt_repository import CourseAssessmentRepository
 from deeptutor.courses.generation_models import (
     GeneratedPracticeOutput,
     GeneratedPracticeQuestion,
@@ -214,6 +216,531 @@ def test_idempotency_reuses_exact_request_and_rejects_a_changed_request(tmp_path
             course.id, title="Changed", source_ids=[source.id], objective_ids=["obj_atp"],
             idempotency_key="same-key", expected_course_write_epoch=course.write_epoch,
         )
+
+
+def test_editable_plan_is_provider_free_and_confirmation_is_idempotent(
+    tmp_path: Path,
+) -> None:
+    provider = GoodProvider()
+    courses, service = _service(tmp_path, provider=provider)
+    course = courses.create_course("Biology")
+    source = _ready_source(courses, course.id)
+    course = courses.get_course(course.id)
+
+    plan = service.create_plan(
+        course.id,
+        title="Cell energy check",
+        focus="Understand ATP production",
+        source_ids=[source.id],
+        objective_ids=["obj_atp"],
+        expected_course_write_epoch=course.write_epoch,
+        item_limit=4,
+        difficulty="foundation",
+        timing_mode="practice_timer",
+        origin={"kind": "practice"},
+    )
+    assert plan.state == "draft"
+    assert provider.requests == []
+
+    edited = service.update_plan(
+        course.id,
+        plan.id,
+        title="Cell energy quiz",
+        focus="Compare ATP production and use",
+        source_ids=[source.id],
+        objective_ids=["obj_atp"],
+        item_limit=5,
+        difficulty="mixed",
+        timing_mode="practice_timer",
+        expected_revision=plan.revision,
+    )
+    assert edited.revision == 2
+    assert provider.requests == []
+
+    confirmation = service.confirm_plan(
+        course.id,
+        edited.id,
+        expected_revision=edited.revision,
+        idempotency_key="confirm-cell-energy",
+    )
+    assert confirmation.plan.state == "confirmed"
+    assert confirmation.request.operation.focus == edited.focus
+    assert confirmation.request.operation.difficulty == "mixed"
+    assert confirmation.request.operation.timing_mode == "practice_timer"
+    assert provider.requests == []
+
+    replay = service.confirm_plan(
+        course.id,
+        edited.id,
+        expected_revision=edited.revision,
+        idempotency_key="confirm-cell-energy",
+    )
+    assert replay.request.operation.id == confirmation.request.operation.id
+    with pytest.raises(CourseConflictError):
+        service.confirm_plan(
+            course.id,
+            edited.id,
+            expected_revision=edited.revision,
+            idempotency_key="different-confirmation",
+        )
+
+
+def test_plan_creation_replay_and_cross_plan_confirmation_keys_do_not_alias(
+    tmp_path: Path,
+) -> None:
+    courses, service = _service(tmp_path)
+    course = courses.create_course("Biology")
+    source = _ready_source(courses, course.id)
+    course = courses.get_course(course.id)
+    arguments = {
+        "title": "Owned review",
+        "focus": "Understand ATP",
+        "source_ids": [source.id],
+        "objective_ids": ["obj_atp"],
+        "expected_course_write_epoch": course.write_epoch,
+        "item_limit": 1,
+        "difficulty": "mixed",
+        "timing_mode": "untimed",
+        "origin": {"kind": "practice"},
+    }
+
+    first = service.create_plan(
+        course.id, **arguments, idempotency_key="create-owned-review"
+    )
+    replay = service.create_plan(
+        course.id, **arguments, idempotency_key="create-owned-review"
+    )
+    assert replay.id == first.id
+    with pytest.raises(CourseConflictError, match="another quiz plan"):
+        service.create_plan(
+            course.id,
+            **{**arguments, "focus": "Changed focus"},
+            idempotency_key="create-owned-review",
+        )
+
+    second = service.create_plan(
+        course.id,
+        **{**arguments, "title": "Second owned review"},
+        idempotency_key="create-second-review",
+    )
+    first_confirmation = service.confirm_plan(
+        course.id,
+        first.id,
+        expected_revision=first.revision,
+        idempotency_key="same-confirm-key",
+    )
+    with pytest.raises(CourseConflictError, match="another quiz plan"):
+        service.confirm_plan(
+            course.id,
+            second.id,
+            expected_revision=second.revision,
+            idempotency_key="same-confirm-key",
+        )
+
+    legacy = service.create_generated_practice(
+        course.id,
+        title="Legacy operation",
+        source_ids=[source.id],
+        idempotency_key="legacy-confirm-collision",
+        expected_course_write_epoch=course.write_epoch,
+        item_limit=1,
+    )
+    collision_safe = service.confirm_plan(
+        course.id,
+        second.id,
+        expected_revision=second.revision,
+        idempotency_key="legacy-confirm-collision",
+    )
+    assert collision_safe.request.operation.id != legacy.operation.id
+    assert first_confirmation.request.operation.id != legacy.operation.id
+
+
+def test_generated_practice_timer_is_advisory_immutable_and_survives_restart(
+    tmp_path: Path,
+) -> None:
+    courses, service = _service(tmp_path)
+    course = courses.create_course("Biology")
+    source = _ready_source(courses, course.id)
+    course = courses.get_course(course.id)
+    plan = service.create_plan(
+        course.id,
+        title="Timed review",
+        focus="Understand ATP",
+        source_ids=[source.id],
+        expected_course_write_epoch=course.write_epoch,
+        item_limit=1,
+        difficulty="mixed",
+        timing_mode="practice_timer",
+        origin={"kind": "practice"},
+    )
+    confirmation = service.confirm_plan(
+        course.id,
+        plan.id,
+        expected_revision=plan.revision,
+        idempotency_key="confirm-timed-review",
+    )
+    operation = service.run_operation(
+        course.id, confirmation.request.operation.id
+    )
+    assert operation.state == "completed"
+    practice_set = CoursePracticeRepository(courses).get_practice_set(
+        course.id, operation.practice_set_id
+    )
+    attempt_repository = CourseAssessmentRepository(courses)
+    attempt = attempt_repository.start_or_resume_attempt(
+        course.id,
+        practice_set.id,
+        operation.practice_set_revision_id,
+        expected_course_write_epoch=course.write_epoch,
+        expected_practice_set_write_epoch=practice_set.write_epoch,
+    )
+    assert attempt.attempt.timing_mode == "practice_timer"
+    assert attempt.attempt.state == "in_progress"
+
+    restarted = CourseAssessmentRepository(
+        CourseRepository(courses.db_path, "u_alice")
+    ).get_attempt(course.id, practice_set.id, attempt.attempt.id)
+    assert restarted.attempt.timing_mode == "practice_timer"
+    assert restarted.attempt.started_at == attempt.attempt.started_at
+    assert restarted.attempt.state == "in_progress"
+    with courses._connect() as conn, pytest.raises(
+        sqlite3.IntegrityError, match="timing mode is immutable"
+    ):
+        conn.execute(
+            "UPDATE quiz_attempts SET timing_mode = 'untimed' WHERE id = ?",
+            (attempt.attempt.id,),
+        )
+
+
+def test_plan_stale_foreign_and_source_authority_fail_closed(tmp_path: Path) -> None:
+    courses, service = _service(tmp_path)
+    course = courses.create_course("Biology")
+    source = _ready_source(courses, course.id)
+    course = courses.get_course(course.id)
+    plan = service.create_plan(
+        course.id,
+        title="Owned quiz",
+        focus="Use the owned source",
+        source_ids=[source.id],
+        expected_course_write_epoch=course.write_epoch,
+        origin={"kind": "course_chat", "session_id": "session-owned", "assistant_message_id": 7},
+    )
+
+    with pytest.raises(CourseConflictError, match="stale"):
+        service.update_plan(
+            course.id,
+            plan.id,
+            title=plan.title,
+            focus=plan.focus,
+            source_ids=[source.id],
+            objective_ids=[],
+            item_limit=5,
+            difficulty="mixed",
+            timing_mode="untimed",
+            expected_revision=plan.revision + 1,
+        )
+
+    foreign_courses = CourseRepository(tmp_path / "foreign.db", "u_bob")
+    foreign = CoursePracticeGenerationService(
+        CoursePracticeGenerationRepository(foreign_courses),
+        provider=GoodProvider(),
+        source_text_resolver=StaticResolver(),
+        account_active=lambda _user_id: True,
+        identity_lock=lambda: nullcontext(),
+    )
+    foreign_course = foreign_courses.create_course("Biology")
+    with pytest.raises(CourseNotFoundError):
+        foreign.get_plan(foreign_course.id, plan.id)
+
+    archived = courses.archive_source(course.id, source.id, source.revision)
+    assert archived.state == "archived"
+    with pytest.raises((CourseNotFoundError, CourseConflictError)):
+        service.confirm_plan(
+            course.id,
+            plan.id,
+            expected_revision=plan.revision,
+            idempotency_key="confirm-after-source-change",
+        )
+
+
+def test_database_rejects_draft_confirmation_tamper_and_queued_cancel_marker(
+    tmp_path: Path,
+) -> None:
+    courses, service = _service(tmp_path)
+    course = courses.create_course("Biology")
+    source = _ready_source(courses, course.id)
+    course = courses.get_course(course.id)
+    plan = service.create_plan(
+        course.id,
+        title="Owned quiz",
+        focus="Use the owned source",
+        source_ids=[source.id],
+        expected_course_write_epoch=course.write_epoch,
+        origin={"kind": "practice"},
+    )
+    request = service.create_generated_practice(
+        course.id,
+        title="Queued quiz",
+        source_ids=[source.id],
+        idempotency_key="queued-cancel-tamper",
+        expected_course_write_epoch=course.write_epoch,
+        item_limit=1,
+    )
+    with courses._connect() as conn:
+        forged_receipts = json.dumps(
+            [
+                {
+                    "source_id": "src_missing",
+                    "source_revision": 1,
+                    "content_sha256": "a" * 64,
+                }
+            ],
+            separators=(",", ":"),
+        )
+        with pytest.raises(
+            sqlite3.IntegrityError,
+            match="current owned source receipts",
+        ):
+            conn.execute(
+                """INSERT INTO practice_generation_operations
+                   (id, owner_user_id, course_id, practice_set_id,
+                    practice_set_revision_id, idempotency_key,
+                    request_fingerprint, source_snapshot_json,
+                    objective_ids_json, course_write_epoch,
+                    practice_set_write_epoch, item_limit, context_char_limit,
+                    state, created_at, updated_at)
+                   SELECT 'opg_forged_source', owner_user_id, course_id,
+                          practice_set_id, practice_set_revision_id,
+                          'forged-source-operation', request_fingerprint, ?,
+                          objective_ids_json, course_write_epoch,
+                          practice_set_write_epoch, item_limit,
+                          context_char_limit, 'queued', created_at, updated_at
+                   FROM practice_generation_operations WHERE id = ?""",
+                (forged_receipts, request.operation.id),
+            )
+        with pytest.raises(
+            sqlite3.IntegrityError,
+            match="invalid Practice generation plan transition",
+        ):
+            conn.execute(
+                """UPDATE practice_generation_plans
+                   SET source_snapshot_json = ?,
+                       revision = revision + 1, updated_at = updated_at + 1
+                   WHERE id = ?""",
+                (forged_receipts, plan.id),
+            )
+        duplicate_receipts = json.dumps(
+            [plan.source_snapshot[0].model_dump(mode="json")] * 2,
+            separators=(",", ":"),
+        )
+        with pytest.raises(
+            sqlite3.IntegrityError,
+            match="invalid Practice generation plan transition",
+        ):
+            conn.execute(
+                """UPDATE practice_generation_plans
+                   SET source_snapshot_json = ?,
+                       revision = revision + 1, updated_at = updated_at + 1
+                   WHERE id = ?""",
+                (duplicate_receipts, plan.id),
+            )
+        with pytest.raises(
+            sqlite3.IntegrityError,
+            match="invalid Practice generation plan transition",
+        ):
+            conn.execute(
+                """UPDATE practice_generation_plans
+                   SET objective_ids_json = '[{"not":"an objective"}]',
+                       revision = revision + 1, updated_at = updated_at + 1
+                   WHERE id = ?""",
+                (plan.id,),
+            )
+        with pytest.raises(
+            sqlite3.IntegrityError,
+            match="invalid Practice generation plan transition",
+        ):
+            conn.execute(
+                """UPDATE practice_generation_plans
+                   SET confirmation_idempotency_key = 'forged-confirmation',
+                       revision = revision + 1, updated_at = updated_at + 1
+                   WHERE id = ?""",
+                (plan.id,),
+            )
+        with pytest.raises(
+            sqlite3.IntegrityError,
+            match="invalid Practice generation cancellation",
+        ):
+            conn.execute(
+                """UPDATE practice_generation_operations
+                   SET cancel_requested_at = 1, updated_at = updated_at + 1
+                   WHERE id = ?""",
+                (request.operation.id,),
+            )
+
+    service.cancel_operation(course.id, request.operation.id)
+    courses.archive_course(
+        course.id, expected_revision=courses.get_course(course.id).revision
+    )
+    with courses._connect() as conn, pytest.raises(
+        sqlite3.IntegrityError,
+        match="invalid Practice generation plan transition",
+    ):
+        conn.execute(
+            """UPDATE practice_generation_plans
+               SET title = 'Edited while archived',
+                   revision = revision + 1, updated_at = updated_at + 1
+               WHERE id = ?""",
+            (plan.id,),
+        )
+
+
+def test_database_confirmation_revalidates_course_and_practice_set_epochs(
+    tmp_path: Path,
+) -> None:
+    courses, service = _service(tmp_path)
+    course = courses.create_course("Biology")
+    source = _ready_source(courses, course.id)
+    course = courses.get_course(course.id)
+    plan = service.create_plan(
+        course.id,
+        title="Owned quiz",
+        focus="Use the owned source",
+        source_ids=[source.id],
+        expected_course_write_epoch=course.write_epoch,
+        origin={"kind": "practice"},
+    )
+
+    def allocate(conn: sqlite3.Connection, key: str):
+        return service.repository._allocate_generated_practice(
+            conn,
+            course.id,
+            title=plan.title,
+            source_ids=[source.id],
+            objectives=plan.objective_ids,
+            idempotency_key=key,
+            expected_course_write_epoch=course.write_epoch,
+            item_limit=plan.item_limit,
+            context_char_limit=12_000,
+            focus=plan.focus,
+            difficulty=plan.difficulty,
+            timing_mode=plan.timing_mode,
+            provider_available=True,
+            expected_snapshot=plan.source_snapshot,
+        )
+
+    with courses._connect() as conn:
+        conn.execute("BEGIN IMMEDIATE")
+        request = allocate(conn, "confirm-set-epoch-allocation")
+        conn.execute(
+            """UPDATE practice_sets
+               SET write_epoch = write_epoch + 1, updated_at = updated_at + 1
+               WHERE id = ?""",
+            (request.practice_set_id,),
+        )
+        with pytest.raises(
+            sqlite3.IntegrityError,
+            match="requires its owned operation",
+        ):
+            conn.execute(
+                """UPDATE practice_generation_plans
+                   SET state = 'confirmed', confirmed_operation_id = ?,
+                       confirmation_idempotency_key = 'confirm-set-epoch',
+                       confirmed_at = ?, updated_at = ?
+                   WHERE id = ?""",
+                (request.operation.id, time.time(), time.time(), plan.id),
+            )
+        conn.rollback()
+
+    with courses._connect() as conn:
+        conn.execute("BEGIN IMMEDIATE")
+        request = allocate(conn, "confirm-course-epoch-allocation")
+        conn.execute(
+            """UPDATE courses
+               SET state = 'archived', write_epoch = write_epoch + 1,
+                   revision = revision + 1, archived_at = ?,
+                   updated_at = updated_at + 1
+               WHERE id = ?""",
+            (time.time(), course.id),
+        )
+        with pytest.raises(
+            sqlite3.IntegrityError,
+            match="requires its owned operation",
+        ):
+            conn.execute(
+                """UPDATE practice_generation_plans
+                   SET state = 'confirmed', confirmed_operation_id = ?,
+                       confirmation_idempotency_key = 'confirm-course-epoch',
+                       confirmed_at = ?, updated_at = ?
+                   WHERE id = ?""",
+                (request.operation.id, time.time(), time.time(), plan.id),
+            )
+        conn.rollback()
+
+    with courses._connect() as conn:
+        conn.execute("BEGIN IMMEDIATE")
+        request = allocate(conn, "confirm-short-key-allocation")
+        with pytest.raises(
+            sqlite3.IntegrityError,
+            match="invalid Practice generation plan transition",
+        ):
+            conn.execute(
+                """UPDATE practice_generation_plans
+                   SET state = 'confirmed', confirmed_operation_id = ?,
+                       confirmation_idempotency_key = 'short',
+                       confirmed_at = ?, updated_at = ?
+                   WHERE id = ?""",
+                (request.operation.id, time.time(), time.time(), plan.id),
+            )
+        conn.rollback()
+
+
+def test_cancellation_discards_queued_and_late_provider_results(tmp_path: Path) -> None:
+    courses, service = _service(tmp_path)
+    course = courses.create_course("Biology")
+    _source, queued = _request(courses, service, course.id, key="cancel-queued")
+    cancelled = service.cancel_operation(course.id, queued.operation.id)
+    assert cancelled.state == "failed"
+    assert cancelled.error_code == "interrupted"
+    assert cancelled.cancel_requested_at is not None
+    assert cancelled.cancelled_at is not None
+
+    course = courses.get_course(course.id)
+    source = _ready_source(courses, course.id)
+    course = courses.get_course(course.id)
+    callback_service: CoursePracticeGenerationService
+
+    def cancel_while_running(request: PracticeGenerationInput) -> None:
+        callback_service.cancel_operation(request.course_id, request.operation_id)
+
+    callback_service = CoursePracticeGenerationService(
+        CoursePracticeGenerationRepository(courses),
+        provider=GoodProvider(cancel_while_running),
+        source_text_resolver=StaticResolver(),
+        account_active=lambda _user_id: True,
+        identity_lock=lambda: nullcontext(),
+    )
+    request = callback_service.create_generated_practice(
+        course.id,
+        title="Late result",
+        source_ids=[source.id],
+        idempotency_key="cancel-running",
+        expected_course_write_epoch=course.write_epoch,
+    )
+    terminal = callback_service.run_operation(course.id, request.operation.id)
+    assert terminal.state == "failed"
+    assert terminal.error_code == "interrupted"
+    assert terminal.cancelled_at is not None
+    with courses._connect() as conn:
+        revision = conn.execute(
+            "SELECT state FROM practice_set_revisions WHERE id = ?",
+            (request.practice_set_revision_id,),
+        ).fetchone()
+        questions = conn.execute(
+            "SELECT count(*) FROM practice_questions WHERE practice_set_revision_id = ?",
+            (request.practice_set_revision_id,),
+        ).fetchone()[0]
+    assert revision is not None and revision["state"] == "draft"
+    assert questions == 0
 
 
 def test_invalid_or_partial_provider_output_fails_without_any_ready_revision(tmp_path: Path) -> None:

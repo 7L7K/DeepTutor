@@ -11,6 +11,8 @@ from deeptutor.multi_user.models import LOCAL_ADMIN_ID
 from .generation_models import (
     PracticeGenerationInput,
     PracticeGenerationOperation,
+    PracticeGenerationPlan,
+    PracticeGenerationPlanConfirmation,
     PracticeGenerationRequest,
 )
 from .generation_provider import (
@@ -18,6 +20,7 @@ from .generation_provider import (
     DeterministicIndexCourseSourceTextResolver,
     PracticeGenerationProvider,
     PracticeGenerationProviderError,
+    PracticeGenerationProviderQuotaExceeded,
     PracticeGenerationProviderTimedOut,
     PracticeGenerationProviderUnavailable,
     default_practice_generation_provider,
@@ -124,6 +127,36 @@ class CoursePracticeGenerationService:
 
         return practice_generation_provider_available(self.provider)
 
+    def create_plan(self, course_id: str, **kwargs: object) -> PracticeGenerationPlan:
+        if not self._account_active(self.repository.owner_user_id):
+            raise CourseConflictError("Generation account authority is no longer active")
+        return self.repository.create_plan(course_id, **kwargs)
+
+    def update_plan(
+        self, course_id: str, plan_id: str, **kwargs: object
+    ) -> PracticeGenerationPlan:
+        if not self._account_active(self.repository.owner_user_id):
+            raise CourseConflictError("Generation account authority is no longer active")
+        return self.repository.update_plan(course_id, plan_id, **kwargs)
+
+    def get_plan(self, course_id: str, plan_id: str) -> PracticeGenerationPlan:
+        return self.repository.get_plan(course_id, plan_id)
+
+    def list_plans(self, course_id: str) -> list[PracticeGenerationPlan]:
+        return self.repository.list_plans(course_id)
+
+    def confirm_plan(
+        self, course_id: str, plan_id: str, **kwargs: object
+    ) -> PracticeGenerationPlanConfirmation:
+        if not self._account_active(self.repository.owner_user_id):
+            raise CourseConflictError("Generation account authority is no longer active")
+        return self.repository.confirm_plan(
+            course_id,
+            plan_id,
+            provider_available=self.provider_available(),
+            **kwargs,
+        )
+
     def get_operation(self, course_id: str, operation_id: str) -> PracticeGenerationOperation:
         self._reconcile_for_owned_read(course_id)
         return self.repository.get_operation(course_id, operation_id)
@@ -131,6 +164,13 @@ class CoursePracticeGenerationService:
     def list_operations(self, course_id: str, **kwargs: object) -> list[PracticeGenerationOperation]:
         self._reconcile_for_owned_read(course_id)
         return self.repository.list_operations(course_id, **kwargs)
+
+    def cancel_operation(
+        self, course_id: str, operation_id: str
+    ) -> PracticeGenerationOperation:
+        if not self._account_active(self.repository.owner_user_id):
+            raise CourseConflictError("Generation account authority is no longer active")
+        return self.repository.cancel_operation(course_id, operation_id)
 
     def request_generation(self, course_id: str, practice_set_id: str, **kwargs: object) -> PracticeGenerationRequest:
         if not self._account_active(self.repository.owner_user_id):
@@ -158,6 +198,7 @@ class CoursePracticeGenerationService:
             )
             output = self._generate_with_deadline(PracticeGenerationInput(
                 operation_id=operation.id,
+                owner_user_id=operation.owner_user_id,
                 course_id=operation.course_id,
                 practice_set_id=operation.practice_set_id,
                 practice_set_revision_id=operation.practice_set_revision_id,
@@ -165,6 +206,9 @@ class CoursePracticeGenerationService:
                 objective_ids=operation.objective_ids,
                 item_limit=operation.item_limit,
                 context_char_limit=operation.context_char_limit,
+                focus=operation.focus,
+                difficulty=operation.difficulty,
+                timing_mode=operation.timing_mode,
             ))
             with self._identity_lock():
                 return self.repository.complete_operation(
@@ -176,6 +220,8 @@ class CoursePracticeGenerationService:
             return self.repository.fail_operation(course_id, operation_id, "provider_unavailable")
         except PracticeGenerationProviderTimedOut:
             return self.repository.fail_operation(course_id, operation_id, "provider_timed_out")
+        except PracticeGenerationProviderQuotaExceeded:
+            return self.repository.fail_operation(course_id, operation_id, "provider_unavailable")
         except PracticeGenerationProviderError:
             return self.repository.fail_operation(course_id, operation_id, "provider_failed")
         except ValueError:
