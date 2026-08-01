@@ -21,7 +21,17 @@ interface Phase4BrowserState {
 }
 
 async function signIn(page: Page, username: string, password: string) {
+  // A cold Next.js development server can return the server-rendered login
+  // shell before its client bundle has compiled and hydrated. Clicking that
+  // shell has no submit handler. The auth-status request is emitted by the
+  // hydrated login effect, so it is the deterministic readiness boundary.
+  const authReady = page.waitForResponse(
+    (response) =>
+      response.url().includes("/api/v1/auth/status") &&
+      response.request().method() === "GET",
+  );
   await page.goto("/login");
+  expect((await authReady).status()).toBe(200);
   await page.getByLabel("Email or username").fill(username);
   await page.getByLabel("Password").fill(password);
   const loginResponse = page.waitForResponse(
@@ -38,6 +48,7 @@ async function signIn(page: Page, username: string, password: string) {
       ),
     )
     .toBe(true);
+  await page.waitForURL((url) => !url.pathname.startsWith("/login"));
   await page.goto("/space/learning");
   await expect(page).toHaveURL(/\/space\/learning$/);
 }

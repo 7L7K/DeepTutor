@@ -12,7 +12,13 @@ interface Phase5BrowserState {
 
 async function signIn(page: Page, username: string, password: string) {
   await page.context().clearCookies();
+  const authReady = page.waitForResponse(
+    (response) =>
+      response.url().includes("/api/v1/auth/status") &&
+      response.request().method() === "GET",
+  );
   await page.goto("/login");
+  expect((await authReady).status()).toBe(200);
   await page.getByLabel("Email or username").fill(username);
   await page.getByLabel("Password").fill(password);
   const loginResponse = page.waitForResponse(
@@ -29,6 +35,7 @@ async function signIn(page: Page, username: string, password: string) {
       ),
     )
     .toBe(true);
+  await page.waitForURL((url) => !url.pathname.startsWith("/login"));
 }
 
 test("phase5 study-first shell keeps provider machinery out of the learner journey", async ({

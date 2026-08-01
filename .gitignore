@@ -118,6 +118,10 @@ web/build/
 
 # TypeScript build info
 *.tsbuildinfo
+# Next.js generates this file and switches its route-type import between
+# development and production builds. Keep the generated runtime input local so
+# supported startup/build commands cannot dirty the repository.
+web/next-env.d.ts
 
 # ============================================
 # Common Output and Cache Directories
