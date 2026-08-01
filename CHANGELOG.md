@@ -4,6 +4,35 @@
 
 ### Added
 
+- Centralized TEEECHR text-generation model, capability, reasoning, pricing,
+  long-context, and per-feature policy in the deployment-owned model catalog.
+  GPT-5.6 Luna is now the sole active model: General Chat and Course Chat use
+  low reasoning, while Flashcards and Practice use medium reasoning. GPT-5
+  Mini remains defined only as an inactive emergency rollback. The frozen
+  16-call Mini/Luna comparison used
+  zero retries and settled at $0.012788 against its $0.25 cap: both Chat
+  features passed all required domain, source, citation, handoff, security, and
+  validation gates. A subsequent Luna-only four-pathway medium-reasoning run
+  hardened Practice question clarity, used no Mini calls or retries, passed all
+  Flashcard and Practice domain/security graders, and settled at $0.002546
+  against its $0.15 cap.
+  General Chat and Course Chat resolve their server-controlled default and
+  versioned Mini/Luna usage pricing through the policy, while Flashcards and
+  Practice no longer carry duplicate Mini allowlists or price constants. Paid
+  provider receipts retain
+  requested and actual model identities plus pricing, prompt, schema,
+  reasoning, and `store: false` versions; incomplete registries, unsupported
+  capabilities or reasoning settings, invalid long-context pricing, and
+  unexpected actual models fail closed before publication. The separate
+  Course-generation settings file now controls only paid-call enablement and
+  its dedicated credential, with read compatibility for its prior v1 shape.
+- Froze the provider-free Mini-versus-Luna qualification pack across General
+  Chat, Course Chat, Course and conversation Flashcards, Course and General
+  Study Practice, and the Make Flashcards and Quiz Me handoffs. The validator
+  requires identical hashed inputs, low reasoning, one call with no retries,
+  exact requested/actual model and pricing provenance, complete usage/cost and
+  artifact receipts, case-specific graders, and passing security validation.
+  The frozen pack carries no paid-call authority or spend cap.
 - Accelerated direct `deeptutor start` launches by deferring unrelated Chat,
   Knowledge, OpenAI, Anthropic, memory, notebook, and other CLI command imports.
   The full command tree still loads for ordinary CLI commands and root help,

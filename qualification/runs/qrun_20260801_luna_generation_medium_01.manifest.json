@@ -1,0 +1,61 @@
+{
+  "version": 2,
+  "run_id": "qrun_20260801_luna_generation_medium_01",
+  "pack_id": "teeechr-core-mini-luna-v1",
+  "pack_sha256": "f37f57694d9cbdabcd522eb2b85b30c7e18701e4fbfd4ed3d3bdb037252a7d5a",
+  "compatibility_matrix_id": "teeechr-mini-luna-provider-free-v1",
+  "compatibility_matrix_sha256": "f3349bdd8fe95002e8597eec86a82c5698488fcfa59bb3d81e463927d37e131e",
+  "provider_calls_authorized": true,
+  "approval_reference": "codex-thread-message-2026-08-01-luna-medium-only-015usd",
+  "approval_sha256": "cc46f30ea89eb8b936436bece4bb479dd176e545e5a7a8bbd5ecaaf416dc35c5",
+  "approved_at": "2026-08-01T19:01:19Z",
+  "expires_at": "2026-08-02T19:01:19Z",
+  "approved_spend_cap_microusd": 150000,
+  "max_calls_per_model_case": 1,
+  "max_retries": 0,
+  "store": false,
+  "reasoning_effort": "medium",
+  "models": [
+    {
+      "model_id": "gpt-5.6-luna",
+      "api_model": "gpt-5.6-luna",
+      "pricing_version": "openai-gpt-5.6-luna-2026-08-01"
+    }
+  ],
+  "cases": [
+    {
+      "case_id": "q_course_flashcards_01",
+      "input_sha256": "3b9bb358becf3644860ac35741e43659a8180af40ab0f9972cf594923c0aae79"
+    },
+    {
+      "case_id": "q_conversation_flashcards_01",
+      "input_sha256": "047a89e381f22b338ace8f2e96e7805993ebe53051ece2a89e678f18b0ef32a6"
+    },
+    {
+      "case_id": "q_course_practice_01",
+      "input_sha256": "f119f1602e284615a19e984e3641e169d38996aa9c008198bea331885178496c"
+    },
+    {
+      "case_id": "q_general_study_practice_01",
+      "input_sha256": "365fb3bd62d2d8af76baf67d2f7a590d32c687dc5f87ae7070681dd3994f8b58"
+    }
+  ],
+  "authorized_pairs": [
+    {
+      "case_id": "q_course_flashcards_01",
+      "requested_model": "gpt-5.6-luna"
+    },
+    {
+      "case_id": "q_conversation_flashcards_01",
+      "requested_model": "gpt-5.6-luna"
+    },
+    {
+      "case_id": "q_course_practice_01",
+      "requested_model": "gpt-5.6-luna"
+    },
+    {
+      "case_id": "q_general_study_practice_01",
+      "requested_model": "gpt-5.6-luna"
+    }
+  ]
+}

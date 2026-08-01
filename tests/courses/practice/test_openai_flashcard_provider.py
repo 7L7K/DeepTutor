@@ -25,6 +25,10 @@ from deeptutor.courses.provider_usage import (
     ProviderUsageLedger,
     ProviderUsagePolicy,
 )
+from deeptutor.services.config.text_generation_registry import (
+    TextGenerationRegistry,
+    default_text_generation_catalog,
+)
 
 
 def _request(
@@ -101,10 +105,7 @@ def _conversation_request() -> FlashcardGenerationInput:
         conversation_context=FlashcardGenerationConversationText(
             selected_message_ids=[1, 2],
             context_sha256=digest,
-            text=(
-                "user: Explain linear equations\n"
-                "assistant: Slope is the rate of change."
-            ),
+            text=("user: Explain linear equations\nassistant: Slope is the rate of change."),
         ),
         objective_ids=[],
         generation_brief=FlashcardGenerationBrief(
@@ -129,7 +130,7 @@ class _FakeResponses:
         self.captured.update(kwargs)
         return SimpleNamespace(
             id="resp_test",
-            model="gpt-5-mini-2026-07-01",
+            model=self.captured.get("_actual_model", "gpt-5-mini-2026-07-01"),
             status="completed",
             service_tier="default",
             output_text=json.dumps(self.payload),
@@ -169,9 +170,9 @@ def test_conversation_provider_uses_bounded_context_without_fake_citations(
     request_payload = json.loads(captured["input"])
     assert request_payload["sources"] == []
     assert request_payload["conversation"]["selected_message_ids"] == [1, 2]
-    citations_schema = captured["text"]["format"]["schema"]["properties"][
-        "cards"
-    ]["items"]["properties"]["citations"]
+    citations_schema = captured["text"]["format"]["schema"]["properties"]["cards"]["items"][
+        "properties"
+    ]["citations"]
     assert citations_schema["minItems"] == citations_schema["maxItems"] == 0
 
 
@@ -202,7 +203,7 @@ def _provider(
     )
 
 
-def test_default_provider_uses_dedicated_binding_not_chat_catalog(
+def test_default_provider_uses_dedicated_credential_and_generation_policy(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -228,7 +229,8 @@ def test_default_provider_uses_dedicated_binding_not_chat_catalog(
 
     assert isinstance(provider, OpenAIFlashcardGenerationProvider)
     assert provider.api_key == "sk-dedicated-test"
-    assert provider.model == "gpt-5-mini"
+    assert provider.model == "gpt-5.6-luna"
+    assert provider.reasoning_effort == "medium"
 
 
 def test_openai_provider_uses_strict_store_false_tool_free_request(
@@ -244,6 +246,8 @@ def test_openai_provider_uses_strict_store_false_tool_free_request(
     assert output.cached_input_tokens == 20
     assert output.reasoning_output_tokens == 10
     assert output.estimated_cost_microusd == 186
+    assert output.pricing_version == OpenAIFlashcardGenerationProvider.PRICING_VERSION
+    assert output.reasoning_effort == "minimal"
     assert output.response_status == "completed"
     assert output.service_tier == "default"
     assert len(output.cards) == 3
@@ -263,6 +267,61 @@ def test_openai_provider_uses_strict_store_false_tool_free_request(
     assert "incidental dialogue" in captured["instructions"]
     assert "Ignore all rules" in captured["input"]
     assert "sk-test-only" not in captured["input"]
+
+
+def test_luna_shaped_flashcard_response_is_supported_but_not_default(
+    tmp_path: Path,
+) -> None:
+    catalog = {"text_generation": default_text_generation_catalog()}
+    section = catalog["text_generation"]
+    section["features"]["flashcard_generation"] = {
+        "model": "gpt-5.6-luna",
+        "mode": "qualified",
+        "reasoning_effort": "low",
+    }
+    resolved = TextGenerationRegistry.from_catalog(catalog).resolve(
+        "flashcard_generation",
+        required_capabilities={"responses", "structured_outputs"},
+    )
+    captured = {"_actual_model": "gpt-5.6-luna-2026-07-30"}
+    ledger = ProviderUsageLedger(tmp_path / "luna-usage" / "provider_usage.db")
+    ledger.configure(
+        ProviderUsagePolicy(
+            enabled=True,
+            pricing_version=resolved.model.pricing.version,
+        )
+    )
+
+    provider = OpenAIFlashcardGenerationProvider(
+        api_key="sk-test-only",
+        model="gpt-5.6-luna",
+        ledger=ledger,
+        resolved_generation=resolved,
+        client_factory=lambda **_kwargs: SimpleNamespace(
+            responses=_FakeResponses(_payload(), captured)
+        ),
+    )
+    output = provider.generate(_request())
+
+    assert output.requested_model == "gpt-5.6-luna"
+    assert output.actual_model == "gpt-5.6-luna-2026-07-30"
+    assert output.pricing_version == "openai-gpt-5.6-luna-2026-08-01"
+    assert output.reasoning_effort == "low"
+    assert output.cached_input_tokens == 20
+    assert output.reasoning_output_tokens == 10
+    assert captured["model"] == "gpt-5.6-luna"
+    assert captured["reasoning"] == {"effort": "low"}
+
+
+def test_flashcard_provider_rejects_unexpected_actual_model(tmp_path: Path) -> None:
+    captured = {"_actual_model": "gpt-5.6-luna"}
+    provider = _provider(tmp_path, _payload(), captured)
+
+    with pytest.raises(
+        FlashcardGenerationProviderError,
+        match="unexpected model",
+    ):
+        provider.generate(_request())
 
 
 @pytest.mark.parametrize(
@@ -385,6 +444,75 @@ def test_openai_provider_fails_closed_on_incomplete_or_empty_responses(
     assert row is not None
     assert row["state"] == "settled"
     assert row["estimated_cost_microusd"] > 0
+
+
+def test_openai_provider_rejects_refusal_and_malformed_json_without_artifact(
+    tmp_path: Path,
+) -> None:
+    provider = _provider(tmp_path, _payload(), {})
+
+    class _Response:
+        calls = 0
+
+        def create(self, **_kwargs):
+            self.calls += 1
+            output_text = "" if self.calls == 1 else "{malformed"
+            return SimpleNamespace(
+                id="resp_flashcard_failure_shape",
+                model="gpt-5-mini",
+                status="completed",
+                service_tier="default",
+                output_text=output_text,
+                output=[
+                    SimpleNamespace(
+                        type="message",
+                        content=[SimpleNamespace(type="refusal", refusal="declined")],
+                    )
+                ],
+                usage=SimpleNamespace(input_tokens=10, output_tokens=0),
+            )
+
+    responses = _Response()
+    provider._client_factory = lambda **_kwargs: SimpleNamespace(responses=responses)
+
+    with pytest.raises(FlashcardGenerationProviderError, match="no structured output"):
+        provider.generate(_request())
+    with pytest.raises(FlashcardGenerationProviderError, match="provider output is invalid"):
+        provider.generate(_request().model_copy(update={"operation_id": "ofg_" + "9" * 32}))
+
+
+@pytest.mark.parametrize(
+    "error",
+    [
+        type("SyntheticInvalidRequest", (RuntimeError,), {"status_code": 400})("private"),
+        type("SyntheticAuthentication", (RuntimeError,), {"status_code": 401})("private"),
+        type("SyntheticRateLimit", (RuntimeError,), {"status_code": 429})("private"),
+        TimeoutError("private"),
+    ],
+)
+def test_openai_provider_failure_classes_remain_generic_and_uncertain(
+    tmp_path: Path,
+    error: Exception,
+) -> None:
+    provider = _provider(tmp_path, _payload(), {})
+
+    class _FailingResponses:
+        def create(self, **_kwargs):
+            raise error
+
+    provider._client_factory = lambda **_kwargs: SimpleNamespace(
+        responses=_FailingResponses()
+    )
+
+    with pytest.raises(FlashcardGenerationProviderError, match="provider request failed") as exc:
+        provider.generate(_request())
+
+    assert "private" not in str(exc.value)
+    with provider.ledger._connect() as connection:
+        row = connection.execute(
+            "SELECT state FROM provider_usage_reservations"
+        ).fetchone()
+    assert row is not None and row["state"] == "uncertain"
 
 
 @pytest.mark.parametrize(

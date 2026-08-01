@@ -1,0 +1,83 @@
+{
+  "case_id": "q_conversation_flashcards_01",
+  "input_sha256": "047a89e381f22b338ace8f2e96e7805993ebe53051ece2a89e678f18b0ef32a6",
+  "pathway": "conversation_flashcards",
+  "requested_model": "gpt-5-mini",
+  "result": {
+    "actual_model": "gpt-5-mini-2025-08-07",
+    "cached_input_tokens": 0,
+    "cards": [
+      {
+        "answer": "The slope m is the rate of change: the change in y divided by the change in x (Δy/Δx).",
+        "card_type": "concept",
+        "citations": [],
+        "hint": "Think rise over run on a graph.",
+        "objective_ids": [],
+        "prompt": "What does the slope m represent in the linear equation y = mx + b?"
+      },
+      {
+        "answer": "With slope 3, y increases by 3×4 = 12 when x increases by 4.",
+        "card_type": "application",
+        "citations": [],
+        "hint": "Multiply the slope by the change in x to get the change in y.",
+        "objective_ids": [],
+        "prompt": "If a line has equation y = 3x + 2, what does the slope tell you about y when x increases by 4?"
+      }
+    ],
+    "estimated_cost_microusd": 669,
+    "generated_at": 1785606677.3788118,
+    "input_tokens": 442,
+    "latency_ms": 4791,
+    "output": {
+      "actual_model": "gpt-5-mini-2025-08-07",
+      "cached_input_tokens": 0,
+      "cards": [
+        {
+          "answer": "The slope m is the rate of change: the change in y divided by the change in x (Δy/Δx).",
+          "card_type": "concept",
+          "citations": [],
+          "hint": "Think rise over run on a graph.",
+          "objective_ids": [],
+          "prompt": "What does the slope m represent in the linear equation y = mx + b?"
+        },
+        {
+          "answer": "With slope 3, y increases by 3×4 = 12 when x increases by 4.",
+          "card_type": "application",
+          "citations": [],
+          "hint": "Multiply the slope by the change in x to get the change in y.",
+          "objective_ids": [],
+          "prompt": "If a line has equation y = 3x + 2, what does the slope tell you about y when x increases by 4?"
+        }
+      ],
+      "estimated_cost_microusd": 669,
+      "generated_at": 1785606677.3788118,
+      "input_tokens": 442,
+      "latency_ms": 4791,
+      "output_tokens": 279,
+      "pricing_version": "openai-gpt-5-mini-pricing-2026-07-29",
+      "prompt_version": "course-flashcards-v2",
+      "provider_label": "openai",
+      "reasoning_effort": "low",
+      "reasoning_output_tokens": 64,
+      "request_id": "resp_05ae34340d07c63a016a6e3210be34819794cdcffbdd9f5bde",
+      "requested_model": "gpt-5-mini",
+      "response_status": "completed",
+      "schema_version": "course-flashcards-schema-v2",
+      "service_tier": "default",
+      "store": false
+    },
+    "output_tokens": 279,
+    "pricing_version": "openai-gpt-5-mini-pricing-2026-07-29",
+    "prompt_version": "course-flashcards-v2",
+    "provider_label": "openai",
+    "reasoning_effort": "low",
+    "reasoning_output_tokens": 64,
+    "request_id": "resp_05ae34340d07c63a016a6e3210be34819794cdcffbdd9f5bde",
+    "requested_model": "gpt-5-mini",
+    "response_status": "completed",
+    "schema_version": "course-flashcards-schema-v2",
+    "service_tier": "default",
+    "store": false
+  },
+  "run_id": "qrun_20260801_core_01"
+}

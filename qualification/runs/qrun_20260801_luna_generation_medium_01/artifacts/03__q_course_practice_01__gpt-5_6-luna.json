@@ -1,0 +1,167 @@
+{
+  "case_id": "q_course_practice_01",
+  "input_sha256": "f119f1602e284615a19e984e3641e169d38996aa9c008198bea331885178496c",
+  "pathway": "course_practice",
+  "requested_model": "gpt-5.6-luna",
+  "result": {
+    "actual_model": "gpt-5.6-luna",
+    "cached_input_tokens": 0,
+    "estimated_cost_microusd": 773,
+    "input_tokens": 529,
+    "latency_ms": 3838,
+    "output": {
+      "actual_model": "gpt-5.6-luna",
+      "cached_input_tokens": 0,
+      "estimated_cost_microusd": 773,
+      "input_tokens": 529,
+      "latency_ms": 3838,
+      "output_tokens": 556,
+      "pricing_version": "openai-gpt-5.6-luna-2026-08-01",
+      "prompt_version": "course-practice-v1",
+      "provider_label": "openai",
+      "questions": [
+        {
+          "answer_contract": {
+            "answer": "ATP couples energy-releasing reactions to energy-requiring cellular work.",
+            "kind": "exact"
+          },
+          "citations": [
+            {
+              "content_sha256": "6ce629af9e6fa2c85520e32aef97c758d38d99a33dd2905e2d9c3eb2c2d90c0c",
+              "locator": {
+                "evidence_quote": "ATP couples energy-releasing reactions to energy-requiring cellular work."
+              },
+              "source_id": "src_qualification_atp",
+              "source_revision": 1
+            }
+          ],
+          "explanation": "ATP links reactions that release energy with cellular processes that require energy, enabling the released energy to support cellular work.",
+          "objective_ids": [],
+          "prompt": "What does ATP couple in cellular processes?",
+          "question_type": "short_answer"
+        },
+        {
+          "answer_contract": {
+            "answer": "ATP hydrolysis produces ADP and phosphate and can transfer energy to coupled processes.",
+            "kind": "exact"
+          },
+          "citations": [
+            {
+              "content_sha256": "6ce629af9e6fa2c85520e32aef97c758d38d99a33dd2905e2d9c3eb2c2d90c0c",
+              "locator": {
+                "evidence_quote": "Hydrolysis of ATP to ADP and phosphate can transfer energy to coupled processes."
+              },
+              "source_id": "src_qualification_atp",
+              "source_revision": 1
+            }
+          ],
+          "explanation": "Hydrolysis breaks ATP down into ADP and phosphate; the associated energy transfer can support processes coupled to ATP hydrolysis.",
+          "objective_ids": [],
+          "prompt": "What products result when ATP is hydrolyzed, and what can this process do?",
+          "question_type": "short_answer"
+        },
+        {
+          "answer_contract": {
+            "answer": "ATP is regenerated rather than stored as a long-term energy reserve.",
+            "kind": "exact"
+          },
+          "citations": [
+            {
+              "content_sha256": "6ce629af9e6fa2c85520e32aef97c758d38d99a33dd2905e2d9c3eb2c2d90c0c",
+              "locator": {
+                "evidence_quote": "ATP is regenerated rather than stored as a long-term energy reserve."
+              },
+              "source_id": "src_qualification_atp",
+              "source_revision": 1
+            }
+          ],
+          "explanation": "ATP functions as a renewable energy-transfer molecule: it is regenerated for continued coupling rather than accumulated as a long-term store.",
+          "objective_ids": [],
+          "prompt": "Is ATP primarily stored as a long-term energy reserve, or is it regenerated for ongoing use?",
+          "question_type": "short_answer"
+        }
+      ],
+      "reasoning_effort": "medium",
+      "reasoning_output_tokens": 69,
+      "request_id": "resp_08728c1a9fa9b510016a6e42b1c1e081938ca8a62b52fb2ecb",
+      "requested_model": "gpt-5.6-luna",
+      "response_status": "completed",
+      "schema_version": "course-practice-schema-v1",
+      "store": false
+    },
+    "output_tokens": 556,
+    "pricing_version": "openai-gpt-5.6-luna-2026-08-01",
+    "prompt_version": "course-practice-v1",
+    "provider_label": "openai",
+    "questions": [
+      {
+        "answer_contract": {
+          "answer": "ATP couples energy-releasing reactions to energy-requiring cellular work.",
+          "kind": "exact"
+        },
+        "citations": [
+          {
+            "content_sha256": "6ce629af9e6fa2c85520e32aef97c758d38d99a33dd2905e2d9c3eb2c2d90c0c",
+            "locator": {
+              "evidence_quote": "ATP couples energy-releasing reactions to energy-requiring cellular work."
+            },
+            "source_id": "src_qualification_atp",
+            "source_revision": 1
+          }
+        ],
+        "explanation": "ATP links reactions that release energy with cellular processes that require energy, enabling the released energy to support cellular work.",
+        "objective_ids": [],
+        "prompt": "What does ATP couple in cellular processes?",
+        "question_type": "short_answer"
+      },
+      {
+        "answer_contract": {
+          "answer": "ATP hydrolysis produces ADP and phosphate and can transfer energy to coupled processes.",
+          "kind": "exact"
+        },
+        "citations": [
+          {
+            "content_sha256": "6ce629af9e6fa2c85520e32aef97c758d38d99a33dd2905e2d9c3eb2c2d90c0c",
+            "locator": {
+              "evidence_quote": "Hydrolysis of ATP to ADP and phosphate can transfer energy to coupled processes."
+            },
+            "source_id": "src_qualification_atp",
+            "source_revision": 1
+          }
+        ],
+        "explanation": "Hydrolysis breaks ATP down into ADP and phosphate; the associated energy transfer can support processes coupled to ATP hydrolysis.",
+        "objective_ids": [],
+        "prompt": "What products result when ATP is hydrolyzed, and what can this process do?",
+        "question_type": "short_answer"
+      },
+      {
+        "answer_contract": {
+          "answer": "ATP is regenerated rather than stored as a long-term energy reserve.",
+          "kind": "exact"
+        },
+        "citations": [
+          {
+            "content_sha256": "6ce629af9e6fa2c85520e32aef97c758d38d99a33dd2905e2d9c3eb2c2d90c0c",
+            "locator": {
+              "evidence_quote": "ATP is regenerated rather than stored as a long-term energy reserve."
+            },
+            "source_id": "src_qualification_atp",
+            "source_revision": 1
+          }
+        ],
+        "explanation": "ATP functions as a renewable energy-transfer molecule: it is regenerated for continued coupling rather than accumulated as a long-term store.",
+        "objective_ids": [],
+        "prompt": "Is ATP primarily stored as a long-term energy reserve, or is it regenerated for ongoing use?",
+        "question_type": "short_answer"
+      }
+    ],
+    "reasoning_effort": "medium",
+    "reasoning_output_tokens": 69,
+    "request_id": "resp_08728c1a9fa9b510016a6e42b1c1e081938ca8a62b52fb2ecb",
+    "requested_model": "gpt-5.6-luna",
+    "response_status": "completed",
+    "schema_version": "course-practice-schema-v1",
+    "store": false
+  },
+  "run_id": "qrun_20260801_luna_generation_medium_01"
+}

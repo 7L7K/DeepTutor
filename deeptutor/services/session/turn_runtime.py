@@ -1386,7 +1386,11 @@ class TurnRuntimeManager:
         stream_done_sent = False
         terminal_stream_error = ""
         llm_scope_token: Token[LLMConfig | None] | None = None
+        text_generation_feature_token: Token[str | None] | None = None
         reset_active_llm_selection: Callable[[Token[LLMConfig | None] | None], None] | None = None
+        reset_active_text_generation_feature: Callable[[Token[str | None] | None], None] | None = (
+            None
+        )
         # One queue per turn for ``ask_user`` style pause-resume.
         # Created here (BEFORE the orchestrator runs) so the pipeline can
         # await on the awaitable we publish into ``context.metadata``.
@@ -1405,9 +1409,13 @@ class TurnRuntimeManager:
             from deeptutor.services.memory import get_memory_store
             from deeptutor.services.model_selection.runtime import (
                 activate_llm_selection,
+                set_text_generation_feature,
             )
             from deeptutor.services.model_selection.runtime import (
                 reset_llm_selection as reset_active_llm_selection,
+            )
+            from deeptutor.services.model_selection.runtime import (
+                reset_text_generation_feature as reset_active_text_generation_feature,
             )
             from deeptutor.services.notebook import get_notebook_manager
             from deeptutor.services.session.context_builder import ContextBuilder
@@ -1417,12 +1425,8 @@ class TurnRuntimeManager:
             followup_question_context = _extract_followup_question_context(request_config)
             persist_user_message = _extract_persist_user_message(request_config)
             is_regenerate = _extract_regenerate_flag(request_config)
-            regenerated_from_message_id = request_config.pop(
-                "_regenerated_from_message_id", None
-            )
-            replace_assistant_message_id = request_config.pop(
-                "_replace_assistant_message_id", None
-            )
+            regenerated_from_message_id = request_config.pop("_regenerated_from_message_id", None)
+            replace_assistant_message_id = request_config.pop("_replace_assistant_message_id", None)
             request_config.pop("_superseded_turn_id", None)
             raw_user_content = str(payload.get("content", "") or "")
             # Edit-branching tip: when the FE includes ``parent_message_id``
@@ -1549,6 +1553,12 @@ class TurnRuntimeManager:
                         capability=capability_name or "chat",
                     )
 
+            text_generation_feature = None
+            if (capability_name or "") in {"", "chat"}:
+                text_generation_feature = (
+                    "course_chat" if payload.get("course_id") else "general_chat"
+                )
+            text_generation_feature_token = set_text_generation_feature(text_generation_feature)
             llm_config, llm_scope_token = activate_llm_selection(payload.get("llm_selection"))
             builder = ContextBuilder(self.store)
 
@@ -1886,8 +1896,7 @@ class TurnRuntimeManager:
                     pending_done_event = event
                     continue
                 if event.type == StreamEventType.ERROR and (
-                    event.metadata.get("turn_terminal")
-                    or event.metadata.get("status") == "failed"
+                    event.metadata.get("turn_terminal") or event.metadata.get("status") == "failed"
                 ):
                     terminal_stream_error = str(event.content or "Turn failed").strip()
                 payload_event = await self._publish_authorized_live_event(execution, event)
@@ -2056,9 +2065,8 @@ class TurnRuntimeManager:
             # suppressed separately so the status update below always runs —
             # a turn left "running" gets mislabelled as a restart orphan.
             partial_content = _persisted_answer()
-            if (
-                self._execution_owner_is_current(execution)
-                and (partial_content or generated_attachments or assistant_events)
+            if self._execution_owner_is_current(execution) and (
+                partial_content or generated_attachments or assistant_events
             ):
                 with contextlib.suppress(Exception):
                     await asyncio.shield(
@@ -2114,6 +2122,11 @@ class TurnRuntimeManager:
         finally:
             if llm_scope_token is not None and reset_active_llm_selection is not None:
                 reset_active_llm_selection(llm_scope_token)
+            if (
+                text_generation_feature_token is not None
+                and reset_active_text_generation_feature is not None
+            ):
+                reset_active_text_generation_feature(text_generation_feature_token)
             # Drop the reply queue first — any in-flight ``submit_user_reply``
             # that finds the queue gone will return ``False`` rather than
             # accumulating on a dead turn.
@@ -2296,7 +2309,9 @@ class TurnRuntimeManager:
                 continue
             self._mirror_event_to_workspace(execution, persisted)
 
-    def _mirror_event_to_workspace(self, execution: _TurnExecution, payload: dict[str, Any]) -> None:
+    def _mirror_event_to_workspace(
+        self, execution: _TurnExecution, payload: dict[str, Any]
+    ) -> None:
         """Mirror turn events to task-local ``events.jsonl`` files under ``data/user/workspace``."""
         try:
             db_path = getattr(self.store, "db_path", None)

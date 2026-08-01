@@ -1,0 +1,83 @@
+{
+  "case_id": "q_conversation_flashcards_01",
+  "input_sha256": "047a89e381f22b338ace8f2e96e7805993ebe53051ece2a89e678f18b0ef32a6",
+  "pathway": "conversation_flashcards",
+  "requested_model": "gpt-5.6-luna",
+  "result": {
+    "actual_model": "gpt-5.6-luna",
+    "cached_input_tokens": 0,
+    "cards": [
+      {
+        "answer": "The change in y divided by the change in x—the rate of change.",
+        "card_type": "concept",
+        "citations": [],
+        "hint": "Think about how y changes when x changes.",
+        "objective_ids": [],
+        "prompt": "In the linear equation y = mx + b, what does the slope m represent?"
+      },
+      {
+        "answer": "The slope, or rate of change.",
+        "card_type": "application",
+        "citations": [],
+        "hint": "It measures how y changes relative to x.",
+        "objective_ids": [],
+        "prompt": "A linear relationship has a change in y divided by a change in x. What quantity does this calculate?"
+      }
+    ],
+    "estimated_cost_microusd": 457,
+    "generated_at": 1785610929.604944,
+    "input_tokens": 442,
+    "latency_ms": 4475,
+    "output": {
+      "actual_model": "gpt-5.6-luna",
+      "cached_input_tokens": 0,
+      "cards": [
+        {
+          "answer": "The change in y divided by the change in x—the rate of change.",
+          "card_type": "concept",
+          "citations": [],
+          "hint": "Think about how y changes when x changes.",
+          "objective_ids": [],
+          "prompt": "In the linear equation y = mx + b, what does the slope m represent?"
+        },
+        {
+          "answer": "The slope, or rate of change.",
+          "card_type": "application",
+          "citations": [],
+          "hint": "It measures how y changes relative to x.",
+          "objective_ids": [],
+          "prompt": "A linear relationship has a change in y divided by a change in x. What quantity does this calculate?"
+        }
+      ],
+      "estimated_cost_microusd": 457,
+      "generated_at": 1785610929.604944,
+      "input_tokens": 442,
+      "latency_ms": 4475,
+      "output_tokens": 307,
+      "pricing_version": "openai-gpt-5.6-luna-2026-08-01",
+      "prompt_version": "course-flashcards-v2",
+      "provider_label": "openai",
+      "reasoning_effort": "medium",
+      "reasoning_output_tokens": 171,
+      "request_id": "resp_0b166e664e46a302016a6e42ad4ae48190af470586569f4d98",
+      "requested_model": "gpt-5.6-luna",
+      "response_status": "completed",
+      "schema_version": "course-flashcards-schema-v2",
+      "service_tier": "default",
+      "store": false
+    },
+    "output_tokens": 307,
+    "pricing_version": "openai-gpt-5.6-luna-2026-08-01",
+    "prompt_version": "course-flashcards-v2",
+    "provider_label": "openai",
+    "reasoning_effort": "medium",
+    "reasoning_output_tokens": 171,
+    "request_id": "resp_0b166e664e46a302016a6e42ad4ae48190af470586569f4d98",
+    "requested_model": "gpt-5.6-luna",
+    "response_status": "completed",
+    "schema_version": "course-flashcards-schema-v2",
+    "service_tier": "default",
+    "store": false
+  },
+  "run_id": "qrun_20260801_luna_generation_medium_01"
+}

@@ -1,0 +1,169 @@
+{
+  "version": 1,
+  "matrix_id": "teeechr-mini-luna-provider-free-v1",
+  "provider_calls_allowed": false,
+  "requirements": [
+    {
+      "id": "streaming",
+      "status": "covered_provider_free",
+      "evidence": ["tests/core/test_labeled_step_finish_usage.py::test_luna_shaped_stream_preserves_function_call_and_versioned_usage"]
+    },
+    {
+      "id": "structured_outputs",
+      "status": "covered_provider_free",
+      "evidence": [
+        "tests/courses/practice/test_openai_flashcard_provider.py::test_luna_shaped_flashcard_response_is_supported_but_not_default",
+        "tests/courses/practice/test_openai_practice_provider.py::test_luna_shaped_practice_response_is_supported_but_not_default"
+      ]
+    },
+    {
+      "id": "function_calling",
+      "status": "covered_provider_free",
+      "evidence": [
+        "tests/core/test_agentic_client_provider_kwargs.py::test_luna_chat_kwargs_preserve_low_reasoning_and_native_tools",
+        "tests/core/test_labeled_step_finish_usage.py::test_luna_shaped_stream_preserves_function_call_and_versioned_usage"
+      ]
+    },
+    {
+      "id": "reasoning_usage",
+      "status": "covered_provider_free",
+      "evidence": [
+        "tests/courses/practice/test_openai_flashcard_provider.py::test_luna_shaped_flashcard_response_is_supported_but_not_default",
+        "tests/courses/practice/test_openai_practice_provider.py::test_luna_shaped_practice_response_is_supported_but_not_default"
+      ]
+    },
+    {
+      "id": "cached_usage",
+      "status": "covered_provider_free",
+      "evidence": [
+        "tests/courses/practice/test_openai_flashcard_provider.py::test_luna_shaped_flashcard_response_is_supported_but_not_default",
+        "tests/courses/practice/test_openai_practice_provider.py::test_luna_shaped_practice_response_is_supported_but_not_default"
+      ]
+    },
+    {
+      "id": "zero_output",
+      "status": "covered_provider_free",
+      "evidence": [
+        "tests/courses/practice/test_openai_flashcard_provider.py::test_openai_provider_rejects_refusal_and_malformed_json_without_artifact",
+        "tests/courses/practice/test_openai_practice_provider.py::test_practice_provider_fails_closed_on_incomplete_refusal_or_malformed_output"
+      ]
+    },
+    {
+      "id": "refusal",
+      "status": "covered_provider_free",
+      "evidence": [
+        "tests/courses/practice/test_openai_flashcard_provider.py::test_openai_provider_rejects_refusal_and_malformed_json_without_artifact",
+        "tests/courses/practice/test_openai_practice_provider.py::test_practice_provider_fails_closed_on_incomplete_refusal_or_malformed_output"
+      ]
+    },
+    {
+      "id": "incomplete_status",
+      "status": "covered_provider_free",
+      "evidence": [
+        "tests/courses/practice/test_openai_flashcard_provider.py::test_openai_provider_fails_closed_on_incomplete_or_empty_responses",
+        "tests/courses/practice/test_openai_practice_provider.py::test_practice_provider_fails_closed_on_incomplete_refusal_or_malformed_output"
+      ]
+    },
+    {
+      "id": "http_400",
+      "status": "covered_provider_free",
+      "evidence": ["tests/courses/practice/test_openai_practice_provider.py::test_practice_provider_classifies_required_http_and_timeout_failures"]
+    },
+    {
+      "id": "http_401",
+      "status": "covered_provider_free",
+      "evidence": ["tests/courses/practice/test_openai_practice_provider.py::test_practice_provider_classifies_required_http_and_timeout_failures"]
+    },
+    {
+      "id": "rate_limit",
+      "status": "covered_provider_free",
+      "evidence": ["tests/courses/practice/test_openai_practice_provider.py::test_practice_provider_logs_only_bounded_request_diagnostics"]
+    },
+    {
+      "id": "timeout",
+      "status": "covered_provider_free",
+      "evidence": [
+        "tests/courses/practice/test_openai_practice_provider.py::test_practice_provider_classifies_required_http_and_timeout_failures",
+        "tests/courses/practice/test_generation_contract.py::test_provider_deadline_terminalizes_without_publishing_late_output"
+      ]
+    },
+    {
+      "id": "malformed_json",
+      "status": "covered_provider_free",
+      "evidence": [
+        "tests/courses/practice/test_openai_flashcard_provider.py::test_openai_provider_rejects_refusal_and_malformed_json_without_artifact",
+        "tests/courses/practice/test_openai_practice_provider.py::test_practice_provider_fails_closed_on_incomplete_refusal_or_malformed_output"
+      ]
+    },
+    {
+      "id": "duplicate_cards",
+      "status": "covered_provider_free",
+      "evidence": ["tests/courses/practice/test_flashcard_generation_contract.py::test_semantic_validation_filters_duplicates_and_answer_leakage"]
+    },
+    {
+      "id": "duplicate_questions",
+      "status": "covered_provider_free",
+      "evidence": ["tests/courses/practice/test_openai_practice_provider.py::test_practice_provider_rejects_duplicate_question_prompts"]
+    },
+    {
+      "id": "unexpected_actual_model",
+      "status": "covered_provider_free",
+      "evidence": [
+        "tests/courses/practice/test_openai_flashcard_provider.py::test_flashcard_provider_rejects_unexpected_actual_model",
+        "tests/courses/practice/test_openai_practice_provider.py::test_practice_provider_rejects_unexpected_actual_model"
+      ]
+    },
+    {
+      "id": "budget_reservation",
+      "status": "covered_provider_free",
+      "evidence": ["tests/courses/test_provider_usage.py::test_reservation_is_idempotent_and_settles_without_content"]
+    },
+    {
+      "id": "budget_settlement",
+      "status": "covered_provider_free",
+      "evidence": ["tests/courses/test_provider_usage.py::test_settlement_cannot_silently_exceed_reserved_budget"]
+    },
+    {
+      "id": "failure_release",
+      "status": "covered_provider_free",
+      "evidence": ["tests/courses/test_provider_usage.py::test_pre_call_release_restores_lifetime_capacity"]
+    },
+    {
+      "id": "idempotent_replay",
+      "status": "covered_provider_free",
+      "evidence": [
+        "tests/courses/practice/test_flashcard_generation_contract.py::test_idempotency_atomic_publication_and_successor_lineage",
+        "tests/courses/practice/test_generation_contract.py::test_idempotency_reuses_exact_request_and_rejects_a_changed_request"
+      ]
+    },
+    {
+      "id": "owner_revocation",
+      "status": "covered_provider_free",
+      "evidence": [
+        "tests/courses/practice/test_flashcard_generation_contract.py::test_final_preflight_blocks_revocation_and_cancellation_before_provider",
+        "tests/courses/practice/test_generation_contract.py::test_source_change_and_account_revocation_fence_the_final_commit"
+      ]
+    },
+    {
+      "id": "course_archive_during_work",
+      "status": "covered_provider_free",
+      "evidence": ["tests/courses/practice/test_flashcard_generation_contract.py::test_course_archive_reconciles_expired_candidate_review"]
+    },
+    {
+      "id": "source_revision_change",
+      "status": "covered_provider_free",
+      "evidence": [
+        "tests/courses/practice/test_flashcard_generation_contract.py::test_source_change_during_resolution_is_fenced_before_provider_call",
+        "tests/courses/practice/test_generation_contract.py::test_generation_index_requires_the_exact_course_source_fingerprint"
+      ]
+    },
+    {
+      "id": "restart_recovery",
+      "status": "covered_provider_free",
+      "evidence": [
+        "tests/courses/practice/test_flashcard_generation_contract.py::test_invalid_citation_and_restart_orphan_never_publish",
+        "tests/courses/practice/test_generation_contract.py::test_restart_reconciliation_and_default_unavailable_provider_are_safe_terminal_states"
+      ]
+    }
+  ]
+}

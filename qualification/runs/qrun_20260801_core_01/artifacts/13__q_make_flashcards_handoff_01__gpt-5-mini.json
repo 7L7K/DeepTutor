@@ -1,0 +1,32 @@
+{
+  "case_id": "q_make_flashcards_handoff_01",
+  "input_sha256": "4cd5e81ab4c270bc769468facce59d9bf1867fccefe15b49e34fbc95c586358e",
+  "pathway": "make_flashcards_handoff",
+  "requested_model": "gpt-5-mini",
+  "result": {
+    "actual_model": "gpt-5-mini-2025-08-07",
+    "cached_input_tokens": 0,
+    "input_tokens": 290,
+    "latency_ms": 5810,
+    "output": {
+      "answer": "I can create a set of flashcards that teach slope as a rate of change. Before I make them, here’s a clear plan so you can confirm or request changes: 1) Learning goals: define slope, interpret slope from a graph, compute slope from two points, connect slope to real-world rate-of-change situations, and practice sign and units. 2) Number of cards: 12–16 cards (definition + examples + calculations + word problems + quick checks). 3) Card types and examples: • Definition card: “What is slope?” (concise definition) • Concept card: “Slope as rate of change — how to interpret rise/run” • Procedure card: “How to compute slope from two points (formula m = (y2−y1)/(x2−x1))” • Graph interpretation cards (3): identify slope from graphs (positive, negative, zero, undefined) • Calculation cards (3): compute slope from given point pairs, including fractional slopes • Units/word-problem cards (2–3): translate real situations (speed, cost per item) into slope and interpret units • Common-mistake card: pitfalls (ordering of points, division by zero) • Quick-check cards (2): true/false or multiple-choice recall prompts 4) Card format: front = single question or prompt; back = concise explanation + worked steps for example cards + one-line takeaway. 5) Difficulty/progression: start conceptual → procedural → applied → mixed review. 6) Optional spacing/review suggestions: use 1-day, 3-day, 7-day spaced repeats. Confirm whether you want: number of cards adjusted, focus shifted (more word problems or more graph work), or a particular difficulty level/grade. After you confirm, I will generate the actual flashcards.",
+      "citations": [],
+      "handoff": {
+        "publication_authority": "none",
+        "requires_user_confirmation": true,
+        "type": "flashcard_generation_plan"
+      }
+    },
+    "output_tokens": 481,
+    "pricing_version": "openai-gpt-5-mini-pricing-2026-07-29",
+    "prompt_version": "teeechr-qualification-chat-v1",
+    "reasoning_effort": "low",
+    "reasoning_output_tokens": 64,
+    "request_id": "chatcmpl-E88A8WK1XutmnnmCh0TAXt7qpwRgs",
+    "requested_model": "gpt-5-mini",
+    "response_status": "completed",
+    "schema_version": "teeechr-qualification-chat-schema-v1",
+    "store": false
+  },
+  "run_id": "qrun_20260801_core_01"
+}

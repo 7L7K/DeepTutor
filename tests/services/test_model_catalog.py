@@ -75,6 +75,8 @@ def test_load_creates_empty_catalog_without_dotenv_hydration(tmp_path: Path):
     assert catalog["services"]["llm"]["profiles"] == []
     assert catalog["services"]["embedding"]["profiles"] == []
     assert catalog["services"]["search"]["profiles"] == []
+    assert catalog["text_generation"]["default_model"] == "gpt-5.6-luna"
+    assert "gpt-5.6-luna" in catalog["text_generation"]["models"]
 
 
 def test_load_does_not_sync_existing_active_profiles_from_dotenv(tmp_path: Path):

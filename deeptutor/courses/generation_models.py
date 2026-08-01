@@ -167,6 +167,11 @@ class GeneratedPracticeOutput(BaseModel):
     output_tokens: int | None = Field(default=None, ge=0)
     reasoning_output_tokens: int | None = Field(default=None, ge=0)
     estimated_cost_microusd: int | None = Field(default=None, ge=0)
+    pricing_version: str = Field(default="provider-free", min_length=1, max_length=80)
+    prompt_version: str = Field(default="course-practice-v1", min_length=1, max_length=80)
+    schema_version: str = Field(default="course-practice-schema-v1", min_length=1, max_length=80)
+    reasoning_effort: str = Field(default="none", min_length=1, max_length=40)
+    store: Literal[False] = False
     response_status: str | None = Field(default=None, max_length=80)
     latency_ms: int | None = Field(default=None, ge=0)
 

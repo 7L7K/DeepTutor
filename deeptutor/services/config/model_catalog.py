@@ -13,6 +13,7 @@ from .provider_credentials import (
     ProviderCredentialAuthority,
     ProviderCredentialError,
 )
+from .text_generation_registry import default_text_generation_catalog
 
 # Legacy fallback only — frozen at admin scope at import time. Production code
 # enters through ``get_model_catalog_service()``, which resolves the explicit
@@ -38,6 +39,7 @@ def _search_shell() -> dict[str, Any]:
 def _default_catalog() -> dict[str, Any]:
     return {
         "version": 1,
+        "text_generation": default_text_generation_catalog(),
         "services": {
             "llm": _service_shell(),
             "embedding": _service_shell(),

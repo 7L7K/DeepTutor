@@ -42,6 +42,23 @@ MODEL_PRICING = {
 
 def get_pricing(model: str) -> dict[str, float]:
     """Get pricing for a model (fuzzy match)."""
+    # TEEECHR core text models have one deployment-owned price authority.
+    # Keep the older table only for secondary models that have not entered the
+    # feature qualification/migration lane yet.
+    from deeptutor.services.config.text_generation_registry import (
+        TextGenerationRegistryError,
+        get_text_generation_registry,
+    )
+
+    try:
+        definition = get_text_generation_registry().require_api_model(model)
+    except TextGenerationRegistryError:
+        pass
+    else:
+        return {
+            "input": definition.pricing.input_microusd_per_million / 1_000_000_000,
+            "output": definition.pricing.output_microusd_per_million / 1_000_000_000,
+        }
     model_lower = model.lower()
     for key, pricing in MODEL_PRICING.items():
         if key in model_lower or model_lower in key:

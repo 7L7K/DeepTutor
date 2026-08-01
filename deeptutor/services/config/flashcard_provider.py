@@ -1,4 +1,8 @@
-"""Dedicated provider binding for Course-owned Flashcard generation."""
+"""Dedicated paid-provider credential gate for Course generation.
+
+Model and pricing authority live in ``model_catalog.json``. This file retains
+only the operator enablement gate and credential-bearing provider endpoint.
+"""
 
 from __future__ import annotations
 
@@ -24,18 +28,17 @@ class FlashcardProviderConfigError(RuntimeError):
 class FlashcardProviderConfig:
     enabled: bool = False
     provider: str = "openai"
-    model: str = "gpt-5-mini"
     base_url: str = "https://api.openai.com/v1"
     credential_ref: str | None = None
     api_key: str = ""
 
 
 class FlashcardProviderConfigService:
-    """Admin-only configuration that cannot alter the Chat model catalog."""
+    """Admin-only paid-call and credential configuration."""
 
-    _VERSION = 1
+    _VERSION = 2
+    _LEGACY_VERSION = 1
     _PROVIDER = "openai"
-    _MODEL = "gpt-5-mini"
     _BASE_URL = "https://api.openai.com/v1"
 
     def __init__(
@@ -72,19 +75,21 @@ class FlashcardProviderConfigService:
         payload = self._read_payload()
         if not payload:
             return self.default()
+        expected = {
+            "version",
+            "enabled",
+            "provider",
+            "base_url",
+            "credential_ref",
+        }
+        legacy = payload.get("version") == self._LEGACY_VERSION
+        if legacy:
+            expected = {*expected, "model"}
         if (
-            set(payload)
-            != {
-                "version",
-                "enabled",
-                "provider",
-                "model",
-                "base_url",
-                "credential_ref",
-            }
-            or payload.get("version") != self._VERSION
+            set(payload) != expected
+            or payload.get("version") not in {self._VERSION, self._LEGACY_VERSION}
             or payload.get("provider") != self._PROVIDER
-            or payload.get("model") != self._MODEL
+            or (legacy and payload.get("model") != "gpt-5-mini")
             or payload.get("base_url") != self._BASE_URL
             or not isinstance(payload.get("enabled"), bool)
             or (
@@ -111,7 +116,6 @@ class FlashcardProviderConfigService:
         return FlashcardProviderConfig(
             enabled=bool(payload["enabled"]),
             provider=self._PROVIDER,
-            model=self._MODEL,
             base_url=self._BASE_URL,
             credential_ref=str(reference) if reference else None,
             api_key=api_key,
@@ -141,7 +145,6 @@ class FlashcardProviderConfigService:
             "version": self._VERSION,
             "enabled": bool(enabled),
             "provider": self._PROVIDER,
-            "model": self._MODEL,
             "base_url": self._BASE_URL,
             "credential_ref": reference,
         }

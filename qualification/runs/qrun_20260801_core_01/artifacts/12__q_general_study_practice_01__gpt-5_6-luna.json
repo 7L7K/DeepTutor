@@ -1,0 +1,127 @@
+{
+  "case_id": "q_general_study_practice_01",
+  "input_sha256": "365fb3bd62d2d8af76baf67d2f7a590d32c687dc5f87ae7070681dd3994f8b58",
+  "pathway": "general_study_practice",
+  "requested_model": "gpt-5.6-luna",
+  "result": {
+    "actual_model": "gpt-5.6-luna",
+    "cached_input_tokens": 0,
+    "estimated_cost_microusd": 440,
+    "input_tokens": 492,
+    "latency_ms": 2259,
+    "output": {
+      "actual_model": "gpt-5.6-luna",
+      "cached_input_tokens": 0,
+      "estimated_cost_microusd": 440,
+      "input_tokens": 492,
+      "latency_ms": 2259,
+      "output_tokens": 284,
+      "pricing_version": "openai-gpt-5.6-luna-2026-08-01",
+      "prompt_version": "course-practice-v1",
+      "provider_label": "openai",
+      "questions": [
+        {
+          "answer_contract": {
+            "answer": "ATP and NADPH.",
+            "kind": "exact"
+          },
+          "citations": [
+            {
+              "content_sha256": "264968663cd3b4c4438c72e8d89d2f1bed7a63c152db5a337aa3639447528c83",
+              "locator": {
+                "evidence_quote": "In the light-dependent reactions, chlorophyll absorbs light and helps produce ATP and NADPH."
+              },
+              "source_id": "src_qualification_photosynthesis",
+              "source_revision": 1
+            }
+          ],
+          "explanation": "The passage states that chlorophyll absorbs light in the light-dependent reactions and helps produce ATP and NADPH.",
+          "objective_ids": [],
+          "prompt": "What do the light-dependent reactions help produce?",
+          "question_type": "short_answer"
+        },
+        {
+          "answer_contract": {
+            "answer": "Carbon fixation.",
+            "kind": "exact"
+          },
+          "citations": [
+            {
+              "content_sha256": "264968663cd3b4c4438c72e8d89d2f1bed7a63c152db5a337aa3639447528c83",
+              "locator": {
+                "evidence_quote": "The Calvin cycle uses ATP and NADPH to support carbon fixation."
+              },
+              "source_id": "src_qualification_photosynthesis",
+              "source_revision": 1
+            }
+          ],
+          "explanation": "The passage states that the Calvin cycle uses ATP and NADPH to support carbon fixation.",
+          "objective_ids": [],
+          "prompt": "What does the Calvin cycle use ATP and NADPH to support?",
+          "question_type": "short_answer"
+        }
+      ],
+      "reasoning_effort": "low",
+      "reasoning_output_tokens": 0,
+      "request_id": "resp_0353c4fb5e0d5f14016a6e3231bab4819586d4c9a6135e394c",
+      "requested_model": "gpt-5.6-luna",
+      "response_status": "completed",
+      "schema_version": "course-practice-schema-v1",
+      "store": false
+    },
+    "output_tokens": 284,
+    "pricing_version": "openai-gpt-5.6-luna-2026-08-01",
+    "prompt_version": "course-practice-v1",
+    "provider_label": "openai",
+    "questions": [
+      {
+        "answer_contract": {
+          "answer": "ATP and NADPH.",
+          "kind": "exact"
+        },
+        "citations": [
+          {
+            "content_sha256": "264968663cd3b4c4438c72e8d89d2f1bed7a63c152db5a337aa3639447528c83",
+            "locator": {
+              "evidence_quote": "In the light-dependent reactions, chlorophyll absorbs light and helps produce ATP and NADPH."
+            },
+            "source_id": "src_qualification_photosynthesis",
+            "source_revision": 1
+          }
+        ],
+        "explanation": "The passage states that chlorophyll absorbs light in the light-dependent reactions and helps produce ATP and NADPH.",
+        "objective_ids": [],
+        "prompt": "What do the light-dependent reactions help produce?",
+        "question_type": "short_answer"
+      },
+      {
+        "answer_contract": {
+          "answer": "Carbon fixation.",
+          "kind": "exact"
+        },
+        "citations": [
+          {
+            "content_sha256": "264968663cd3b4c4438c72e8d89d2f1bed7a63c152db5a337aa3639447528c83",
+            "locator": {
+              "evidence_quote": "The Calvin cycle uses ATP and NADPH to support carbon fixation."
+            },
+            "source_id": "src_qualification_photosynthesis",
+            "source_revision": 1
+          }
+        ],
+        "explanation": "The passage states that the Calvin cycle uses ATP and NADPH to support carbon fixation.",
+        "objective_ids": [],
+        "prompt": "What does the Calvin cycle use ATP and NADPH to support?",
+        "question_type": "short_answer"
+      }
+    ],
+    "reasoning_effort": "low",
+    "reasoning_output_tokens": 0,
+    "request_id": "resp_0353c4fb5e0d5f14016a6e3231bab4819586d4c9a6135e394c",
+    "requested_model": "gpt-5.6-luna",
+    "response_status": "completed",
+    "schema_version": "course-practice-schema-v1",
+    "store": false
+  },
+  "run_id": "qrun_20260801_core_01"
+}
