@@ -6,7 +6,9 @@
     "node": "22.x || 24.x"
   },
   "scripts": {
+    "predev": "node ./scripts/check-node-version.mjs",
     "dev": "node --max-old-space-size=4096 ./node_modules/next/dist/bin/next dev",
+    "predev:turbo": "node ./scripts/check-node-version.mjs",
     "dev:turbo": "node --max-old-space-size=6144 ./node_modules/next/dist/bin/next dev --turbopack",
     "prebuild": "node ./scripts/check-node-version.mjs",
     "build": "next build",

@@ -208,7 +208,7 @@ After `deeptutor start`, open the frontend URL printed in the terminal — by de
 <details>
 <summary><b>Option 2 — Install From Source</b> · develop against a checkout</summary>
 
-For development against a checkout. Use **Python 3.11+** and **Node.js 22 LTS** to match CI and Docker. The frontend build rejects unsupported Node majors; Node.js 26 is known to leave the current Next.js worker process running after finalization. `web/.nvmrc` selects the supported baseline, and Node.js 24 is also accepted for local builds.
+For development against a checkout. Use **Python 3.11+** and **Node.js 22 LTS** to match CI and Docker. Run `nvm use` from `web/` before installing, building, or starting the source frontend. Development and production scripts reject unsupported Node majors; Node.js 26 is known to rewrite package metadata during startup and leave the current Next.js worker process running after build finalization. `web/.nvmrc` selects the supported baseline, and Node.js 24 is also accepted for local development and builds.
 
 ```bash
 git clone https://github.com/HKUDS/DeepTutor.git
