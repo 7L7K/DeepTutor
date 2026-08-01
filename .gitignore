@@ -18,6 +18,9 @@ deeptutor/services/rag/eg_only_for_analysis/
 !/docs/TEEECHR_V152_PHASE4_P4_01_TEST_SPEC.md
 !/docs/TEEECHR_V152_PHASE4_P4_01_COMMIT_MAP.md
 !/docs/TEEECHR_V152_PHASE6_PRACTICE_INTELLIGENCE_CLOSEOUT_PLAN.md
+!/docs/TEEECHR_V157_BETA_CERTIFICATION.md
+!/docs/TEEECHR_HISTORICAL_LEARNER_DATA_MIGRATION_PLAN.md
+!/docs/TEEECHR_NEXT_ADVANCED_LEARNER_FEATURE_DECISION.md
 !/docs/contracts/
 /docs/contracts/*
 !/docs/contracts/teeechr_phase3a_courses_schema_manifest.json

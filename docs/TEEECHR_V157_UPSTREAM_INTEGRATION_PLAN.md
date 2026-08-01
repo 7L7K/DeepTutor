@@ -1,10 +1,16 @@
 # TEEECHR v1.5.7 Upstream Integration Plan
 
-Status: implementation authorized by the approved nine-step roadmap
+Status: integrated and locally beta-qualified (`PASS_WITH_PARKED_FOLLOWUPS`)
 Target upstream: DeepTutor `v1.5.7` / `740ec413`
-Source TEEECHR snapshot: `762ccc39`
+Source TEEECHR snapshot: `b8130e7f`
 Shared base: `b7283548`
-Intended integration branch: `feature/teeechr-v157-integration`
+Integration branch: `feature/teeechr-v157-integration`
+Integration commit: `c55d1e1a58c73f042794c00b7da182ff63090710`
+
+The exact beta certification is recorded in
+`docs/TEEECHR_V157_BETA_CERTIFICATION.md`. Historical learner migration and the
+next advanced learner feature are separate follow-on contracts; neither was
+silently included in the upstream merge.
 
 ## Goal
 
