@@ -88,6 +88,33 @@ def test_agentic_kwargs_preserve_legacy_shape_without_binding() -> None:
     assert kwargs == {"temperature": 0.2, "max_tokens": 256}
 
 
+def test_agentic_kwargs_apply_model_temperature_capability() -> None:
+    kwargs = build_completion_kwargs(
+        temperature=0.2,
+        model="gpt-5-mini",
+        max_tokens=256,
+        binding="openai",
+    )
+
+    assert kwargs["temperature"] == 1.0
+    assert kwargs["max_completion_tokens"] == 256
+
+
+def test_luna_chat_kwargs_preserve_low_reasoning_and_native_tools() -> None:
+    kwargs = build_completion_kwargs(
+        temperature=0.2,
+        model="gpt-5.6-luna",
+        max_tokens=512,
+        binding="openai",
+        reasoning_effort="low",
+    )
+
+    assert kwargs["temperature"] == 1.0
+    assert kwargs["max_completion_tokens"] == 512
+    assert kwargs["reasoning_effort"] == "low"
+    assert can_use_native_tool_calling(binding="openai", model="gpt-5.6-luna") is True
+
+
 def test_native_tool_backends_all_have_adapter_builders() -> None:
     # Every tool-gated backend must be adapter-routed, or tool schemas would be
     # attached to a plain AsyncOpenAI client speaking a non-OpenAI wire format.

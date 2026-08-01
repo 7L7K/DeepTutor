@@ -7,6 +7,7 @@ import {
   Brain,
   BrainCircuit,
   Clapperboard,
+  Cable,
   Database,
   FileScan,
   Image as ImageIcon,
@@ -36,7 +37,7 @@ import type { ServiceName } from "@/components/settings/SettingsContext";
  * Settings information architecture.
  *
  * Two levels, deliberately unlike the flat Learning Space dashboard:
- *   • The hub (`/settings`) shows six category blocks + a resident Status
+ *   • The hub (`/settings`) shows category blocks + a resident Status
  *     module — nothing else.
  *   • Categories with several settings (Models, Chat) open a sub-hub page
  *     that lists their leaves as tiles; single-setting categories link
@@ -273,6 +274,16 @@ const AGENT_CHILDREN: SettingsLeaf[] = [
 
 export const SETTINGS_CATEGORIES: SettingsCategory[] = [
   {
+    key: "blueway",
+    label: { zh: "BlueWay 连接", en: "BlueWay" },
+    blurb: {
+      zh: "私密同步课程、作业、笔记与课堂文字记录",
+      en: "Privately sync classes, assignments, notes, and lecture transcripts",
+    },
+    icon: Cable,
+    href: "/settings/blueway",
+  },
+  {
     key: "appearance",
     label: { zh: "外观", en: "Appearance" },
     blurb: { zh: "视觉主题与界面语言", en: "Theme and interface language" },
@@ -347,6 +358,7 @@ const HUB_LABEL: Lang = { zh: "设置", en: "Settings" };
 /** Routes that are pure navigation (hub + sub-hubs) — no Save/Apply toolbar. */
 const NAV_ONLY_ROUTES = new Set<string>([
   SETTINGS_HUB_HREF,
+  "/settings/blueway",
   ...SETTINGS_CATEGORIES.filter((c) => c.children).map((c) => c.href),
 ]);
 

@@ -225,9 +225,9 @@ def test_avatar_serving_headers_and_visibility(profile_client):
     assert "private" in response.headers["cache-control"]
 
 
-def test_admin_user_deletion_removes_avatar_file(profile_client):
-    """Deleting an account must not leave its avatar image orphaned on disk."""
-    from deeptutor.multi_user.identity import get_avatar_file
+def test_admin_user_removal_disables_account_and_preserves_recoverable_data(profile_client):
+    """Removal revokes access without purging identity-owned data."""
+    from deeptutor.multi_user.identity import get_avatar_file, load_users
 
     client, users = profile_client
     client.put(
@@ -239,7 +239,9 @@ def test_admin_user_deletion_removes_avatar_file(profile_client):
 
     response = client.delete("/api/v1/auth/users/bob", headers=_auth("admin-token"))
     assert response.status_code == 200
-    assert get_avatar_file(users["bob"]["id"]) is None
+    assert response.json()["disabled"] is True
+    assert load_users()["bob"]["disabled"] is True
+    assert get_avatar_file(users["bob"]["id"]) is not None
 
 
 def test_avatar_serving_rejects_missing_and_malformed_ids(profile_client):

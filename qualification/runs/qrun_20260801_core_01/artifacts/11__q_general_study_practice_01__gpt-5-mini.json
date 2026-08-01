@@ -1,0 +1,127 @@
+{
+  "case_id": "q_general_study_practice_01",
+  "input_sha256": "365fb3bd62d2d8af76baf67d2f7a590d32c687dc5f87ae7070681dd3994f8b58",
+  "pathway": "general_study_practice",
+  "requested_model": "gpt-5-mini",
+  "result": {
+    "actual_model": "gpt-5-mini-2025-08-07",
+    "cached_input_tokens": 0,
+    "estimated_cost_microusd": 1163,
+    "input_tokens": 492,
+    "latency_ms": 8452,
+    "output": {
+      "actual_model": "gpt-5-mini-2025-08-07",
+      "cached_input_tokens": 0,
+      "estimated_cost_microusd": 1163,
+      "input_tokens": 492,
+      "latency_ms": 8452,
+      "output_tokens": 520,
+      "pricing_version": "openai-gpt-5-mini-pricing-2026-07-29",
+      "prompt_version": "course-practice-v1",
+      "provider_label": "openai",
+      "questions": [
+        {
+          "answer_contract": {
+            "answer": "To produce ATP and NADPH by converting light energy into chemical energy.",
+            "kind": "exact"
+          },
+          "citations": [
+            {
+              "content_sha256": "264968663cd3b4c4438c72e8d89d2f1bed7a63c152db5a337aa3639447528c83",
+              "locator": {
+                "evidence_quote": "In the light-dependent reactions, chlorophyll absorbs light and helps produce ATP and NADPH."
+              },
+              "source_id": "src_qualification_photosynthesis",
+              "source_revision": 1
+            }
+          ],
+          "explanation": "The light-dependent reactions use chlorophyll to absorb light and drive the formation of ATP and NADPH, thereby converting light energy into chemical energy that can be used in later steps.",
+          "objective_ids": [],
+          "prompt": "What is the primary role of the light-dependent reactions in photosynthesis?",
+          "question_type": "short_answer"
+        },
+        {
+          "answer_contract": {
+            "answer": "It uses ATP and NADPH to support carbon fixation.",
+            "kind": "exact"
+          },
+          "citations": [
+            {
+              "content_sha256": "264968663cd3b4c4438c72e8d89d2f1bed7a63c152db5a337aa3639447528c83",
+              "locator": {
+                "evidence_quote": "The Calvin cycle uses ATP and NADPH to support carbon fixation."
+              },
+              "source_id": "src_qualification_photosynthesis",
+              "source_revision": 1
+            }
+          ],
+          "explanation": "The Calvin cycle takes the chemical energy carried by ATP and NADPH from the light-dependent reactions and uses it to fix carbon into organic molecules.",
+          "objective_ids": [],
+          "prompt": "What role does the Calvin cycle play in photosynthesis?",
+          "question_type": "short_answer"
+        }
+      ],
+      "reasoning_effort": "low",
+      "reasoning_output_tokens": 64,
+      "request_id": "resp_0dc1d1c4987e0434016a6e3229be2881908d008889438dbf95",
+      "requested_model": "gpt-5-mini",
+      "response_status": "completed",
+      "schema_version": "course-practice-schema-v1",
+      "store": false
+    },
+    "output_tokens": 520,
+    "pricing_version": "openai-gpt-5-mini-pricing-2026-07-29",
+    "prompt_version": "course-practice-v1",
+    "provider_label": "openai",
+    "questions": [
+      {
+        "answer_contract": {
+          "answer": "To produce ATP and NADPH by converting light energy into chemical energy.",
+          "kind": "exact"
+        },
+        "citations": [
+          {
+            "content_sha256": "264968663cd3b4c4438c72e8d89d2f1bed7a63c152db5a337aa3639447528c83",
+            "locator": {
+              "evidence_quote": "In the light-dependent reactions, chlorophyll absorbs light and helps produce ATP and NADPH."
+            },
+            "source_id": "src_qualification_photosynthesis",
+            "source_revision": 1
+          }
+        ],
+        "explanation": "The light-dependent reactions use chlorophyll to absorb light and drive the formation of ATP and NADPH, thereby converting light energy into chemical energy that can be used in later steps.",
+        "objective_ids": [],
+        "prompt": "What is the primary role of the light-dependent reactions in photosynthesis?",
+        "question_type": "short_answer"
+      },
+      {
+        "answer_contract": {
+          "answer": "It uses ATP and NADPH to support carbon fixation.",
+          "kind": "exact"
+        },
+        "citations": [
+          {
+            "content_sha256": "264968663cd3b4c4438c72e8d89d2f1bed7a63c152db5a337aa3639447528c83",
+            "locator": {
+              "evidence_quote": "The Calvin cycle uses ATP and NADPH to support carbon fixation."
+            },
+            "source_id": "src_qualification_photosynthesis",
+            "source_revision": 1
+          }
+        ],
+        "explanation": "The Calvin cycle takes the chemical energy carried by ATP and NADPH from the light-dependent reactions and uses it to fix carbon into organic molecules.",
+        "objective_ids": [],
+        "prompt": "What role does the Calvin cycle play in photosynthesis?",
+        "question_type": "short_answer"
+      }
+    ],
+    "reasoning_effort": "low",
+    "reasoning_output_tokens": 64,
+    "request_id": "resp_0dc1d1c4987e0434016a6e3229be2881908d008889438dbf95",
+    "requested_model": "gpt-5-mini",
+    "response_status": "completed",
+    "schema_version": "course-practice-schema-v1",
+    "store": false
+  },
+  "run_id": "qrun_20260801_core_01"
+}

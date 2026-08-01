@@ -40,6 +40,8 @@ def _package(name: str) -> types.ModuleType:
 def _load_question_router_module(monkeypatch: pytest.MonkeyPatch):
     sys.modules.pop("deeptutor.api.routers.question", None)
 
+    from deeptutor.multi_user.context import set_current_user, user_from_token_payload
+
     fake_agents = _package("deeptutor.agents")
     fake_agents_question = types.ModuleType("deeptutor.agents.question")
     fake_agents_question.AgentCoordinator = object
@@ -58,6 +60,15 @@ def _load_question_router_module(monkeypatch: pytest.MonkeyPatch):
     fake_config.PROJECT_ROOT = Path.cwd()
     fake_config.load_config_with_main = lambda *_args, **_kwargs: {}
     monkeypatch.setitem(sys.modules, "deeptutor.services.config", fake_config)
+
+    fake_auth = types.ModuleType("deeptutor.api.routers.auth")
+    fake_auth.ws_auth_failed = object()
+
+    async def _allow_local_test_user(_websocket):
+        return set_current_user(user_from_token_payload(None))
+
+    fake_auth.ws_require_auth = _allow_local_test_user
+    monkeypatch.setitem(sys.modules, "deeptutor.api.routers.auth", fake_auth)
 
     fake_llm_package = _package("deeptutor.services.llm")
     fake_llm_config = types.ModuleType("deeptutor.services.llm.config")

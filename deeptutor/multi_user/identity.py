@@ -11,6 +11,8 @@ import threading
 from typing import Any
 from uuid import uuid4
 
+from deeptutor.services.file_io import atomic_write_json
+
 from .models import Role
 from .paths import PROJECT_ROOT, SYSTEM_ROOT, migrate_legacy_multi_user_tree
 
@@ -21,13 +23,24 @@ logger = logging.getLogger(__name__)
 # process FastAPI deployments (the ``deeptutor start`` launcher) are fully covered;
 # multi-worker deployments still race and must rely on an external user store
 # (e.g. PocketBase), which is documented in the multi-user README.
-_USERS_WRITE_LOCK = threading.Lock()
+_USERS_WRITE_LOCK = threading.RLock()
 
 AUTH_DIR = SYSTEM_ROOT / "auth"
 USERS_FILE = AUTH_DIR / "users.json"
 SECRET_FILE = AUTH_DIR / "auth_secret"
 LEGACY_USERS_FILE = PROJECT_ROOT / "data" / "user" / "auth_users.json"
 LEGACY_SECRET_FILE = PROJECT_ROOT / "data" / "user" / "auth_secret"
+
+
+def identity_write_lock() -> threading.RLock:
+    """Return the single-process identity authority lock.
+
+    Callers that make an owned resource visible must hold this lock before
+    verifying the account and then acquiring their resource lock.  Account
+    disable/delete/role mutations already use the same lock, so this gives a
+    defined identity -> resource lock order within one process.
+    """
+    return _USERS_WRITE_LOCK
 
 
 def new_user_id() -> str:
@@ -71,18 +84,40 @@ def _canonical_record(
     }
 
 
-def _read_json(path: Path) -> dict[str, Any]:
+def _read_json(path: Path, *, fail_closed: bool = False) -> dict[str, Any]:
     try:
         loaded = json.loads(path.read_text(encoding="utf-8"))
-        return loaded if isinstance(loaded, dict) else {}
+        if not isinstance(loaded, dict):
+            raise ValueError("identity store root must be a JSON object")
+        return loaded
     except Exception as exc:
         logger.warning("Failed to read %s: %s", path, exc)
+        if fail_closed:
+            raise RuntimeError("Identity store is unreadable; authentication is locked") from exc
         return {}
 
 
 def _write_users(users: dict[str, dict[str, Any]]) -> None:
     USERS_FILE.parent.mkdir(parents=True, exist_ok=True)
-    USERS_FILE.write_text(json.dumps(users, indent=2, ensure_ascii=False), encoding="utf-8")
+    try:
+        USERS_FILE.parent.chmod(0o700)
+    except OSError as exc:
+        raise RuntimeError("Could not enforce identity store directory permissions") from exc
+    atomic_write_json(USERS_FILE, users)
+    try:
+        USERS_FILE.chmod(0o600)
+    except OSError as exc:
+        raise RuntimeError("Could not enforce identity store permissions") from exc
+
+
+def _restrict_identity_permissions() -> None:
+    for path, mode in ((USERS_FILE.parent, 0o700), (USERS_FILE, 0o600)):
+        if not path.exists():
+            continue
+        try:
+            path.chmod(mode)
+        except OSError as exc:
+            raise RuntimeError("Could not enforce identity store permissions") from exc
 
 
 def _migrate_legacy_users() -> dict[str, dict[str, Any]] | None:
@@ -129,7 +164,10 @@ def load_users(  # nosec B107 - empty defaults mean "no env fallback supplied".
     migrate_legacy_multi_user_tree()
     users: dict[str, dict[str, Any]] | None = None
     if USERS_FILE.exists():
-        users = _read_json(USERS_FILE)
+        # Corruption is not an empty installation. Failing closed prevents a
+        # torn identity write from reopening first-admin registration.
+        users = _read_json(USERS_FILE, fail_closed=True)
+        _restrict_identity_permissions()
     else:
         users = _migrate_legacy_users()
 
@@ -148,6 +186,16 @@ def load_users(  # nosec B107 - empty defaults mean "no env fallback supplied".
             continue
         canonical[str(username)] = record
         changed = changed or record != value
+
+    seen_ids: dict[str, str] = {}
+    for username, record in canonical.items():
+        user_id = str(record.get("id") or "")
+        previous = seen_ids.get(user_id)
+        if previous is not None:
+            raise RuntimeError(
+                f"Identity store has duplicate immutable user id for {previous!r} and {username!r}"
+            )
+        seen_ids[user_id] = username
 
     if USERS_FILE.exists() and changed:
         _write_users(canonical)
@@ -219,13 +267,20 @@ def get_user_by_id(user_id: str) -> tuple[str, dict[str, Any]] | None:
 
 
 def delete_user(username: str) -> bool:
+    """Disable an account while preserving its recoverable identity record.
+
+    Phase 2 treats removal as immediate access revocation and quarantine.  It
+    intentionally does not purge the user's workspace or identity because hard
+    deletion has a separate retention/authorization contract.
+    """
     if not USERS_FILE.exists():
         return False
-    users = load_users()
-    if username not in users:
-        return False
-    users.pop(username, None)
-    _write_users(users)
+    with _USERS_WRITE_LOCK:
+        users = load_users()
+        if username not in users:
+            return False
+        users[username]["disabled"] = True
+        _write_users(users)
     return True
 
 
@@ -292,11 +347,12 @@ def set_role(username: str, role: Role) -> bool:
         raise ValueError("role must be 'admin' or 'user'")
     if not USERS_FILE.exists():
         return False
-    users = load_users()
-    if username not in users:
-        return False
-    users[username]["role"] = role
-    _write_users(users)
+    with _USERS_WRITE_LOCK:
+        users = load_users()
+        if username not in users:
+            return False
+        users[username]["role"] = role
+        _write_users(users)
     return True
 
 

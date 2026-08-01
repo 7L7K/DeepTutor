@@ -43,7 +43,7 @@ logger = logging.getLogger(__name__)
 
 @router.websocket("/ws")
 async def unified_websocket(ws: WebSocket) -> None:
-    from deeptutor.api.routers.auth import ws_auth_failed, ws_require_auth
+    from deeptutor.api.routers.auth import ws_auth_failed, ws_require_auth, ws_revalidate_auth
     from deeptutor.multi_user.context import reset_current_user
 
     user_token = await ws_require_auth(ws)
@@ -76,25 +76,108 @@ async def unified_websocket(ws: WebSocket) -> None:
         except asyncio.CancelledError:
             pass
 
-    async def subscribe_turn(turn_id: str, after_seq: int = 0) -> None:
+    def runtime_for(course_id: str | None):
         from deeptutor.services.session import get_turn_runtime_manager
 
+        if course_id:
+            from deeptutor.courses.service import install_personal_course_context
+
+            install_personal_course_context()
+        return get_turn_runtime_manager(personal=bool(course_id))
+
+    async def authorize_session(
+        runtime,
+        session_id: str,
+        course_id: str | None,
+        *,
+        writable: bool = False,
+    ) -> bool:
+        session = await runtime.store.get_session(session_id)
+        if session is None or (session.get("course_id") or None) != (course_id or None):
+            await safe_send({"type": "error", "content": "Session not found."})
+            return False
+        if course_id and writable:
+            from deeptutor.courses.repository import CourseNotFoundError
+            from deeptutor.courses.service import CourseUnavailableError, get_current_course_service
+
+            try:
+                course = get_current_course_service().get(course_id)
+            except (CourseNotFoundError, CourseUnavailableError):
+                await safe_send({"type": "error", "content": "Session not found."})
+                return False
+            if course.state != "active":
+                await safe_send(
+                    {"type": "error", "content": "Archived Course sessions are read-only."}
+                )
+                return False
+        return True
+
+    async def authorize_turn(
+        runtime,
+        turn_id: str,
+        course_id: str | None,
+        *,
+        writable: bool = False,
+    ) -> bool:
+        turn = await runtime.store.get_turn(turn_id)
+        if turn is None:
+            await safe_send({"type": "error", "content": "Turn not found."})
+            return False
+        return await authorize_session(
+            runtime,
+            str(turn.get("session_id") or ""),
+            course_id,
+            writable=writable,
+        )
+
+    def course_is_active(course_id: str | None) -> bool:
+        if not course_id:
+            return True
+        from deeptutor.courses.repository import CourseNotFoundError
+        from deeptutor.courses.service import CourseUnavailableError, get_current_course_service
+
+        try:
+            return get_current_course_service().get(course_id).state == "active"
+        except (CourseNotFoundError, CourseUnavailableError):
+            return False
+
+    async def subscribe_turn(
+        turn_id: str, after_seq: int = 0, course_id: str | None = None
+    ) -> None:
         async def _forward() -> None:
-            runtime = get_turn_runtime_manager()
-            async for event in runtime.subscribe_turn(turn_id, after_seq=after_seq):
+            runtime = runtime_for(course_id)
+            async for event in runtime.subscribe_turn(
+                turn_id,
+                after_seq=after_seq,
+                reconcile_orphan=course_is_active(course_id),
+            ):
+                if not await ws_revalidate_auth(ws):
+                    return
                 await safe_send(event)
 
+        runtime = runtime_for(course_id)
+        if not await authorize_turn(runtime, turn_id, course_id):
+            return
         await stop_subscription(turn_id)
         subscription_tasks[turn_id] = asyncio.create_task(_forward())
 
-    async def subscribe_session(session_id: str, after_seq: int = 0) -> None:
-        from deeptutor.services.session import get_turn_runtime_manager
-
+    async def subscribe_session(
+        session_id: str, after_seq: int = 0, course_id: str | None = None
+    ) -> None:
         async def _forward() -> None:
-            runtime = get_turn_runtime_manager()
-            async for event in runtime.subscribe_session(session_id, after_seq=after_seq):
+            runtime = runtime_for(course_id)
+            async for event in runtime.subscribe_session(
+                session_id,
+                after_seq=after_seq,
+                reconcile_orphan=course_is_active(course_id),
+            ):
+                if not await ws_revalidate_auth(ws):
+                    return
                 await safe_send(event)
 
+        runtime = runtime_for(course_id)
+        if not await authorize_session(runtime, session_id, course_id):
+            return
         key = f"session:{session_id}"
         await stop_subscription(key)
         subscription_tasks[key] = asyncio.create_task(_forward())
@@ -102,6 +185,9 @@ async def unified_websocket(ws: WebSocket) -> None:
     try:
         while not closed:
             raw = await ws.receive_text()
+            if not await ws_revalidate_auth(ws):
+                closed = True
+                break
             try:
                 msg = json.loads(raw)
             except json.JSONDecodeError:
@@ -109,11 +195,10 @@ async def unified_websocket(ws: WebSocket) -> None:
                 continue
 
             msg_type = msg.get("type")
+            requested_course_id = str(msg.get("course_id") or "").strip() or None
 
             if msg_type in {"message", "start_turn"}:
-                from deeptutor.services.session import get_turn_runtime_manager
-
-                runtime = get_turn_runtime_manager()
+                runtime = runtime_for(requested_course_id)
                 try:
                     _, turn = await runtime.start_turn(msg)
                 except RuntimeError as exc:
@@ -130,7 +215,9 @@ async def unified_websocket(ws: WebSocket) -> None:
                         }
                     )
                     continue
-                await subscribe_turn(turn["id"], after_seq=0)
+                await subscribe_turn(
+                    turn["id"], after_seq=0, course_id=requested_course_id
+                )
                 continue
 
             if msg_type == "ping":
@@ -146,7 +233,11 @@ async def unified_websocket(ws: WebSocket) -> None:
                 if not turn_id:
                     await safe_send({"type": "error", "content": "Missing turn_id."})
                     continue
-                await subscribe_turn(turn_id, after_seq=int(msg.get("after_seq") or 0))
+                await subscribe_turn(
+                    turn_id,
+                    after_seq=int(msg.get("after_seq") or 0),
+                    course_id=requested_course_id,
+                )
                 continue
 
             if msg_type == "subscribe_session":
@@ -154,7 +245,11 @@ async def unified_websocket(ws: WebSocket) -> None:
                 if not session_id:
                     await safe_send({"type": "error", "content": "Missing session_id."})
                     continue
-                await subscribe_session(session_id, after_seq=int(msg.get("after_seq") or 0))
+                await subscribe_session(
+                    session_id,
+                    after_seq=int(msg.get("after_seq") or 0),
+                    course_id=requested_course_id,
+                )
                 continue
 
             if msg_type == "check_active_turn":
@@ -162,9 +257,11 @@ async def unified_websocket(ws: WebSocket) -> None:
                 if not session_id:
                     await safe_send({"type": "error", "content": "Missing session_id."})
                     continue
-                from deeptutor.services.session import get_turn_runtime_manager
-
-                runtime = get_turn_runtime_manager()
+                runtime = runtime_for(requested_course_id)
+                if not await authorize_session(
+                    runtime, session_id, requested_course_id, writable=True
+                ):
+                    continue
                 active_turn = await runtime.store.get_active_turn(session_id)
                 if active_turn:
                     # Verify the turn has a live execution; stale persisted
@@ -197,7 +294,11 @@ async def unified_websocket(ws: WebSocket) -> None:
                 if not turn_id:
                     await safe_send({"type": "error", "content": "Missing turn_id."})
                     continue
-                await subscribe_turn(turn_id, after_seq=int(msg.get("seq") or 0))
+                await subscribe_turn(
+                    turn_id,
+                    after_seq=int(msg.get("seq") or 0),
+                    course_id=requested_course_id,
+                )
                 continue
 
             if msg_type == "unsubscribe":
@@ -214,9 +315,11 @@ async def unified_websocket(ws: WebSocket) -> None:
                 if not turn_id:
                     await safe_send({"type": "error", "content": "Missing turn_id."})
                     continue
-                from deeptutor.services.session import get_turn_runtime_manager
-
-                runtime = get_turn_runtime_manager()
+                runtime = runtime_for(requested_course_id)
+                if not await authorize_turn(
+                    runtime, turn_id, requested_course_id, writable=True
+                ):
+                    continue
                 cancelled = await runtime.cancel_turn(turn_id)
                 if not cancelled:
                     await safe_send({"type": "error", "content": f"Turn not found: {turn_id}"})
@@ -245,9 +348,11 @@ async def unified_websocket(ws: WebSocket) -> None:
                             continue
                         cleaned.append({"questionId": qid, "text": str(entry.get("text") or "")})
                     answers = cleaned or None
-                from deeptutor.services.session import get_turn_runtime_manager
-
-                runtime = get_turn_runtime_manager()
+                runtime = runtime_for(requested_course_id)
+                if not await authorize_turn(
+                    runtime, turn_id, requested_course_id, writable=True
+                ):
+                    continue
                 accepted = await runtime.submit_user_reply(turn_id, text=text_str, answers=answers)
                 if not accepted:
                     await safe_send(
@@ -263,9 +368,11 @@ async def unified_websocket(ws: WebSocket) -> None:
                 if not session_id:
                     await safe_send({"type": "error", "content": "Missing session_id."})
                     continue
-                from deeptutor.services.session import get_turn_runtime_manager
-
-                runtime = get_turn_runtime_manager()
+                runtime = runtime_for(requested_course_id)
+                if not await authorize_session(
+                    runtime, session_id, requested_course_id, writable=True
+                ):
+                    continue
                 overrides = msg.get("overrides") if isinstance(msg.get("overrides"), dict) else None
                 try:
                     _, turn = await runtime.regenerate_last_turn(
@@ -290,13 +397,20 @@ async def unified_websocket(ws: WebSocket) -> None:
                         }
                     )
                     continue
-                await subscribe_turn(turn["id"], after_seq=0)
+                await subscribe_turn(
+                    turn["id"], after_seq=0, course_id=requested_course_id
+                )
                 continue
 
             if msg_type == "user_input":
                 turn_id = str(msg.get("turn_id") or "").strip()
                 if not turn_id:
                     await safe_send({"type": "error", "content": "Missing turn_id for user_input."})
+                    continue
+                runtime = runtime_for(requested_course_id)
+                if not await authorize_turn(
+                    runtime, turn_id, requested_course_id, writable=True
+                ):
                     continue
                 from deeptutor.core.stream_bus import get_bus
 

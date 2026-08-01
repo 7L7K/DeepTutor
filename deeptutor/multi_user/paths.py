@@ -22,6 +22,8 @@ import os
 from pathlib import Path
 import shutil
 import stat
+import subprocess
+import sys
 import threading
 from typing import Iterator
 
@@ -45,6 +47,173 @@ _legacy_migration_lock = threading.Lock()
 _legacy_migration_done = False
 
 
+def restrict_private_tree_permissions(root: Path) -> None:
+    """Repair a private workspace tree without following symbolic links.
+
+    The beta uses one OS account for the application, so directories need no
+    group/world traversal and regular files need no group/world read access.
+    Symlinks are forbidden in the application-managed private tree because a
+    later legacy path join could otherwise follow one outside the profile.
+    """
+    root = Path(root)
+    if root.is_symlink():
+        raise ValueError("private workspace root cannot be a symbolic link")
+    expected_uid = os.geteuid() if hasattr(os, "geteuid") else None
+
+    def assert_owned(path: Path, path_stat: os.stat_result | None = None) -> None:
+        resolved_stat = path_stat if path_stat is not None else path.lstat()
+        if expected_uid is not None and resolved_stat.st_uid != expected_uid:
+            raise RuntimeError(
+                f"private workspace path is owned by another OS account: {path}"
+            )
+
+    assert_owned(root)
+    repaired_paths = [root]
+    root.chmod(0o700)
+    for current, dirnames, filenames in os.walk(root, topdown=True, followlinks=False):
+        current_path = Path(current)
+        assert_owned(current_path)
+        repaired_paths.append(current_path)
+        current_path.chmod(0o700)
+        safe_dirs: list[str] = []
+        for name in dirnames:
+            child = current_path / name
+            try:
+                child_stat = child.lstat()
+            except FileNotFoundError:
+                # SQLite WAL sidecars and atomically replaced files may vanish
+                # after os.walk snapshots the directory. A missing entry grants
+                # no authority and will be inspected on the next pass if it
+                # reappears.
+                continue
+            mode = child_stat.st_mode
+            assert_owned(child, child_stat)
+            if stat.S_ISLNK(mode):
+                raise RuntimeError(f"symbolic link is not allowed in private workspace: {child}")
+            if stat.S_ISDIR(mode):
+                try:
+                    child.chmod(0o700)
+                except FileNotFoundError:
+                    continue
+                repaired_paths.append(child)
+                safe_dirs.append(name)
+        dirnames[:] = safe_dirs
+        for name in filenames:
+            child = current_path / name
+            try:
+                child_stat = child.lstat()
+            except FileNotFoundError:
+                continue
+            mode = child_stat.st_mode
+            assert_owned(child, child_stat)
+            if stat.S_ISLNK(mode):
+                raise RuntimeError(f"symbolic link is not allowed in private workspace: {child}")
+            if stat.S_ISREG(mode):
+                if child_stat.st_nlink > 1:
+                    raise RuntimeError(
+                        f"hard-linked file is not allowed in private workspace: {child}"
+                    )
+                try:
+                    child.chmod(0o600)
+                except FileNotFoundError:
+                    continue
+                repaired_paths.append(child)
+    if sys.platform == "darwin":
+        # POSIX mode bits do not override a macOS extended ACL. Strip inherited
+        # or restored ACL entries before considering a private tree repaired.
+        unique_paths = list(dict.fromkeys(repaired_paths))
+        for offset in range(0, len(unique_paths), 200):
+            batch = unique_paths[offset : offset + 200]
+            try:
+                subprocess.run(
+                    ["/bin/chmod", "-N", *map(str, batch)],
+                    check=True,
+                    capture_output=True,
+                )
+            except subprocess.CalledProcessError as batch_error:
+                # One transient SQLite sidecar can disappear after the walk and
+                # make macOS chmod reject the whole batch. Retry individually so
+                # only that verified-missing path is ignored; any extant path or
+                # OS error still fails the private-workspace check closed.
+                for candidate in batch:
+                    try:
+                        subprocess.run(
+                            ["/bin/chmod", "-N", str(candidate)],
+                            check=True,
+                            capture_output=True,
+                        )
+                    except subprocess.CalledProcessError as path_error:
+                        # An open SQLite sidecar can disappear and be recreated
+                        # between chmod's pathname lookup and this check. Retry
+                        # only those known-volatile files, revalidating their
+                        # identity constraints every time. Persistent errors
+                        # and every non-sidecar error still fail closed.
+                        retry_error = path_error
+                        retry_limit = (
+                            3
+                            if candidate.name.endswith(("-wal", "-shm"))
+                            else 0
+                        )
+                        for _attempt in range(retry_limit + 1):
+                            try:
+                                candidate_stat = candidate.lstat()
+                            except FileNotFoundError:
+                                break
+                            assert_owned(candidate, candidate_stat)
+                            candidate_mode = candidate_stat.st_mode
+                            if stat.S_ISLNK(candidate_mode):
+                                raise RuntimeError(
+                                    f"symbolic link is not allowed in private workspace: "
+                                    f"{candidate}"
+                                )
+                            if (
+                                stat.S_ISREG(candidate_mode)
+                                and candidate_stat.st_nlink > 1
+                            ):
+                                raise RuntimeError(
+                                    f"hard-linked file is not allowed in private workspace: "
+                                    f"{candidate}"
+                                )
+                            if retry_limit and not stat.S_ISREG(candidate_mode):
+                                raise RuntimeError(
+                                    f"SQLite sidecar is not a regular file in private "
+                                    f"workspace: {candidate}"
+                                )
+                            if retry_limit:
+                                try:
+                                    candidate.chmod(0o600)
+                                except FileNotFoundError:
+                                    break
+                            if _attempt == retry_limit:
+                                raise RuntimeError(
+                                    f"Could not clear extended ACLs from private workspace "
+                                    f"{root}"
+                                ) from retry_error
+                            try:
+                                subprocess.run(
+                                    ["/bin/chmod", "-N", str(candidate)],
+                                    check=True,
+                                    capture_output=True,
+                                )
+                                break
+                            except subprocess.CalledProcessError as exc:
+                                retry_error = exc
+                                continue
+                            except OSError as exc:
+                                raise RuntimeError(
+                                    f"Could not clear extended ACLs from private workspace "
+                                    f"{root}"
+                                ) from exc
+                    except OSError as path_error:
+                        raise RuntimeError(
+                            f"Could not clear extended ACLs from private workspace {root}"
+                        ) from path_error
+            except OSError as exc:
+                raise RuntimeError(
+                    f"Could not clear extended ACLs from private workspace {root}"
+                ) from exc
+
+
 def migrate_legacy_multi_user_tree() -> None:
     """One-time move of the pre-v1.5 sibling ``multi-user/`` tree into ``data/``.
 
@@ -61,9 +230,17 @@ def migrate_legacy_multi_user_tree() -> None:
     with _legacy_migration_lock:
         if _legacy_migration_done:
             return
-        _legacy_migration_done = True
         legacy = LEGACY_MULTI_USER_ROOT
         if not legacy.is_dir():
+            if USERS_ROOT.exists():
+                for profile in USERS_ROOT.iterdir():
+                    if profile.is_symlink():
+                        raise RuntimeError(
+                            f"symbolic link is not allowed as a private profile: {profile}"
+                        )
+                    if profile.is_dir():
+                        restrict_private_tree_permissions(profile)
+            _legacy_migration_done = True
             return
         leftovers: list[str] = []
         for child in sorted(legacy.iterdir()):
@@ -74,16 +251,36 @@ def migrate_legacy_multi_user_tree() -> None:
             target.parent.mkdir(parents=True, exist_ok=True)
             shutil.move(str(child), str(target))
             logger.info("Migrated legacy multi-user path %s -> %s", child, target)
+        if USERS_ROOT.exists():
+            for profile in USERS_ROOT.iterdir():
+                if profile.is_symlink():
+                    raise RuntimeError(
+                        f"symbolic link is not allowed as a private profile: {profile}"
+                    )
+                if profile.is_dir():
+                    restrict_private_tree_permissions(profile)
         if leftovers:
+            for name in leftovers:
+                leftover = legacy / name
+                if name == "_system":
+                    continue
+                if leftover.is_symlink():
+                    raise RuntimeError(
+                        f"symbolic link is not allowed as a legacy private profile: {leftover}"
+                    )
+                if leftover.is_dir():
+                    restrict_private_tree_permissions(leftover)
             logger.warning(
                 "Legacy multi-user tree partially migrated; reconcile by hand: %s",
                 ", ".join(str(legacy / name) for name in leftovers),
             )
+            _legacy_migration_done = True
             return
         try:
             legacy.rmdir()
         except OSError:
             logger.warning("Could not remove legacy multi-user root %s", legacy)
+        _legacy_migration_done = True
 
 
 def admin_scope() -> UserScope:
@@ -102,12 +299,41 @@ def local_admin_user() -> CurrentUser:
 def scope_for_user(user_id: str, *, is_admin: bool) -> UserScope:
     if is_admin:
         return admin_scope()
+    return personal_scope_for_user(user_id)
+
+
+def personal_scope_for_user(user_id: str) -> UserScope:
+    """Return the private workspace scope for an immutable user id.
+
+    Authorization role and personal data ownership are deliberately separate:
+    administrators still receive a private ``data/users/<uid>`` tree for
+    courses and other learner-owned product data.  The legacy
+    :func:`scope_for_user` contract continues to route generic admin features
+    to the shared admin workspace.
+    """
+    if not user_id:
+        raise ValueError("A non-empty user_id is required for a personal workspace")
     migrate_legacy_multi_user_tree()
-    return UserScope(kind="user", user_id=user_id, root=(USERS_ROOT / user_id).resolve())
+    users_root = USERS_ROOT.resolve()
+    candidate = users_root / user_id
+    try:
+        lexical_relative = candidate.relative_to(users_root)
+    except ValueError as exc:
+        raise ValueError("user_id resolves outside the private workspace root") from exc
+    if lexical_relative.parts != (user_id,) or candidate.is_symlink():
+        raise ValueError("user_id must identify exactly one non-symlink private workspace")
+    root = candidate.resolve()
+    try:
+        relative = root.relative_to(users_root)
+    except ValueError as exc:
+        raise ValueError("user_id resolves outside the private workspace root") from exc
+    if relative.parts != (user_id,):
+        raise ValueError("user_id must identify exactly one private workspace")
+    return UserScope(kind="user", user_id=user_id, root=root)
 
 
 def ensure_user_workspace(user_id: str) -> Path:
-    return ensure_scope_workspace(scope_for_user(user_id, is_admin=False))
+    return ensure_scope_workspace(personal_scope_for_user(user_id))
 
 
 def ensure_scope_workspace(scope: UserScope) -> Path:
@@ -119,9 +345,29 @@ def ensure_scope_workspace(scope: UserScope) -> Path:
     For regular users both paths are identical.
     """
     root = scope.root.resolve()
+    if scope.kind == "user":
+        # Private learner workspaces contain Course databases, source files,
+        # transcripts, and mastery state.  Do not rely on the host process's
+        # umask (commonly 022, which creates world-traversable directories).
+        # The application process is the only OS principal that needs access
+        # during the single-host beta.
+        try:
+            root.mkdir(parents=True, exist_ok=True, mode=0o700)
+            restrict_private_tree_permissions(root)
+        except OSError as exc:
+            raise RuntimeError(
+                f"Could not enforce private workspace permissions for {root}"
+            ) from exc
     PathService(workspace_root=root).ensure_all_directories()
     (root / "knowledge_bases").mkdir(parents=True, exist_ok=True)
     (root / "memory").mkdir(parents=True, exist_ok=True)
+    if scope.kind == "user":
+        try:
+            restrict_private_tree_permissions(root)
+        except OSError as exc:
+            raise RuntimeError(
+                f"Could not enforce private workspace permissions for {root}"
+            ) from exc
     return root
 
 
@@ -248,6 +494,25 @@ def get_owner_secrets_dir() -> Path:
 def current_owner_id() -> str:
     """Id of the account owning the current scope (a partner's is its owner's)."""
     return _resolve_owner()[0]
+
+
+def get_personal_path_service(user_id: str | None = None) -> PathService:
+    """Resolve a private user workspace without any admin/default fallback.
+
+    Course-owned services use this accessor instead of ``get_path_service``.
+    When ``user_id`` is omitted an installed authenticated context is required;
+    absence is a terminal ownership error rather than a route to admin data.
+    """
+    if user_id is None:
+        from .context import get_current_user_or_none
+
+        current = get_current_user_or_none()
+        if current is None:
+            raise RuntimeError("Authenticated user context is required")
+        user_id = current.id
+    scope = personal_scope_for_user(user_id)
+    ensure_scope_workspace(scope)
+    return get_path_service_for_scope(scope)
 
 
 @contextmanager

@@ -1,0 +1,270 @@
+{
+  "version": 1,
+  "pack_id": "teeechr-core-mini-luna-v1",
+  "models": [
+    "gpt-5-mini",
+    "gpt-5.6-luna"
+  ],
+  "reasoning_effort": "low",
+  "max_calls_per_model_case": 1,
+  "max_retries": 0,
+  "paid_gate": "not_authorized",
+  "approved_spend_cap_microusd": null,
+  "cases": [
+    {
+      "case_id": "q_general_chat_01",
+      "feature": "general_chat",
+      "pathway": "general_chat",
+      "required_graders": [
+        "correctness",
+        "instruction_following",
+        "conversation_continuity"
+      ],
+      "input_sha256": "245604fce441465f915ab58c02b6084b4611c760c3571acc51f6f12f6272d5d3",
+      "input": {
+        "conversation": [
+          {
+            "role": "user",
+            "content": "I keep mixing up correlation and causation. Explain the difference in plain language, give one original example, then ask one short check-for-understanding question."
+          }
+        ],
+        "sources": [],
+        "expected_contract": {
+          "must_distinguish_association_from_causal_effect": true,
+          "must_include_one_example": true,
+          "must_end_with_one_check_question": true
+        }
+      }
+    },
+    {
+      "case_id": "q_course_chat_01",
+      "feature": "course_chat",
+      "pathway": "course_chat",
+      "required_graders": [
+        "correctness",
+        "source_support",
+        "citation_accuracy",
+        "unsupported_question_abstention"
+      ],
+      "input_sha256": "e418d28703007024c3feeb09592cc06c2ae5513a0456408cbb648270006fa839",
+      "input": {
+        "conversation": [
+          {
+            "role": "user",
+            "content": "Using only the Course excerpt, explain why random assignment matters for causal inference. Also tell me the study's sample size."
+          }
+        ],
+        "sources": [
+          {
+            "source_id": "src_qualification_statistics",
+            "source_revision": 1,
+            "content_sha256": "c8f6507a2dd786193f8d6713e8e437c5d23df5857cd76706829fd812822bdf97",
+            "text": "Random assignment distributes known and unknown confounders across treatment groups on average. It supports causal inference when the study is otherwise well conducted. This excerpt does not report a sample size."
+          }
+        ],
+        "expected_contract": {
+          "must_explain_random_assignment": true,
+          "must_abstain_on_sample_size": true,
+          "citations_required": true
+        }
+      }
+    },
+    {
+      "case_id": "q_course_flashcards_01",
+      "feature": "flashcard_generation",
+      "pathway": "course_flashcards",
+      "required_graders": [
+        "correctness",
+        "source_support",
+        "citation_accuracy",
+        "no_duplicate_cards",
+        "no_answer_leakage",
+        "useful_difficulty"
+      ],
+      "input_sha256": "3b9bb358becf3644860ac35741e43659a8180af40ab0f9972cf594923c0aae79",
+      "input": {
+        "prompt": "Create three intermediate flashcards that distinguish ATP coupling from long-term energy storage.",
+        "item_limit": 3,
+        "sources": [
+          {
+            "source_id": "src_qualification_atp",
+            "source_revision": 1,
+            "content_sha256": "6ce629af9e6fa2c85520e32aef97c758d38d99a33dd2905e2d9c3eb2c2d90c0c",
+            "text": "ATP couples energy-releasing reactions to energy-requiring cellular work. Hydrolysis of ATP to ADP and phosphate can transfer energy to coupled processes. ATP is regenerated rather than stored as a long-term energy reserve."
+          }
+        ],
+        "expected_contract": {
+          "required_count": 3,
+          "citations_required": true,
+          "publication_authority": "none"
+        }
+      }
+    },
+    {
+      "case_id": "q_conversation_flashcards_01",
+      "feature": "flashcard_generation",
+      "pathway": "conversation_flashcards",
+      "required_graders": [
+        "correctness",
+        "conversation_support",
+        "no_duplicate_cards",
+        "no_answer_leakage"
+      ],
+      "input_sha256": "047a89e381f22b338ace8f2e96e7805993ebe53051ece2a89e678f18b0ef32a6",
+      "input": {
+        "conversation": [
+          {
+            "role": "user",
+            "content": "What does slope mean in a linear equation?"
+          },
+          {
+            "role": "assistant",
+            "content": "In y = mx + b, slope m is the change in y divided by the change in x. It describes the rate of change."
+          },
+          {
+            "role": "user",
+            "content": "Draft two flashcards from our conversation, but do not publish them."
+          }
+        ],
+        "item_limit": 2,
+        "sources": [],
+        "expected_contract": {
+          "required_count": 2,
+          "must_use_conversation_only": true,
+          "publication_authority": "none"
+        }
+      }
+    },
+    {
+      "case_id": "q_course_practice_01",
+      "feature": "practice_generation",
+      "pathway": "course_practice",
+      "required_graders": [
+        "answerability",
+        "expected_answer_correctness",
+        "citation_accuracy",
+        "no_ambiguity",
+        "deterministic_grading_compatibility"
+      ],
+      "input_sha256": "f119f1602e284615a19e984e3641e169d38996aa9c008198bea331885178496c",
+      "input": {
+        "prompt": "Create three mixed-difficulty short-answer questions about ATP coupling.",
+        "item_limit": 3,
+        "sources": [
+          {
+            "source_id": "src_qualification_atp",
+            "source_revision": 1,
+            "content_sha256": "6ce629af9e6fa2c85520e32aef97c758d38d99a33dd2905e2d9c3eb2c2d90c0c",
+            "text": "ATP couples energy-releasing reactions to energy-requiring cellular work. Hydrolysis of ATP to ADP and phosphate can transfer energy to coupled processes. ATP is regenerated rather than stored as a long-term energy reserve."
+          }
+        ],
+        "expected_contract": {
+          "required_count": 3,
+          "question_type": "short_answer",
+          "citations_required": true,
+          "publication_authority": "none"
+        }
+      }
+    },
+    {
+      "case_id": "q_general_study_practice_01",
+      "feature": "practice_generation",
+      "pathway": "general_study_practice",
+      "required_graders": [
+        "answerability",
+        "expected_answer_correctness",
+        "source_support",
+        "no_ambiguity",
+        "deterministic_grading_compatibility"
+      ],
+      "input_sha256": "365fb3bd62d2d8af76baf67d2f7a590d32c687dc5f87ae7070681dd3994f8b58",
+      "input": {
+        "prompt": "Using only this learner-provided study passage, create two foundation short-answer questions about the roles of the light-dependent reactions and the Calvin cycle.",
+        "item_limit": 2,
+        "context_kind": "learner_provided_study_material",
+        "sources": [
+          {
+            "source_id": "src_qualification_photosynthesis",
+            "source_revision": 1,
+            "content_sha256": "264968663cd3b4c4438c72e8d89d2f1bed7a63c152db5a337aa3639447528c83",
+            "text": "Photosynthesis converts light energy into chemical energy. In the light-dependent reactions, chlorophyll absorbs light and helps produce ATP and NADPH. The Calvin cycle uses ATP and NADPH to support carbon fixation."
+          }
+        ],
+        "expected_contract": {
+          "required_count": 2,
+          "question_type": "short_answer",
+          "must_use_supplied_material_only": true,
+          "publication_authority": "none"
+        }
+      }
+    },
+    {
+      "case_id": "q_make_flashcards_handoff_01",
+      "feature": "general_chat",
+      "pathway": "make_flashcards_handoff",
+      "required_graders": [
+        "intent_accuracy",
+        "explicit_confirmation",
+        "no_implicit_publication",
+        "authority_preservation"
+      ],
+      "input_sha256": "4cd5e81ab4c270bc769468facce59d9bf1867fccefe15b49e34fbc95c586358e",
+      "input": {
+        "conversation": [
+          {
+            "role": "user",
+            "content": "Help me understand slope as a rate of change."
+          },
+          {
+            "role": "assistant",
+            "content": "Slope compares the change in the output to the change in the input."
+          },
+          {
+            "role": "user",
+            "content": "Make flashcards from this."
+          }
+        ],
+        "sources": [],
+        "expected_contract": {
+          "handoff": "flashcard_generation_plan",
+          "requires_user_confirmation": true,
+          "publication_authority": "none"
+        }
+      }
+    },
+    {
+      "case_id": "q_quiz_me_handoff_01",
+      "feature": "course_chat",
+      "pathway": "quiz_me_handoff",
+      "required_graders": [
+        "intent_accuracy",
+        "source_boundary",
+        "explicit_confirmation",
+        "no_implicit_publication",
+        "authority_preservation"
+      ],
+      "input_sha256": "bb9bc2a03f3421704c81cf0d2c02e19665e12849697283dfac40382f5db17296",
+      "input": {
+        "conversation": [
+          {
+            "role": "user",
+            "content": "Quiz me on how to interpret slope, using only this Course excerpt."
+          }
+        ],
+        "sources": [
+          {
+            "source_id": "src_qualification_slope",
+            "source_revision": 1,
+            "content_sha256": "c4f32edd7e9c1faeb1f6393363d6201ecfeb5f724fdc91d248eebc2534b02bba",
+            "text": "A linear equation can be written as y = mx + b. The slope m is the change in y divided by the change in x, and b is the y-intercept."
+          }
+        ],
+        "expected_contract": {
+          "handoff": "practice_generation_plan",
+          "requires_user_confirmation": true,
+          "publication_authority": "none"
+        }
+      }
+    }
+  ]
+}

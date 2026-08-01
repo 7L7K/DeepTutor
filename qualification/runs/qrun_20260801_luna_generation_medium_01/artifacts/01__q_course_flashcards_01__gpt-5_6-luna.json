@@ -1,0 +1,153 @@
+{
+  "case_id": "q_course_flashcards_01",
+  "input_sha256": "3b9bb358becf3644860ac35741e43659a8180af40ab0f9972cf594923c0aae79",
+  "pathway": "course_flashcards",
+  "requested_model": "gpt-5.6-luna",
+  "result": {
+    "actual_model": "gpt-5.6-luna",
+    "cached_input_tokens": 0,
+    "cards": [
+      {
+        "answer": "ATP couples energy-releasing reactions to energy-requiring cellular work.",
+        "card_type": "definition",
+        "citations": [
+          {
+            "content_sha256": "6ce629af9e6fa2c85520e32aef97c758d38d99a33dd2905e2d9c3eb2c2d90c0c",
+            "locator": {
+              "evidence_quote": "ATP couples energy-releasing reactions to energy-requiring cellular work."
+            },
+            "source_id": "src_qualification_atp",
+            "source_revision": 1
+          }
+        ],
+        "hint": "Think of ATP as an intermediary between two types of reactions.",
+        "objective_ids": [],
+        "prompt": "What role does ATP play in cellular energy coupling?"
+      },
+      {
+        "answer": "ATP is regenerated rather than stored as a long-term energy reserve.",
+        "card_type": "comparison",
+        "citations": [
+          {
+            "content_sha256": "6ce629af9e6fa2c85520e32aef97c758d38d99a33dd2905e2d9c3eb2c2d90c0c",
+            "locator": {
+              "evidence_quote": "ATP is regenerated rather than stored as a long-term energy reserve."
+            },
+            "source_id": "src_qualification_atp",
+            "source_revision": 1
+          }
+        ],
+        "hint": "Focus on whether ATP is repeatedly renewed or stockpiled.",
+        "objective_ids": [],
+        "prompt": "How does ATP compare with a long-term energy reserve?"
+      },
+      {
+        "answer": "Hydrolysis of ATP to ADP and phosphate can transfer energy to coupled processes.",
+        "card_type": "application",
+        "citations": [
+          {
+            "content_sha256": "6ce629af9e6fa2c85520e32aef97c758d38d99a33dd2905e2d9c3eb2c2d90c0c",
+            "locator": {
+              "evidence_quote": "Hydrolysis of ATP to ADP and phosphate can transfer energy to coupled processes."
+            },
+            "source_id": "src_qualification_atp",
+            "source_revision": 1
+          }
+        ],
+        "hint": "Consider what happens when ATP is broken down.",
+        "objective_ids": [],
+        "prompt": "What can ATP hydrolysis do in a coupled cellular process?"
+      }
+    ],
+    "estimated_cost_microusd": 803,
+    "generated_at": 1785610925.118748,
+    "input_tokens": 615,
+    "latency_ms": 4659,
+    "output": {
+      "actual_model": "gpt-5.6-luna",
+      "cached_input_tokens": 0,
+      "cards": [
+        {
+          "answer": "ATP couples energy-releasing reactions to energy-requiring cellular work.",
+          "card_type": "definition",
+          "citations": [
+            {
+              "content_sha256": "6ce629af9e6fa2c85520e32aef97c758d38d99a33dd2905e2d9c3eb2c2d90c0c",
+              "locator": {
+                "evidence_quote": "ATP couples energy-releasing reactions to energy-requiring cellular work."
+              },
+              "source_id": "src_qualification_atp",
+              "source_revision": 1
+            }
+          ],
+          "hint": "Think of ATP as an intermediary between two types of reactions.",
+          "objective_ids": [],
+          "prompt": "What role does ATP play in cellular energy coupling?"
+        },
+        {
+          "answer": "ATP is regenerated rather than stored as a long-term energy reserve.",
+          "card_type": "comparison",
+          "citations": [
+            {
+              "content_sha256": "6ce629af9e6fa2c85520e32aef97c758d38d99a33dd2905e2d9c3eb2c2d90c0c",
+              "locator": {
+                "evidence_quote": "ATP is regenerated rather than stored as a long-term energy reserve."
+              },
+              "source_id": "src_qualification_atp",
+              "source_revision": 1
+            }
+          ],
+          "hint": "Focus on whether ATP is repeatedly renewed or stockpiled.",
+          "objective_ids": [],
+          "prompt": "How does ATP compare with a long-term energy reserve?"
+        },
+        {
+          "answer": "Hydrolysis of ATP to ADP and phosphate can transfer energy to coupled processes.",
+          "card_type": "application",
+          "citations": [
+            {
+              "content_sha256": "6ce629af9e6fa2c85520e32aef97c758d38d99a33dd2905e2d9c3eb2c2d90c0c",
+              "locator": {
+                "evidence_quote": "Hydrolysis of ATP to ADP and phosphate can transfer energy to coupled processes."
+              },
+              "source_id": "src_qualification_atp",
+              "source_revision": 1
+            }
+          ],
+          "hint": "Consider what happens when ATP is broken down.",
+          "objective_ids": [],
+          "prompt": "What can ATP hydrolysis do in a coupled cellular process?"
+        }
+      ],
+      "estimated_cost_microusd": 803,
+      "generated_at": 1785610925.118748,
+      "input_tokens": 615,
+      "latency_ms": 4659,
+      "output_tokens": 566,
+      "pricing_version": "openai-gpt-5.6-luna-2026-08-01",
+      "prompt_version": "course-flashcards-v2",
+      "provider_label": "openai",
+      "reasoning_effort": "medium",
+      "reasoning_output_tokens": 133,
+      "request_id": "resp_0b57416b3b83a8b5016a6e42a9489881938294bf70c97372b0",
+      "requested_model": "gpt-5.6-luna",
+      "response_status": "completed",
+      "schema_version": "course-flashcards-schema-v2",
+      "service_tier": "default",
+      "store": false
+    },
+    "output_tokens": 566,
+    "pricing_version": "openai-gpt-5.6-luna-2026-08-01",
+    "prompt_version": "course-flashcards-v2",
+    "provider_label": "openai",
+    "reasoning_effort": "medium",
+    "reasoning_output_tokens": 133,
+    "request_id": "resp_0b57416b3b83a8b5016a6e42a9489881938294bf70c97372b0",
+    "requested_model": "gpt-5.6-luna",
+    "response_status": "completed",
+    "schema_version": "course-flashcards-schema-v2",
+    "service_tier": "default",
+    "store": false
+  },
+  "run_id": "qrun_20260801_luna_generation_medium_01"
+}

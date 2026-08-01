@@ -2,9 +2,14 @@
 
 from __future__ import annotations
 
+import pytest
+
 from deeptutor.services.config.provider_runtime import (
     resolve_llm_runtime_config,
     resolve_search_runtime_config,
+)
+from deeptutor.services.config.text_generation_registry import (
+    default_text_generation_catalog,
 )
 
 
@@ -36,6 +41,7 @@ def _build_catalog(
     }
     return {
         "version": 1,
+        "text_generation": default_text_generation_catalog(),
         "services": {
             "llm": {
                 "active_profile_id": llm_profile["id"],
@@ -53,6 +59,92 @@ def _build_catalog(
             },
         },
     }
+
+
+def test_text_generation_feature_policy_overrides_active_chat_model() -> None:
+    profile = {
+        "id": "llm-p",
+        "name": "LLM",
+        "binding": "openai",
+        "base_url": "https://api.openai.com/v1",
+        "api_key": "sk-test",
+        "api_version": "",
+        "extra_headers": {},
+        "models": [
+            {
+                "id": "llm-luna",
+                "name": "Luna",
+                "model": "gpt-5.6-luna",
+                "reasoning_effort": "medium",
+            },
+            {
+                "id": "llm-mini",
+                "name": "Mini",
+                "model": "gpt-5-mini",
+                "reasoning_effort": "high",
+            },
+        ],
+    }
+    catalog = _build_catalog(llm_profile=profile, llm_model=profile["models"][0])
+
+    resolved = resolve_llm_runtime_config(
+        catalog=catalog,
+        text_generation_feature="general_chat",
+    )
+
+    assert resolved.model == "gpt-5.6-luna"
+    assert resolved.reasoning_effort == "low"
+    assert resolved.context_window == 1_050_000
+
+
+def test_chat_policy_can_resolve_luna_from_configured_profile() -> None:
+    profile = {
+        "id": "llm-p",
+        "name": "LLM",
+        "binding": "openai",
+        "base_url": "https://api.openai.com/v1",
+        "api_key": "sk-test",
+        "api_version": "",
+        "extra_headers": {},
+        "models": [
+            {"id": "llm-mini", "name": "Mini", "model": "gpt-5-mini"},
+            {"id": "llm-luna", "name": "Luna", "model": "gpt-5.6-luna"},
+        ],
+    }
+    catalog = _build_catalog(llm_profile=profile, llm_model=profile["models"][0])
+    catalog["text_generation"]["default_model"] = "gpt-5.6-luna"
+    catalog["text_generation"]["features"]["flashcard_generation"]["model"] = (
+        "rollback"
+    )
+    catalog["text_generation"]["features"]["practice_generation"]["model"] = (
+        "rollback"
+    )
+
+    resolved = resolve_llm_runtime_config(
+        catalog=catalog,
+        text_generation_feature="course_chat",
+    )
+
+    assert resolved.model == "gpt-5.6-luna"
+    assert resolved.reasoning_effort == "low"
+    assert resolved.context_window == 1_050_000
+
+
+def test_chat_policy_rejects_model_without_provider_configuration() -> None:
+    catalog = _build_catalog()
+    catalog["text_generation"]["default_model"] = "gpt-5.6-luna"
+    catalog["text_generation"]["features"]["flashcard_generation"]["model"] = (
+        "rollback"
+    )
+    catalog["text_generation"]["features"]["practice_generation"]["model"] = (
+        "rollback"
+    )
+
+    with pytest.raises(ValueError, match="no configured provider profile"):
+        resolve_llm_runtime_config(
+            catalog=catalog,
+            text_generation_feature="general_chat",
+        )
 
 
 def test_llm_explicit_binding_and_headers() -> None:

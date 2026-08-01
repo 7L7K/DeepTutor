@@ -4,7 +4,12 @@ import time
 import pytest
 
 from deeptutor.learning.models import KnowledgeType, LearningProgress, RepetitionState
-from deeptutor.learning.storage import LearningStore, _atomic_write_text
+from deeptutor.learning.storage import (
+    LearningConflictError,
+    LearningDataError,
+    LearningStore,
+    _atomic_write_text,
+)
 
 
 @pytest.fixture
@@ -64,6 +69,23 @@ class TestSaveLoad:
         store.save(lp)
         assert store.load("book1").mastery_levels["kp1"] == 0.9
 
+    def test_stale_save_is_rejected_instead_of_losing_mastery(self, store):
+        original = LearningProgress(book_id="book1")
+        store.save(original)
+        first = store.load("book1")
+        stale = store.load("book1")
+        assert first is not None and stale is not None
+
+        first.mastery_levels["kp_a"] = 0.8
+        store.save(first)
+        stale.mastery_levels["kp_b"] = 0.6
+        with pytest.raises(LearningConflictError, match="stale"):
+            store.save(stale)
+
+        persisted = store.load("book1")
+        assert persisted is not None
+        assert persisted.mastery_levels == {"kp_a": 0.8}
+
 
 # ── load nonexistent ─────────────────────────────────────────────────────
 
@@ -71,6 +93,21 @@ class TestSaveLoad:
 class TestLoadNonexistent:
     def test_returns_none(self, store):
         assert store.load("nonexistent") is None
+
+
+class TestCorruptState:
+    def test_load_fails_closed_and_quarantine_preserves_bytes(self, store, tmp_path):
+        path = tmp_path / "book1.json"
+        path.write_text("{broken", encoding="utf-8")
+
+        with pytest.raises(LearningDataError, match="unreadable"):
+            store.load("book1")
+        quarantined = store.quarantine_corrupt("book1")
+
+        assert quarantined is not None
+        assert quarantined.read_text(encoding="utf-8") == "{broken"
+        assert not path.exists()
+        assert store.load("book1") is None
 
 
 # ── exists ───────────────────────────────────────────────────────────────

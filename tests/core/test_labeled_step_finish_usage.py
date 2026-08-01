@@ -40,6 +40,30 @@ def _usage_chunk(*, prompt: int, completion: int, total: int) -> SimpleNamespace
     )
 
 
+def _tool_chunk(*, finish_reason: str | None = None) -> SimpleNamespace:
+    return SimpleNamespace(
+        choices=[
+            SimpleNamespace(
+                delta=SimpleNamespace(
+                    content="``TOOL``",
+                    tool_calls=[
+                        SimpleNamespace(
+                            index=0,
+                            id="call_luna_1",
+                            function=SimpleNamespace(
+                                name="lookup_course_source",
+                                arguments='{"source_id":"src_qualification"}',
+                            ),
+                        )
+                    ],
+                ),
+                finish_reason=finish_reason,
+            )
+        ],
+        usage=None,
+    )
+
+
 class _Stream:
     def __init__(self, chunks: list[SimpleNamespace], *, stall_after_chunks: bool = False) -> None:
         self._chunks = list(chunks)
@@ -172,3 +196,67 @@ async def test_stream_options_unsupported_retries_without_usage_request() -> Non
     assert len(client.calls) == 2
     assert "stream_options" in client.calls[0]
     assert "stream_options" not in client.calls[1]
+
+
+@pytest.mark.asyncio
+async def test_luna_shaped_stream_preserves_function_call_and_versioned_usage() -> None:
+    stream = _Stream(
+        [
+            _tool_chunk(finish_reason="tool_calls"),
+            _usage_chunk(prompt=10, completion=4, total=14),
+        ]
+    )
+    client = _Client([stream])
+    usage = UsageTracker(model="gpt-5.6-luna")
+    tool_schema = {
+        "type": "function",
+        "function": {
+            "name": "lookup_course_source",
+            "parameters": {
+                "type": "object",
+                "properties": {"source_id": {"type": "string"}},
+                "required": ["source_id"],
+            },
+        },
+    }
+
+    result = await run_labeled_step(
+        client=client,
+        model="gpt-5.6-luna",
+        messages=[{"role": "user", "content": "Use the Course source."}],
+        completion_kwargs={"reasoning_effort": "low"},
+        tool_schemas=[tool_schema],
+        allowed_labels=("FINISH", "THINK", "TOOL"),
+        final_labels=frozenset({"FINISH"}),
+        tool_label="TOOL",
+        stream=StreamBus(),
+        source="test",
+        stage="responding",
+        iter_meta={"label": "Reasoning"},
+        binding="openai",
+        usage=usage,
+    )
+
+    assert result.label == "TOOL"
+    assert result.tool_calls == [
+        {
+            "id": "call_luna_1",
+            "name": "lookup_course_source",
+            "arguments": '{"source_id":"src_qualification"}',
+        }
+    ]
+    assert client.calls == [
+        {
+            "model": "gpt-5.6-luna",
+            "messages": [{"role": "user", "content": "Use the Course source."}],
+            "stream": True,
+            "reasoning_effort": "low",
+            "stream_options": {"include_usage": True},
+            "tools": [tool_schema],
+            "tool_choice": "auto",
+        }
+    ]
+    summary = usage.summary()
+    assert summary is not None
+    assert summary["total_tokens"] == 14
+    assert summary["pricing_version"] == "openai-gpt-5.6-luna-2026-08-01"

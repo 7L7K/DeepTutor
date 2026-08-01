@@ -8,9 +8,13 @@ The fix makes the tool-name parameter positional-only.
 
 from __future__ import annotations
 
+from pathlib import Path
+
 import pytest
 
 from deeptutor.core.tool_protocol import BaseTool, ToolDefinition, ToolParameter, ToolResult
+from deeptutor.multi_user.context import reset_current_user, set_current_user
+from deeptutor.multi_user.models import CurrentUser, UserScope
 from deeptutor.runtime.registry.tool_registry import ToolRegistry
 
 
@@ -45,3 +49,45 @@ async def test_execute_forwards_event_sink_alongside_name() -> None:
     # Mirrors the dispatcher, which always passes event_sink plus tool args.
     result = await reg.execute("thing_reader", event_sink=None, name="gadget")
     assert result.content == "read:gadget"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "record",
+    [
+        {"id": "usr_one", "role": "admin", "disabled": True},
+        {"id": "usr_one", "role": "user", "disabled": False},
+    ],
+)
+async def test_tool_execution_revalidates_account_before_side_effect(
+    monkeypatch,
+    tmp_path: Path,
+    record: dict[str, object],
+) -> None:
+    from deeptutor.services import auth as auth_service
+
+    calls: list[dict[str, object]] = []
+
+    class SideEffectTool(_NameParamTool):
+        async def execute(self, **kwargs: object) -> ToolResult:
+            calls.append(kwargs)
+            return ToolResult(content="unexpected")
+
+    registry = ToolRegistry()
+    registry.register(SideEffectTool())
+    monkeypatch.setattr(auth_service, "AUTH_ENABLED", True)
+    monkeypatch.setattr(auth_service, "_load_users", lambda: {"one": record})
+    token = set_current_user(
+        CurrentUser(
+            id="usr_one",
+            username="one",
+            role="admin",
+            scope=UserScope(kind="user", user_id="usr_one", root=tmp_path),
+        )
+    )
+    try:
+        with pytest.raises(PermissionError, match="authorization changed"):
+            await registry.execute("thing_reader", name="blocked")
+        assert calls == []
+    finally:
+        reset_current_user(token)

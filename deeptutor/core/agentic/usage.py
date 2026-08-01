@@ -28,8 +28,12 @@ class UsageTracker:
         self.total_tokens: int = 0
         self.calls: int = 0
         self.model: str | None = model
+        self.actual_model: str | None = None
 
     def add_from_response(self, response_or_usage: Any) -> None:
+        actual_model = getattr(response_or_usage, "model", None)
+        if isinstance(actual_model, str) and actual_model.strip():
+            self.actual_model = actual_model.strip()
         usage = getattr(response_or_usage, "usage", None) or response_or_usage
         prompt = int(getattr(usage, "prompt_tokens", 0) or 0)
         completion = int(getattr(usage, "completion_tokens", 0) or 0)
@@ -81,20 +85,47 @@ class UsageTracker:
         if self.calls == 0:
             return None
         cost_usd = 0.0
+        pricing_version: str | None = None
+        pricing_authority = "unavailable"
         if self.model:
-            # Local import keeps ``core.agentic`` import-light at module load.
-            from deeptutor.logging.stats.llm_stats import get_pricing
+            # Core TEEECHR text models use the deployment-owned registry.
+            # Legacy/secondary models retain their existing reporting path
+            # until their feature-specific qualification phase.
+            from deeptutor.services.config.text_generation_registry import (
+                TextGenerationRegistryError,
+                get_text_generation_registry,
+            )
 
-            pricing = get_pricing(self.model)
-            cost_usd = (self.prompt_tokens / 1000.0) * pricing.get("input", 0.0) + (
-                self.completion_tokens / 1000.0
-            ) * pricing.get("output", 0.0)
+            try:
+                definition = get_text_generation_registry().require_api_model(self.model)
+            except TextGenerationRegistryError:
+                from deeptutor.logging.stats.llm_stats import get_pricing
+
+                pricing = get_pricing(self.model)
+                cost_usd = (self.prompt_tokens / 1000.0) * pricing.get(
+                    "input", 0.0
+                ) + (self.completion_tokens / 1000.0) * pricing.get("output", 0.0)
+                pricing_authority = "legacy-secondary"
+            else:
+                cost_usd = (
+                    definition.pricing.cost_microusd(
+                        input_tokens=self.prompt_tokens,
+                        output_tokens=self.completion_tokens,
+                    )
+                    / 1_000_000
+                )
+                pricing_version = definition.pricing.version
+                pricing_authority = "text_generation_registry"
         return {
             "total_cost_usd": cost_usd,
             "total_tokens": self.total_tokens,
             "total_calls": self.calls,
             "prompt_tokens": self.prompt_tokens,
             "completion_tokens": self.completion_tokens,
+            "requested_model": self.model,
+            "actual_model": self.actual_model,
+            "pricing_version": pricing_version,
+            "pricing_authority": pricing_authority,
         }
 
 

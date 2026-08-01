@@ -6,18 +6,18 @@ import { capabilityForPath } from "../lib/capability-routes";
 // ── capabilityForPath ──────────────────────────────────────────────────
 
 test("capabilityForPath maps LLM features to llm", () => {
-  assert.equal(capabilityForPath("/home"), "llm");
+  assert.equal(capabilityForPath("/home"), null); // Course organization stays available.
   assert.equal(capabilityForPath("/partners"), "llm");
   assert.equal(capabilityForPath("/co-writer"), "llm");
   assert.equal(capabilityForPath("/book"), "llm");
-  assert.equal(capabilityForPath("/space/learning"), "llm"); // Mastery Path
+  assert.equal(capabilityForPath("/space/learning"), null); // Model-free Course learning.
   assert.equal(capabilityForPath("/playground"), "llm");
 });
 
 test("capabilityForPath matches nested routes by prefix", () => {
-  assert.equal(capabilityForPath("/home/abc-123"), "llm");
+  assert.equal(capabilityForPath("/home/abc-123"), null);
   assert.equal(capabilityForPath("/partners/partner-1"), "llm");
-  assert.equal(capabilityForPath("/space/learning/book-1"), "llm");
+  assert.equal(capabilityForPath("/space/learning/book-1"), null);
 });
 
 test("capabilityForPath matches on a segment boundary, not a bare prefix", () => {

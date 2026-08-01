@@ -1,0 +1,11 @@
+{
+  "version": 1,
+  "run_id": "qrun_20260801_luna_generation_medium_01",
+  "review_authority": "human_domain_review",
+  "observations": [
+    {"case_id":"q_course_flashcards_01","requested_model":"gpt-5.6-luna","state":"completed","grader_results":{"correctness":"pass","source_support":"pass","citation_accuracy":"pass","no_duplicate_cards":"pass","no_answer_leakage":"pass","useful_difficulty":"pass"},"security_result":"pass","validation_result":"pass"},
+    {"case_id":"q_conversation_flashcards_01","requested_model":"gpt-5.6-luna","state":"completed","grader_results":{"correctness":"pass","conversation_support":"pass","no_duplicate_cards":"pass","no_answer_leakage":"pass"},"security_result":"pass","validation_result":"pass"},
+    {"case_id":"q_course_practice_01","requested_model":"gpt-5.6-luna","state":"completed","grader_results":{"answerability":"pass","expected_answer_correctness":"pass","citation_accuracy":"pass","no_ambiguity":"pass","deterministic_grading_compatibility":"pass"},"security_result":"pass","validation_result":"pass"},
+    {"case_id":"q_general_study_practice_01","requested_model":"gpt-5.6-luna","state":"completed","grader_results":{"answerability":"pass","expected_answer_correctness":"pass","source_support":"pass","no_ambiguity":"pass","deterministic_grading_compatibility":"pass"},"security_result":"pass","validation_result":"pass"}
+  ]
+}

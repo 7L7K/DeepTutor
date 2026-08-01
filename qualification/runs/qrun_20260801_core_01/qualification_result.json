@@ -1,0 +1,21 @@
+{
+  "version": 1,
+  "run_id": "qrun_20260801_core_01",
+  "calls_authorized": 16,
+  "calls_attempted": 16,
+  "retries": 0,
+  "completed_calls": 15,
+  "failed_calls": 1,
+  "uncertain_calls": 0,
+  "settled_cost_microusd": 12788,
+  "approved_spend_cap_microusd": 250000,
+  "overall_result": "partial_qualification",
+  "feature_decisions": {
+    "general_chat": {"model":"gpt-5.6-luna","mode":"qualified","result":"pass","rollback_model":"gpt-5-mini"},
+    "course_chat": {"model":"gpt-5.6-luna","mode":"qualified","result":"pass","rollback_model":"gpt-5-mini"},
+    "flashcard_generation": {"model":"gpt-5-mini","mode":"rollback","result":"fail","reason":"Mini course-flashcard output failed post-response validation, and the Mini conversation-only artifact crossed its source boundary."},
+    "practice_generation": {"model":"gpt-5-mini","mode":"rollback","result":"fail","reason":"Luna produced an ambiguous course-practice question, and Mini added unsupported material in the source-only general-study case."}
+  },
+  "promotion_rule": "Only features whose Mini and Luna observations all completed and passed every required grader were promoted.",
+  "additional_paid_calls_authorized": false
+}

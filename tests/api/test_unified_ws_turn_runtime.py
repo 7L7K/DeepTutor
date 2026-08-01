@@ -6,11 +6,29 @@ import pytest
 
 from deeptutor.core.stream import StreamEvent, StreamEventType
 from deeptutor.services.session.sqlite_store import SQLiteSessionStore
-from deeptutor.services.session.turn_runtime import TurnRuntimeManager
+from deeptutor.services.session.turn_runtime import (
+    TurnRuntimeManager,
+    _request_snapshot_metadata,
+    _TurnExecution,
+)
 
 
 async def _noop_async(*_args, **_kwargs):
     return None
+
+
+@pytest.fixture(autouse=True)
+def _use_legacy_llm_config_for_generic_turn_tests(monkeypatch):
+    """Keep generic runtime tests independent of deployment study policy.
+
+    Dedicated provider-policy tests cover the TEEECHR registry. These tests
+    intentionally stub the legacy LLM config and exercise session/turn
+    behavior, so a developer's configured policy must not change their result.
+    """
+    monkeypatch.setattr(
+        "deeptutor.services.model_selection.runtime.set_text_generation_feature",
+        lambda _feature: None,
+    )
 
 
 def _fake_skill_service() -> SimpleNamespace:
@@ -71,6 +89,195 @@ def _model_catalog() -> dict:
             }
         },
     }
+
+
+def test_course_provenance_snapshot_is_persisted_as_one_owned_revision_set() -> None:
+    metadata = _request_snapshot_metadata(
+        payload={
+            "language": "en",
+            "tools": [],
+            "knowledge_bases": ["personal:kb:course_crs_one"],
+            "course_context": {
+                "course_id": "crs_one",
+                "course_revision": 4,
+                "source_ids": ["src_one"],
+                "source_revisions": {"src_one": 2},
+                "source_fingerprints": {"src_one": "a" * 64},
+            },
+        },
+        content="Explain this",
+        capability="chat",
+        config={},
+        attachments=[],
+        notebook_references=[],
+        history_references=[],
+        question_notebook_references=[],
+        book_references=[],
+        persona="",
+        memory_references=[],
+        llm_selection=None,
+    )["request_snapshot"]
+    assert metadata["courseId"] == "crs_one"
+    assert metadata["courseRevision"] == 4
+    assert metadata["sourceIds"] == ["src_one"]
+    assert metadata["sourceRevisions"] == {"src_one": 2}
+    assert metadata["sourceFingerprints"] == {"src_one": "a" * 64}
+
+
+def test_turn_commit_revalidation_rejects_disable_and_role_change(monkeypatch) -> None:
+    from deeptutor.services import auth as auth_service
+
+    execution = _TurnExecution(
+        turn_id="turn_one",
+        session_id="session_one",
+        capability="chat",
+        payload={},
+        owner_user_id="u_owner",
+        owner_role="admin",
+    )
+    monkeypatch.setattr(auth_service, "AUTH_ENABLED", True)
+    current = {
+        "owner": {
+            "id": "u_owner",
+            "role": "admin",
+            "disabled": False,
+        }
+    }
+    monkeypatch.setattr(auth_service, "_load_users", lambda: current)
+
+    assert TurnRuntimeManager._execution_owner_is_current(execution) is True
+    current["owner"]["role"] = "user"
+    assert TurnRuntimeManager._execution_owner_is_current(execution) is False
+    execution.payload["course_id"] = "crs_private"
+    assert TurnRuntimeManager._execution_owner_is_current(execution) is False
+    execution.payload.clear()
+    current["owner"]["role"] = "admin"
+    current["owner"]["disabled"] = True
+    assert TurnRuntimeManager._execution_owner_is_current(execution) is False
+    current.clear()
+    assert TurnRuntimeManager._execution_owner_is_current(execution) is False
+
+
+@pytest.mark.asyncio
+async def test_terminal_capability_error_marks_turn_failed_without_blank_assistant(
+    monkeypatch,
+    tmp_path,
+) -> None:
+    store = SQLiteSessionStore(tmp_path / "chat_history.db")
+    runtime = TurnRuntimeManager(store)
+
+    class FakeContextBuilder:
+        def __init__(self, _store):
+            pass
+
+        async def build(self, **_kwargs):
+            return SimpleNamespace(
+                conversation_history=[],
+                conversation_summary="",
+                context_text="",
+                token_count=0,
+                budget=0,
+            )
+
+    class FakeOrchestrator:
+        async def handle(self, _context):
+            yield StreamEvent(
+                type=StreamEventType.ERROR,
+                source="chat",
+                content="provider rejected request",
+                metadata={"turn_terminal": True, "status": "failed"},
+            )
+            yield StreamEvent(
+                type=StreamEventType.DONE,
+                source="chat",
+                metadata={"status": "failed"},
+            )
+
+    monkeypatch.setattr("deeptutor.services.llm.config.get_llm_config", lambda: SimpleNamespace())
+    monkeypatch.setattr(
+        "deeptutor.services.session.context_builder.ContextBuilder",
+        FakeContextBuilder,
+    )
+    monkeypatch.setattr("deeptutor.runtime.orchestrator.ChatOrchestrator", FakeOrchestrator)
+    monkeypatch.setattr(
+        "deeptutor.book.context.build_book_context",
+        lambda *_args, **_kwargs: SimpleNamespace(text="", references=[], warnings=[]),
+    )
+    monkeypatch.setattr(
+        "deeptutor.services.memory.get_memory_store",
+        lambda: SimpleNamespace(read_l3_concat=lambda: "", emit=_noop_async),
+    )
+    monkeypatch.setattr("deeptutor.services.skill.get_skill_service", _fake_skill_service)
+    monkeypatch.setattr("deeptutor.services.persona.get_persona_service", _fake_persona_service)
+
+    session, turn = await runtime.start_turn(
+        {
+            "type": "start_turn",
+            "content": "hello",
+            "session_id": None,
+            "capability": None,
+            "tools": [],
+            "knowledge_bases": [],
+            "attachments": [],
+            "language": "en",
+            "config": {},
+        }
+    )
+    events = [event async for event in runtime.subscribe_turn(turn["id"], after_seq=0)]
+
+    persisted = await store.get_turn(turn["id"])
+    detail = await store.get_session_with_messages(session["id"])
+    assert persisted is not None
+    assert persisted["status"] == "failed"
+    assert persisted["error"] == "provider rejected request"
+    assert detail is not None
+    assert [message["role"] for message in detail["messages"]] == ["user"]
+    assert [event["type"] for event in events] == ["session", "error", "done"]
+    assert events[-1]["metadata"]["status"] == "failed"
+
+
+@pytest.mark.asyncio
+async def test_inflight_stream_stops_before_next_event_after_revocation(
+    monkeypatch,
+    tmp_path,
+) -> None:
+    from deeptutor.services import auth as auth_service
+
+    store = SQLiteSessionStore(tmp_path / "chat_history.db")
+    runtime = TurnRuntimeManager(store)
+    execution = _TurnExecution(
+        turn_id="turn_one",
+        session_id="session_one",
+        capability="chat",
+        payload={},
+        owner_user_id="u_owner",
+        owner_role="admin",
+    )
+    current = {
+        "owner": {"id": "u_owner", "role": "admin", "disabled": False}
+    }
+    published: list[str] = []
+
+    async def capture(_execution, event):
+        published.append(event.content)
+        return {"type": event.type.value}
+
+    monkeypatch.setattr(auth_service, "AUTH_ENABLED", True)
+    monkeypatch.setattr(auth_service, "_load_users", lambda: current)
+    monkeypatch.setattr(runtime, "_publish_live_event", capture)
+
+    await runtime._publish_authorized_live_event(
+        execution,
+        StreamEvent(type=StreamEventType.CONTENT, source="chat", content="first"),
+    )
+    current["owner"]["disabled"] = True
+    with pytest.raises(PermissionError, match="authorization changed"):
+        await runtime._publish_authorized_live_event(
+            execution,
+            StreamEvent(type=StreamEventType.CONTENT, source="chat", content="second"),
+        )
+
+    assert published == ["first"]
 
 
 @pytest.mark.asyncio
@@ -581,10 +788,18 @@ async def test_turn_runtime_allows_model_switching_within_same_session(
 async def test_regenerate_reuses_snapshot_or_override_llm_selection(tmp_path) -> None:
     store = SQLiteSessionStore(tmp_path / "chat_history.db")
     captured_payloads: list[dict] = []
+    captured_course_contexts: list[dict | None] = []
 
     class CapturingRuntime(TurnRuntimeManager):
-        async def start_turn(self, payload: dict):
+        async def start_turn(
+            self,
+            payload: dict,
+            *,
+            preserved_course_context: dict | None = None,
+            replace_assistant_message_id: int | str | None = None,
+        ):
             captured_payloads.append(payload)
+            captured_course_contexts.append(preserved_course_context)
             return {"id": payload["session_id"]}, {"id": "turn-test"}
 
     runtime = CapturingRuntime(store)
@@ -619,6 +834,35 @@ async def test_regenerate_reuses_snapshot_or_override_llm_selection(tmp_path) ->
     assert captured_payloads[-1]["llm_selection"] == {
         "profile_id": "p-default",
         "model_id": "m-default",
+    }
+    assert captured_course_contexts == [None, None]
+
+    course_session = await store.create_session(
+        session_id="course-session-with-snapshot",
+        course_id="crs_one",
+    )
+    await store.add_message(
+        session_id=course_session["id"],
+        role="user",
+        content="course again",
+        capability="chat",
+        metadata={
+            "request_snapshot": {
+                "courseId": "crs_one",
+                "courseRevision": 5,
+                "sourceIds": ["src_one"],
+                "sourceRevisions": {"src_one": 2},
+                "sourceFingerprints": {"src_one": "a" * 64},
+            }
+        },
+    )
+    await runtime.regenerate_last_turn(course_session["id"])
+    assert captured_course_contexts[-1] == {
+        "course_id": "crs_one",
+        "course_revision": 5,
+        "source_ids": ["src_one"],
+        "source_revisions": {"src_one": 2},
+        "source_fingerprints": {"src_one": "a" * 64},
     }
 
 

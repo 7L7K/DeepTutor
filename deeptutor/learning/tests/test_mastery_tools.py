@@ -5,10 +5,16 @@ path id injected server-side (never by the model)."""
 
 from __future__ import annotations
 
+import asyncio
 import json
 
 import pytest
 
+from deeptutor.agents.chat.agentic_pipeline import AgenticChatPipeline
+from deeptutor.capabilities.mastery import tools as mastery_tools
+from deeptutor.capabilities.mastery.tools import CourseMasteryReplyReceipt
+from deeptutor.core.context import UnifiedContext
+from deeptutor.learning.service import LearningService
 from deeptutor.learning.storage import LearningStore
 from deeptutor.services.session.sqlite_store import SQLiteSessionStore
 from deeptutor.tools.mastery_tool import (
@@ -61,6 +67,54 @@ async def _build_basic(path_id):
     )
 
 
+def _course_kwargs(pending, receipt=None, *, answer="forged"):
+    kwargs = {
+        "_mastery_path_id": "lp_crs_one",
+        "_course_id": "crs_one",
+        "_session_id": "session_one",
+        "_turn_id": "turn_one",
+        "answer": answer,
+    }
+    if receipt is not None:
+        kwargs["_course_mastery_reply_receipt"] = receipt
+    return kwargs
+
+
+async def _course_quiz(path_id="lp_crs_one"):
+    await _build_basic(path_id)
+    status = json.loads((await MasteryStatusTool().execute(_mastery_path_id=path_id)).content)
+    return await MasteryQuizTool().execute(
+        _mastery_path_id=path_id,
+        knowledge_point_id=status["next"]["knowledge_point_id"],
+        question="2+2?",
+        expected_answer="4",
+        question_type="short",
+    )
+
+
+def _mint_course_receipt(pipeline, service, *, answer="4", questions=None):
+    pending = service.get_or_create("lp_crs_one").pending_question
+    assert pending is not None
+    return pipeline._mint_course_mastery_reply_receipt(
+        context=UnifiedContext(
+            session_id="session_one",
+            metadata={
+                "course_context": {"course_id": "crs_one"},
+                "mastery_path_id": "lp_crs_one",
+                "turn_id": "turn_one",
+            },
+        ),
+        ask_user={
+            "questions": questions
+            if questions is not None
+            else [{"id": "q1", "prompt": pending.prompt, "options": []}]
+        },
+        ask_tool_call_id="ask_call_one",
+        reply_text=answer,
+        answers=None,
+    )
+
+
 # ── build ───────────────────────────────────────────────────────────────────
 
 
@@ -110,6 +164,25 @@ async def test_build_unknown_type_defaults_to_concept(path_id):
 async def test_status_empty_path_asks_for_build(path_id):
     payload = json.loads((await MasteryStatusTool().execute(_mastery_path_id=path_id)).content)
     assert payload["status"] == "empty"
+    assert "mastery_build" in payload["message"]
+
+
+@pytest.mark.asyncio
+async def test_course_status_empty_path_requires_owned_learning_setup(path_id, monkeypatch):
+    service = LearningService(LearningStore())
+    monkeypatch.setattr(mastery_tools, "_new_service", lambda _path_id: service)
+    payload = json.loads(
+        (
+            await MasteryStatusTool().execute(
+                _mastery_path_id="lp_crs_one",
+                _course_id="crs_one",
+            )
+        ).content
+    )
+
+    assert payload["status"] == "empty"
+    assert "Course learning setup" in payload["message"]
+    assert "mastery_build" not in payload["message"]
 
 
 @pytest.mark.asyncio
@@ -185,6 +258,250 @@ async def test_wrong_answer_does_not_master(path_id):
     )
     assert result["is_correct"] is False
     assert result["mastered"] is False
+
+
+@pytest.mark.asyncio
+async def test_course_grade_without_reply_receipt_has_no_mutation(path_id, monkeypatch):
+    service = LearningService(LearningStore())
+    monkeypatch.setattr(mastery_tools, "_new_service", lambda _path_id: service)
+    await _course_quiz()
+    before = service.get_or_create("lp_crs_one")
+    assert before.pending_question is not None
+    version = before.version
+
+    result = await MasteryGradeTool().execute(**_course_kwargs(before.pending_question, answer="4"))
+
+    assert result.success is False
+    after = service.get_or_create("lp_crs_one")
+    assert after.version == version
+    assert after.pending_question is not None
+    assert after.quiz_attempts == []
+
+
+@pytest.mark.asyncio
+async def test_course_grade_uses_paused_reply_not_forged_model_answer(path_id, monkeypatch):
+    service = LearningService(LearningStore())
+    monkeypatch.setattr(mastery_tools, "_new_service", lambda _path_id: service)
+    await _course_quiz()
+    pipeline = AgenticChatPipeline(language="en")
+    monkeypatch.setattr(
+        "deeptutor.agents.chat.agentic_pipeline._new_service", lambda _path_id: service
+    )
+
+    receipt = _mint_course_receipt(pipeline, service, answer="4")
+    assert receipt is not None
+    correct = json.loads(
+        (
+            await MasteryGradeTool().execute(
+                **_course_kwargs(service.get_or_create("lp_crs_one").pending_question, receipt, answer="5")
+            )
+        ).content
+    )
+    assert correct["is_correct"] is True
+    assert receipt.consumed is True
+
+    await _course_quiz()
+    wrong_receipt = _mint_course_receipt(pipeline, service, answer="5")
+    assert wrong_receipt is not None
+    wrong = json.loads(
+        (
+            await MasteryGradeTool().execute(
+                **_course_kwargs(
+                    service.get_or_create("lp_crs_one").pending_question,
+                    wrong_receipt,
+                    answer="4",
+                )
+            )
+        ).content
+    )
+    assert wrong["is_correct"] is False
+
+
+@pytest.mark.asyncio
+async def test_course_receipt_rejects_mismatch_and_is_one_use(path_id, monkeypatch):
+    service = LearningService(LearningStore())
+    monkeypatch.setattr(mastery_tools, "_new_service", lambda _path_id: service)
+    await _course_quiz()
+    pipeline = AgenticChatPipeline(language="en")
+    monkeypatch.setattr(
+        "deeptutor.agents.chat.agentic_pipeline._new_service", lambda _path_id: service
+    )
+    receipt = _mint_course_receipt(pipeline, service)
+    assert receipt is not None
+    receipt.pending_question_id = "wrong_question"
+    mismatch = await MasteryGradeTool().execute(
+        **_course_kwargs(service.get_or_create("lp_crs_one").pending_question, receipt)
+    )
+    assert mismatch.success is False
+    assert service.get_or_create("lp_crs_one").quiz_attempts == []
+
+    receipt.pending_question_id = service.get_or_create("lp_crs_one").pending_question.question_id
+    first = await MasteryGradeTool().execute(
+        **_course_kwargs(service.get_or_create("lp_crs_one").pending_question, receipt)
+    )
+    assert first.success is True
+    assert receipt.consumed is True
+    second = await MasteryGradeTool().execute(**_course_kwargs(None, receipt))
+    assert second.success is False
+    assert len(service.get_or_create("lp_crs_one").quiz_attempts) == 1
+
+
+@pytest.mark.asyncio
+async def test_course_receipt_rejects_parallel_duplicate_grades(path_id, monkeypatch):
+    service = LearningService(LearningStore())
+    monkeypatch.setattr(mastery_tools, "_new_service", lambda _path_id: service)
+    await _build_basic("lp_crs_one")
+    status = json.loads(
+        (await MasteryStatusTool().execute(_mastery_path_id="lp_crs_one")).content
+    )
+    await MasteryQuizTool().execute(
+        _mastery_path_id="lp_crs_one",
+        knowledge_point_id=status["next"]["knowledge_point_id"],
+        question="2+2?",
+        expected_answer="A",
+        question_type="choice",
+        options=["A: four", "B: five"],
+    )
+    pending = service.get_or_create("lp_crs_one").pending_question
+    assert pending is not None
+    receipt = CourseMasteryReplyReceipt(
+        version=1,
+        course_id="crs_one",
+        mastery_path_id="lp_crs_one",
+        session_id="session_one",
+        turn_id="turn_one",
+        pending_question_id=pending.question_id,
+        ask_tool_call_id="ask_call_one",
+        ask_question_id="q1",
+        actual_answer_text="A",
+    )
+
+    async def _slow_choice(*_args):
+        await asyncio.sleep(0)
+        return {"A": "four", "B": "five"}, "A"
+
+    monkeypatch.setattr(mastery_tools, "_resolve_pending_choice", _slow_choice)
+    kwargs = _course_kwargs(pending, receipt, answer="B")
+    first, second = await asyncio.gather(
+        MasteryGradeTool().execute(**kwargs), MasteryGradeTool().execute(**kwargs)
+    )
+
+    assert sorted([first.success, second.success]) == [False, True]
+    assert receipt.consumed is True
+    assert len(service.get_or_create("lp_crs_one").quiz_attempts) == 1
+
+
+@pytest.mark.asyncio
+async def test_course_receipt_retries_once_after_real_store_save_failure(path_id, monkeypatch):
+    store = LearningStore()
+    service = LearningService(store)
+    monkeypatch.setattr(mastery_tools, "_new_service", lambda _path_id: service)
+    await _course_quiz()
+    pipeline = AgenticChatPipeline(language="en")
+    monkeypatch.setattr(
+        "deeptutor.agents.chat.agentic_pipeline._new_service", lambda _path_id: service
+    )
+    receipt = _mint_course_receipt(pipeline, service)
+    assert receipt is not None
+
+    original_save = service.save
+
+    def _save_failure(_progress):
+        raise RuntimeError("simulated durable save failure")
+
+    monkeypatch.setattr(service, "save", _save_failure)
+    with pytest.raises(RuntimeError, match="durable save failure"):
+        await MasteryGradeTool().execute(
+            **_course_kwargs(service.get_or_create("lp_crs_one").pending_question, receipt)
+        )
+
+    assert receipt.consumed is False
+    assert receipt.redeeming is False
+    failed_state = store.load("lp_crs_one")
+    assert failed_state is not None
+    assert failed_state.pending_question is not None
+    assert failed_state.quiz_attempts == []
+
+    monkeypatch.setattr(service, "save", original_save)
+    retry = await MasteryGradeTool().execute(
+        **_course_kwargs(service.get_or_create("lp_crs_one").pending_question, receipt)
+    )
+
+    assert retry.success is True
+    assert receipt.consumed is True
+    durable_state = store.load("lp_crs_one")
+    assert durable_state is not None
+    assert durable_state.pending_question is None
+    assert len(durable_state.quiz_attempts) == 1
+
+
+@pytest.mark.asyncio
+async def test_course_receipt_requires_single_nonempty_matching_card_reply(path_id, monkeypatch):
+    service = LearningService(LearningStore())
+    monkeypatch.setattr(mastery_tools, "_new_service", lambda _path_id: service)
+    await _course_quiz()
+    pipeline = AgenticChatPipeline(language="en")
+    monkeypatch.setattr(
+        "deeptutor.agents.chat.agentic_pipeline._new_service", lambda _path_id: service
+    )
+
+    assert _mint_course_receipt(
+        pipeline,
+        service,
+        questions=[
+            {"id": "q1", "prompt": "2+2?", "options": []},
+            {"id": "q2", "prompt": "Another?", "options": []},
+        ],
+    ) is None
+    assert _mint_course_receipt(pipeline, service, answer="   ") is None
+    assert _mint_course_receipt(
+        pipeline,
+        service,
+        questions=[{"id": "q1", "prompt": "different", "options": []}],
+    ) is None
+    receipt = _mint_course_receipt(pipeline, service)
+    assert receipt is not None
+    with pytest.raises(TypeError):
+        json.dumps(receipt)
+
+
+@pytest.mark.asyncio
+async def test_course_quiz_preserves_pending_and_rejects_qualitative_objectives(path_id, monkeypatch):
+    service = LearningService(LearningStore())
+    monkeypatch.setattr(mastery_tools, "_new_service", lambda _path_id: service)
+    await _course_quiz()
+    pending = service.get_or_create("lp_crs_one").pending_question
+    assert pending is not None
+
+    overwrite = await MasteryQuizTool().execute(
+        _mastery_path_id="lp_crs_one",
+        knowledge_point_id=pending.knowledge_point_id,
+        question="replacement?",
+        expected_answer="x",
+    )
+    assert overwrite.success is False
+    assert service.get_or_create("lp_crs_one").pending_question.question_id == pending.question_id
+
+    status = json.loads(
+        (await MasteryStatusTool().execute(_mastery_path_id="lp_crs_one", _course_id="crs_one")).content
+    )
+    assert status["pending_question"] == {
+        "prompt": "2+2?",
+        "question_type": "short",
+        "options": [],
+    }
+    assert "expected_answer" not in json.dumps(status)
+
+    service.clear_pending_question(service.get_or_create("lp_crs_one"))
+    concept_id = service.get_or_create("lp_crs_one").modules[0].knowledge_points[1].id
+    qualitative = await MasteryQuizTool().execute(
+        _mastery_path_id="lp_crs_one",
+        knowledge_point_id=concept_id,
+        question="Explain XOR",
+        expected_answer="an exclusive OR operation",
+    )
+    assert qualitative.success is False
+    assert service.get_or_create("lp_crs_one").pending_question is None
 
 
 @pytest.mark.asyncio

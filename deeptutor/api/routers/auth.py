@@ -20,7 +20,8 @@ from fastapi import (
 from fastapi.responses import FileResponse, HTMLResponse
 from pydantic import BaseModel, field_validator
 
-from deeptutor.services.config import load_auth_settings
+from deeptutor.services.config import load_auth_settings, load_system_settings
+from deeptutor.services.config.origins import normalize_origin, normalize_origins
 
 # SameSite=None lets the cookie work when the browser accesses the frontend via
 # 127.0.0.1 and the backend via localhost (different origins on the same machine).
@@ -58,6 +59,31 @@ router = APIRouter()
 
 _COOKIE_NAME = "dt_token"
 _COOKIE_MAX_AGE = TOKEN_EXPIRE_HOURS * 3600
+
+
+def _allowed_browser_origins() -> set[str]:
+    """Return the exact frontend origins allowed to use cookie authentication."""
+    system = load_system_settings()
+    frontend_port = str(system["frontend_port"])
+    origins = {
+        f"http://localhost:{frontend_port}",
+        f"http://127.0.0.1:{frontend_port}",
+        "http://localhost:3000",
+        "http://127.0.0.1:3000",
+    }
+    origins.update(normalize_origins([system["cors_origin"], system["cors_origins"]]))
+    return origins
+
+
+def _websocket_origin_allowed(ws: WebSocket) -> bool:
+    """Protect cookie-authenticated WebSocket upgrades from cross-site use.
+
+    Non-browser clients commonly omit ``Origin`` and authenticate with an
+    explicit token; those clients remain supported. Browsers always send an
+    Origin and must match the configured frontend allowlist.
+    """
+    origin = normalize_origin(ws.headers.get("origin"))
+    return not origin or origin in _allowed_browser_origins()
 
 
 def _cookie_attrs() -> dict:
@@ -315,6 +341,10 @@ async def ws_require_auth(ws: WebSocket) -> _CtxToken | _WsAuthFailed:
     if not AUTH_ENABLED:
         return _install_current_user(None)
 
+    if not _websocket_origin_allowed(ws):
+        await ws.close(code=4003)
+        return ws_auth_failed
+
     token = ws.query_params.get("token") or ws.cookies.get(_COOKIE_NAME)
     payload = decode_token(token) if token else None
     if not payload:
@@ -322,6 +352,20 @@ async def ws_require_auth(ws: WebSocket) -> _CtxToken | _WsAuthFailed:
         return ws_auth_failed
 
     return _install_current_user(payload)
+
+
+async def ws_revalidate_auth(ws: WebSocket) -> bool:
+    """Revalidate account existence/status/role for a live WebSocket command."""
+    if not AUTH_ENABLED:
+        _install_current_user(None)
+        return True
+    token = ws.query_params.get("token") or ws.cookies.get(_COOKIE_NAME)
+    payload = decode_token(token) if token else None
+    if not payload:
+        await ws.close(code=4001)
+        return False
+    _install_current_user(payload)
+    return True
 
 
 async def require_admin(
@@ -824,28 +868,19 @@ async def remove_user(
     username: str,
     current: TokenPayload = Depends(require_admin),
 ) -> dict:
-    """Delete a user. Admins cannot delete their own account."""
+    """Disable a user. Admins cannot disable their own account."""
     if current and username == current.username:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="You cannot delete your own account",
         )
 
-    # Capture the id before the record disappears so the avatar file can go too.
-    info = get_user_info(username)
-
     removed = delete_user(username)
     if not removed:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
 
-    user_id = str(info.get("id") or "") if info else ""
-    if user_id and _USER_ID_RE.match(user_id):
-        from deeptutor.multi_user.identity import delete_avatar_file
-
-        delete_avatar_file(user_id)
-
-    logger.info(f"Admin '{current.username if current else 'local'}' deleted user '{username}'")
-    return {"ok": True}
+    logger.info(f"Admin '{current.username if current else 'local'}' disabled user '{username}'")
+    return {"ok": True, "disabled": True}
 
 
 @router.put("/users/{username}/role", status_code=status.HTTP_200_OK)

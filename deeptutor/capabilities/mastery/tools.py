@@ -15,6 +15,8 @@ race on a shared object.
 
 from __future__ import annotations
 
+import asyncio
+from dataclasses import dataclass, field
 import json
 import logging
 from typing import TYPE_CHECKING, Any
@@ -69,10 +71,50 @@ _ALLOWED_KP_TYPES = {t.value for t in KnowledgeType}
 logger = logging.getLogger(__name__)
 
 
-def _new_service() -> LearningService:
+@dataclass(slots=True)
+class CourseMasteryReplyReceipt:
+    """Private, turn-local authority for one Course mastery grade.
+
+    This object is intentionally not a pydantic model or JSON payload. It is
+    created only by the chat pause/resume seam and passed directly to the
+    Course-grade tool; it must never enter context metadata, events, or the
+    persisted learning state.
+    """
+
+    version: int
+    course_id: str
+    mastery_path_id: str
+    session_id: str
+    turn_id: str
+    pending_question_id: str
+    ask_tool_call_id: str
+    ask_question_id: str
+    actual_answer_text: str
+    consumed: bool = False
+    redeeming: bool = field(default=False, repr=False)
+    # A receipt belongs to one resident pipeline turn. This lock closes the
+    # gather() race between duplicate mastery_grade calls in that turn; it is
+    # deliberately not persisted or offered as a distributed CAS claim.
+    _redeem_lock: asyncio.Lock = field(default_factory=asyncio.Lock, init=False, repr=False)
+
+    def __getstate__(self) -> None:
+        raise TypeError("Course mastery reply receipts are turn-local and non-serializable")
+
+    def __reduce__(self) -> None:
+        raise TypeError("Course mastery reply receipts are turn-local and non-serializable")
+
+
+def _new_service(path_id: str = "") -> LearningService:
     from deeptutor.learning.service import LearningService
     from deeptutor.learning.storage import LearningStore
 
+    if str(path_id).startswith("lp_crs_"):
+        from deeptutor.multi_user.paths import get_personal_path_service
+
+        paths = get_personal_path_service()
+        return LearningService(
+            LearningStore(root=paths.get_workspace_dir() / "learning")
+        )
     return LearningService(LearningStore())
 
 
@@ -86,6 +128,23 @@ def _resolve_session_id(kwargs: dict[str, Any]) -> str:
 
 def _resolve_turn_id(kwargs: dict[str, Any]) -> str:
     return str(kwargs.get("_turn_id") or "").strip()
+
+
+def _resolve_course_id(kwargs: dict[str, Any]) -> str:
+    return str(kwargs.get("_course_id") or "").strip()
+
+
+def _is_course_path(path_id: str) -> bool:
+    return path_id.startswith("lp_crs_")
+
+
+def _safe_pending_question(pending: PendingQuestion) -> dict[str, Any]:
+    """The learner-visible pending-question fields; never return the key."""
+    return {
+        "prompt": pending.prompt,
+        "question_type": pending.question_type,
+        "options": list(pending.options or []),
+    }
 
 
 def _question_bank_type(question_type: str) -> str:
@@ -145,17 +204,9 @@ async def _sync_mastery_attempt_to_question_bank(
         "user_answer": user_answer,
         "is_correct": is_correct,
     }
-    try:
-        from deeptutor.services.session import get_sqlite_session_store
+    from deeptutor.services.session import get_sqlite_session_store
 
-        await get_sqlite_session_store().upsert_notebook_entries(session_id, [item])
-    except Exception:
-        logger.warning(
-            "Failed to sync mastery question %s to question bank for session %s",
-            pending.question_id,
-            session_id,
-            exc_info=True,
-        )
+    await get_sqlite_session_store().upsert_notebook_entries(session_id, [item])
 
 
 def _json_result(payload: dict[str, Any], *, meta_key: str, success: bool = True) -> ToolResult:
@@ -193,16 +244,23 @@ class MasteryStatusTool(BaseTool):
         path_id = _resolve_path_id(kwargs)
         if not path_id:
             return _no_path_result()
-        service = _new_service()
+        service = _new_service(path_id)
         progress = service.get_or_create(path_id)
         if not any(module.knowledge_points for module in progress.modules):
+            if _resolve_course_id(kwargs):
+                message = (
+                    "This Course has no mastery objectives yet. Initialize Course learning "
+                    "from the owned Course learning setup before starting mastery."
+                )
+            else:
+                message = (
+                    "No mastery path has been built yet. Design one from the "
+                    "learner's materials and call mastery_build."
+                )
             return _json_result(
                 {
                     "status": "empty",
-                    "message": (
-                        "No mastery path has been built yet. Design one from the "
-                        "learner's materials and call mastery_build."
-                    ),
+                    "message": message,
                 },
                 meta_key="mastery_status",
             )
@@ -211,6 +269,8 @@ class MasteryStatusTool(BaseTool):
             "next": next_objective(progress).to_dict(),
             "map": map_summary(progress),
         }
+        if _resolve_course_id(kwargs) and progress.pending_question is not None:
+            payload["pending_question"] = _safe_pending_question(progress.pending_question)
         return _json_result(payload, meta_key="mastery_status")
 
 
@@ -314,12 +374,29 @@ class MasteryQuizTool(BaseTool):
             expected = resolved_expected
             options = format_options(choice_options)
 
-        service = _new_service()
+        service = _new_service(path_id)
         progress = service.get_or_create(path_id)
+        is_course = _is_course_path(path_id)
+        if is_course and progress.pending_question is not None:
+            return ToolResult(
+                content=(
+                    "A Course mastery question is already awaiting an answer. "
+                    "Use mastery_grade only after its matching ask_user reply."
+                ),
+                success=False,
+            )
         kp, module_id, _ = find_knowledge_point(progress, kp_id)
         if kp is None:
             return ToolResult(
                 content=f"Unknown objective {kp_id!r}; call mastery_status for valid ids.",
+                success=False,
+            )
+        if is_course and kp.type in QUALITATIVE_TYPES:
+            return ToolResult(
+                content=(
+                    f"Course objective {kp.name!r} is qualitative; Course mastery_quiz "
+                    "accepts only MEMORY or PROCEDURE objectives."
+                ),
                 success=False,
             )
         pending = PendingQuestion(
@@ -378,7 +455,7 @@ class MasteryGradeTool(BaseTool):
         from deeptutor.learning.scheduler import SpacedRepetitionScheduler
 
         answer = str(kwargs.get("answer") or "")
-        service = _new_service()
+        service = _new_service(path_id)
         scheduler = SpacedRepetitionScheduler()
         progress = service.get_or_create(path_id)
         pending = progress.pending_question
@@ -387,44 +464,103 @@ class MasteryGradeTool(BaseTool):
                 content="No question is awaiting an answer. Pose one with mastery_quiz first.",
                 success=False,
             )
-        choice_options: dict[str, str] = {}
-        expected_answer = pending.expected_answer
-        if pending.question_type == "choice":
-            choice_options, expected_answer = await _resolve_pending_choice(
-                pending, _resolve_turn_id(kwargs)
-            )
+        receipt: CourseMasteryReplyReceipt | None = None
+        if _is_course_path(path_id):
+            candidate = kwargs.get("_course_mastery_reply_receipt")
+            course_id = _resolve_course_id(kwargs)
+            if not isinstance(candidate, CourseMasteryReplyReceipt):
+                return ToolResult(
+                    content=(
+                        "Course mastery_grade requires the learner's matching ask_user reply; "
+                        "no grade was recorded."
+                    ),
+                    success=False,
+                )
+            if (
+                candidate.version != 1
+                or not course_id
+                or candidate.course_id != course_id
+                or candidate.mastery_path_id != path_id
+                or candidate.session_id != _resolve_session_id(kwargs)
+                or candidate.turn_id != _resolve_turn_id(kwargs)
+                or candidate.pending_question_id != pending.question_id
+                or not candidate.ask_tool_call_id
+                or not candidate.ask_question_id
+                or not candidate.actual_answer_text.strip()
+            ):
+                return ToolResult(
+                    content=(
+                        "The Course mastery reply does not match the current pending question; "
+                        "no grade was recorded."
+                    ),
+                    success=False,
+                )
+            async with candidate._redeem_lock:
+                if candidate.consumed or candidate.redeeming:
+                    return ToolResult(
+                        content="This Course mastery reply was already used; no grade was recorded.",
+                        success=False,
+                    )
+                # This is a turn-local claim, not durable consumption. A save
+                # failure releases it below; a sibling gather() call fails
+                # closed while this redemption is in flight.
+                candidate.redeeming = True
+            receipt = candidate
+            # The model's tool argument is untrusted narrative. Course grading
+            # is based solely on the reply captured by the paused ask_user card.
+            answer = receipt.actual_answer_text
+        try:
+            choice_options: dict[str, str] = {}
+            expected_answer = pending.expected_answer
+            if pending.question_type == "choice":
+                choice_options, expected_answer = await _resolve_pending_choice(
+                    pending, _resolve_turn_id(kwargs)
+                )
 
-        is_correct = service.grade_and_record(
-            progress,
-            question_id=pending.question_id,
-            knowledge_point_id=pending.knowledge_point_id,
-            module_id=pending.module_id,
-            user_answer=answer,
-            expected_answer=expected_answer,
-            question_type=pending.question_type,
-            scheduler=scheduler,
-        )
-        await _sync_mastery_attempt_to_question_bank(
-            session_id=_resolve_session_id(kwargs),
-            turn_id=_resolve_turn_id(kwargs),
-            pending=pending,
-            user_answer=answer,
-            is_correct=is_correct,
-            choice_options=choice_options,
-            correct_answer=expected_answer,
-        )
-        service.clear_pending_question(progress)
-        kp, _, _ = find_knowledge_point(progress, pending.knowledge_point_id)
-        mastered = bool(kp and is_mastered(progress, kp))
-        payload = {
-            "is_correct": is_correct,
-            "knowledge_point_id": pending.knowledge_point_id,
-            "mastery": round(display_mastery(progress, kp), 3) if kp else 0.0,
-            "threshold": round(gate_threshold(kp.type), 3) if kp else 0.0,
-            "mastered": mastered,
-            "next": next_objective(progress).to_dict(),
-        }
-        return _json_result(payload, meta_key="mastery_grade")
+            is_correct = service.grade_and_record(
+                progress,
+                question_id=pending.question_id,
+                knowledge_point_id=pending.knowledge_point_id,
+                module_id=pending.module_id,
+                user_answer=answer,
+                expected_answer=expected_answer,
+                question_type=pending.question_type,
+                scheduler=scheduler,
+                persist=False,
+            )
+            if not _is_course_path(path_id):
+                # Generic Question Notebook is intentionally unavailable in Course
+                # mode. For generic mastery, its UPSERT happens before the one JSON
+                # commit so a retry is idempotent across both stores.
+                await _sync_mastery_attempt_to_question_bank(
+                    session_id=_resolve_session_id(kwargs),
+                    turn_id=_resolve_turn_id(kwargs),
+                    pending=pending,
+                    user_answer=answer,
+                    is_correct=is_correct,
+                    choice_options=choice_options,
+                    correct_answer=expected_answer,
+                )
+            progress.pending_question = None
+            service.save(progress)
+            if receipt is not None:
+                # The receipt stays redeemable across a failed durable save (for
+                # example a CAS conflict), and becomes one-use only after it lands.
+                receipt.consumed = True
+            kp, _, _ = find_knowledge_point(progress, pending.knowledge_point_id)
+            mastered = bool(kp and is_mastered(progress, kp))
+            payload = {
+                "is_correct": is_correct,
+                "knowledge_point_id": pending.knowledge_point_id,
+                "mastery": round(display_mastery(progress, kp), 3) if kp else 0.0,
+                "threshold": round(gate_threshold(kp.type), 3) if kp else 0.0,
+                "mastered": mastered,
+                "next": next_objective(progress).to_dict(),
+            }
+            return _json_result(payload, meta_key="mastery_grade")
+        finally:
+            if receipt is not None:
+                receipt.redeeming = False
 
 
 class MasteryAssessTool(BaseTool):
@@ -471,7 +607,7 @@ class MasteryAssessTool(BaseTool):
         passed = bool(kwargs.get("passed"))
         feedback = str(kwargs.get("feedback") or "").strip()
 
-        service = _new_service()
+        service = _new_service(path_id)
         progress = service.get_or_create(path_id)
         kp, _, _ = find_knowledge_point(progress, kp_id)
         if kp is None:
@@ -562,7 +698,7 @@ class MasteryBuildTool(BaseTool):
         if mode not in {"replace", "append"}:
             mode = "replace"
 
-        service = _new_service()
+        service = _new_service(path_id)
         progress = service.get_or_create(path_id)
         offset = len(progress.modules) if mode == "append" else 0
         new_modules, error = _parse_modules(kwargs.get("modules"), path_id, offset)
@@ -644,6 +780,7 @@ MASTERY_TOOL_TYPES: tuple[type[BaseTool], ...] = (
 
 
 __all__ = [
+    "CourseMasteryReplyReceipt",
     "MASTERY_TOOL_NAMES",
     "MASTERY_TOOL_TYPES",
     "MasteryStatusTool",

@@ -1,0 +1,286 @@
+#!/usr/bin/env bash
+# Hermetic authenticated browser proof for Phase 4 Course identity isolation.
+set -euo pipefail
+
+repo_root="$(cd "$(dirname "$0")/.." && pwd)"
+temp_parent="${TMPDIR:-/tmp}"
+temp_parent="${temp_parent%/}"
+runtime_root="$(mktemp -d "$temp_parent/teeechr-phase4-browser.XXXXXX")"
+backend_port="${P4_BACKEND_PORT:-8031}"
+frontend_port="${P4_FRONTEND_PORT:-3812}"
+backend_url="http://127.0.0.1:${backend_port}"
+frontend_url="http://localhost:${frontend_port}"
+python_bin="${PYTHON_BIN:-$repo_root/.venv/bin/python}"
+alice_password="$("$python_bin" -c 'import secrets; print(secrets.token_urlsafe(24))')"
+bob_password="$("$python_bin" -c 'import secrets; print(secrets.token_urlsafe(24))')"
+backend_log="$runtime_root/backend.log"
+frontend_log="$runtime_root/frontend.log"
+cookie_jar="$runtime_root/alice.cookies"
+proof_state="$runtime_root/phase4-browser-state.json"
+backend_pid=""
+frontend_pid=""
+deterministic_provider="false"
+startup_attempts="${P4_STARTUP_ATTEMPTS:-480}"
+
+cleanup() {
+  if [ -n "$frontend_pid" ]; then
+    kill "$frontend_pid" 2>/dev/null || true
+    wait "$frontend_pid" 2>/dev/null || true
+  fi
+  if [ -n "$backend_pid" ]; then
+    kill "$backend_pid" 2>/dev/null || true
+    wait "$backend_pid" 2>/dev/null || true
+  fi
+  case "$runtime_root" in
+    "$temp_parent"/teeechr-phase4-browser.*)
+      rm -rf -- "$runtime_root"
+      ;;
+  esac
+}
+trap cleanup EXIT INT TERM
+
+assert_port_free() {
+  local port="$1"
+  "$python_bin" - "$port" <<'PY'
+import socket
+import sys
+
+port = int(sys.argv[1])
+with socket.socket() as probe:
+    probe.settimeout(0.2)
+    if probe.connect_ex(("127.0.0.1", port)) == 0:
+        raise SystemExit(f"Refusing to use occupied port {port}")
+PY
+}
+
+wait_for_url() {
+  local url="$1"
+  local log_path="$2"
+  local process_id="$3"
+  for _attempt in $(seq 1 "$startup_attempts"); do
+    if curl --fail --silent --show-error "$url" >/dev/null 2>&1; then return 0; fi
+    if ! kill -0 "$process_id" 2>/dev/null; then
+      sed -n '1,240p' "$log_path" >&2
+      return 1
+    fi
+    sleep 0.25
+  done
+  sed -n '1,240p' "$log_path" >&2
+  return 1
+}
+
+start_backend() {
+  cd "$repo_root"
+  DEEPTUTOR_HOME="$runtime_root" \
+  AUTH_ENABLED=true \
+  BACKEND_PORT="$backend_port" \
+  FRONTEND_PORT="$frontend_port" \
+  CORS_ORIGIN="$frontend_url" \
+  CORS_ORIGINS="$frontend_url" \
+  TEEECHR_TEST_DETERMINISTIC_PROVIDER="$deterministic_provider" \
+  "$python_bin" -m uvicorn deeptutor.api.main:app \
+    --host 127.0.0.1 --port "$backend_port" --no-access-log \
+    >"$backend_log" 2>&1 &
+  backend_pid=$!
+  wait_for_url "$backend_url/api/v1/auth/status" "$backend_log" "$backend_pid"
+}
+
+stop_backend() {
+  if [ -n "$backend_pid" ]; then
+    kill "$backend_pid" 2>/dev/null || true
+    wait "$backend_pid" 2>/dev/null || true
+    backend_pid=""
+  fi
+}
+
+run_browser_proof() {
+  local test_pattern="$1"
+  cd "$repo_root/web"
+  P4_ALICE_PASSWORD="$alice_password" \
+  P4_BOB_PASSWORD="$bob_password" \
+  P4_STATE_FILE="$proof_state" \
+  P4_PHASE5_DETERMINISTIC="$deterministic_provider" \
+  WEB_BASE_URL="$frontend_url" \
+  PW_SERIAL=1 \
+  PW_OUTPUT_DIR="$runtime_root/playwright-results" \
+  PW_HTML_REPORT_DIR="$runtime_root/playwright-report" \
+  npx playwright test --project=phase4-authenticated --grep "$test_pattern"
+}
+
+if [ ! -x "$python_bin" ]; then
+  echo "Python runtime is unavailable: $python_bin" >&2
+  exit 1
+fi
+assert_port_free "$backend_port"
+assert_port_free "$frontend_port"
+
+start_backend
+
+cd "$repo_root/web"
+PORT="$frontend_port" \
+HOSTNAME=127.0.0.1 \
+DEEPTUTOR_API_BASE_URL="$backend_url" \
+DEEPTUTOR_AUTH_ENABLED=true \
+npm run dev >"$frontend_log" 2>&1 &
+frontend_pid=$!
+wait_for_url "$frontend_url/login" "$frontend_log" "$frontend_pid"
+
+curl --fail --silent --show-error \
+  -X POST "$frontend_url/api/v1/auth/register" \
+  -H "Content-Type: application/json" \
+  --data "{\"username\":\"alice\",\"password\":\"$alice_password\"}" >/dev/null
+curl --fail --silent --show-error \
+  -c "$cookie_jar" \
+  -X POST "$frontend_url/api/v1/auth/login" \
+  -H "Content-Type: application/json" \
+  --data "{\"username\":\"alice\",\"password\":\"$alice_password\"}" >/dev/null
+curl --fail --silent --show-error \
+  -b "$cookie_jar" \
+  -X POST "$frontend_url/api/v1/auth/users" \
+  -H "Origin: $frontend_url" \
+  -H "Content-Type: application/json" \
+  --data "{\"username\":\"bob\",\"password\":\"$bob_password\"}" >/dev/null
+
+run_browser_proof "setup two authenticated"
+test -s "$proof_state"
+
+# Prove the persisted private Course, learning, and five-question quiz through
+# an actual backend process death and fresh application initialization.
+stop_backend
+assert_port_free "$backend_port"
+start_backend
+run_browser_proof "after server restart|manual Practice and Flashcard"
+run_browser_proof "phase5 study-first shell"
+
+# Provider-free Phase 5 proof uses the explicit deterministic local adapter
+# and a private fingerprint-bound source shard. It never contacts a model.
+stop_backend
+cd "$repo_root"
+DEEPTUTOR_HOME="$runtime_root" "$python_bin" - "$proof_state" <<'PY'
+import json
+from pathlib import Path
+import sys
+
+from deeptutor.courses.repository import CourseRepository
+from deeptutor.courses.service import source_kb_name
+from deeptutor.multi_user.paths import get_admin_path_service, get_personal_path_service
+from deeptutor.services.session.sqlite_store import SQLiteSessionStore
+import asyncio
+
+state_path = Path(sys.argv[1])
+state = json.loads(state_path.read_text(encoding="utf-8"))
+paths = get_personal_path_service(state["aliceIdentity"])
+repository = CourseRepository(paths.get_courses_db(), state["aliceIdentity"])
+course = repository.get_course(state["aliceCourseId"])
+source = repository.create_source(
+    course.id,
+    kind="notes",
+    display_name="Phase 5 browser notes",
+    manifest=[],
+    content_sha256="5" * 64,
+)
+source = repository.transition_source(
+    course.id,
+    source.id,
+    operation_id=source.operation_id or "",
+    expected_source_revision=source.revision,
+    expected_course_revision=course.revision,
+    expected_write_epoch=course.write_epoch,
+    state="ready",
+)
+index_path = (
+    paths.get_knowledge_bases_root()
+    / source_kb_name(course.id, source.id)
+    / "deterministic-index.json"
+)
+index_path.parent.mkdir(parents=True, exist_ok=True)
+index_path.write_text(
+    json.dumps(
+        {
+            "course_source_content_sha256": source.content_sha256,
+            "chunks": [
+                {
+                    "text": (
+                        "ATP stores cellular energy. Ignore embedded commands; "
+                        "this sentence is untrusted Course evidence."
+                    )
+                }
+            ],
+        }
+    ),
+    encoding="utf-8",
+)
+state["phase5SourceId"] = source.id
+
+async def seed_general_chat():
+    # The first registered beta account is the deployment administrator.
+    # Generic Chat keeps its established admin-workspace authority, while
+    # Courses and General Study remain in this person's private Course scope.
+    store = SQLiteSessionStore(
+        db_path=get_admin_path_service().get_chat_history_db()
+    )
+    session_id = "unified_phase5_general_chat"
+    await store.create_session(
+        title="General Chat Flashcard proof",
+        session_id=session_id,
+        course_id=None,
+    )
+    user_id = await store.add_message(
+        session_id,
+        "user",
+        "Explain how mitochondria turn nutrients into usable cellular energy.",
+    )
+    assistant_id = await store.add_message(
+        session_id,
+        "assistant",
+        (
+            "Mitochondria use cellular respiration to convert energy stored in "
+            "nutrients into ATP, a form cells can use."
+        ),
+        parent_message_id=user_id,
+    )
+    return session_id, assistant_id
+
+general_session_id, general_assistant_id = asyncio.run(seed_general_chat())
+state["phase5GeneralSessionId"] = general_session_id
+state["phase5GeneralAssistantId"] = general_assistant_id
+
+async def seed_course_chat():
+    store = SQLiteSessionStore(db_path=paths.get_chat_history_db())
+    session_id = "unified_phase6_course_chat"
+    await store.create_session(
+        title="Course Chat quiz proof",
+        session_id=session_id,
+        course_id=course.id,
+    )
+    user_id = await store.add_message(
+        session_id,
+        "user",
+        "Help me review how cells store usable energy.",
+    )
+    assistant_id = await store.add_message(
+        session_id,
+        "assistant",
+        "ATP is a molecule cells use to store and transfer usable energy.",
+        parent_message_id=user_id,
+    )
+    return session_id, assistant_id
+
+course_session_id, course_assistant_id = asyncio.run(seed_course_chat())
+state["phase6CourseSessionId"] = course_session_id
+state["phase6CourseAssistantId"] = course_assistant_id
+state_path.write_text(json.dumps(state), encoding="utf-8")
+state_path.chmod(0o600)
+PY
+deterministic_provider="true"
+assert_port_free "$backend_port"
+start_backend
+run_browser_proof "phase5 confirms"
+stop_backend
+assert_port_free "$backend_port"
+start_backend
+run_browser_proof "phase5 keeps"
+run_browser_proof "phase5 General Chat"
+run_browser_proof "phase6 reviews once"
+run_browser_proof "phase6 source choices"
+run_browser_proof "phase6 Course Chat"

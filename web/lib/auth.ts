@@ -53,7 +53,10 @@ export async function login(
       skipAuthRedirect: true,
     });
 
-    if (res.ok) return { ok: true };
+    if (res.ok) {
+      if (typeof window !== "undefined") window.dispatchEvent(new Event("dt:auth-changed"));
+      return { ok: true };
+    }
 
     const data = await res.json().catch(() => ({}));
     return { ok: false, error: extractDetail(data.detail) ?? "Login failed" };
@@ -100,8 +103,10 @@ export async function register(
     });
 
     const data = await res.json().catch(() => ({}));
-    if (res.ok)
+    if (res.ok) {
+      if (typeof window !== "undefined") window.dispatchEvent(new Event("dt:auth-changed"));
       return { ok: true, role: data.role, is_first_user: data.is_first_user };
+    }
     return { ok: false, error: extractDetail(data.detail) };
   } catch {
     return { ok: false, error: "Could not reach the server" };
@@ -132,5 +137,7 @@ export async function logout(): Promise<void> {
     });
   } catch {
     // Ignore — we'll redirect regardless
+  } finally {
+    if (typeof window !== "undefined") window.dispatchEvent(new Event("dt:auth-changed"));
   }
 }

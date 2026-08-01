@@ -16,6 +16,46 @@ from deeptutor.core.agentic.usage import (
 )
 
 
+def test_core_text_model_summary_uses_versioned_registry_pricing(
+    monkeypatch,
+) -> None:
+    from deeptutor.services.config.text_generation_registry import (
+        TextGenerationRegistry,
+        default_text_generation_catalog,
+    )
+
+    registry = TextGenerationRegistry.from_catalog(
+        {"text_generation": default_text_generation_catalog()}
+    )
+    monkeypatch.setattr(
+        "deeptutor.services.config.text_generation_registry.get_text_generation_registry",
+        lambda: registry,
+    )
+    tracker = UsageTracker(model="gpt-5-mini")
+    tracker.add_from_response(
+        SimpleNamespace(
+            model="gpt-5-mini-2025-08-07",
+            usage=SimpleNamespace(
+                prompt_tokens=120,
+                completion_tokens=80,
+                total_tokens=200,
+            ),
+        )
+    )
+
+    assert tracker.summary() == {
+        "total_cost_usd": 0.00019,
+        "total_tokens": 200,
+        "total_calls": 1,
+        "prompt_tokens": 120,
+        "completion_tokens": 80,
+        "requested_model": "gpt-5-mini",
+        "actual_model": "gpt-5-mini-2025-08-07",
+        "pricing_version": "openai-gpt-5-mini-pricing-2026-07-29",
+        "pricing_authority": "text_generation_registry",
+    }
+
+
 def _frame(prompt: int, completion: int) -> SimpleNamespace:
     return SimpleNamespace(
         prompt_tokens=prompt,

@@ -44,6 +44,7 @@ from deeptutor.multi_user.knowledge_access import (
     assert_writable,
     current_kb_base_dir,
     current_kb_manager,
+    is_managed_course_kb,
     manager_for_resource,
     resolve_kb,
 )
@@ -247,9 +248,11 @@ def _save_zip_archive(
     file.file.seek(0)
     max_size = DocumentValidator.MAX_FILE_SIZE
     tmp_path: Path | None = None
+    existing_paths = set(target_dir.iterdir()) if target_dir.exists() else set()
     try:
         with tempfile.NamedTemporaryFile(suffix=".zip", delete=False) as tmp:
             tmp_path = Path(tmp.name)
+            tmp_path.chmod(0o600)
             written = 0
             for chunk in iter(lambda: file.file.read(8192), b""):
                 written += len(chunk)
@@ -264,26 +267,33 @@ def _save_zip_archive(
                 tmp.write(chunk)
 
         try:
-            result = safe_extract_zip(
-                tmp_path, target_dir, allowed_extensions=allowed_extensions or set()
-            )
-        except ArchiveTooLargeError as exc:
-            raise HTTPException(
-                status_code=400,
-                detail=f"Rejected archive '{sanitized_filename}': {exc}",
-            ) from exc
-        except zipfile.BadZipFile as exc:
-            raise HTTPException(
-                status_code=400,
-                detail=f"'{sanitized_filename}' is not a valid zip archive.",
-            ) from exc
+            try:
+                result = safe_extract_zip(
+                    tmp_path, target_dir, allowed_extensions=allowed_extensions or set()
+                )
+            except ArchiveTooLargeError as exc:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Rejected archive '{sanitized_filename}': {exc}",
+                ) from exc
+            except zipfile.BadZipFile as exc:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"'{sanitized_filename}' is not a valid zip archive.",
+                ) from exc
 
-        if not result.extracted:
-            raise HTTPException(
-                status_code=400,
-                detail=f"Archive '{sanitized_filename}' contained no supported files.",
-            )
-        return result.extracted
+            if not result.extracted:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Archive '{sanitized_filename}' contained no supported files.",
+                )
+            return result.extracted
+        except Exception:
+            if target_dir.exists():
+                for path in target_dir.iterdir():
+                    if path not in existing_paths and path.is_file() and not path.is_symlink():
+                        path.unlink(missing_ok=True)
+            raise
     finally:
         if tmp_path is not None:
             tmp_path.unlink(missing_ok=True)
@@ -357,6 +367,7 @@ def _save_uploaded_files(
     try:
         for idx, file in enumerate(files):
             file_path = None
+            file_created = False
             original_filename = file.filename or "upload"
             try:
                 sanitized_filename = DocumentValidator.validate_upload_safety(
@@ -377,7 +388,8 @@ def _save_uploaded_files(
                 subdir = _sanitize_rel_subdir(rel.rsplit("/", 1)[0]) if "/" in rel else ""
                 dest_dir = target_dir / subdir if subdir else target_dir
                 if subdir:
-                    dest_dir.mkdir(parents=True, exist_ok=True)
+                    dest_dir.mkdir(parents=True, exist_ok=True, mode=0o700)
+                dest_dir.chmod(0o700)
                 rel_name = f"{subdir}/{sanitized_filename}" if subdir else sanitized_filename
 
                 if Path(sanitized_filename).suffix.lower() == ".zip":
@@ -400,12 +412,17 @@ def _save_uploaded_files(
                                 )
                     continue
 
-                file_path = dest_dir / sanitized_filename
+                file_path = _safe_join_raw(target_dir, rel_name)
                 max_size = DocumentValidator.MAX_FILE_SIZE
                 written_bytes = 0
 
                 file.file.seek(0)
-                with open(file_path, "wb") as buffer:
+                flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL
+                if hasattr(os, "O_NOFOLLOW"):
+                    flags |= os.O_NOFOLLOW
+                descriptor = os.open(file_path, flags, 0o600)
+                file_created = True
+                with os.fdopen(descriptor, "wb") as buffer:
                     for chunk in iter(lambda: file.file.read(8192), b""):
                         written_bytes += len(chunk)
                         if written_bytes > max_size:
@@ -437,7 +454,7 @@ def _save_uploaded_files(
                             pb_exc,
                         )
             except Exception as e:
-                if file_path and file_path.exists():
+                if file_created and file_path and file_path.exists():
                     try:
                         os.unlink(file_path)
                     except OSError:
@@ -721,7 +738,12 @@ def _matching_index_is_valid(kb_name: str, matching_version: dict | None) -> boo
         return False
 
 
-async def run_initialization_task(initializer: KnowledgeBaseInitializer, task_id: str):
+async def run_initialization_task(
+    initializer: KnowledgeBaseInitializer,
+    task_id: str,
+    *,
+    finalize_task: bool = True,
+) -> bool:
     """Background task for knowledge base initialization"""
     task_manager = TaskIDManager.get_instance()
     task_stream_manager = get_task_stream_manager()
@@ -776,10 +798,12 @@ async def run_initialization_task(initializer: KnowledgeBaseInitializer, task_id
             _task_log(
                 task_id, f"Knowledge base '{initializer.kb_name}' initialized", level="success"
             )
-            task_manager.update_task_status(task_id, "completed")
-            task_stream_manager.emit_complete(
-                task_id, f"Knowledge base '{initializer.kb_name}' initialization complete"
-            )
+            if finalize_task:
+                task_manager.update_task_status(task_id, "completed")
+                task_stream_manager.emit_complete(
+                    task_id, f"Knowledge base '{initializer.kb_name}' initialization complete"
+                )
+            return True
         except Exception as e:
             import traceback as _tb
 
@@ -789,7 +813,8 @@ async def run_initialization_task(initializer: KnowledgeBaseInitializer, task_id
             _task_log(task_id, f"Initialization failed: {error_msg}", level="error")
             _task_log(task_id, f"Stack trace:\n{trace}", level="error")
 
-            task_manager.update_task_status(task_id, "error", error=error_msg)
+            if finalize_task:
+                task_manager.update_task_status(task_id, "error", error=error_msg)
 
             manager = get_kb_manager()
             manager.update_kb_status(
@@ -809,7 +834,9 @@ async def run_initialization_task(initializer: KnowledgeBaseInitializer, task_id
                 initializer.progress_tracker.update(
                     ProgressStage.ERROR, f"Initialization failed: {error_msg}", error=error_msg
                 )
-            task_stream_manager.emit_failed(task_id, error_msg, details=trace)
+            if finalize_task:
+                task_stream_manager.emit_failed(task_id, error_msg, details=trace)
+            return False
 
 
 async def run_upload_processing_task(
@@ -819,7 +846,9 @@ async def run_upload_processing_task(
     task_id: str,
     rag_provider: str = None,
     folder_id: str = None,
-):
+    *,
+    finalize_task: bool = True,
+) -> bool:
     """Background task for processing uploaded files.
 
     Args:
@@ -864,11 +893,12 @@ async def run_upload_processing_task(
                     current=0,
                     total=0,
                 )
-                task_manager.update_task_status(task_id, "completed")
-                task_stream_manager.emit_complete(
-                    task_id, "No new files to process (all duplicates or invalid)"
-                )
-                return
+                if finalize_task:
+                    task_manager.update_task_status(task_id, "completed")
+                    task_stream_manager.emit_complete(
+                        task_id, "No new files to process (all duplicates or invalid)"
+                    )
+                return True
 
             index_result = await adder.process_new_documents(staged_files)
             processed_files = index_result.processed_files
@@ -897,15 +927,17 @@ async def run_upload_processing_task(
                     index_changed=index_result.processed_count > 0,
                     index_action="upload",
                 )
-                task_manager.update_task_status(task_id, "error", error=error_msg)
-                task_stream_manager.emit_failed(
-                    task_id,
-                    error_msg,
-                    details="\n".join(
-                        f"{failure.file_path}: {failure.error}" for failure in index_result.failures
-                    ),
-                )
-                return
+                if finalize_task:
+                    task_manager.update_task_status(task_id, "error", error=error_msg)
+                    task_stream_manager.emit_failed(
+                        task_id,
+                        error_msg,
+                        details="\n".join(
+                            f"{failure.file_path}: {failure.error}"
+                            for failure in index_result.failures
+                        ),
+                    )
+                return False
 
             adder.update_metadata(index_result.processed_count)
 
@@ -935,10 +967,12 @@ async def run_upload_processing_task(
             _task_log(
                 task_id, f"Processed {num_processed} file(s) for '{kb_name}'", level="success"
             )
-            task_manager.update_task_status(task_id, "completed")
-            task_stream_manager.emit_complete(
-                task_id, f"Successfully processed {num_processed} files for '{kb_name}'"
-            )
+            if finalize_task:
+                task_manager.update_task_status(task_id, "completed")
+                task_stream_manager.emit_complete(
+                    task_id, f"Successfully processed {num_processed} files for '{kb_name}'"
+                )
+            return True
         except Exception as e:
             import traceback as _tb
 
@@ -947,12 +981,15 @@ async def run_upload_processing_task(
             _task_log(task_id, error_msg, level="error")
             _task_log(task_id, f"Stack trace:\n{trace}", level="error")
 
-            task_manager.update_task_status(task_id, "error", error=error_msg)
+            if finalize_task:
+                task_manager.update_task_status(task_id, "error", error=error_msg)
 
             progress_tracker.update(
                 ProgressStage.ERROR, f"Processing failed: {error_msg}", error=error_msg
             )
-            task_stream_manager.emit_failed(task_id, error_msg, details=trace)
+            if finalize_task:
+                task_stream_manager.emit_failed(task_id, error_msg, details=trace)
+            return False
 
 
 @router.get("/health")
@@ -1351,7 +1388,13 @@ async def get_all_kb_configs():
         from deeptutor.services.config import get_kb_config_service
 
         service = get_kb_config_service()
-        return service.get_all_configs()
+        payload = dict(service.get_all_configs())
+        payload["knowledge_bases"] = {
+            name: config
+            for name, config in dict(payload.get("knowledge_bases") or {}).items()
+            if not is_managed_course_kb(name)
+        }
+        return payload
     except Exception as e:
         logger.error(f"Error getting KB configs: {e}")
         raise HTTPException(status_code=500, detail=str(e))
@@ -1360,6 +1403,8 @@ async def get_all_kb_configs():
 @router.get("/{kb_name}/config")
 async def get_kb_config(kb_name: str):
     """Get configuration for a specific knowledge base."""
+    if is_managed_course_kb(kb_name):
+        raise HTTPException(status_code=404, detail="Knowledge base not found")
     try:
         from deeptutor.services.config import get_kb_config_service
 
@@ -1374,6 +1419,8 @@ async def get_kb_config(kb_name: str):
 @router.put("/{kb_name}/config")
 async def update_kb_config(kb_name: str, config: dict):
     """Update configuration for a specific knowledge base."""
+    if is_managed_course_kb(kb_name):
+        raise HTTPException(status_code=404, detail="Knowledge base not found")
     try:
         from deeptutor.services.config import get_kb_config_service
         from deeptutor.services.rag.index_probe import has_ready_provider_index
@@ -1428,7 +1475,15 @@ async def sync_configs_from_metadata():
         from deeptutor.services.config import get_kb_config_service
 
         service = get_kb_config_service()
-        service.sync_all_from_metadata(_current_kb_base_dir())
+        base_dir = _current_kb_base_dir()
+        if base_dir.exists():
+            for kb_dir in base_dir.iterdir():
+                if (
+                    kb_dir.is_dir()
+                    and not kb_dir.name.startswith(".")
+                    and not is_managed_course_kb(kb_dir.name)
+                ):
+                    service.sync_from_metadata(kb_dir.name, base_dir)
         return {"status": "success", "message": "Configurations synced from metadata files"}
     except Exception as e:
         logger.error(f"Error syncing configs: {e}")
@@ -1441,6 +1496,8 @@ async def get_default_kb():
     try:
         manager = get_kb_manager()
         default_kb = manager.get_default()
+        if is_managed_course_kb(default_kb):
+            default_kb = None
         return {"default_kb": default_kb}
     except Exception as e:
         logger.error(f"Error getting default KB: {e}")
@@ -1483,6 +1540,8 @@ async def connect_obsidian_vault(payload: ConnectObsidianRequest):
     vault_path = (payload.vault_path or "").strip()
     if not name or not vault_path:
         raise HTTPException(status_code=400, detail="Both name and vault_path are required.")
+    if is_managed_course_kb(name):
+        raise HTTPException(status_code=400, detail="Reserved knowledge base name")
     try:
         folder = assert_path_allowed(vault_path)
         manager = get_kb_manager()
@@ -1541,6 +1600,8 @@ async def connect_linked_folder_route(payload: ConnectFolderRequest):
     folder_path = (payload.folder_path or "").strip()
     if not name or not folder_path:
         raise HTTPException(status_code=400, detail="Both name and folder_path are required.")
+    if is_managed_course_kb(name):
+        raise HTTPException(status_code=400, detail="Reserved knowledge base name")
     try:
         folder = assert_path_allowed(folder_path)
     except ValueError as e:
@@ -1622,6 +1683,8 @@ async def connect_lightrag_server_route(payload: ConnectLightRagServerRequest):
     server_url = (payload.server_url or "").strip()
     if not name or not server_url:
         raise HTTPException(status_code=400, detail="Both name and server_url are required.")
+    if is_managed_course_kb(name):
+        raise HTTPException(status_code=400, detail="Reserved knowledge base name")
 
     result = await probe_server(server_url, payload.api_key or "")
     if not result.ok:
@@ -1754,6 +1817,8 @@ async def list_knowledge_bases():
         errors = []
 
         for name in kb_names:
+            if is_managed_course_kb(name):
+                continue
             try:
                 info = manager.get_info(name)
                 logger.debug(f"Successfully got info for KB '{name}': {info.get('statistics', {})}")
@@ -2130,6 +2195,10 @@ async def delete_knowledge_base(kb_name: str):
 @router.get("/tasks/{task_id}/stream")
 async def stream_task_logs(task_id: str):
     """Stream task-specific logs for knowledge-base operations."""
+    task_ids = TaskIDManager.get_instance()
+    metadata = task_ids.get_task_metadata(task_id) or {}
+    if task_id.startswith("course_source_") or metadata.get("private_course"):
+        raise HTTPException(status_code=404, detail="Knowledge task not found")
     manager = get_task_stream_manager()
     manager.ensure_task(task_id)
     return StreamingResponse(
@@ -2232,6 +2301,8 @@ async def create_knowledge_base(
             name = validate_knowledge_base_name(name)
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
+        if is_managed_course_kb(name):
+            raise HTTPException(status_code=400, detail="Reserved knowledge base name")
 
         manager = get_kb_manager()
         kb_base_dir = _current_kb_base_dir()
@@ -2611,6 +2682,12 @@ async def websocket_progress(websocket: WebSocket, kb_name: str):
 
     user_token = await ws_require_auth(websocket)
     if user_token is ws_auth_failed:
+        return
+
+    if is_managed_course_kb(kb_name):
+        if user_token is not None:
+            reset_current_user(user_token)
+        await websocket.close(code=4404)
         return
 
     await websocket.accept()

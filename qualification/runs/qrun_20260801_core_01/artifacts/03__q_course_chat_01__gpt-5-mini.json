@@ -1,0 +1,33 @@
+{
+  "case_id": "q_course_chat_01",
+  "input_sha256": "e418d28703007024c3feeb09592cc06c2ae5513a0456408cbb648270006fa839",
+  "pathway": "course_chat",
+  "requested_model": "gpt-5-mini",
+  "result": {
+    "actual_model": "gpt-5-mini-2025-08-07",
+    "cached_input_tokens": 0,
+    "input_tokens": 370,
+    "latency_ms": 3232,
+    "output": {
+      "answer": "Random assignment matters for causal inference because it \"distributes known and unknown confounders across treatment groups on average,\" and when paired with a well-conducted study it \"supports causal inference.\" The provided excerpt does not report a sample size.",
+      "citations": [
+        {
+          "evidence_quote": "Random assignment distributes known and unknown confounders across treatment groups on average. It supports causal inference when the study is otherwise well conducted. This excerpt does not report a sample size.",
+          "source_id": "src_qualification_statistics"
+        }
+      ],
+      "handoff": null
+    },
+    "output_tokens": 210,
+    "pricing_version": "openai-gpt-5-mini-pricing-2026-07-29",
+    "prompt_version": "teeechr-qualification-chat-v1",
+    "reasoning_effort": "low",
+    "reasoning_output_tokens": 64,
+    "request_id": "chatcmpl-E889CjM2B4WFDE3JZcMAUEVs2RyW8",
+    "requested_model": "gpt-5-mini",
+    "response_status": "completed",
+    "schema_version": "teeechr-qualification-chat-schema-v1",
+    "store": false
+  },
+  "run_id": "qrun_20260801_core_01"
+}

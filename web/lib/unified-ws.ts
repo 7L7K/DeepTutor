@@ -135,7 +135,7 @@ export interface SubmitUserReplyMessage {
   answers?: Array<{ questionId: string; text: string }>;
 }
 
-export type ChatMessage =
+export type ChatMessage = (
   | StartTurnMessage
   | SubscribeTurnMessage
   | SubscribeSessionMessage
@@ -143,7 +143,8 @@ export type ChatMessage =
   | UnsubscribeMessage
   | CancelTurnMessage
   | RegenerateMessage
-  | SubmitUserReplyMessage;
+  | SubmitUserReplyMessage
+) & { course_id?: string | null };
 
 // ---- Connection manager ----
 
@@ -168,6 +169,7 @@ export class UnifiedWSClient {
 
   private activeTurnId: string | null = null;
   private lastSeq = 0;
+  private activeCourseId: string | null = null;
 
   constructor(onEvent: EventHandler, onClose?: () => void) {
     this.onEvent = onEvent;
@@ -175,9 +177,10 @@ export class UnifiedWSClient {
   }
 
   /** Provide the current turn/seq so reconnection can resume the stream. */
-  setResumeState(turnId: string | null, seq: number): void {
+  setResumeState(turnId: string | null, seq: number, courseId: string | null = null): void {
     this.activeTurnId = turnId;
     this.lastSeq = seq;
+    this.activeCourseId = courseId;
   }
 
   connect(): void {
@@ -197,6 +200,7 @@ export class UnifiedWSClient {
           type: "resume_from",
           turn_id: this.activeTurnId,
           seq: this.lastSeq,
+          course_id: this.activeCourseId,
         });
       }
     };
@@ -309,6 +313,7 @@ export class UnifiedWSClient {
   private resetResumeState(): void {
     this.activeTurnId = null;
     this.lastSeq = 0;
+    this.activeCourseId = null;
     this.reconnectAttempt = 0;
   }
 }

@@ -22,6 +22,7 @@ from deeptutor.capabilities import (
     active_loop_capabilities,
     any_exclusive_capability_active,
 )
+from deeptutor.capabilities.mastery.tools import CourseMasteryReplyReceipt, _new_service
 from deeptutor.core.agentic import (
     DispatchOutcome,
     LLMClientConfig,
@@ -102,6 +103,10 @@ KB_SEED_CHARS_PER_KB = 4000
 DEFAULT_MAX_ROUNDS = 8
 CONTEXT_WINDOW_GUARD_RATIO = 0.9
 _DispatchOutcome = DispatchOutcome
+
+
+class UnauthorizedToolBatchError(RuntimeError):
+    """An LLM emitted a name outside its current server-authorized surface."""
 
 
 def _read_int(cfg: Any, *, key: str, default: int) -> int:
@@ -214,6 +219,9 @@ class AgenticChatPipeline:
         # The blocks the turn's system prompt was rendered from, kept for the
         # context-budget breakdown (see ``measure_context_budget``).
         self._last_prompt_blocks: list[PromptBlock] = []
+        # Never place this in ``context.metadata``: metadata can flow to
+        # tracing/persistence, while a receipt is private turn-local authority.
+        self._course_mastery_reply_receipt: CourseMasteryReplyReceipt | None = None
 
         try:
             chat_cfg = get_chat_params()
@@ -324,6 +332,9 @@ class AgenticChatPipeline:
         return self.respond_max_tokens
 
     async def run(self, context: UnifiedContext, stream: StreamBus) -> None:
+        # Pipeline instances are normally one-shot, but clearing defensively
+        # prevents a regenerated/reused instance from inheriting a reply.
+        self._course_mastery_reply_receipt = None
         await self._prepare_deferred_tools(context)
         await self._prepare_kb_manifests(context)
         self._exec_enabled = await self._exec_allowed(context)
@@ -479,6 +490,14 @@ class AgenticChatPipeline:
         context into a :class:`ToolScope`.
         """
         self._pageindex_docs = self._pageindex_doc_maps(context)
+        if (context.metadata or {}).get("course_context"):
+            # Phase 2 Course mode authorizes only the server-derived RAG shards.
+            # Deferred MCP tools use separate remote authority and some providers
+            # expose account-wide document ids, so they stay unavailable until a
+            # Course-scoped MCP contract validates every resource argument.
+            self._deferred_pool = []
+            self._deferred_loader = None
+            return
         try:
             view = await build_tool_view(
                 base_registry=self.registry,
@@ -618,7 +637,10 @@ class AgenticChatPipeline:
             # chat's read_memory/write_memory suppressed — the split-memory model
             # (own workspace writable, owner's memory read-only) lives in those
             # tools, not in chat's.
-            forced=PARTNER_BUILTIN_TOOL_NAMES if is_partner else (),
+            forced=(
+                *(PARTNER_BUILTIN_TOOL_NAMES if is_partner else ()),
+                *self._capability_forced_tools(context),
+            ),
             suppressed=_PARTNER_SUPPRESSED_TOOLS if is_partner else (),
         )
         return _drop_unconfigured_generation_tools(composed)
@@ -640,7 +662,17 @@ class AgenticChatPipeline:
         """The active capabilities' own tools — added on top of chat's full surface."""
         names: list[str] = []
         for cap in self._active_loop_capabilities(context):
-            names.extend(cap.owned_tools)
+            resolver = getattr(cap, "owned_tools_for", None)
+            names.extend(resolver(context) if callable(resolver) else cap.owned_tools)
+        return tuple(names)
+
+    def _capability_forced_tools(self, context: UnifiedContext) -> tuple[str, ...]:
+        """Built-ins a capability explicitly requires despite a turn whitelist."""
+        names: list[str] = []
+        for cap in self._active_loop_capabilities(context):
+            resolver = getattr(cap, "forced_tools_for", None)
+            if callable(resolver):
+                names.extend(resolver(context))
         return tuple(names)
 
     def _capability_system_blocks(self, context: UnifiedContext):
@@ -821,11 +853,33 @@ class AgenticChatPipeline:
         self,
         *,
         tool_calls: list[dict[str, Any]],
+        authorized_tool_names: frozenset[str],
         context: UnifiedContext,
         stream: StreamBus,
         iteration_index: int,
         stage: str = "exploring",
     ) -> DispatchOutcome:
+        # The registry is broader than a turn's live schema surface (it also
+        # holds disabled, deferred, and capability tools). Reject the entire
+        # batch before kwarg injection, trace events, or parallel execution so
+        # an off-list name cannot trigger a sibling side effect or become
+        # authorized by a sibling ``load_tools`` call.
+        emitted_names = {str(tool_call.get("name") or "").strip() for tool_call in tool_calls}
+        unauthorized_names = sorted(emitted_names - authorized_tool_names)
+        if unauthorized_names:
+            logger.warning(
+                "rejecting unauthorized chat tool batch: %s",
+                ", ".join(unauthorized_names),
+            )
+            raise UnauthorizedToolBatchError(
+                self._t(
+                    "notices.unauthorized_tool_call",
+                    default=(
+                        "I could not complete this turn because it requested a tool "
+                        "that is not authorized for this round."
+                    ),
+                )
+            )
         too_many = None
         if len(tool_calls) > MAX_PARALLEL_TOOL_CALLS:
             too_many = self._t(
@@ -884,6 +938,13 @@ class AgenticChatPipeline:
         if raw_reply is None:
             return False
         reply_text, answers = _normalise_user_reply(raw_reply)
+        self._course_mastery_reply_receipt = self._mint_course_mastery_reply_receipt(
+            context=context,
+            ask_user=ask_user,
+            ask_tool_call_id=str(dispatch.pause_tool_call_id or ""),
+            reply_text=reply_text,
+            answers=answers,
+        )
         body_text = _format_user_reply_body(
             reply_text,
             answers,
@@ -913,6 +974,84 @@ class AgenticChatPipeline:
         await stream.progress("", source="chat", stage="responding", metadata=meta)
         return True
 
+    def _mint_course_mastery_reply_receipt(
+        self,
+        *,
+        context: UnifiedContext,
+        ask_user: dict[str, Any],
+        ask_tool_call_id: str,
+        reply_text: str,
+        answers: list[dict[str, str]] | None,
+    ) -> CourseMasteryReplyReceipt | None:
+        """Mint Course grade authority only for one exact paused card reply."""
+        course_context = context.metadata.get("course_context")
+        if not isinstance(course_context, dict):
+            return None
+        course_id = str(course_context.get("course_id") or "").strip()
+        path_id = str(context.metadata.get("mastery_path_id") or "").strip()
+        session_id = str(context.session_id or "").strip()
+        turn_id = str(context.metadata.get("turn_id") or "").strip()
+        questions = ask_user.get("questions") if isinstance(ask_user, dict) else None
+        if (
+            not course_id
+            or not path_id.startswith("lp_crs_")
+            or not session_id
+            or not turn_id
+            or not ask_tool_call_id
+            or not isinstance(questions, list)
+            or len(questions) != 1
+            or not isinstance(questions[0], dict)
+        ):
+            return None
+        question = questions[0]
+        ask_question_id = str(question.get("id") or "").strip()
+        prompt = str(question.get("prompt") or "").strip()
+        if not ask_question_id or not prompt:
+            return None
+        if answers is None:
+            actual_answer = reply_text
+        elif len(answers) == 1 and answers[0].get("questionId") == ask_question_id:
+            actual_answer = str(answers[0].get("text") or "")
+        else:
+            return None
+        if not actual_answer.strip():
+            return None
+        ask_options: list[str] = []
+        raw_options = question.get("options") or []
+        if not isinstance(raw_options, list):
+            return None
+        for option in raw_options:
+            if not isinstance(option, dict):
+                return None
+            label = str(option.get("label") or "").strip()
+            description = str(option.get("description") or "").strip()
+            if not label:
+                return None
+            ask_options.append(f"{label}: {description}" if description else label)
+        try:
+            progress = _new_service(path_id).get_or_create(path_id)
+        except Exception:
+            logger.warning("Could not load Course mastery state for reply receipt", exc_info=True)
+            return None
+        pending = progress.pending_question
+        if (
+            pending is None
+            or pending.prompt != prompt
+            or list(pending.options or []) != ask_options
+        ):
+            return None
+        return CourseMasteryReplyReceipt(
+            version=1,
+            course_id=course_id,
+            mastery_path_id=path_id,
+            session_id=session_id,
+            turn_id=turn_id,
+            pending_question_id=pending.question_id,
+            ask_tool_call_id=ask_tool_call_id,
+            ask_question_id=ask_question_id,
+            actual_answer_text=actual_answer,
+        )
+
     def _augment_tool_kwargs(
         self,
         tool_name: str,
@@ -929,6 +1068,14 @@ class AgenticChatPipeline:
         )
         exec_dir = task_dir / "exec" if task_dir is not None else None
         if tool_name == "rag":
+            requested_kb = str(kwargs.get("kb_name") or "").strip()
+            attached_kbs = self._rag_kbs(context)
+            if requested_kb not in attached_kbs:
+                # Tool-schema enums guide cooperative models but are not an
+                # authorization boundary.  Enforce the attached set again at
+                # dispatch so a hallucinated or prompt-injected kb_name cannot
+                # reach another accessible Knowledge base.
+                raise ValueError("RAG knowledge base is not attached to this turn")
             kwargs.setdefault("mode", "hybrid")
         elif tool_name == "kb_files":
             # The report is read by the user as much as by the model, so it is
@@ -1044,6 +1191,8 @@ class AgenticChatPipeline:
             kwargs["language"] = context.language or "zh"
         for cap in self._active_loop_capabilities(context):
             kwargs = cap.augment_kwargs(tool_name, kwargs, context)
+        if tool_name == "mastery_grade" and self._course_mastery_reply_receipt is not None:
+            kwargs["_course_mastery_reply_receipt"] = self._course_mastery_reply_receipt
         return kwargs
 
     def _retrieve_trace_metadata(

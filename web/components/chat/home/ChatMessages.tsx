@@ -54,6 +54,11 @@ import type { SelectedBookReference } from "@/lib/book-references";
 import { buildVisiblePath, type SiblingInfo } from "@/lib/message-branches";
 import { turnAnchorKey } from "@/lib/chat-outline";
 import { shouldSubmitOnEnter } from "@/lib/composer-keyboard";
+import {
+  canShowCourseLearnerActions,
+  type CourseLearnerAction,
+  visibleCourseLearnerActions,
+} from "@/lib/course-actions-api";
 import { useImeComposing } from "@/lib/use-ime-composing";
 import type { SpaceMemoryFile } from "@/lib/space-items";
 import {
@@ -1153,6 +1158,13 @@ export const ChatMessageList = memo(function ChatMessageList({
   onEditMessage,
   onSwitchBranch,
   onSubmitUserReply,
+  modelActionsEnabled = true,
+  courseActionsEnabled = false,
+  generalFlashcardsEnabled = false,
+  practiceGenerationEnabled = false,
+  flashcardGenerationEnabled = false,
+  learnerActionBusy = null,
+  onLearnerAction,
 }: {
   messages: ChatMessageItem[];
   isStreaming: boolean;
@@ -1160,6 +1172,16 @@ export const ChatMessageList = memo(function ChatMessageList({
   language?: string;
   onCopyAssistantMessage: (content: string) => void | Promise<void>;
   onRegenerateMessage: () => void;
+  modelActionsEnabled?: boolean;
+  courseActionsEnabled?: boolean;
+  generalFlashcardsEnabled?: boolean;
+  practiceGenerationEnabled?: boolean;
+  flashcardGenerationEnabled?: boolean;
+  learnerActionBusy?: CourseLearnerAction | null;
+  onLearnerAction?: (
+    action: CourseLearnerAction,
+    assistantMessageId: number,
+  ) => void | Promise<void>;
   onConfirmOutline?: (
     outline: Array<{ title: string; overview: string }>,
     topic: string,
@@ -1378,6 +1400,7 @@ export const ChatMessageList = memo(function ChatMessageList({
         const showActions = msgDone && hasVisibleMarkdownContent(msg.content);
         const isLastAssistant = i === lastRenderedAssistantIndex;
         const showRegenerate =
+          modelActionsEnabled &&
           showActions &&
           !isStreaming &&
           isLastAssistant &&
@@ -1389,6 +1412,17 @@ export const ChatMessageList = memo(function ChatMessageList({
             ? pairedUserMessage.id
             : null;
         const showDelete = deletableTurnUserId != null;
+        const showLearnerActions =
+          Boolean(onLearnerAction) &&
+          canShowCourseLearnerActions({
+            courseActionsEnabled:
+              courseActionsEnabled || generalFlashcardsEnabled,
+            isStreaming,
+            isLastAssistant,
+            role: msg.role,
+            messageId: msg.id,
+            hasVisibleContent: showActions,
+          });
 
         const costSummary = (() => {
           if (!msgDone) return null;
@@ -1465,6 +1499,60 @@ export const ChatMessageList = memo(function ChatMessageList({
                 </div>
               );
             })()}
+            {showLearnerActions ? (
+              <div className="mt-3 flex flex-wrap gap-2">
+                {(generalFlashcardsEnabled && !courseActionsEnabled
+                  ? (["make_flashcards"] as CourseLearnerAction[])
+                  : visibleCourseLearnerActions(
+                      practiceGenerationEnabled,
+                      flashcardGenerationEnabled,
+                    )
+                ).map(
+                  (action) => {
+                    const presentation: {
+                      Icon: typeof ClipboardList;
+                      label: string;
+                    } = ({
+                      quiz_me: { Icon: ClipboardList, label: t("Quiz me") },
+                      explain_simpler: {
+                        Icon: MessageSquare,
+                        label: t("Explain simpler"),
+                      },
+                      make_flashcards: {
+                        Icon: BookOpen,
+                        label: t("Make flashcards"),
+                      },
+                      review_weak_topics: {
+                        Icon: Brain,
+                        label: t("Review weak topics"),
+                      },
+                    } satisfies Record<
+                      CourseLearnerAction,
+                      { Icon: typeof ClipboardList; label: string }
+                    >)[action];
+                    const { Icon, label } = presentation;
+                    return (
+                      <button
+                        key={action}
+                        type="button"
+                        onClick={() =>
+                          void onLearnerAction?.(action, msg.id as number)
+                        }
+                        disabled={learnerActionBusy != null}
+                        className="inline-flex items-center gap-1.5 rounded-full border border-[var(--border)] bg-[var(--card)] px-3 py-1.5 text-xs font-medium text-[var(--foreground)] transition hover:bg-[var(--muted)]/40 disabled:cursor-not-allowed disabled:opacity-50"
+                      >
+                        {learnerActionBusy === action ? (
+                          <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                        ) : (
+                          <Icon className="h-3.5 w-3.5" />
+                        )}
+                        {label}
+                      </button>
+                    );
+                  },
+                )}
+              </div>
+            ) : null}
             {(showActions || costSummary || showDelete) && (
               <div className="mt-3 flex items-center">
                 {(showActions || showDelete) && (

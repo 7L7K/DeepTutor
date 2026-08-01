@@ -2,6 +2,12 @@
 
 import importlib
 
+from .flashcard_provider import (
+    FlashcardProviderConfig,
+    FlashcardProviderConfigError,
+    FlashcardProviderConfigService,
+    get_flashcard_provider_config_service,
+)
 from .knowledge_base_config import (
     KnowledgeBaseConfigService,
     get_kb_config_service,
@@ -66,6 +72,10 @@ __all__ = [
     # From knowledge_base_config.py
     "KnowledgeBaseConfigService",
     "get_kb_config_service",
+    "FlashcardProviderConfig",
+    "FlashcardProviderConfigError",
+    "FlashcardProviderConfigService",
+    "get_flashcard_provider_config_service",
     "ModelCatalogService",
     "get_model_catalog_service",
     "ConfigTestRunner",

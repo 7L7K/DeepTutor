@@ -10,6 +10,8 @@ import {
   BookText,
   Bot,
   Brain,
+  ClipboardCheck,
+  GalleryVerticalEnd,
   ChevronDown,
   Github,
   HeartHandshake,
@@ -48,7 +50,6 @@ const PRIMARY_NAV: NavEntry[] = [
     label: "Home",
     icon: House,
     tooltipKey: "Home tooltip",
-    requires: "llm",
   },
   {
     href: "/partners",
@@ -86,6 +87,18 @@ const PRIMARY_NAV: NavEntry[] = [
     label: "Learning Space",
     icon: LayoutGrid,
     tooltipKey: "Space tooltip",
+  },
+  {
+    href: "/practice",
+    label: "Practice",
+    icon: ClipboardCheck,
+    tooltipKey: "Practice",
+  },
+  {
+    href: "/flashcards",
+    label: "Flashcards",
+    icon: GalleryVerticalEnd,
+    tooltipKey: "Flashcards",
   },
 ];
 

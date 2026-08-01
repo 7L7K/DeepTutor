@@ -23,7 +23,9 @@ from deeptutor.multi_user.context import get_current_user
 from deeptutor.multi_user.model_access import allowed_llm_options
 from deeptutor.services.codex_auth import CodexAuthError, get_codex_oauth_service
 from deeptutor.services.config import (
+    FlashcardProviderConfigError,
     get_config_test_runner,
+    get_flashcard_provider_config_service,
     get_model_catalog_service,
     get_runtime_settings_service,
 )
@@ -155,6 +157,23 @@ class EnabledToolsUpdate(BaseModel):
 
 class CatalogPayload(BaseModel):
     catalog: dict[str, Any]
+
+
+class ProviderUsagePolicyUpdate(BaseModel):
+    enabled: bool = False
+    max_concurrent_per_user: int = Field(ge=1, le=8)
+    max_concurrent_global: int = Field(ge=1, le=32)
+    max_lifetime_cost_microusd: int = Field(ge=1, le=1_000_000_000)
+    max_daily_input_tokens_per_user: int = Field(ge=1, le=100_000_000)
+    max_daily_output_tokens_per_user: int = Field(ge=1, le=20_000_000)
+    max_daily_input_tokens_global: int = Field(ge=1, le=500_000_000)
+    max_daily_output_tokens_global: int = Field(ge=1, le=100_000_000)
+    pricing_version: str = Field(min_length=1, max_length=80)
+
+
+class FlashcardProviderSettingsUpdate(BaseModel):
+    enabled: bool = False
+    api_key: str | None = Field(default=None, max_length=16384)
 
 
 class FetchModelsPayload(BaseModel):
@@ -515,7 +534,7 @@ async def get_settings():
         return {"ui": load_ui_settings()}
     return {
         "ui": load_ui_settings(),
-        "catalog": get_model_catalog_service().load(),
+        "catalog": get_model_catalog_service().load_public(),
         "providers": _provider_choices(),
     }
 
@@ -568,7 +587,68 @@ async def refresh_openai_codex_models() -> dict[str, Any]:
 @router.get("/catalog")
 async def get_catalog():
     _require_settings_admin()
-    return {"catalog": get_model_catalog_service().load()}
+    return {"catalog": get_model_catalog_service().load_public()}
+
+
+@router.get("/provider-usage")
+async def get_provider_usage_policy():
+    from dataclasses import asdict
+
+    from deeptutor.courses.provider_usage import get_provider_usage_ledger
+
+    _require_settings_admin()
+    ledger = get_provider_usage_ledger()
+    return {
+        "policy": asdict(ledger.load_policy()),
+        "usage": ledger.usage_summary(),
+    }
+
+
+@router.put("/provider-usage")
+async def update_provider_usage_policy(payload: ProviderUsagePolicyUpdate):
+    from dataclasses import asdict
+
+    from deeptutor.courses.provider_usage import (
+        ProviderUsageError,
+        ProviderUsagePolicy,
+        get_provider_usage_ledger,
+    )
+
+    _require_settings_admin()
+    try:
+        policy = get_provider_usage_ledger().configure(
+            ProviderUsagePolicy(**payload.model_dump())
+        )
+    except ProviderUsageError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    return {
+        "policy": asdict(policy),
+        "usage": get_provider_usage_ledger().usage_summary(),
+    }
+
+
+@router.get("/flashcard-provider")
+async def get_flashcard_provider_settings():
+    _require_settings_admin()
+    try:
+        return {
+            "provider": get_flashcard_provider_config_service().load_public()
+        }
+    except FlashcardProviderConfigError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+
+
+@router.put("/flashcard-provider")
+async def update_flashcard_provider_settings(
+    payload: FlashcardProviderSettingsUpdate,
+):
+    _require_settings_admin()
+    try:
+        service = get_flashcard_provider_config_service()
+        service.configure(enabled=payload.enabled, api_key=payload.api_key)
+        return {"provider": service.load_public()}
+    except FlashcardProviderConfigError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
 
 
 @router.get("/network")
@@ -1012,9 +1092,10 @@ async def get_llm_options():
 @router.put("/catalog")
 async def update_catalog(payload: CatalogPayload):
     _require_settings_admin()
-    catalog = get_model_catalog_service().save(payload.catalog)
+    service = get_model_catalog_service()
+    service.save(payload.catalog)
     _invalidate_runtime_caches()
-    return {"catalog": catalog}
+    return {"catalog": service.load_public()}
 
 
 @router.post("/apply")
@@ -1025,7 +1106,7 @@ async def apply_catalog(payload: CatalogPayload | None = None):
     _invalidate_runtime_caches()
     return {
         "message": "Catalog applied to runtime settings.",
-        "catalog": get_model_catalog_service().load(),
+        "catalog": get_model_catalog_service().load_public(),
         "runtime": applied,
     }
 

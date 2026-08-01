@@ -37,6 +37,7 @@ from .embedding_endpoint import (
 )
 from .loader import load_config_with_main
 from .model_catalog import ModelCatalogService, get_model_catalog_service
+from .text_generation_registry import TextGenerationRegistry
 
 SUPPORTED_SEARCH_PROVIDERS = {
     "brave",
@@ -621,11 +622,40 @@ def resolve_llm_runtime_config(
     *,
     service: ModelCatalogService | None = None,
     llm_selection: dict[str, Any] | LLMSelection | None = None,
+    text_generation_feature: str | None = None,
 ) -> ResolvedLLMConfig:
     """Resolve active LLM config with TutorBot-style provider matching."""
     catalog_service = service or get_model_catalog_service()
     loaded = _load_catalog(catalog)
     loaded = apply_llm_selection_to_catalog(loaded, llm_selection)
+
+    feature_resolution = None
+    if text_generation_feature is not None:
+        feature_resolution = TextGenerationRegistry.from_catalog(loaded).resolve(
+            text_generation_feature,
+            required_capabilities={"chat_completions", "streaming"},
+        )
+        matching_selection: dict[str, str] | None = None
+        llm_service = loaded.get("services", {}).get("llm", {})
+        profiles = list(llm_service.get("profiles") or [])
+        active_profile_id = llm_service.get("active_profile_id")
+        profiles.sort(key=lambda item: item.get("id") != active_profile_id)
+        for candidate_profile in profiles:
+            binding = canonical_provider_name(_as_str(candidate_profile.get("binding")))
+            if binding != feature_resolution.model.provider:
+                continue
+            for candidate_model in candidate_profile.get("models") or []:
+                if _as_str(candidate_model.get("model")) == feature_resolution.model.api_model:
+                    matching_selection = {
+                        "profile_id": _as_str(candidate_profile.get("id")),
+                        "model_id": _as_str(candidate_model.get("id")),
+                    }
+                    break
+            if matching_selection is not None:
+                break
+        if not matching_selection or not all(matching_selection.values()):
+            raise ValueError("Text-generation policy model has no configured provider profile")
+        loaded = apply_llm_selection_to_catalog(loaded, matching_selection)
 
     profile, model = _active_profile_and_model(loaded, catalog_service, "llm")
     resolved_model = _as_str((model or {}).get("model"))
@@ -638,11 +668,17 @@ def resolve_llm_runtime_config(
     active_api_key = _as_str((profile or {}).get("api_key"))
     active_api_base = _as_str((profile or {}).get("base_url"))
     active_api_version = _as_str((profile or {}).get("api_version"))
-    reasoning_effort = _as_str((model or {}).get("reasoning_effort")) or None
+    reasoning_effort = (
+        feature_resolution.reasoning_effort
+        if feature_resolution is not None
+        else _as_str((model or {}).get("reasoning_effort")) or None
+    )
     active_extra_headers = _to_headers((profile or {}).get("extra_headers"))
     context_window = _coerce_optional_int((model or {}).get("context_window"))
     if context_window is None:
         context_window = _coerce_optional_int((model or {}).get("context_window_tokens"))
+    if feature_resolution is not None:
+        context_window = feature_resolution.model.context_window_tokens
 
     provider_pool = _collect_provider_pool(loaded)
     spec = _choose_resolved_provider(

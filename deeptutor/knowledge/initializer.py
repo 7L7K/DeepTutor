@@ -113,7 +113,8 @@ class KnowledgeBaseInitializer:
         for dir_path in [
             self.raw_dir,
         ]:
-            dir_path.mkdir(parents=True, exist_ok=True)
+            dir_path.mkdir(parents=True, exist_ok=True, mode=0o700)
+            dir_path.chmod(0o700)
 
         metadata = {
             "name": self.kb_name,

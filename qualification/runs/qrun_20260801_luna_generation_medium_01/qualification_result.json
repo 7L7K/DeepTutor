@@ -1,0 +1,23 @@
+{
+  "version": 1,
+  "run_id": "qrun_20260801_luna_generation_medium_01",
+  "candidate_model": "gpt-5.6-luna",
+  "reasoning_effort": "medium",
+  "calls_authorized": 4,
+  "calls_attempted": 4,
+  "mini_calls": 0,
+  "retries": 0,
+  "completed_calls": 4,
+  "failed_calls": 0,
+  "uncertain_calls": 0,
+  "settled_cost_microusd": 2546,
+  "approved_spend_cap_microusd": 150000,
+  "overall_result": "pass",
+  "feature_decisions": {
+    "flashcard_generation": {"model":"gpt-5.6-luna","mode":"qualified","reasoning_effort":"medium","result":"pass"},
+    "practice_generation": {"model":"gpt-5.6-luna","mode":"qualified","reasoning_effort":"medium","result":"pass"}
+  },
+  "rollback_definition": {"model":"gpt-5-mini","active_features":[]},
+  "promotion_rule": "Each Luna-medium feature passed every required grader across all of its frozen pathways. Mini was not called and was not used as a candidate veto.",
+  "additional_paid_calls_authorized": false
+}

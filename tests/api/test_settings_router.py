@@ -28,6 +28,99 @@ class _FakeEmbeddingAdapter:
         return type("EmbeddingResponse", (), {"embeddings": [[] for _ in request.texts]})()
 
 
+@pytest.mark.asyncio
+async def test_provider_usage_policy_is_admin_operable_and_fail_closed(
+    tmp_path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from deeptutor.courses import provider_usage
+
+    ledger = provider_usage.ProviderUsageLedger(tmp_path / "provider_usage.db")
+    monkeypatch.setattr(settings_router, "_require_settings_admin", lambda: None)
+    monkeypatch.setattr(
+        provider_usage, "get_provider_usage_ledger", lambda: ledger
+    )
+
+    initial = await settings_router.get_provider_usage_policy()
+    assert initial["policy"]["enabled"] is False
+    assert initial["policy"]["max_lifetime_cost_microusd"] == 10_000_000
+    assert initial["usage"]["remaining_cost_microusd"] == 10_000_000
+    updated = await settings_router.update_provider_usage_policy(
+        settings_router.ProviderUsagePolicyUpdate(
+            enabled=True,
+            max_concurrent_per_user=1,
+            max_concurrent_global=2,
+            max_lifetime_cost_microusd=10_000_000,
+            max_daily_input_tokens_per_user=10_000,
+            max_daily_output_tokens_per_user=2_000,
+            max_daily_input_tokens_global=20_000,
+            max_daily_output_tokens_global=4_000,
+            pricing_version="test-only-v1",
+        )
+    )
+    assert updated["policy"]["enabled"] is True
+    assert updated["usage"]["admitted_cost_microusd"] == 0
+    assert ledger.load_policy().pricing_version == "test-only-v1"
+
+
+@pytest.mark.asyncio
+async def test_flashcard_provider_settings_are_admin_only_and_redacted(
+    tmp_path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from deeptutor.services.config.flashcard_provider import (
+        FlashcardProviderConfigService,
+    )
+
+    service = FlashcardProviderConfigService(
+        tmp_path / "settings" / "flashcard_provider.json"
+    )
+    monkeypatch.setattr(settings_router, "_require_settings_admin", lambda: None)
+    monkeypatch.setattr(
+        settings_router,
+        "get_flashcard_provider_config_service",
+        lambda: service,
+    )
+
+    initial = await settings_router.get_flashcard_provider_settings()
+    assert initial["provider"]["enabled"] is False
+    assert initial["provider"]["credential_configured"] is False
+    updated = await settings_router.update_flashcard_provider_settings(
+        settings_router.FlashcardProviderSettingsUpdate(
+            enabled=True,
+            api_key="sk-test-private",
+        )
+    )
+
+    assert updated["provider"]["enabled"] is True
+    assert updated["provider"]["credential_configured"] is True
+    assert "api_key" not in updated["provider"]
+    assert "credential_ref" not in updated["provider"]
+
+
+@pytest.mark.asyncio
+async def test_flashcard_provider_cannot_enable_without_credential(
+    tmp_path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from deeptutor.services.config.flashcard_provider import (
+        FlashcardProviderConfigService,
+    )
+
+    service = FlashcardProviderConfigService(
+        tmp_path / "settings" / "flashcard_provider.json"
+    )
+    monkeypatch.setattr(settings_router, "_require_settings_admin", lambda: None)
+    monkeypatch.setattr(
+        settings_router,
+        "get_flashcard_provider_config_service",
+        lambda: service,
+    )
+
+    with pytest.raises(settings_router.HTTPException) as error:
+        await settings_router.update_flashcard_provider_settings(
+            settings_router.FlashcardProviderSettingsUpdate(enabled=True)
+        )
+    assert error.value.status_code == 422
+
+
 class _FakeCatalogService:
     def __init__(self, catalog: dict[str, Any]):
         self._catalog = deepcopy(catalog)
@@ -38,6 +131,15 @@ class _FakeCatalogService:
 
     def load(self) -> dict[str, Any]:
         return deepcopy(self._catalog)
+
+    def load_public(self) -> dict[str, Any]:
+        catalog = self.load()
+        for configured_service in catalog["services"].values():
+            for profile in configured_service.get("profiles", []):
+                profile["api_key_set"] = bool(profile.get("api_key"))
+                profile["api_key"] = ""
+                profile.pop("credential_ref", None)
+        return catalog
 
     def apply(self, catalog: dict[str, Any]) -> dict[str, Any]:
         current = self.save(catalog)
@@ -557,7 +659,8 @@ async def test_update_catalog_invalidates_runtime_caches(monkeypatch: pytest.Mon
     new_llm_client = llm_client_module.get_llm_client()
     new_embedding_client = embedding_client_module.get_embedding_client()
 
-    assert response == {"catalog": updated_catalog}
+    assert response["catalog"]["services"]["llm"]["profiles"][0]["api_key"] == ""
+    assert response["catalog"]["services"]["llm"]["profiles"][0]["api_key_set"] is True
     assert old_llm_config.model == "gpt-old"
     assert new_llm_config.model == "gpt-new"
     assert new_llm_config.base_url == "https://new-llm.example/v1"
@@ -602,7 +705,8 @@ async def test_apply_catalog_invalidates_runtime_caches(monkeypatch: pytest.Monk
     new_llm_client = llm_client_module.get_llm_client()
     new_embedding_client = embedding_client_module.get_embedding_client()
 
-    assert response["catalog"] == applied_catalog
+    assert response["catalog"]["services"]["llm"]["profiles"][0]["api_key"] == ""
+    assert response["catalog"]["services"]["llm"]["profiles"][0]["api_key_set"] is True
     assert response["runtime"]["catalog_path"]
     assert new_llm_config.model == "gpt-after-apply"
     assert new_llm_client is not old_llm_client

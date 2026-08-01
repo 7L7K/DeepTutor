@@ -550,3 +550,7 @@ class TestBookIdValidation:
         elif method == "DELETE":
             resp = client.delete(path, **kwargs)
         assert resp.status_code == 400, f"{method} {path} should return 400, got {resp.status_code}"
+
+    def test_course_learning_path_cannot_be_deleted_through_generic_api(self, client):
+        response = client.delete("/api/v1/learning/progress/lp_crs_private")
+        assert response.status_code == 404
