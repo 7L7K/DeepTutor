@@ -961,3 +961,29 @@ Boundary:
 - This acceptance is a product/human-review gate. By itself it does not claim
   that the work is pushed, merged, deployed, reconciled with newer upstream
   DeepTutor, or production released.
+
+### 2026-08-01 - Luna qualification and runtime-policy transition
+
+- The accepted learner experience remains anchored at `3243c0d5`.
+- Reviewed commit `a113ebed` promotes Flashcards generation to
+  `gpt-5.6-luna` with medium reasoning through the central typed registry.
+  Mini remains defined only as emergency rollback and is not selected by an
+  active feature.
+- The Luna-medium Course and conversation Flashcard artifacts passed frozen
+  qualification and human review. The complete commit snapshot passed 196
+  impacted tests, Ruff, diff, credential, and local-path checks.
+- The local paid-use ledger retained all historical Mini receipts and changed
+  only its active pricing authority to `openai-gpt-5.6-luna-2026-08-01` after
+  confirming that no operation was reserved. Fresh no-call resolution reports
+  Flashcard generation available.
+- A controlled current-HEAD backend/frontend restart succeeded. The
+  authenticated post-restart Flashcards Create surface exposed `Generate from
+  Course materials` and `Create manually`, with no disabled-provider warning.
+  The check stopped before confirmation, so it made no provider call.
+- The non-terminating production-build boundary was isolated to the machine's
+  unsupported Node.js 26 runtime. The same current tree completed a full Next
+  production build under Node.js 24.14.0, generated all 54 routes, and exited
+  successfully. The web package now rejects unsupported Node majors before a
+  build, accepts only the evidenced Node 22/24 lines, and selects Node 22 LTS in
+  `.nvmrc`. This is local build proof only; no deployment or release authority
+  is claimed.

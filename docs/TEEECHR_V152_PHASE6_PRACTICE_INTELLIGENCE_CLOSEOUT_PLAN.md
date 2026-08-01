@@ -513,10 +513,11 @@ upstream integration is part of this receipt.
   `10` authenticated browser journeys. No paid provider call was made in this
   follow-up.
 - Current-tree production builds compiled and typechecked; Turbopack generated
-  all 54 routes. Both the default Turbopack command and a Webpack discriminator
-  then failed to terminate their local worker processes, so a clean build exit
-  is not claimed for this follow-up. This is parked as build-tool shutdown proof,
-  not converted into browser, deployment, or release authority.
+  all 54 routes. The later stabilization audit isolated the non-terminating
+  worker behavior to unsupported Node.js 26. The same build completed and
+  exited successfully under Node.js 24.14.0, and a prebuild guard now rejects
+  unsupported Node majors. This remains local build proof, not browser,
+  deployment, or release authority.
 
 ### Deliberately separate or unproved
 
@@ -528,9 +529,38 @@ upstream integration is part of this receipt.
   through the authenticated local API, and the resulting real quiz was then
   proved through the authenticated Chrome learner lifecycle. The existing
   provider-free browser suite remains a separate repeatable surface.
-- A clean current-tree production-build process exit is unproved because local
-  Next.js worker processes remained alive after compilation/finalization. The
-  source compiled and typechecked, but that is not recorded as a passed build.
+- Staging, deployed, and release-artifact builds remain unproved. The current
+  tree now has a clean local production-build exit under an evidenced supported
+  Node runtime, but that does not establish any hosted or packaged artifact.
 - Historical learner-data migration, upstream reconciliation, staging,
   production, multi-server coordination, product-shell redesign, strict exam
   mode, and PDF/exam mimic remain parked.
+
+### 2026-08-01 - Luna qualification and runtime-policy transition
+
+- Phase 6 learner acceptance remains closed through `315510e1`.
+- Reviewed commit `a113ebed` promotes Practice generation to
+  `gpt-5.6-luna` with medium reasoning through the central typed registry.
+  Mini remains dormant emergency rollback and is not selected by an active
+  feature.
+- The frozen Course and General Study Practice cases passed Luna-medium live
+  qualification, human review, requested/actual-model validation, pricing
+  receipts, and the zero-retry/capped-call contract. The exact committed slice
+  passed 196 impacted tests plus Ruff, diff, credential, and local-path checks.
+- The local active usage policy was backed up and moved to pricing authority
+  `openai-gpt-5.6-luna-2026-08-01` only after confirming zero reserved
+  operations. Eleven settled and five uncertain historical Mini reservations
+  remain immutable. Fresh no-call provider resolution reports Practice
+  available.
+- The current backend and frontend restarted successfully from `a113ebed`.
+  Authenticated post-restart Practice Create exposed the AI quiz-planning form,
+  including the server-derived `Using BlueWay verified course bundle` status,
+  and did not show the disabled-provider fallback. The check stopped before
+  confirmation, so it made no provider call.
+- The non-terminating production-build boundary was isolated to the machine's
+  unsupported Node.js 26 runtime. Under Node.js 24.14.0 the full current-tree
+  Next build compiled, typechecked, generated all 54 routes with 17 workers,
+  finalized, and exited successfully. The web package now accepts only the
+  evidenced Node 22/24 lines, rejects unsupported majors before building, and
+  selects Node 22 LTS through `.nvmrc`. No deployment or release authority is
+  claimed.
