@@ -28,13 +28,13 @@ _COMMON = {"id", "revision", "content_sha256", "state"}
 _HEX64 = re.compile(r"^[0-9a-f]{64}$")
 _SNAPSHOT_ID = re.compile(r"^bws_[0-9a-f]{64}$")
 _FIELDS: dict[str, set[str]] = {
-    "courses": _COMMON | {"course_id", "title"},
-    "class_meetings": _COMMON | {"course_id", "title", "days", "start_time", "end_time", "room", "location_text"},
+    "courses": _COMMON | {"course_id", "term_id", "title"},
+    "class_meetings": _COMMON | {"course_id", "term_id", "title", "days", "start_time", "end_time", "room", "location_text"},
     "schedule_events": _COMMON | {"course_id", "title", "date", "starts_at", "ends_at", "all_day", "notes"},
     "assignments": _COMMON | {"course_id", "title", "due_at", "details", "submission_method", "grading_note", "status"},
     "class_notes": _COMMON | {"course_id", "body"},
     "class_links": _COMMON | {"course_id", "label", "link_type"},
-    "course_profiles": _COMMON | {"course_id", "title", "display_name", "term", "instructor_name"},
+    "course_profiles": _COMMON | {"course_id", "term_id", "title", "display_name", "term", "instructor_name"},
     "syllabus_facts": _COMMON | {"course_id", "kind", "title", "value"},
     "source_texts": _COMMON | {"course_id", "title", "text", "source_kind"},
     "capture_metadata": _COMMON | {
@@ -83,6 +83,8 @@ def _validate_record(kind: str, record: Any) -> None:
     course_id = record.get("course_id")
     if course_id is not None and not _text(course_id, limit=256):
         raise SnapshotValidationError("BlueWay course_id is invalid")
+    if "term_id" in record and record["term_id"] is not None and not _text(record["term_id"], limit=256):
+        raise SnapshotValidationError("BlueWay term_id is invalid")
     if kind == "courses" and (
         record.get("course_id") != record["id"]
         or record["state"] != "current"

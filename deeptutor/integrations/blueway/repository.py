@@ -401,19 +401,19 @@ class BlueWayRepository:
             ).fetchall()
         return [{"record_kind": row["record_kind"], "external_record_id": row["external_record_id"]} for row in rows]
 
-    def bundle_records(self, connection_id: str) -> list[tuple[str, str, list[dict[str, Any]]]]:
+    def bundle_records(self, connection_id: str) -> list[tuple[str, str, str | None, list[dict[str, Any]]]]:
         """Read only owner-mapped current records; unlinked data is never rendered."""
         self.get_connection(connection_id, active_only=True)
         with self.courses._connect() as conn:  # noqa: SLF001
             rows = conn.execute(
-                """SELECT r.course_id, m.external_course_id, r.record_kind, r.external_record_id, r.payload_json
+                """SELECT r.course_id, m.external_course_id, m.external_term_id, r.record_kind, r.external_record_id, r.payload_json
                    FROM blueway_records r JOIN courses c ON c.id = r.course_id
                    JOIN blueway_course_maps m ON m.connection_id = r.connection_id AND m.course_id = r.course_id
                    WHERE r.connection_id = ? AND r.state = 'current' AND c.owner_user_id = ?
                      AND c.state = 'active' ORDER BY r.course_id, r.record_kind, r.external_record_id""",
                 (connection_id, self.owner_user_id),
             ).fetchall()
-        grouped: dict[tuple[str, str], list[dict[str, Any]]] = {}
+        grouped: dict[tuple[str, str, str | None], list[dict[str, Any]]] = {}
         for row in rows:
             record = json.loads(row["payload_json"])
             # Preserve the validated receipt, but never grant an empty capture
@@ -423,10 +423,10 @@ class BlueWayRepository:
                 for segment in record.get("segments", [])
             ):
                 continue
-            grouped.setdefault((str(row["course_id"]), str(row["external_course_id"])), []).append(
+            grouped.setdefault((str(row["course_id"]), str(row["external_course_id"]), row["external_term_id"]), []).append(
                 {"kind": row["record_kind"], "record": record}
             )
-        return [(course_id, external_course_id, records) for (course_id, external_course_id), records in sorted(grouped.items())]
+        return [(course_id, external_course_id, term_id, records) for (course_id, external_course_id, term_id), records in sorted(grouped.items(), key=lambda item: (item[0][0], item[0][1], item[0][2] or ""))]
 
     def finalize_bundle_source(
         self, connection_id: str, *, course_id: str, source_id: str, operation_id: str,
@@ -584,6 +584,7 @@ class BlueWayRepository:
     def create_course_map(
         self, *, connection_id: str, external_course_id: str, remote_title: str,
         remote_state: str, remote_hash: str, snapshot_id: str, expected_generation: int,
+        external_term_id: str | None = None,
     ) -> Course:
         """Create one opaque Course and its exact external-ID map in one transaction.
 
@@ -594,6 +595,8 @@ class BlueWayRepository:
             raise ValueError("Invalid remote course state")
         if not external_course_id or not snapshot_id or not remote_hash:
             raise ValueError("Course map identity fields are required")
+        if external_term_id is not None and not str(external_term_id).strip():
+            raise ValueError("External term identity must not be empty")
         if expected_generation < 1:
             raise ValueError("Expected connection generation is required")
         now, course_id = time.time(), _id("crs")
@@ -612,8 +615,8 @@ class BlueWayRepository:
             if connection is None:
                 raise CourseConflictError("BlueWay connection is stale or no longer writable")
             existing = conn.execute(
-                "SELECT course_id FROM blueway_course_maps WHERE connection_id = ? AND external_course_id = ?",
-                (connection_id, external_course_id),
+                "SELECT course_id FROM blueway_course_maps WHERE connection_id = ? AND external_course_id = ? AND external_term_id IS ?",
+                (connection_id, external_course_id, external_term_id),
             ).fetchone()
             if existing:
                 row = conn.execute("SELECT * FROM courses WHERE id = ?", (existing["course_id"],)).fetchone()
@@ -626,10 +629,10 @@ class BlueWayRepository:
                 (course_id, self.owner_user_id, title, now, now),
             )
             conn.execute(
-                """INSERT INTO blueway_course_maps (connection_id, external_course_id, course_id, remote_title,
+                """INSERT INTO blueway_course_maps (connection_id, external_course_id, external_term_id, course_id, remote_title,
                     remote_state, remote_hash, first_seen_snapshot_id, last_seen_snapshot_id, created_at, updated_at)
-                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-                (connection_id, external_course_id, course_id, remote_title, remote_state, remote_hash,
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                (connection_id, external_course_id, external_term_id, course_id, remote_title, remote_state, remote_hash,
                  snapshot_id, snapshot_id, now, now),
             )
             row = conn.execute("SELECT * FROM courses WHERE id = ?", (course_id,)).fetchone()
@@ -711,13 +714,14 @@ class BlueWayRepository:
                 assert updated is not None
                 return SyncRun.from_row(updated)
             counts: dict[str, int] = {}
-            course_ids: dict[str, str] = {}
+            course_ids: dict[tuple[str, str | None], str] = {}
             unavailable = {str(item["dataset"]) for item in snapshot.get("unavailable", [])}
             for remote in snapshot["datasets"]["courses"]:
                 external_id, title = str(remote["id"]), str(remote["title"])
+                external_term_id = remote.get("term_id")
                 mapped = conn.execute(
-                    "SELECT course_id FROM blueway_course_maps WHERE connection_id = ? AND external_course_id = ?",
-                    (connection_id, external_id),
+                    "SELECT course_id FROM blueway_course_maps WHERE connection_id = ? AND external_course_id = ? AND external_term_id IS ?",
+                    (connection_id, external_id, external_term_id),
                 ).fetchone()
                 if mapped is None:
                     # A safely disconnected reconnect retains the learner's
@@ -728,9 +732,9 @@ class BlueWayRepository:
                            JOIN blueway_connections prior ON prior.id = m.connection_id
                            JOIN courses course ON course.id = m.course_id
                            WHERE prior.owner_user_id = ? AND prior.external_subject = ?
-                             AND m.external_course_id = ? AND course.owner_user_id = ?
+                             AND m.external_course_id = ? AND m.external_term_id IS ? AND course.owner_user_id = ?
                            ORDER BY m.updated_at DESC LIMIT 1""",
-                        (self.owner_user_id, run["external_subject"], external_id, self.owner_user_id),
+                        (self.owner_user_id, run["external_subject"], external_id, external_term_id, self.owner_user_id),
                     ).fetchone()
                     if rebound is None:
                         local_id = _id("crs")
@@ -742,38 +746,37 @@ class BlueWayRepository:
                     else:
                         local_id = str(rebound["course_id"])
                     conn.execute(
-                        """INSERT INTO blueway_course_maps (connection_id, external_course_id, course_id, remote_title, remote_state, remote_hash, first_seen_snapshot_id, last_seen_snapshot_id, created_at, updated_at)
-                           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-                        (connection_id, external_id, local_id, title, "active", remote["content_sha256"], snapshot_id, snapshot_id, now, now),
+                        """INSERT INTO blueway_course_maps (connection_id, external_course_id, external_term_id, course_id, remote_title, remote_state, remote_hash, first_seen_snapshot_id, last_seen_snapshot_id, created_at, updated_at)
+                           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                        (connection_id, external_id, external_term_id, local_id, title, "active", remote["content_sha256"], snapshot_id, snapshot_id, now, now),
                     )
                 else:
                     local_id = str(mapped["course_id"])
                     conn.execute(
                         """UPDATE blueway_course_maps SET remote_title = ?, remote_state = ?, remote_hash = ?, last_seen_snapshot_id = ?, updated_at = ?
-                           WHERE connection_id = ? AND external_course_id = ?""",
-                        (title, "active", remote["content_sha256"], snapshot_id, now, connection_id, external_id),
+                           WHERE connection_id = ? AND external_course_id = ? AND external_term_id IS ?""",
+                        (title, "active", remote["content_sha256"], snapshot_id, now, connection_id, external_id, external_term_id),
                     )
-                course_ids[external_id] = local_id
+                course_ids[(external_id, external_term_id)] = local_id
             if "courses" in unavailable:
                 # The course list is non-authoritative for this receipt, but
                 # available course-linked records must retain their exact prior
                 # binding instead of being converted to unlinked rows.
                 course_ids = {
-                    str(row["external_course_id"]): str(row["course_id"])
+                    (str(row["external_course_id"]), row["external_term_id"]): str(row["course_id"])
                     for row in conn.execute(
-                        """SELECT external_course_id, course_id FROM blueway_course_maps
+                        """SELECT external_course_id, external_term_id, course_id FROM blueway_course_maps
                            WHERE connection_id = ? AND remote_state = 'active'""",
                         (connection_id,),
                     )
                 }
             counts["courses"] = len(course_ids)
             if snapshot["complete"] and "courses" not in unavailable:
-                marks = ",".join("?" for _ in course_ids)
-                unseen = conn.execute(
-                    f"""SELECT course_id FROM blueway_course_maps WHERE connection_id = ?
-                       AND remote_state = 'active' AND external_course_id NOT IN ({marks or "''"})""",
-                    [connection_id, *course_ids],
+                active_maps = conn.execute(
+                    "SELECT external_course_id, external_term_id, course_id FROM blueway_course_maps WHERE connection_id = ? AND remote_state = 'active'",
+                    (connection_id,),
                 ).fetchall()
+                unseen = [row for row in active_maps if (str(row["external_course_id"]), row["external_term_id"]) not in course_ids]
                 if unseen:
                     local_ids = [str(row["course_id"]) for row in unseen]
                     local_marks = ",".join("?" for _ in local_ids)
@@ -794,13 +797,25 @@ class BlueWayRepository:
                     continue
                 counts[kind] = len(records)
                 for remote in records:
+                    external_course_id = remote.get("course_id")
+                    external_term_id = remote.get("term_id") if kind in {"class_meetings", "course_profiles"} else None
                     prior = conn.execute(
                         """SELECT state, current_source_id FROM blueway_records
-                           WHERE connection_id = ? AND record_kind = ? AND external_record_id = ?""",
-                        (connection_id, kind, remote["id"]),
+                           WHERE connection_id = ? AND record_kind = ? AND external_record_id = ? AND external_term_id IS ?""",
+                        (connection_id, kind, remote["id"], external_term_id),
                     ).fetchone()
-                    external_course_id = remote.get("course_id")
-                    local_course_id = course_ids.get(str(external_course_id)) if external_course_id else None
+                    local_course_id = None
+                    if external_course_id:
+                        if external_term_id is not None:
+                            local_course_id = course_ids.get((str(external_course_id), external_term_id))
+                        else:
+                            candidates = {
+                                course_id
+                                for (course_key, _term_key), course_id in course_ids.items()
+                                if course_key == str(external_course_id)
+                            }
+                            if len(candidates) == 1:
+                                local_course_id = candidates.pop()
                     if local_course_id is not None:
                         course_row = conn.execute("SELECT state FROM courses WHERE id = ? AND owner_user_id = ?", (local_course_id, self.owner_user_id)).fetchone()
                         if course_row is None or str(course_row["state"]) != "active":
@@ -809,13 +824,13 @@ class BlueWayRepository:
                     state = "unlinked" if local_course_id is None else str(remote["state"])
                     payload = json.dumps(remote, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
                     conn.execute(
-                        """INSERT INTO blueway_records (connection_id, record_kind, external_record_id, external_course_id, course_id, state, remote_revision, content_sha256, payload_json, current_source_id, first_seen_snapshot_id, last_seen_snapshot_id, created_at, updated_at)
-                           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, ?, ?, ?)
-                           ON CONFLICT(connection_id, record_kind, external_record_id) DO UPDATE SET
-                             external_course_id=excluded.external_course_id, course_id=excluded.course_id, state=excluded.state,
+                        """INSERT INTO blueway_records (connection_id, record_kind, external_record_id, external_course_id, external_term_id, course_id, state, remote_revision, content_sha256, payload_json, current_source_id, first_seen_snapshot_id, last_seen_snapshot_id, created_at, updated_at)
+                           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, ?, ?, ?)
+                           ON CONFLICT DO UPDATE SET
+                             external_course_id=excluded.external_course_id, external_term_id=excluded.external_term_id, course_id=excluded.course_id, state=excluded.state,
                              remote_revision=excluded.remote_revision, content_sha256=excluded.content_sha256,
                              payload_json=excluded.payload_json, last_seen_snapshot_id=excluded.last_seen_snapshot_id, updated_at=excluded.updated_at""",
-                        (connection_id, kind, remote["id"], external_course_id, local_course_id, state, remote["revision"], remote["content_sha256"], payload, snapshot_id, snapshot_id, now, now),
+                        (connection_id, kind, remote["id"], external_course_id, external_term_id, local_course_id, state, remote["revision"], remote["content_sha256"], payload, snapshot_id, snapshot_id, now, now),
                     )
                     if state == "archived" and prior is not None and prior["state"] == "current" and prior["current_source_id"]:
                         explicitly_archived_source_ids.append(str(prior["current_source_id"]))

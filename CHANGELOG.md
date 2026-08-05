@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+### Fixed
+
+- Kept BlueWay course mappings backward-compatible for exports without terms
+  while qualifying map, record-routing, reconnect, and bundle idempotency
+  identity by `external_course_id` plus optional `external_term_id` when a
+  term is present.
+
 ### Added
 
 - Centralized TEEECHR text-generation model, capability, reasoning, pricing,

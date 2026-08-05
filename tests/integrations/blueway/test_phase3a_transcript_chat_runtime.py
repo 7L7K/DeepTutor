@@ -101,7 +101,7 @@ def _ready_imported_transcript_sources(
 
     grouped = blueway.bundle_records(connection.id)
     grouped_by_external_course = {
-        external_course_id: records for _course_id, external_course_id, records in grouped
+        external_course_id: records for _course_id, external_course_id, _external_term_id, records in grouped
     }
     assert {
         external_course_id: [record["kind"] for record in records]
@@ -131,7 +131,7 @@ def _ready_imported_transcript_sources(
                 if source.kind == "blueway snapshot" and source.state == "ready"
             ),
         )
-        for course_id, external_course_id, _records in grouped
+        for course_id, external_course_id, _external_term_id, _records in grouped
     }
     course_id, source = sources_by_external_course["blueway-course-primary"]
     foreign_course_id, foreign_source = sources_by_external_course["blueway-course-foreign"]

@@ -171,10 +171,10 @@ def _encoded_bundle(*, snapshot_id: str, course_id: str, records: list[dict]) ->
     return json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode("utf-8")
 
 
-def _idempotency_key(*, external_subject: str, external_course_id: str, bundle_sha256: str) -> str:
+def _idempotency_key(*, external_subject: str, external_course_id: str, external_term_id: str | None, bundle_sha256: str) -> str:
     """A bounded key which retains all semantic identity through a digest."""
     identity = json.dumps(
-        {"external_subject": external_subject, "external_course_id": external_course_id, "bundle_sha256": bundle_sha256},
+        {"external_subject": external_subject, "external_course_id": external_course_id, "external_term_id": external_term_id, "bundle_sha256": bundle_sha256},
         separators=(",", ":"), sort_keys=True,
     ).encode("utf-8")
     return f"blueway:{hashlib.sha256(identity).hexdigest()}"
@@ -194,13 +194,13 @@ def materialize_course_bundles(
     staged: list[dict] = []
     processing_sources: list[tuple[str, str]] = []
     try:
-        for course_id, external_course_id, records in repository.bundle_records(connection.id):
+        for course_id, external_course_id, external_term_id, records in repository.bundle_records(connection.id):
             encoded = _encoded_bundle(snapshot_id=snapshot_id, course_id=course_id, records=records)
             digest = hashlib.sha256(encoded).hexdigest()
             existing = [source for source in repository.courses.list_sources(course_id) if source.kind == "blueway snapshot" and source.state in {"ready", "archived"}]
             previous = next((source for source in existing if source.state == "ready"), None)
             key = _idempotency_key(
-                external_subject=connection.external_subject, external_course_id=external_course_id, bundle_sha256=digest,
+                external_subject=connection.external_subject, external_course_id=external_course_id, external_term_id=external_term_id, bundle_sha256=digest,
             )
             source = repository.courses.get_source_by_idempotency_key(course_id, key)
             if source is None:

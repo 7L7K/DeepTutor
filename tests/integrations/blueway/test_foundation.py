@@ -212,6 +212,57 @@ def test_mapping_is_exact_id_not_title_and_course_creation_is_atomic(tmp_path: P
     assert replay.id == first.id and replay.title == "History"
 
 
+def test_term_qualified_mapping_keeps_same_external_course_id_distinct_and_replay_safe(tmp_path: Path) -> None:
+    repository = BlueWayRepository(CourseRepository(tmp_path / "courses.db", "owner-a"))
+    connection = repository.create_active_connection(external_subject="subject-a", scope_version="academic.read.v1")
+    fall = repository.create_course_map(
+        connection_id=connection.id, external_course_id="course-42", external_term_id="fall-2026",
+        remote_title="History Fall", remote_state="active", remote_hash="a" * 64,
+        snapshot_id="bws-1", expected_generation=connection.grant_generation,
+    )
+    spring = repository.create_course_map(
+        connection_id=connection.id, external_course_id="course-42", external_term_id="spring-2027",
+        remote_title="History Spring", remote_state="active", remote_hash="b" * 64,
+        snapshot_id="bws-2", expected_generation=connection.grant_generation,
+    )
+    fall_replay = repository.create_course_map(
+        connection_id=connection.id, external_course_id="course-42", external_term_id="fall-2026",
+        remote_title="Renamed remotely", remote_state="active", remote_hash="a" * 64,
+        snapshot_id="bws-3", expected_generation=connection.grant_generation,
+    )
+    legacy = repository.create_course_map(
+        connection_id=connection.id, external_course_id="course-42",
+        remote_title="Legacy", remote_state="active", remote_hash="c" * 64,
+        snapshot_id="bws-4", expected_generation=connection.grant_generation,
+    )
+    assert fall.id != spring.id != legacy.id
+    assert fall_replay.id == fall.id and fall_replay.title == "History Fall"
+    with repository.courses._connect() as conn:  # noqa: SLF001
+        rows = conn.execute(
+            "SELECT external_term_id, course_id FROM blueway_course_maps WHERE connection_id = ? AND external_course_id = ? ORDER BY external_term_id",
+            (connection.id, "course-42"),
+        ).fetchall()
+    assert [(row["external_term_id"], row["course_id"]) for row in rows] == [
+        (None, legacy.id), ("fall-2026", fall.id), ("spring-2027", spring.id)
+    ]
+
+
+def test_snapshot_accepts_optional_term_identity_only_on_qualified_datasets() -> None:
+    snapshot = _snapshot()
+    snapshot["datasets"]["courses"][0]["term_id"] = "fall-2026"
+    snapshot["datasets"]["class_meetings"] = [{
+        "id": "meeting-1", "course_id": "course-same-title-a", "term_id": "fall-2026",
+        "title": "Lecture", "state": "current", "revision": "a" * 64, "content_sha256": "a" * 64,
+    }]
+    snapshot["datasets"]["course_profiles"] = [{
+        "id": "profile-1", "course_id": "course-same-title-a", "term_id": "fall-2026",
+        "title": "History", "display_name": "History", "state": "current",
+        "revision": "a" * 64, "content_sha256": "a" * 64,
+    }]
+    snapshot["payload_sha256"] = canonical_snapshot_hash(snapshot)
+    assert validate_snapshot(snapshot)["datasets"]["courses"][0]["term_id"] == "fall-2026"
+
+
 def test_pairing_refuses_a_second_provider_grant_until_the_local_connection_is_terminal(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     service, _courses = _service(tmp_path, monkeypatch)
     starts = [0]
