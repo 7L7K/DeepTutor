@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- Added the secure reverse TEEECHR workspace read contract with dedicated
+  metadata-only authorization, Ed25519 assertion verification, and the exact
+  sanitized `teeechr.workspace.v1` projection. This documents the contract only;
+  it makes no runtime or deployment claim.
+
 ### Fixed
 
 - Kept BlueWay course mappings backward-compatible for exports without terms

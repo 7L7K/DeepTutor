@@ -67,6 +67,25 @@ class SyncRun:
         return cls(**payload)
 
 
+@dataclass(frozen=True)
+class WorkspaceAuthorization:
+    authorization_id: str
+    owner_user_id: str
+    connection_id: str
+    client_id: str
+    external_subject_hash: str
+    scope: str
+    status: str
+    created_at: float
+    updated_at: float
+    revoked_at: float | None
+    version: int
+
+    @classmethod
+    def from_row(cls, row: sqlite3.Row) -> "WorkspaceAuthorization":
+        return cls(**dict(row))
+
+
 class BlueWayRepository:
     """Repository facade that never accepts an owner id from request data."""
 
@@ -145,6 +164,43 @@ class BlueWayRepository:
                 (self.owner_user_id,),
             ).fetchone()
         return Connection.from_row(row) if row else None
+
+    def create_workspace_authorization(
+        self, *, authorization_id: str, client_id: str, external_subject_hash: str, scope: str,
+        connection_id: str | None = None,
+    ) -> WorkspaceAuthorization:
+        """Persist only the validated link/consent metadata, never a token."""
+        connection = self.get_connection(connection_id, active_only=True) if connection_id else self.active_connection()
+        if connection is None:
+            raise BlueWayNotFoundError("Integration resource not found")
+        now = time.time()
+        with self.courses._write_lock, self.courses._connect() as conn:
+            conn.execute("""INSERT INTO blueway_workspace_authorizations
+                (authorization_id, owner_user_id, connection_id, client_id, external_subject_hash, scope, status, created_at, updated_at, revoked_at, version)
+                VALUES (?, ?, ?, ?, ?, ?, 'active', ?, ?, NULL, 1)""",
+                (authorization_id, self.owner_user_id, connection.id, client_id, external_subject_hash, scope, now, now))
+            row = conn.execute("SELECT * FROM blueway_workspace_authorizations WHERE authorization_id = ?", (authorization_id,)).fetchone()
+        assert row is not None
+        return WorkspaceAuthorization.from_row(row)
+
+    def get_workspace_authorization(self, authorization_id: str) -> WorkspaceAuthorization:
+        with self.courses._connect() as conn:
+            row = conn.execute("""SELECT * FROM blueway_workspace_authorizations
+                WHERE authorization_id = ? AND owner_user_id = ?""", (authorization_id, self.owner_user_id)).fetchone()
+        if row is None:
+            raise BlueWayNotFoundError("Integration resource not found")
+        return WorkspaceAuthorization.from_row(row)
+
+    def revoke_workspace_authorization(self, authorization_id: str) -> WorkspaceAuthorization:
+        now = time.time()
+        with self.courses._write_lock, self.courses._connect() as conn:
+            conn.execute("""UPDATE blueway_workspace_authorizations
+                SET status = 'revoked', revoked_at = ?, updated_at = ?, version = version + 1
+                WHERE authorization_id = ? AND owner_user_id = ?""", (now, now, authorization_id, self.owner_user_id))
+            row = conn.execute("SELECT * FROM blueway_workspace_authorizations WHERE authorization_id = ? AND owner_user_id = ?", (authorization_id, self.owner_user_id)).fetchone()
+        if row is None:
+            raise BlueWayNotFoundError("Integration resource not found")
+        return WorkspaceAuthorization.from_row(row)
 
     def visible_connection(self) -> Connection | None:
         """Return the active or locally-fenced revocation state for its owner."""

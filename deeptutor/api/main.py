@@ -455,6 +455,11 @@ app.include_router(
     dependencies=_auth,
 )
 app.include_router(
+    blueway_router.workspace_router,
+    prefix="/api/v1/integrations/blueway",
+    tags=["blueway-workspace"],
+)
+app.include_router(
     question.router, prefix="/api/v1/question", tags=["question"], dependencies=_auth
 )
 app.include_router(

@@ -2,8 +2,9 @@
 
 from __future__ import annotations
 
-from fastapi import APIRouter, HTTPException
-from pydantic import BaseModel, Field
+from fastapi import APIRouter, Header, HTTPException
+from fastapi.responses import JSONResponse
+from pydantic import BaseModel, ConfigDict, Field
 
 from .repository import BlueWayNotFoundError, Connection, SyncRun
 from .service import (
@@ -13,13 +14,22 @@ from .service import (
     build_blueway_service,
 )
 from .transport import BlueWayTransportError
+from .assertion import AssertionError as WorkspaceAssertionError, verify_assertion
+from .workspace import ConsentRequiredError, project_workspace
 
 router = APIRouter()
+workspace_router = APIRouter()
 _test_service: BlueWayService | None = None
 
 
 class DisconnectRequest(BaseModel):
     expected_revision: int = Field(ge=1)
+
+
+class WorkspaceReadRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    course_id: str = Field(min_length=1, max_length=256)
+    term_id: str | None = Field(default=None, min_length=1, max_length=256)
 
 
 def set_test_service(service: BlueWayService | None) -> None:
@@ -174,3 +184,21 @@ def unlinked():
 def disconnect(body: DisconnectRequest):
     connection = _call(lambda: _service().disconnect(expected_revision=body.expected_revision))
     return {"connection": _connection(connection)}
+
+
+@workspace_router.post("/workspace")
+def workspace_read(body: WorkspaceReadRequest, authorization: str | None = Header(default=None)):
+    """Read the owner-scoped allowlist projection using a BlueWay assertion only."""
+    if not authorization or not authorization.startswith("Bearer ") or not authorization[7:].strip():
+        raise HTTPException(status_code=401, detail="Workspace assertion required")
+    try:
+        claims = verify_assertion(authorization[7:].strip())
+        if claims["external_course_id"] != body.course_id or claims.get("external_term_id") != body.term_id:
+            raise HTTPException(status_code=400, detail="Workspace request identity does not match assertion")
+        return project_workspace(claims)
+    except WorkspaceAssertionError as exc:
+        raise HTTPException(status_code=401, detail="Invalid workspace assertion") from exc
+    except ConsentRequiredError as exc:
+        return JSONResponse(status_code=403, content={"schema_version": "teeechr.workspace.v1", "status": "consent_required"})
+    except LookupError as exc:
+        raise HTTPException(status_code=403, detail="Workspace consent is unavailable") from exc
