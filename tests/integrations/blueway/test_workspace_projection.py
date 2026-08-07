@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
@@ -11,7 +12,11 @@ import pytest
 
 from deeptutor.courses.repository import CourseRepository
 from deeptutor.integrations.blueway.repository import BlueWayRepository
-from deeptutor.integrations.blueway.workspace import ConsentRequiredError, project_workspace
+from deeptutor.integrations.blueway.workspace import (
+    WORKSPACE_FRESHNESS_SECONDS,
+    ConsentRequiredError,
+    project_workspace,
+)
 
 
 def _claims(term: str) -> dict[str, object]:
@@ -24,7 +29,7 @@ def _claims(term: str) -> dict[str, object]:
     }
 
 
-def test_projection_is_allowlisted_and_term_qualified(tmp_path: Path, monkeypatch) -> None:
+def test_projection_is_allowlisted_and_term_qualified(tmp_path: Path, monkeypatch, caplog) -> None:
     db = tmp_path / "courses.db"
     courses = CourseRepository(db, "owner-one")
     blueway = BlueWayRepository(courses)
@@ -62,7 +67,8 @@ def test_projection_is_allowlisted_and_term_qualified(tmp_path: Path, monkeypatc
              "snapshot-fall", "snapshot-fall", 1.0, 1.0))
     monkeypatch.setattr("deeptutor.integrations.blueway.workspace._candidate_databases", lambda: [db])
 
-    result = project_workspace(_claims("fall"))
+    caplog.set_level(logging.INFO, logger="deeptutor.integrations.blueway.workspace")
+    result = project_workspace(_claims("fall"), now=1704067200.0 + 3600.0)
     assert result == {
         "schema_version": "teeechr.workspace.v1", "status": "ready",
         "course": {"external_course_id": "course-1", "external_term_id": "fall", "title": "History"},
@@ -73,10 +79,26 @@ def test_projection_is_allowlisted_and_term_qualified(tmp_path: Path, monkeypatc
     encoded = str(result)
     assert fall.id not in encoded and spring.id not in encoded and "owner-one" not in encoded
     assert all(key not in result for key in {"owner_user_id", "id", "sources", "records", "transcript", "notes"})
+    resolved = next(record for record in caplog.records if record.message == "blueway_workspace_authorization_resolved")
+    assert resolved.candidate_database_count == 1
+    assert resolved.candidate_databases_scanned == 1
 
     with ThreadPoolExecutor(max_workers=8) as pool:
-        results = list(pool.map(lambda _: project_workspace(_claims("fall")), range(16)))
+        results = list(pool.map(lambda _: project_workspace(_claims("fall"), now=1704067200.0 + 3600.0), range(16)))
     assert all(item["course"]["external_term_id"] == "fall" for item in results)
+    stale = project_workspace(
+        _claims("fall"),
+        now=1704067200.0 + WORKSPACE_FRESHNESS_SECONDS + 1.0,
+    )
+    assert stale["status"] == "stale"
+    assert stale["sync"] == {"last_synced_at": "2024-01-01T00:00:00Z", "is_stale": True}
+    assert stale["summary"] == {"connected_sources_count": 1, "meetings_count": 1}
+    with courses._write_lock, courses._connect() as conn:  # noqa: SLF001
+        conn.execute(
+            "UPDATE blueway_course_maps SET remote_state = 'archived' WHERE course_id = ?",
+            (fall.id,),
+        )
+    assert project_workspace(_claims("fall"), now=1704067200.0 + 3600.0)["status"] == "not_ready"
     with courses._connect() as conn:  # noqa: SLF001
         assert conn.execute("SELECT COUNT(*) FROM courses WHERE owner_user_id = ?", ("owner-one",)).fetchone()[0] == 2
 

@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+import logging
+import re
+
 from fastapi import APIRouter, Header, HTTPException
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, ConfigDict, Field
@@ -20,6 +23,7 @@ from .workspace import ConsentRequiredError, project_workspace
 router = APIRouter()
 workspace_router = APIRouter()
 _test_service: BlueWayService | None = None
+logger = logging.getLogger(__name__)
 
 
 class DisconnectRequest(BaseModel):
@@ -187,8 +191,17 @@ def disconnect(body: DisconnectRequest):
 
 
 @workspace_router.post("/workspace")
-def workspace_read(body: WorkspaceReadRequest, authorization: str | None = Header(default=None)):
+def workspace_read(
+    body: WorkspaceReadRequest,
+    authorization: str | None = Header(default=None),
+    x_request_id: str | None = Header(default=None),
+):
     """Read the owner-scoped allowlist projection using a BlueWay assertion only."""
+    request_id = x_request_id if x_request_id and re.fullmatch(r"[A-Za-z0-9._:-]{1,128}", x_request_id) else None
+    logger.info(
+        "blueway_workspace_request_received",
+        extra={"request_id": request_id, "course_id": body.course_id, "has_term": body.term_id is not None},
+    )
     if not authorization or not authorization.startswith("Bearer ") or not authorization[7:].strip():
         raise HTTPException(status_code=401, detail="Workspace assertion required")
     try:

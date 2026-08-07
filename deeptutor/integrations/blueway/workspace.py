@@ -4,13 +4,16 @@ The route accepts only a verified assertion and external course/term identity.
 It locates the metadata-only authorization, derives its owner, opens that
 owner's private CourseRepository, and never serializes local IDs or source
 payloads.  A missing map is ``not_ready``; active processing is ``syncing``;
-failed provider work is ``temporarily_unavailable``; and an archived prior
-source is ``stale``.
+failed provider work is ``temporarily_unavailable``; and freshness is measured
+from the last successful synchronization timestamp. Archived or incomplete
+Course/map state is ``not_ready``, not ``stale``.
 """
 
 from __future__ import annotations
 
 import hashlib
+import logging
+import time
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -22,6 +25,8 @@ from deeptutor.multi_user import paths
 from .repository import BlueWayRepository, WorkspaceAuthorization
 
 SCHEMA_VERSION = "teeechr.workspace.v1"
+WORKSPACE_FRESHNESS_SECONDS = 24 * 60 * 60
+logger = logging.getLogger(__name__)
 
 
 def _iso_timestamp(value: float | None) -> str | None:
@@ -51,7 +56,10 @@ def resolve_authorization(claims: dict[str, Any]) -> tuple[WorkspaceAuthorizatio
     """Resolve authorization ownership without accepting an owner from input."""
     authorization_id = str(claims["authorization_id"])
     subject_hash = str(claims["subject_hash"])
-    for database in _candidate_databases():
+    candidates = _candidate_databases()
+    scanned_candidates = 0
+    for database in candidates:
+        scanned_candidates += 1
         try:
             # The owner is read from the authorization row, not the assertion.
             with open_course_connection(database) as conn:
@@ -63,9 +71,27 @@ def resolve_authorization(claims: dict[str, Any]) -> tuple[WorkspaceAuthorizatio
             course_repo = CourseRepository(database, owner)
             blueway = BlueWayRepository(course_repo)
             authorization = blueway.get_workspace_authorization(authorization_id)
+            logger.info(
+                "blueway_workspace_authorization_resolved",
+                extra={
+                    "candidate_database_count": len(candidates),
+                    "candidate_databases_scanned": scanned_candidates,
+                },
+            )
             return authorization, blueway
         except (OSError, RuntimeError, ValueError):
+            logger.warning(
+                "blueway_workspace_candidate_unreadable",
+                extra={"candidate_databases_scanned": scanned_candidates},
+            )
             continue
+    logger.info(
+        "blueway_workspace_authorization_not_found",
+        extra={
+            "candidate_database_count": len(candidates),
+            "candidate_databases_scanned": scanned_candidates,
+        },
+    )
     raise ConsentRequiredError("Workspace authorization not found")
 
 
@@ -126,17 +152,19 @@ def project_workspace(claims: dict[str, Any], *, now: float | None = None) -> di
         }
         source_states = [str(row[0]) for row in conn.execute("SELECT state FROM course_sources WHERE course_id = ?", (mapping["course_id"],)).fetchall()]
     if mapping["course_state"] != "active" or mapping["remote_state"] != "active":
-        status = "stale"
-    elif run and run["state"] in {"queued", "fetching", "validating", "staging", "indexing"} or "processing" in source_states:
+        status = "not_ready"
+    elif (run and run["state"] in {"queued", "fetching", "validating", "staging", "indexing"}) or "processing" in source_states:
         status = "syncing"
     elif run and run["state"] == "failed":
         status = "temporarily_unavailable"
+    elif connection.last_sync_at is None:
+        status = "not_ready"
+    elif (now if now is not None else time.time()) - float(connection.last_sync_at) > WORKSPACE_FRESHNESS_SECONDS:
+        status = "stale"
     elif "ready" in source_states:
         status = "ready"
-    elif "archived" in source_states:
-        status = "stale"
     else:
-        status = "ready"
+        status = "not_ready"
     return {
         "schema_version": SCHEMA_VERSION, "status": status,
         "course": {"external_course_id": mapping["external_course_id"], **({"external_term_id": mapping["external_term_id"]} if mapping["external_term_id"] is not None else {}), "title": mapping["remote_title"]},
