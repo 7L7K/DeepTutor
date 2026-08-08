@@ -148,11 +148,15 @@ were not staged or changed by this closeout.
 
 ## Push state and remaining gates
 
-Push target: `fork/feature/teeechr-web-course-hub-slice-b1` only. The fork push
-is authorized after this receipt update; `origin` and all canonical/main
-branches remain untouched. B2 must not claim complete browser closure until a
-working browser target supplies the requested narrow-mobile and keyboard/focus
-proof.
+- Pushed successfully to `fork/feature/teeechr-web-course-hub-slice-b1`.
+- Remote branch now contains commit `428c5bfb` and tracks the local feature
+  branch.
+- `origin` and all canonical/main branches remain untouched.
+- The local worktree still has the two pre-existing Chat test edits; they were
+  not staged, committed, or pushed by this closeout.
+
+B2 must not claim complete browser closure until a working browser target
+supplies the requested narrow-mobile and keyboard/focus proof.
 
 This receipt does not claim hosted Supabase, hosted TEEECHR, physical iPhone,
 TestFlight, production secrets, VoiceOver, Dynamic Type, migration-zero
