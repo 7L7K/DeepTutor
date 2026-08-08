@@ -120,12 +120,86 @@ def _latest_course(client: TestClient, course: dict, owner: str = "alice") -> di
 
 
 def _assistant_binding(
-    client: TestClient, course: dict, owner: str = "alice"
+    client: TestClient,
+    course: dict,
+    owner: str = "alice",
+    *,
+    state: str = "supported",
 ) -> tuple[str, int]:
+    from deeptutor.courses import service as course_service
     from deeptutor.multi_user.paths import get_personal_path_service
     from deeptutor.services.session.sqlite_store import SQLiteSessionStore
 
     owner_id = client.app.state.user_ids[owner]
+    repository = course_service._repository_for(
+        str(get_personal_path_service(owner_id).get_courses_db()), owner_id
+    )
+    source = next(iter(repository.list_sources(course["id"])), None)
+    if state == "supported" and source is None:
+        state = "plain"
+    if state == "plain":
+        events = []
+    else:
+        assert source is not None
+    if state == "supported":
+        citation = {
+            "schema_version": 1,
+            "course_id": course["id"],
+            "source_id": source.id,
+            "source_revision": source.revision,
+            "source_content_hash": source.content_sha256,
+            "source_title_snapshot": source.display_name,
+            "locator_type": "section",
+            "locator_value": "Cellular respiration",
+            "retrieval_fragment_id": "fragment-biology-1",
+        }
+        events = [
+            {
+                "type": "sources",
+                "source": "course_grounding",
+                "metadata": {
+                    "trace_kind": "course_citations",
+                    "course_citations": [citation],
+                },
+            },
+            {
+                "type": "content",
+                "source": "course_grounding",
+                "content": "Oxygen is the final electron acceptor.",
+                "metadata": {
+                    "course_grounding": "supported",
+                    "call_kind": "llm_final_response",
+                },
+            },
+            {
+                "type": "done",
+                "source": "course_grounding",
+                "metadata": {"status": "completed"},
+            },
+        ]
+    elif state == "unsupported":
+        events = [
+            {
+                "type": "content",
+                "source": "course_grounding",
+                "content": "I could not find support for that answer in the available Course materials.",
+                "metadata": {"course_grounding": "unsupported"},
+            },
+            {
+                "type": "done",
+                "source": "course_grounding",
+                "metadata": {"status": "completed"},
+            },
+        ]
+    else:
+        events = [
+            {
+                "type": "error",
+                "source": "course_grounding",
+                "content": "Course provider unavailable",
+                "metadata": {"turn_terminal": True},
+            }
+        ]
     store = SQLiteSessionStore(get_personal_path_service(owner_id).get_chat_history_db())
     session = asyncio.run(
         store.create_session(
@@ -133,7 +207,12 @@ def _assistant_binding(
         )
     )
     message_id = asyncio.run(
-        store.add_message(session["id"], "assistant", "persisted Course answer")
+        store.add_message(
+            session["id"],
+            "assistant",
+            "persisted Course answer",
+            events=events,
+        )
     )
     return str(session["id"]), int(message_id)
 
@@ -186,6 +265,19 @@ def test_quiz_action_is_server_grounded_bounded_and_replays(
     assert payload["generation_plan"]["id"] == payload["plan_id"]
     assert payload["generation_plan"]["state"] == "draft"
     assert payload["objective_ids"] == []
+    assert payload["generation_plan"]["origin"]["citation_anchors"] == [
+        {
+            "schema_version": 1,
+            "course_id": course["id"],
+            "source_id": source["id"],
+            "source_revision": source["revision"],
+            "source_content_hash": source["content_sha256"],
+            "source_title_snapshot": "cells.txt",
+            "locator_type": "section",
+            "locator_value": "Cellular respiration",
+            "retrieval_fragment_id": "fragment-biology-1",
+        }
+    ]
     assert set(payload) == {
         "action", "destination", "course_id", "course_revision", "course_write_epoch",
         "session_id", "parent_message_id", "objective_ids", "source_ids", "reason_code",
@@ -207,6 +299,34 @@ def test_quiz_action_is_server_grounded_bounded_and_replays(
     assert replay.status_code == 202
     assert replay.json() == payload
     assert worker_calls == []
+
+
+@pytest.mark.parametrize("state", ["unsupported", "provider_failed"])
+def test_quiz_action_requires_a_supported_citation_bearing_turn(
+    learner_action_client: TestClient,
+    state: str,
+) -> None:
+    course = _course(learner_action_client)
+    _ready_source(learner_action_client, course)
+    course = _latest_course(learner_action_client, course)
+    binding = _assistant_binding(learner_action_client, course, state=state)
+    endpoint = f"/api/v1/courses/{course['id']}/learner-actions"
+
+    response = learner_action_client.post(
+        endpoint,
+        headers=_auth("alice"),
+        json=_body(course, "quiz_me", binding),
+    )
+
+    assert response.status_code in {404, 409}
+    assert learner_action_client.get(
+        f"/api/v1/courses/{course['id']}/practice-generation/plans",
+        headers=_auth("alice"),
+    ).json()["plans"] == []
+    assert learner_action_client.get(
+        f"/api/v1/courses/{course['id']}/practice",
+        headers=_auth("alice"),
+    ).json()["practice_sets"] == []
 
 
 def test_flashcard_action_returns_a_zero_call_review_brief_without_allocating_work(
