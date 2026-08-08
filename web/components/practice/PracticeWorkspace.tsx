@@ -581,6 +581,9 @@ export default function PracticeWorkspace({
         ]);
         setActiveTab("study");
         setStatus("Your quiz is ready.");
+        router.replace(
+          `/classes/${encodeURIComponent(activeCourse.id)}/practice/${encodeURIComponent(generatedSet.id)}/attempts/${encodeURIComponent(view.attempt.id)}`,
+        );
       } catch (cause) {
         launchedOperationIdRef.current = null;
         if (current(scope)) setError(errorText(cause));
@@ -588,7 +591,7 @@ export default function PracticeWorkspace({
         if (current(scope)) setBusy(false);
       }
     },
-    [activeCourse, advanceView, current],
+    [activeCourse, advanceView, current, router],
   );
 
   const cancelGeneration = useCallback(async () => {
