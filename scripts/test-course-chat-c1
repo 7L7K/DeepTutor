@@ -1,0 +1,349 @@
+#!/usr/bin/env bash
+# Hermetic authenticated browser proof for Vertical Slice C1 Course Chat.
+set -euo pipefail
+
+repo_root="$(cd "$(dirname "$0")/.." && pwd)"
+temp_parent="${TMPDIR:-/tmp}"
+temp_parent="${temp_parent%/}"
+runtime_root="$(mktemp -d "$temp_parent/teeechr-c1-browser.XXXXXX")"
+backend_port="${C1_BACKEND_PORT:-8035}"
+frontend_port="${C1_FRONTEND_PORT:-3815}"
+backend_url="http://127.0.0.1:${backend_port}"
+frontend_url="http://localhost:${frontend_port}"
+python_bin="${PYTHON_BIN:-/Users/home/.codex/runtimes/teeechr-b1-python311/bin/python}"
+node_bin_dir="/opt/homebrew/opt/node@22/bin"
+alice_password="$("$python_bin" -c 'import secrets; print(secrets.token_urlsafe(24))')"
+bob_password="$("$python_bin" -c 'import secrets; print(secrets.token_urlsafe(24))')"
+carol_password="$("$python_bin" -c 'import secrets; print(secrets.token_urlsafe(24))')"
+evidence_dir="${C1_EVIDENCE_DIR:-$repo_root/docs/verification/2026-08-08-teeechr-course-chat-c1}"
+backend_log="$runtime_root/backend.log"
+frontend_log="$runtime_root/frontend.log"
+alice_cookie="$runtime_root/alice.cookies"
+bob_cookie="$runtime_root/bob.cookies"
+carol_cookie="$runtime_root/carol.cookies"
+fixture_json="$runtime_root/fixture.json"
+browser_state="$runtime_root/browser-state.json"
+backend_pid=""
+frontend_pid=""
+startup_attempts="${C1_STARTUP_ATTEMPTS:-480}"
+
+mkdir -p "$evidence_dir/screenshots" "$evidence_dir/playwright-results" "$evidence_dir/playwright-report" "$evidence_dir/backend"
+
+cleanup() {
+  if [ -n "$frontend_pid" ]; then
+    kill "$frontend_pid" 2>/dev/null || true
+    wait "$frontend_pid" 2>/dev/null || true
+  fi
+  if [ -n "$backend_pid" ]; then
+    kill "$backend_pid" 2>/dev/null || true
+    wait "$backend_pid" 2>/dev/null || true
+  fi
+  cp "$backend_log" "$evidence_dir/backend/backend.log" 2>/dev/null || true
+  cp "$frontend_log" "$evidence_dir/backend/frontend.log" 2>/dev/null || true
+  case "$runtime_root" in
+    "$temp_parent"/teeechr-c1-browser.*)
+      rm -rf -- "$runtime_root"
+      ;;
+  esac
+}
+trap cleanup EXIT INT TERM
+
+assert_port_free() {
+  local port="$1"
+  "$python_bin" - "$port" <<'PY'
+import socket
+import sys
+
+port = int(sys.argv[1])
+with socket.socket() as probe:
+    probe.settimeout(0.2)
+    if probe.connect_ex(("127.0.0.1", port)) == 0:
+        raise SystemExit(f"Refusing to use occupied port {port}")
+PY
+}
+
+wait_for_url() {
+  local url="$1"
+  local log_path="$2"
+  local process_id="$3"
+  for _attempt in $(seq 1 "$startup_attempts"); do
+    if curl --fail --silent --show-error "$url" >/dev/null 2>&1; then return 0; fi
+    if ! kill -0 "$process_id" 2>/dev/null; then
+      sed -n '1,240p' "$log_path" >&2
+      return 1
+    fi
+    sleep 0.25
+  done
+  sed -n '1,240p' "$log_path" >&2
+  return 1
+}
+
+login_cookie() {
+  local username="$1"
+  local password="$2"
+  local cookie="$3"
+  curl --fail --silent --show-error \
+    -c "$cookie" \
+    -X POST "$frontend_url/api/v1/auth/login" \
+    -H "Content-Type: application/json" \
+    --data "{\"username\":\"$username\",\"password\":\"$password\"}" >/dev/null
+}
+
+user_identity() {
+  local cookie="$1"
+  curl --fail --silent --show-error -b "$cookie" "$frontend_url/api/v1/auth/status" \
+    | "$python_bin" -c 'import json, sys; print(json.load(sys.stdin)["user_id"])'
+}
+
+if [ ! -x "$python_bin" ]; then
+  echo "Python runtime is unavailable: $python_bin" >&2
+  exit 1
+fi
+assert_port_free "$backend_port"
+assert_port_free "$frontend_port"
+
+cd "$repo_root"
+DEEPTUTOR_HOME="$runtime_root" \
+AUTH_ENABLED=true \
+BACKEND_PORT="$backend_port" \
+FRONTEND_PORT="$frontend_port" \
+CORS_ORIGIN="$frontend_url" \
+CORS_ORIGINS="$frontend_url" \
+TEEECHR_TEST_DETERMINISTIC_PROVIDER=1 \
+"$python_bin" -m uvicorn deeptutor.api.main:app \
+  --host 127.0.0.1 --port "$backend_port" --no-access-log \
+  >"$backend_log" 2>&1 &
+backend_pid=$!
+wait_for_url "$backend_url/api/v1/auth/status" "$backend_log" "$backend_pid"
+
+cd "$repo_root/web"
+env PATH="$node_bin_dir:$PATH" \
+  PORT="$frontend_port" \
+  HOSTNAME=127.0.0.1 \
+  DEEPTUTOR_API_BASE_URL="$backend_url" \
+  DEEPTUTOR_AUTH_ENABLED=true \
+  npm run dev >"$frontend_log" 2>&1 &
+frontend_pid=$!
+wait_for_url "$frontend_url/login" "$frontend_log" "$frontend_pid"
+
+curl --fail --silent --show-error \
+  -X POST "$frontend_url/api/v1/auth/register" \
+  -H "Content-Type: application/json" \
+  --data "{\"username\":\"c1_alice\",\"password\":\"$alice_password\"}" >/dev/null
+login_cookie "c1_alice" "$alice_password" "$alice_cookie"
+for account in "c1_bob:$bob_password" "c1_carol:$carol_password"; do
+  username="${account%%:*}"
+  password="${account#*:}"
+  curl --fail --silent --show-error \
+    -b "$alice_cookie" \
+    -X POST "$frontend_url/api/v1/auth/users" \
+    -H "Origin: $frontend_url" \
+    -H "Content-Type: application/json" \
+    --data "{\"username\":\"$username\",\"password\":\"$password\"}" >/dev/null
+done
+login_cookie "c1_bob" "$bob_password" "$bob_cookie"
+login_cookie "c1_carol" "$carol_password" "$carol_cookie"
+
+alice_identity="$(user_identity "$alice_cookie")"
+bob_identity="$(user_identity "$bob_cookie")"
+carol_identity="$(user_identity "$carol_cookie")"
+
+cd "$repo_root"
+DEEPTUTOR_HOME="$runtime_root" "$python_bin" - \
+  "$alice_identity" "$bob_identity" "$carol_identity" "$fixture_json" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+from deeptutor.courses.repository import CourseRepository
+from deeptutor.courses.service import source_kb_name
+from deeptutor.integrations.blueway.repository import BlueWayRepository
+from deeptutor.multi_user.paths import get_personal_path_service
+
+alice_id, bob_id, carol_id, fixture_path = sys.argv[1:]
+alice_paths = get_personal_path_service(alice_id)
+alice_courses = CourseRepository(alice_paths.get_courses_db(), alice_id)
+blueway = BlueWayRepository(alice_courses)
+connection = blueway.create_active_connection(
+    external_subject="c1-local-alice",
+    scope_version="academic.read.v1",
+)
+biology = blueway.create_course_map(
+    connection_id=connection.id,
+    external_course_id="c1-biology-101",
+    external_term_id="fall-2026",
+    remote_title="Biology 101",
+    remote_state="active",
+    remote_hash="a" * 64,
+    snapshot_id="c1-browser-snapshot",
+    expected_generation=connection.grant_generation,
+)
+ready = alice_courses.create_source(
+    biology.id,
+    kind="notes",
+    display_name="Biology energy notes.txt",
+    manifest=[],
+    content_sha256="b" * 64,
+    operation_id="c1_ready",
+)
+current = alice_courses.get_course(biology.id)
+ready = alice_courses.transition_source(
+    biology.id,
+    ready.id,
+    operation_id="c1_ready",
+    expected_source_revision=ready.revision,
+    expected_course_revision=current.revision,
+    expected_write_epoch=current.write_epoch,
+    state="ready",
+)
+failed = alice_courses.create_source(
+    biology.id,
+    kind="document",
+    display_name="Failed worksheet.pdf",
+    manifest=[],
+    content_sha256="c" * 64,
+    operation_id="c1_failed",
+)
+current = alice_courses.get_course(biology.id)
+alice_courses.transition_source(
+    biology.id,
+    failed.id,
+    operation_id="c1_failed",
+    expected_source_revision=failed.revision,
+    expected_course_revision=current.revision,
+    expected_write_epoch=current.write_epoch,
+    state="failed",
+)
+alice_courses.create_source(
+    biology.id,
+    kind="slides",
+    display_name="Processing lecture slides.pdf",
+    manifest=[],
+    content_sha256="d" * 64,
+    operation_id="c1_processing",
+)
+no_ready = alice_courses.create_course("Empty Course Lab")
+
+index_path = (
+    alice_paths.get_knowledge_bases_root()
+    / source_kb_name(biology.id, ready.id)
+    / "deterministic-index.json"
+)
+index_path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+index_path.write_text(
+    json.dumps(
+        {
+            "chunks": [
+                {
+                    "path": "biology-private-source.txt",
+                    "text": "ATP stores usable cellular energy for Biology 101.",
+                }
+            ]
+        }
+    ),
+    encoding="utf-8",
+)
+
+bob_paths = get_personal_path_service(bob_id)
+bob_courses = CourseRepository(bob_paths.get_courses_db(), bob_id)
+bob_course = bob_courses.create_course("Bob Private Chemistry")
+
+Path(fixture_path).write_text(
+    json.dumps(
+        {
+            "alice_identity": alice_id,
+            "alice_course_id": biology.id,
+            "alice_no_ready_course_id": no_ready.id,
+            "alice_ready_source_id": ready.id,
+            "alice_ready_source_title": ready.display_name,
+            "bob_identity": bob_id,
+            "bob_course_id": bob_course.id,
+            "carol_identity": carol_id,
+        }
+    ),
+    encoding="utf-8",
+)
+Path(fixture_path).chmod(0o600)
+PY
+
+cd "$repo_root/web"
+env PATH="$node_bin_dir:$PATH" \
+  C1_ALICE_PASSWORD="$alice_password" \
+  C1_BOB_PASSWORD="$bob_password" \
+  C1_CAROL_PASSWORD="$carol_password" \
+  C1_FIXTURE_FILE="$fixture_json" \
+  C1_BROWSER_STATE_FILE="$browser_state" \
+  C1_EVIDENCE_DIR="$evidence_dir" \
+  WEB_BASE_URL="$frontend_url" \
+  PW_SERIAL=1 \
+  PW_OUTPUT_DIR="$evidence_dir/playwright-results" \
+  PW_HTML_REPORT_DIR="$evidence_dir/playwright-report" \
+  npx playwright test tests/e2e/course-chat-c1.spec.ts --project=phase4-authenticated \
+    2>&1 | tee "$evidence_dir/playwright-output.txt"
+
+cd "$repo_root"
+cp "$fixture_json" "$evidence_dir/backend/fixture.json"
+cp "$browser_state" "$evidence_dir/backend/browser-state.json"
+chmod 600 "$evidence_dir/backend/fixture.json" "$evidence_dir/backend/browser-state.json"
+DEEPTUTOR_HOME="$runtime_root" "$python_bin" - \
+  "$fixture_json" "$browser_state" "$evidence_dir/backend/backend-receipt.json" <<'PY'
+import asyncio
+import json
+import sys
+from pathlib import Path
+
+from deeptutor.multi_user.paths import get_personal_path_service
+from deeptutor.services.session.sqlite_store import SQLiteSessionStore
+
+fixture_path, browser_state_path, receipt_path = map(Path, sys.argv[1:])
+fixture = json.loads(fixture_path.read_text(encoding="utf-8"))
+browser = json.loads(browser_state_path.read_text(encoding="utf-8"))
+paths = get_personal_path_service(fixture["alice_identity"])
+store = SQLiteSessionStore(paths.get_chat_history_db())
+
+async def receipt():
+    session = await store.get_session_with_messages(browser["sessionId"])
+    sessions = await store.list_sessions()
+    assert session is not None
+    user = next(message for message in session["messages"] if message["role"] == "user")
+    assistant = next(message for message in session["messages"] if message["role"] == "assistant")
+    citations = [
+        citation
+        for event in assistant.get("events") or []
+        for citation in (event.get("metadata") or {}).get("course_citations") or []
+    ]
+    no_ready_sessions = [
+        item
+        for item in sessions
+        if item.get("course_id") == fixture["alice_no_ready_course_id"]
+    ]
+    return {
+        "session_id": session["id"],
+        "course_id": session.get("course_id"),
+        "message_count": len(session["messages"]),
+        "knowledge_bases": (
+            (user.get("metadata") or {}).get("request_snapshot") or {}
+        ).get("knowledgeBases"),
+        "citations": citations,
+        "no_ready_course_session_count": len(no_ready_sessions),
+        "classes_landing_course_list_calls": browser["classesLandingCourseListCalls"],
+        "full_journey_course_list_calls": browser["totalCourseListCalls"],
+        "raw_provider_path_persisted": "biology-private-source.txt" in json.dumps(session),
+    }
+
+payload = asyncio.run(receipt())
+receipt_path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+assert payload["course_id"] == fixture["alice_course_id"], payload
+assert payload["citations"][0]["source_id"] == fixture["alice_ready_source_id"], payload
+assert payload["no_ready_course_session_count"] == 0, payload
+assert payload["classes_landing_course_list_calls"] <= 1, payload
+assert payload["raw_provider_path_persisted"] is False, payload
+PY
+
+printf 'backend_port=%s\nfrontend_port=%s\nnode=%s\nnpm=%s\npython=%s\nbranch=%s\nhead=%s\n' \
+  "$backend_port" "$frontend_port" \
+  "$(env PATH="$node_bin_dir:$PATH" node --version)" \
+  "$(env PATH="$node_bin_dir:$PATH" npm --version)" \
+  "$("$python_bin" --version 2>&1)" \
+  "$(git branch --show-current)" \
+  "$(git rev-parse HEAD)" > "$evidence_dir/runtime.txt"
