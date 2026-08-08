@@ -738,7 +738,7 @@ def test_generation_api_background_completion_uses_only_server_resolved_source_s
         headers=_auth("alice"),
     )
     assert questions.status_code == 200
-    assert len(questions.json()["questions"]) == 1
+    assert len(questions.json()["questions"]) == 5
     # A ready revision is learner-safe: citations remain, answer authority does not.
     question = questions.json()["questions"][0]
     assert "answer_contract" not in question

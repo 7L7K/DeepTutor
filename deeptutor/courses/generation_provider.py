@@ -654,12 +654,16 @@ class DeterministicPracticeGenerationProvider:
             questions=[
                 GeneratedPracticeQuestion(
                     question_type="short_answer",
-                    prompt=f"What bounded fact is represented by source {material.receipt.source_id}?",
+                    prompt=(
+                        f"Question {ordinal}: What bounded fact is represented by "
+                        f"source {material.receipt.source_id}?"
+                    ),
                     answer_contract={"kind": "exact", "answer": answer},
                     explanation="This deterministic local question is grounded in the cited Course source.",
                     objective_ids=request.objective_ids,
                     citations=[PracticeCitation(**material.receipt.model_dump())],
                 )
+                for ordinal in range(1, request.item_limit + 1)
             ],
         )
 
