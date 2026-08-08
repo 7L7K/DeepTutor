@@ -49,6 +49,11 @@ import {
 } from "@/lib/quiz-types";
 import { extractVisualizeResult } from "@/lib/visualize-types";
 import type { StreamEvent } from "@/lib/unified-ws";
+import type { CourseChatReadiness } from "@/lib/course-api";
+import {
+  courseCitationIsAvailable,
+  extractCourseCitations,
+} from "@/lib/course-chat";
 import { hasVisibleMarkdownContent } from "@/lib/markdown-display";
 import type { SelectedBookReference } from "@/lib/book-references";
 import { buildVisiblePath, type SiblingInfo } from "@/lib/message-branches";
@@ -104,6 +109,58 @@ interface NotebookReferenceGroup {
   notebookId: string;
   notebookName: string;
   count: number;
+}
+
+function CourseCitationList({
+  events,
+  readiness,
+}: {
+  events: StreamEvent[] | undefined;
+  readiness: CourseChatReadiness | null;
+}) {
+  const citations = extractCourseCitations(events);
+  if (!citations.length) return null;
+
+  return (
+    <section
+      aria-label="Course sources"
+      data-testid="course-citations"
+      className="mt-3 rounded-xl border border-[var(--border)] bg-[var(--card)] px-3 py-2.5"
+    >
+      <p className="text-[11px] font-semibold uppercase tracking-wide text-[var(--muted-foreground)]">
+        Course sources
+      </p>
+      <ul className="mt-2 space-y-1.5">
+        {citations.map((citation) => {
+          const available = readiness
+            ? courseCitationIsAvailable(citation, readiness)
+            : null;
+          const locator =
+            citation.locator_type && citation.locator_value
+              ? `${citation.locator_type} ${citation.locator_value}`
+              : null;
+          return (
+            <li
+              key={`${citation.source_id}:${citation.source_revision}:${citation.retrieval_fragment_id || "source"}`}
+              data-testid={`course-citation-${citation.source_id}`}
+              className="flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-[var(--foreground)]"
+            >
+              <BookOpen className="h-3.5 w-3.5 text-[var(--muted-foreground)]" />
+              <span className="font-medium">{citation.source_title_snapshot}</span>
+              {locator ? (
+                <span className="text-[var(--muted-foreground)]">{locator}</span>
+              ) : null}
+              {available === false ? (
+                <span className="rounded-full border border-[var(--border)] px-1.5 py-0.5 text-[10px] text-[var(--muted-foreground)]">
+                  Cited version no longer available
+                </span>
+              ) : null}
+            </li>
+          );
+        })}
+      </ul>
+    </section>
+  );
 }
 
 // Returns the i18n key (and a sensible fallback) for the capability badge
@@ -1160,6 +1217,7 @@ export const ChatMessageList = memo(function ChatMessageList({
   onSubmitUserReply,
   modelActionsEnabled = true,
   courseActionsEnabled = false,
+  courseReadiness = null,
   generalFlashcardsEnabled = false,
   practiceGenerationEnabled = false,
   flashcardGenerationEnabled = false,
@@ -1174,6 +1232,7 @@ export const ChatMessageList = memo(function ChatMessageList({
   onRegenerateMessage: () => void;
   modelActionsEnabled?: boolean;
   courseActionsEnabled?: boolean;
+  courseReadiness?: CourseChatReadiness | null;
   generalFlashcardsEnabled?: boolean;
   practiceGenerationEnabled?: boolean;
   flashcardGenerationEnabled?: boolean;
@@ -1462,6 +1521,10 @@ export const ChatMessageList = memo(function ChatMessageList({
                 }
               />
             </InlineFileCardProvider>
+            <CourseCitationList
+              events={msg.events}
+              readiness={courseReadiness}
+            />
             <GeneratedFileCards
               attachments={msg.attachments ?? []}
               events={msg.events}

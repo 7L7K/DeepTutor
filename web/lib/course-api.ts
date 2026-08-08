@@ -36,6 +36,26 @@ export interface CourseCapabilities {
   grounded_generation_reason: string | null;
 }
 
+export interface CourseChatReadySource {
+  source_id: string;
+  title: string;
+  revision: number;
+  content_sha256: string;
+}
+
+export interface CourseChatReadiness {
+  course_id?: string;
+  state: "no_materials" | "processing" | "failed" | "partial" | "ready";
+  counts: {
+    ready: number;
+    processing: number;
+    failed: number;
+    unavailable: number;
+    total: number;
+  };
+  ready_sources: CourseChatReadySource[];
+}
+
 async function json<T>(response: Response): Promise<T> {
   if (!response.ok) {
     const body = await response.json().catch(() => ({}));
@@ -53,6 +73,19 @@ export async function getCourse(courseId: string): Promise<Course> {
   return json<Course>(
     await apiFetch(
       apiUrl(`/api/v1/courses/${encodeURIComponent(courseId)}`),
+      { cache: "no-store" },
+    ),
+  );
+}
+
+export async function getCourseChatReadiness(
+  courseId: string,
+): Promise<CourseChatReadiness> {
+  return json<CourseChatReadiness>(
+    await apiFetch(
+      apiUrl(
+        `/api/v1/courses/${encodeURIComponent(courseId)}/chat-readiness`,
+      ),
       { cache: "no-store" },
     ),
   );

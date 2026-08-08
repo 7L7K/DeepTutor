@@ -6,10 +6,7 @@ import { useParams, useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 import { useCourses } from "@/context/CourseContext";
 import { getCourse, type Course } from "@/lib/course-api";
-
-function termLabel(course: Course): string {
-  return course.term?.trim() || "Term not linked yet";
-}
+import { academicTermLabel, courseChatPath } from "@/lib/course-chat";
 
 export default function CourseOverview() {
   const params = useParams<{ courseId: string }>();
@@ -107,7 +104,7 @@ export default function CourseOverview() {
               {course.title}
             </h1>
             <div className="mt-3 flex flex-wrap items-center gap-x-4 gap-y-2 text-sm text-[var(--muted-foreground)]">
-              <span>Term: {termLabel(course)}</span>
+              <span>Term: {academicTermLabel(course.term)}</span>
               <span>State: {course.state}</span>
             </div>
           </div>
@@ -161,20 +158,27 @@ export default function CourseOverview() {
         </section>
 
         <section className="mt-8 grid gap-4 md:grid-cols-2">
-          <div className="rounded-2xl border border-[var(--border)] bg-[var(--card)] p-5">
+          <Link
+            href={courseChatPath(course.id)}
+            data-testid="course-chat-link"
+            onClick={() => selectCourse(course.id)}
+            aria-disabled={disabled}
+            className={`rounded-2xl border border-[var(--border)] bg-[var(--card)] p-5 transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ring)] ${
+              disabled
+                ? "pointer-events-none opacity-50"
+                : "hover:-translate-y-0.5 hover:border-[var(--foreground)]/25 hover:shadow-md"
+            }`}
+          >
             <div className="flex items-start gap-3">
               <MessageSquare size={18} className="mt-0.5 text-[var(--muted-foreground)]" />
               <div>
                 <h2 className="font-semibold text-[var(--foreground)]">Course Chat</h2>
                 <p className="mt-1 text-sm leading-6 text-[var(--muted-foreground)]">
-                  Chat authorization is still under baseline review, so this destination remains held out of B1.
+                  Ask questions grounded in this Course&apos;s ready materials.
                 </p>
-                <span className="mt-3 inline-flex rounded-full border border-[var(--border)] px-2 py-1 text-xs text-[var(--muted-foreground)]">
-                  Not available in B1
-                </span>
               </div>
             </div>
-          </div>
+          </Link>
           <div className="rounded-2xl border border-dashed border-[var(--border)] px-5 py-5">
             <h2 className="font-semibold text-[var(--foreground)]">Progress and recommendations</h2>
             <p className="mt-1 text-sm leading-6 text-[var(--muted-foreground)]">
