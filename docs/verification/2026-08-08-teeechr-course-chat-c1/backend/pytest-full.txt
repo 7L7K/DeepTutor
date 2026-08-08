@@ -1,0 +1,86 @@
+........................................................................ [  1%]
+........................................................................ [  3%]
+........................................................................ [  5%]
+........................................................................ [  7%]
+........................................................................ [  9%]
+........................................................................ [ 11%]
+........................................................................ [ 12%]
+..................................................s..................... [ 14%]
+........................................................................ [ 16%]
+........................................................................ [ 18%]
+........................................................................ [ 20%]
+........................................................................ [ 22%]
+........................................................................ [ 24%]
+........................................................................ [ 25%]
+........................................................................ [ 27%]
+........................................................................ [ 29%]
+........................................................................ [ 31%]
+........................................................................ [ 33%]
+........................................................................ [ 35%]
+........................................................................ [ 36%]
+........................................................................ [ 38%]
+........................................................................ [ 40%]
+........................................................................ [ 42%]
+........................................................................ [ 44%]
+........................................................................ [ 46%]
+........................................................................ [ 48%]
+........................................................................ [ 49%]
+........................................................................ [ 51%]
+........................................................................ [ 53%]
+........................................................................ [ 55%]
+........................................................................ [ 57%]
+........................................................................ [ 59%]
+........................................................................ [ 61%]
+........................................................................ [ 62%]
+........................................................................ [ 64%]
+............................................ss.......................... [ 66%]
+........................................................................ [ 68%]
+........................................................................ [ 70%]
+........................................................................ [ 72%]
+........................................................................ [ 73%]
+........................................................................ [ 75%]
+........................................................................ [ 77%]
+.........s.............................................................. [ 79%]
+........................................................................ [ 81%]
+.....................................s.................................. [ 83%]
+........................................................................ [ 85%]
+........................................................................ [ 86%]
+........................................................................ [ 88%]
+........................................................................ [ 90%]
+........................................................................ [ 92%]
+........................................................................ [ 94%]
+.......................................................................s [ 96%]
+s................s...................................................... [ 98%]
+........................................................................ [ 99%]
+.....                                                                    [100%]
+3885 passed, 8 skipped, 10 warnings in 538.02s (0:08:58)
+/Users/home/.codex/runtimes/teeechr-b1-python311/lib/python3.11/site-packages/_pytest/pathlib.py:96: PytestWarning: (rm_rf) error removing /private/var/folders/th/9_1tm93n26v0bgzd8ng3c3yh0000gn/T/pytest-of-home/garbage-debf6877-208e-44f3-acba-3c84513b7dec/test_delete_knowledge_base_cle0
+<class 'OSError'>: [Errno 66] Directory not empty: 'test_delete_knowledge_base_cle0'
+  warnings.warn(
+/Users/home/.codex/runtimes/teeechr-b1-python311/lib/python3.11/site-packages/_pytest/pathlib.py:96: PytestWarning: (rm_rf) error removing /private/var/folders/th/9_1tm93n26v0bgzd8ng3c3yh0000gn/T/pytest-of-home/garbage-debf6877-208e-44f3-acba-3c84513b7dec
+<class 'OSError'>: [Errno 66] Directory not empty: '/private/var/folders/th/9_1tm93n26v0bgzd8ng3c3yh0000gn/T/pytest-of-home/garbage-debf6877-208e-44f3-acba-3c84513b7dec'
+  warnings.warn(
+/Users/home/.codex/runtimes/teeechr-b1-python311/lib/python3.11/site-packages/_pytest/pathlib.py:96: PytestWarning: (rm_rf) error removing /private/var/folders/th/9_1tm93n26v0bgzd8ng3c3yh0000gn/T/pytest-of-home/garbage-95b08afc-43dd-4bd6-88f4-16143dd3f842/test_delete_knowledge_base_cle0
+<class 'OSError'>: [Errno 66] Directory not empty: 'test_delete_knowledge_base_cle0'
+  warnings.warn(
+/Users/home/.codex/runtimes/teeechr-b1-python311/lib/python3.11/site-packages/_pytest/pathlib.py:96: PytestWarning: (rm_rf) error removing /private/var/folders/th/9_1tm93n26v0bgzd8ng3c3yh0000gn/T/pytest-of-home/garbage-95b08afc-43dd-4bd6-88f4-16143dd3f842
+<class 'OSError'>: [Errno 66] Directory not empty: '/private/var/folders/th/9_1tm93n26v0bgzd8ng3c3yh0000gn/T/pytest-of-home/garbage-95b08afc-43dd-4bd6-88f4-16143dd3f842'
+  warnings.warn(
+/Users/home/.codex/runtimes/teeechr-b1-python311/lib/python3.11/site-packages/_pytest/pathlib.py:96: PytestWarning: (rm_rf) error removing /private/var/folders/th/9_1tm93n26v0bgzd8ng3c3yh0000gn/T/pytest-of-home/garbage-5adea8fc-808b-401b-a2bc-19166b5960e1/test_delete_knowledge_base_cle0
+<class 'OSError'>: [Errno 66] Directory not empty: 'test_delete_knowledge_base_cle0'
+  warnings.warn(
+/Users/home/.codex/runtimes/teeechr-b1-python311/lib/python3.11/site-packages/_pytest/pathlib.py:96: PytestWarning: (rm_rf) error removing /private/var/folders/th/9_1tm93n26v0bgzd8ng3c3yh0000gn/T/pytest-of-home/garbage-5adea8fc-808b-401b-a2bc-19166b5960e1
+<class 'OSError'>: [Errno 66] Directory not empty: '/private/var/folders/th/9_1tm93n26v0bgzd8ng3c3yh0000gn/T/pytest-of-home/garbage-5adea8fc-808b-401b-a2bc-19166b5960e1'
+  warnings.warn(
+/Users/home/.codex/runtimes/teeechr-b1-python311/lib/python3.11/site-packages/_pytest/pathlib.py:96: PytestWarning: (rm_rf) error removing /private/var/folders/th/9_1tm93n26v0bgzd8ng3c3yh0000gn/T/pytest-of-home/garbage-859c1213-52f6-4d02-858c-a2db2e3e91c7/test_delete_knowledge_base_cle0
+<class 'OSError'>: [Errno 66] Directory not empty: 'test_delete_knowledge_base_cle0'
+  warnings.warn(
+/Users/home/.codex/runtimes/teeechr-b1-python311/lib/python3.11/site-packages/_pytest/pathlib.py:96: PytestWarning: (rm_rf) error removing /private/var/folders/th/9_1tm93n26v0bgzd8ng3c3yh0000gn/T/pytest-of-home/garbage-859c1213-52f6-4d02-858c-a2db2e3e91c7
+<class 'OSError'>: [Errno 66] Directory not empty: '/private/var/folders/th/9_1tm93n26v0bgzd8ng3c3yh0000gn/T/pytest-of-home/garbage-859c1213-52f6-4d02-858c-a2db2e3e91c7'
+  warnings.warn(
+/Users/home/.codex/runtimes/teeechr-b1-python311/lib/python3.11/site-packages/_pytest/pathlib.py:96: PytestWarning: (rm_rf) error removing /private/var/folders/th/9_1tm93n26v0bgzd8ng3c3yh0000gn/T/pytest-of-home/garbage-316d8f44-4dc7-47ed-b181-5dd1a1edf41e/test_delete_knowledge_base_cle0
+<class 'OSError'>: [Errno 66] Directory not empty: 'test_delete_knowledge_base_cle0'
+  warnings.warn(
+/Users/home/.codex/runtimes/teeechr-b1-python311/lib/python3.11/site-packages/_pytest/pathlib.py:96: PytestWarning: (rm_rf) error removing /private/var/folders/th/9_1tm93n26v0bgzd8ng3c3yh0000gn/T/pytest-of-home/garbage-316d8f44-4dc7-47ed-b181-5dd1a1edf41e
+<class 'OSError'>: [Errno 66] Directory not empty: '/private/var/folders/th/9_1tm93n26v0bgzd8ng3c3yh0000gn/T/pytest-of-home/garbage-316d8f44-4dc7-47ed-b181-5dd1a1edf41e'
+  warnings.warn(

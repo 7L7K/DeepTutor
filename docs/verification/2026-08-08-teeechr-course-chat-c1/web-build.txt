@@ -1,0 +1,104 @@
+
+> opentutor-web@1.0.0 prebuild
+> node ./scripts/check-node-version.mjs
+
+
+> opentutor-web@1.0.0 build
+> next build
+
+▲ Next.js 16.2.3 (Turbopack)
+- Experiments (use with caution):
+  · proxyClientMaxBodySize: 220200960
+
+  Creating an optimized production build ...
+Browserslist: browsers data (caniuse-lite) is 8 months old. Please run:
+  npx update-browserslist-db@latest
+  Why you should do it regularly: https://github.com/browserslist/update-db#readme
+✓ Compiled successfully in 13.0s
+  Running TypeScript ...
+  Finished TypeScript in 8.6s ...
+  Collecting page data using 17 workers ...
+  Generating static pages using 17 workers (0/62) ...
+  Generating static pages using 17 workers (15/62)
+  Generating static pages using 17 workers (30/62)
+  Generating static pages using 17 workers (46/62)
+✓ Generating static pages using 17 workers (62/62) in 536ms
+  Finalizing page optimization ...
+
+Route (app)
+┌ ○ /
+├ ○ /_not-found
+├ ○ /admin/users
+├ ○ /agents
+├ ○ /book
+├ ○ /classes
+├ ƒ /classes/[courseId]
+├ ƒ /classes/[courseId]/chat
+├ ƒ /classes/[courseId]/chat/[sessionId]
+├ ƒ /classes/[courseId]/materials
+├ ○ /co-writer
+├ ƒ /co-writer/[docId]
+├ ○ /flashcards
+├ ƒ /home/[[...sessionId]]
+├ ○ /knowledge
+├ ○ /launch/blueway
+├ ○ /login
+├ ○ /memory
+├ ○ /memory/graph
+├ ○ /memory/l1
+├ ○ /memory/l2
+├ ƒ /memory/l2/[surface]
+├ ○ /memory/l3
+├ ƒ /memory/l3/[slot]
+├ ○ /memory/resolve
+├ ○ /notebook
+├ ○ /partners
+├ ƒ /partners/[partnerId]
+├ ○ /partners/new
+├ ○ /playground
+├ ○ /practice
+├ ○ /profile
+├ ○ /register
+├ ○ /settings
+├ ○ /settings/agents
+├ ○ /settings/agents/claude-code
+├ ○ /settings/agents/codex
+├ ○ /settings/agents/gemini
+├ ○ /settings/agents/kimi
+├ ○ /settings/agents/mimo
+├ ○ /settings/agents/opencode
+├ ○ /settings/appearance
+├ ○ /settings/attachments
+├ ○ /settings/blueway
+├ ○ /settings/capabilities
+├ ○ /settings/chat
+├ ○ /settings/document-parsing
+├ ○ /settings/embedding
+├ ○ /settings/image
+├ ○ /settings/llm
+├ ○ /settings/mcp
+├ ○ /settings/memory
+├ ○ /settings/mineru
+├ ○ /settings/models
+├ ○ /settings/network
+├ ○ /settings/search
+├ ○ /settings/status
+├ ○ /settings/stt
+├ ○ /settings/tools
+├ ○ /settings/tts
+├ ○ /settings/video
+├ ○ /space
+├ ○ /space/chat-history
+├ ○ /space/cli-apps
+├ ○ /space/learning
+├ ○ /space/mcp
+├ ○ /space/notebooks
+├ ○ /space/personas
+├ ○ /space/questions
+└ ○ /space/skills
+
+
+ƒ Proxy (Middleware)
+
+○  (Static)   prerendered as static content
+ƒ  (Dynamic)  server-rendered on demand

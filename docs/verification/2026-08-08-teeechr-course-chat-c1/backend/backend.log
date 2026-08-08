@@ -1,0 +1,55 @@
+INFO    deeptutor.api.main - CORS configured: mode=explicit allow_origins=['http://localhost:3815', 'http://127.0.0.1:3815', 'http://localhost:3000', 'http://127.0.0.1:3000'] allow_origin_regex=None
+INFO    deeptutor.services.setup.init - Created default settings: /private/var/folders/th/9_1tm93n26v0bgzd8ng3c3yh0000gn/T/teeechr-c1-browser.NPqg2h/data/user/settings/interface.json
+INFO    deeptutor.services.setup.init - Created default settings: /private/var/folders/th/9_1tm93n26v0bgzd8ng3c3yh0000gn/T/teeechr-c1-browser.NPqg2h/data/user/settings/main.yaml
+INFO    deeptutor.services.setup.init - Created default settings: /private/var/folders/th/9_1tm93n26v0bgzd8ng3c3yh0000gn/T/teeechr-c1-browser.NPqg2h/data/user/settings/agents.yaml
+INFO    deeptutor.services.setup.init - Seeded default personas: peer, research-assistant, teacher
+WARNING deeptutor.multi_user.identity - Auth is enabled and no auth_secret file exists. Generated a stable local secret at /private/var/folders/th/9_1tm93n26v0bgzd8ng3c3yh0000gn/T/teeechr-c1-browser.NPqg2h/data/system/auth/auth_secret.
+warning: The `fitz` API is deprecated and will be removed in future. Use `import pymupdf` instead.
+INFO:     Started server process [22634]
+INFO:     Waiting for application startup.
+INFO    deeptutor.api.main - Application startup
+INFO    deeptutor.api.main - LLM client initialized: model=gpt-4o-mini
+INFO    deeptutor.events.event_bus - EventBus started
+INFO    deeptutor.api.main - EventBus started
+INFO    deeptutor.services.cron.service - Cron service started (0 jobs)
+INFO:     Application startup complete.
+INFO:     Uvicorn running on http://127.0.0.1:8035 (Press CTRL+C to quit)
+INFO    deeptutor.services.auth - User 'c1_alice' saved with role='admin'
+INFO    deeptutor.api.routers.auth - First user (admin) registered: 'c1_alice'
+::1 - "POST /api/v1/auth/register HTTP/1.1" 201
+INFO    deeptutor.api.routers.auth - User 'c1_alice' logged in (role='admin')
+INFO    deeptutor.services.auth - User 'c1_bob' saved with role='user'
+INFO    deeptutor.api.routers.auth - Admin 'c1_alice' created user 'c1_bob' (role='user')
+::1 - "POST /api/v1/auth/users HTTP/1.1" 201
+INFO    deeptutor.services.auth - User 'c1_carol' saved with role='user'
+INFO    deeptutor.api.routers.auth - Admin 'c1_alice' created user 'c1_carol' (role='user')
+::1 - "POST /api/v1/auth/users HTTP/1.1" 201
+INFO    deeptutor.api.routers.auth - User 'c1_bob' logged in (role='user')
+INFO    deeptutor.api.routers.auth - User 'c1_carol' logged in (role='user')
+INFO    deeptutor.api.routers.auth - User 'c1_alice' logged in (role='admin')
+INFO:     ::1:0 - "WebSocket /api/v1/ws" [accepted]
+INFO:     ::1:0 - "WebSocket /api/v1/ws" [accepted]
+INFO    deeptutor.api.routers.auth - User 'c1_alice' logged in (role='admin')
+INFO:     ::1:0 - "WebSocket /api/v1/ws" [accepted]
+INFO:     ::1:0 - "WebSocket /api/v1/ws" [accepted]
+INFO    deeptutor.api.routers.auth - User 'c1_bob' logged in (role='user')
+::1 - "GET /api/v1/courses/crs_8a2f245814b84b30b2428550848e1955 HTTP/1.1" 404
+::1 - "GET /api/v1/courses/crs_8a2f245814b84b30b2428550848e1955/chat-readiness HTTP/1.1" 404
+::1 - "GET /api/v1/courses/crs_8a2f245814b84b30b2428550848e1955 HTTP/1.1" 404
+::1 - "GET /api/v1/courses/crs_8a2f245814b84b30b2428550848e1955/chat-readiness HTTP/1.1" 404
+::1 - "GET /api/v1/sessions/unified_1786227825748_bd302b62 HTTP/1.1" 404
+::1 - "GET /api/v1/sessions/unified_1786227825748_bd302b62 HTTP/1.1" 404
+INFO    deeptutor.api.routers.auth - User 'c1_alice' logged in (role='admin')
+INFO    deeptutor.knowledge.initializer - Creating directory structure for knowledge base: course_crs_646aededf1fb4a42adde987b9c3ac3f8_src_1a18667eafe3465495deeb19ac9a8dd9
+::1 - "POST /api/v1/courses/crs_646aededf1fb4a42adde987b9c3ac3f8/sources HTTP/1.1" 202
+INFO    deeptutor.api.routers.auth - User 'c1_carol' logged in (role='user')
+INFO:     Shutting down
+INFO:     Waiting for background tasks to complete. (CTRL+C to force quit)
+INFO:     Waiting for application shutdown.
+INFO    deeptutor.api.main - Application shutdown
+INFO    deeptutor.api.main - Partners stopped
+INFO    deeptutor.api.main - MCP connections closed
+INFO    deeptutor.events.event_bus - EventBus stopped
+INFO    deeptutor.api.main - EventBus stopped
+INFO:     Application shutdown complete.
+INFO:     Finished server process [22634]

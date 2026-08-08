@@ -1,0 +1,58 @@
+
+> opentutor-web@1.0.0 predev
+> node ./scripts/check-node-version.mjs
+
+
+> opentutor-web@1.0.0 dev
+> node --max-old-space-size=4096 ./node_modules/next/dist/bin/next dev
+
+▲ Next.js 16.2.3 (Turbopack)
+- Local:         http://localhost:3815
+- Network:       http://10.0.0.83:3815
+✓ Ready in 192ms
+- Experiments (use with caution):
+  · proxyClientMaxBodySize: 220200960
+
+ GET /login 200 in 189ms (next.js: 31ms, proxy.ts: 76ms, application-code: 83ms)
+ GET /login 200 in 21ms (next.js: 1784µs, proxy.ts: 1205µs, application-code: 18ms)
+ GET / 200 in 23ms (next.js: 10ms, proxy.ts: 2ms, application-code: 11ms)
+ GET /classes 200 in 24ms (next.js: 10ms, proxy.ts: 4ms, application-code: 10ms)
+ GET /classes 200 in 62ms (next.js: 1023µs, proxy.ts: 1186µs, application-code: 60ms)
+ GET /classes/crs_8a2f245814b84b30b2428550848e1955 200 in 205ms (next.js: 178ms, proxy.ts: 1417µs, application-code: 25ms)
+ GET /classes/crs_8a2f245814b84b30b2428550848e1955/chat 200 in 184ms (next.js: 173ms, proxy.ts: 1693µs, application-code: 9ms)
+ GET /classes/crs_8a2f245814b84b30b2428550848e1955/chat/unified_1786227825748_bd302b62 200 in 198ms (next.js: 187ms, proxy.ts: 1765µs, application-code: 10ms)
+ GET /classes/crs_8a2f245814b84b30b2428550848e1955/chat/unified_1786227825748_bd302b62 200 in 94ms (next.js: 3ms, proxy.ts: 1039µs, application-code: 90ms)
+ GET /classes/crs_8a2f245814b84b30b2428550848e1955 200 in 12ms (next.js: 3ms, proxy.ts: 1124µs, application-code: 8ms)
+ GET /classes/crs_8a2f245814b84b30b2428550848e1955/chat/unified_1786227825748_bd302b62 200 in 29ms (next.js: 3ms, proxy.ts: 1281µs, application-code: 25ms)
+ GET /classes/crs_25a0124d62684e67a50569abbdf1353a/chat/unified_1786227825748_bd302b62 200 in 26ms (next.js: 2ms, proxy.ts: 1304µs, application-code: 23ms)
+ GET /classes/crs_25a0124d62684e67a50569abbdf1353a/chat 200 in 25ms (next.js: 4ms, proxy.ts: 1019µs, application-code: 20ms)
+ GET /classes/crs_25a0124d62684e67a50569abbdf1353a/chat/unified_1786227828637_d763e87d 200 in 13ms (next.js: 3ms, proxy.ts: 1513µs, application-code: 9ms)
+ GET /login 200 in 17ms (next.js: 961µs, proxy.ts: 1029µs, application-code: 15ms)
+ GET / 200 in 12ms (next.js: 1383µs, proxy.ts: 2ms, application-code: 8ms)
+ GET /classes 200 in 18ms (next.js: 3ms, proxy.ts: 3ms, application-code: 12ms)
+ GET /classes 200 in 27ms (next.js: 1189µs, proxy.ts: 1555µs, application-code: 25ms)
+ GET /classes/crs_9f3e4a4267d2481ea87922deb2afd29d/chat 200 in 34ms (next.js: 7ms, proxy.ts: 1529µs, application-code: 25ms)
+ GET /classes/crs_9f3e4a4267d2481ea87922deb2afd29d/chat/unified_1786227830427_fe60b169 200 in 13ms (next.js: 3ms, proxy.ts: 1450µs, application-code: 9ms)
+ GET /classes/crs_440c7a6c8c1c40f5945a9c47690f718c/chat 200 in 27ms (next.js: 2ms, proxy.ts: 1193µs, application-code: 23ms)
+ GET /classes/crs_440c7a6c8c1c40f5945a9c47690f718c/chat/unified_1786227831650_c3f1b5bc 200 in 12ms (next.js: 3ms, proxy.ts: 1681µs, application-code: 7ms)
+ GET /login 200 in 17ms (next.js: 900µs, proxy.ts: 995µs, application-code: 15ms)
+ GET / 200 in 9ms (next.js: 1322µs, proxy.ts: 1091µs, application-code: 7ms)
+ GET /classes 200 in 14ms (next.js: 2ms, proxy.ts: 3ms, application-code: 9ms)
+ GET /classes 200 in 7ms (next.js: 758µs, proxy.ts: 780µs, application-code: 5ms)
+ GET /classes/crs_8a2f245814b84b30b2428550848e1955/chat 200 in 32ms (next.js: 2ms, proxy.ts: 1052µs, application-code: 28ms)
+ GET /classes/crs_8a2f245814b84b30b2428550848e1955/chat/unified_1786227825748_bd302b62 200 in 27ms (next.js: 2ms, proxy.ts: 956µs, application-code: 24ms)
+ GET /classes/crs_a0f7cdc8af104715b3bde5868d411c23 200 in 28ms (next.js: 3ms, proxy.ts: 1674µs, application-code: 23ms)
+ GET /login 200 in 17ms (next.js: 942µs, proxy.ts: 971µs, application-code: 16ms)
+ GET / 200 in 8ms (next.js: 978µs, proxy.ts: 1642µs, application-code: 5ms)
+ GET /classes 200 in 17ms (next.js: 3ms, proxy.ts: 3ms, application-code: 12ms)
+ GET /classes 200 in 9ms (next.js: 860µs, proxy.ts: 985µs, application-code: 7ms)
+ GET /classes/crs_9b3a5a57cdda4bafbf32b112c254eb39/chat 200 in 35ms (next.js: 4ms, proxy.ts: 1031µs, application-code: 30ms)
+ GET /classes/crs_646aededf1fb4a42adde987b9c3ac3f8/chat 200 in 24ms (next.js: 2ms, proxy.ts: 1053µs, application-code: 21ms)
+ GET /classes/crs_10bf0673cb2549b0921635c9f224a06a/chat 200 in 23ms (next.js: 2ms, proxy.ts: 1084µs, application-code: 20ms)
+ GET /login 200 in 10ms (next.js: 1039µs, proxy.ts: 3ms, application-code: 6ms)
+ GET /login 200 in 17ms (next.js: 877µs, proxy.ts: 1119µs, application-code: 15ms)
+ GET / 200 in 11ms (next.js: 1198µs, proxy.ts: 2ms, application-code: 7ms)
+ GET /classes 200 in 18ms (next.js: 3ms, proxy.ts: 3ms, application-code: 11ms)
+ GET /classes 200 in 12ms (next.js: 1345µs, proxy.ts: 1152µs, application-code: 9ms)
+ GET /classes 200 in 40ms (next.js: 1685µs, proxy.ts: 2ms, application-code: 37ms)
+[?25h

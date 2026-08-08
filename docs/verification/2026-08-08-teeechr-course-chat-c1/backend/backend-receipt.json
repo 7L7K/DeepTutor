@@ -1,0 +1,60 @@
+{
+  "biology": {
+    "citations": [
+      {
+        "course_id": "crs_8a2f245814b84b30b2428550848e1955",
+        "locator_type": null,
+        "locator_value": null,
+        "retrieval_fragment_id": null,
+        "schema_version": 1,
+        "source_content_hash": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "source_id": "src_fe2a0cf1321e44c1aef1f382a71ddd1c",
+        "source_revision": 2,
+        "source_title_snapshot": "Biology energy notes.txt"
+      }
+    ],
+    "course_id": "crs_8a2f245814b84b30b2428550848e1955",
+    "knowledge_bases": [
+      "personal:kb:course_crs_8a2f245814b84b30b2428550848e1955_src_fe2a0cf1321e44c1aef1f382a71ddd1c"
+    ],
+    "message_count": 2,
+    "raw_provider_path_persisted": false,
+    "session_id": "unified_1786227825748_bd302b62"
+  },
+  "blocked_course_session_counts": {
+    "alice_no_ready_course_id": 0,
+    "failed_only_course_id": 0,
+    "processing_only_course_id": 0
+  },
+  "classes_landing_course_list_calls": 1,
+  "full_journey_course_list_calls": 18,
+  "provider_failure": {
+    "course_id": "crs_440c7a6c8c1c40f5945a9c47690f718c",
+    "error": "Deterministic provider unavailable for C1 proof",
+    "message_count": 2,
+    "session_id": "unified_1786227831650_c3f1b5bc",
+    "turn_terminal": true
+  },
+  "psychology": {
+    "citations": [
+      {
+        "course_id": "crs_25a0124d62684e67a50569abbdf1353a",
+        "locator_type": null,
+        "locator_value": null,
+        "retrieval_fragment_id": null,
+        "schema_version": 1,
+        "source_content_hash": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+        "source_id": "src_05590bd0f92b4834b9eac689263c3889",
+        "source_revision": 2,
+        "source_title_snapshot": "Psychology cognition notes.txt"
+      }
+    ],
+    "course_id": "crs_25a0124d62684e67a50569abbdf1353a",
+    "knowledge_bases": [
+      "personal:kb:course_crs_25a0124d62684e67a50569abbdf1353a_src_05590bd0f92b4834b9eac689263c3889"
+    ],
+    "message_count": 2,
+    "raw_provider_path_persisted": false,
+    "session_id": "unified_1786227828637_d763e87d"
+  }
+}

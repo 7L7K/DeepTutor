@@ -1,0 +1,7 @@
+backend_port=8035
+frontend_port=3815
+node=v22.23.2
+npm=10.9.8
+python=Python 3.11.15
+branch=feature/teeechr-course-chat-c1
+head=1d6a36e5f76ce3db53e0e5971cc890945aaaa143

@@ -1,0 +1,318 @@
+
+> opentutor-web@1.0.0 lint
+> eslint .
+
+
+/Users/home/Desktop/2k26/teeech/DeepTutor-course-chat-c1/web/app/(auth)/login/page.tsx
+   56:99  warning  Avoid literal UI text in JSX. Use t("...") instead                          i18n/no-literal-ui-text
+   94:27  warning  Avoid literal UI text in JSX attribute 'placeholder'. Use t("...") instead  i18n/no-literal-ui-text
+  154:78  warning  Avoid literal UI text in JSX. Use t("...") instead                          i18n/no-literal-ui-text
+  165:93  warning  Avoid literal UI text in JSX. Use t("...") instead                          i18n/no-literal-ui-text
+
+/Users/home/Desktop/2k26/teeech/DeepTutor-course-chat-c1/web/app/(auth)/register/page.tsx
+   58:99  warning  Avoid literal UI text in JSX. Use t("...") instead                          i18n/no-literal-ui-text
+   99:27  warning  Avoid literal UI text in JSX attribute 'placeholder'. Use t("...") instead  i18n/no-literal-ui-text
+  186:78  warning  Avoid literal UI text in JSX. Use t("...") instead                          i18n/no-literal-ui-text
+
+/Users/home/Desktop/2k26/teeech/DeepTutor-course-chat-c1/web/app/(utility)/settings/blueway/page.tsx
+  144:15   warning  Avoid literal UI text in JSX attribute 'title'. Use t("...") instead  i18n/no-literal-ui-text
+  171:98   warning  Avoid literal UI text in JSX. Use t("...") instead                    i18n/no-literal-ui-text
+  216:16   warning  Avoid literal UI text in JSX. Use t("...") instead                    i18n/no-literal-ui-text
+  235:14   warning  Avoid literal UI text in JSX. Use t("...") instead                    i18n/no-literal-ui-text
+  255:14   warning  Avoid literal UI text in JSX. Use t("...") instead                    i18n/no-literal-ui-text
+  273:14   warning  Avoid literal UI text in JSX. Use t("...") instead                    i18n/no-literal-ui-text
+  280:147  warning  Avoid literal UI text in JSX. Use t("...") instead                    i18n/no-literal-ui-text
+  287:67   warning  Avoid literal UI text in JSX. Use t("...") instead                    i18n/no-literal-ui-text
+  288:129  warning  Avoid literal UI text in JSX. Use t("...") instead                    i18n/no-literal-ui-text
+  297:18   warning  Avoid literal UI text in JSX. Use t("...") instead                    i18n/no-literal-ui-text
+  301:86   warning  Avoid literal UI text in JSX. Use t("...") instead                    i18n/no-literal-ui-text
+  309:76   warning  Avoid literal UI text in JSX. Use t("...") instead                    i18n/no-literal-ui-text
+  324:47   warning  Avoid literal UI text in JSX. Use t("...") instead                    i18n/no-literal-ui-text
+  333:86   warning  Avoid literal UI text in JSX. Use t("...") instead                    i18n/no-literal-ui-text
+
+/Users/home/Desktop/2k26/teeech/DeepTutor-course-chat-c1/web/app/(workspace)/book/components/blocks/AnimationBlock.tsx
+  65:11  warning  Using `<img>` could result in slower LCP and higher bandwidth. Consider using `<Image />` from `next/image` or a custom image loader to automatically optimize images. This may incur additional usage or cost from your provider. See: https://nextjs.org/docs/messages/no-img-element  @next/next/no-img-element
+
+/Users/home/Desktop/2k26/teeech/DeepTutor-course-chat-c1/web/app/(workspace)/partners/new/page.tsx
+  361:38  warning  Avoid literal UI text in JSX. Use t("...") instead  i18n/no-literal-ui-text
+  362:38  warning  Avoid literal UI text in JSX. Use t("...") instead  i18n/no-literal-ui-text
+
+/Users/home/Desktop/2k26/teeech/DeepTutor-course-chat-c1/web/app/(workspace)/playground/page.tsx
+  678:31  warning  Avoid literal UI text in JSX. Use t("...") instead  i18n/no-literal-ui-text
+
+/Users/home/Desktop/2k26/teeech/DeepTutor-course-chat-c1/web/app/launch/blueway/page.tsx
+  6:128  warning  Avoid literal UI text in JSX. Use t("...") instead  i18n/no-literal-ui-text
+
+/Users/home/Desktop/2k26/teeech/DeepTutor-course-chat-c1/web/components/chat/home/ChatMessages.tsx
+  127:18   warning  Avoid literal UI text in JSX attribute 'aria-label'. Use t("...") instead  i18n/no-literal-ui-text
+  131:103  warning  Avoid literal UI text in JSX. Use t("...") instead                         i18n/no-literal-ui-text
+  155:135  warning  Avoid literal UI text in JSX. Use t("...") instead                         i18n/no-literal-ui-text
+
+/Users/home/Desktop/2k26/teeech/DeepTutor-course-chat-c1/web/components/chat/home/SessionLoadingView.tsx
+  50:9   warning  Using `<img>` could result in slower LCP and higher bandwidth. Consider using `<Image />` from `next/image` or a custom image loader to automatically optimize images. This may incur additional usage or cost from your provider. See: https://nextjs.org/docs/messages/no-img-element  @next/next/no-img-element
+  52:15  warning  Avoid literal UI text in JSX attribute 'alt'. Use t("...") instead                                                                                                                                                                                                                       i18n/no-literal-ui-text
+
+/Users/home/Desktop/2k26/teeech/DeepTutor-course-chat-c1/web/components/chat/home/UnifiedChatPage.tsx
+  2083:19  warning  Using `<img>` could result in slower LCP and higher bandwidth. Consider using `<Image />` from `next/image` or a custom image loader to automatically optimize images. This may incur additional usage or cost from your provider. See: https://nextjs.org/docs/messages/no-img-element  @next/next/no-img-element
+  2085:25  warning  Avoid literal UI text in JSX attribute 'alt'. Use t("...") instead                                                                                                                                                                                                                       i18n/no-literal-ui-text
+
+/Users/home/Desktop/2k26/teeech/DeepTutor-course-chat-c1/web/components/common/RichMarkdownRenderer.tsx
+  652:7  warning  Using `<img>` could result in slower LCP and higher bandwidth. Consider using `<Image />` from `next/image` or a custom image loader to automatically optimize images. This may incur additional usage or cost from your provider. See: https://nextjs.org/docs/messages/no-img-element  @next/next/no-img-element
+
+/Users/home/Desktop/2k26/teeech/DeepTutor-course-chat-c1/web/components/common/SimpleMarkdownRenderer.tsx
+  430:7  warning  Using `<img>` could result in slower LCP and higher bandwidth. Consider using `<Image />` from `next/image` or a custom image loader to automatically optimize images. This may incur additional usage or cost from your provider. See: https://nextjs.org/docs/messages/no-img-element  @next/next/no-img-element
+
+/Users/home/Desktop/2k26/teeech/DeepTutor-course-chat-c1/web/components/courses/ClassesHome.tsx
+   26:109  warning  Avoid literal UI text in JSX. Use t("...") instead                          i18n/no-literal-ui-text
+   40:108  warning  Avoid literal UI text in JSX. Use t("...") instead                          i18n/no-literal-ui-text
+   90:79   warning  Avoid literal UI text in JSX. Use t("...") instead                          i18n/no-literal-ui-text
+   93:97   warning  Avoid literal UI text in JSX. Use t("...") instead                          i18n/no-literal-ui-text
+   96:91   warning  Avoid literal UI text in JSX. Use t("...") instead                          i18n/no-literal-ui-text
+  107:78   warning  Avoid literal UI text in JSX. Use t("...") instead                          i18n/no-literal-ui-text
+  127:152  warning  Avoid literal UI text in JSX. Use t("...") instead                          i18n/no-literal-ui-text
+  136:16   warning  Avoid literal UI text in JSX. Use t("...") instead                          i18n/no-literal-ui-text
+  158:81   warning  Avoid literal UI text in JSX. Use t("...") instead                          i18n/no-literal-ui-text
+  161:99   warning  Avoid literal UI text in JSX. Use t("...") instead                          i18n/no-literal-ui-text
+  174:70   warning  Avoid literal UI text in JSX. Use t("...") instead                          i18n/no-literal-ui-text
+  177:74   warning  Avoid literal UI text in JSX. Use t("...") instead                          i18n/no-literal-ui-text
+  182:71   warning  Avoid literal UI text in JSX. Use t("...") instead                          i18n/no-literal-ui-text
+  189:31   warning  Avoid literal UI text in JSX attribute 'placeholder'. Use t("...") instead  i18n/no-literal-ui-text
+  211:14   warning  Avoid literal UI text in JSX. Use t("...") instead                          i18n/no-literal-ui-text
+  226:69   warning  Avoid literal UI text in JSX. Use t("...") instead                          i18n/no-literal-ui-text
+  231:12   warning  Avoid literal UI text in JSX. Use t("...") instead                          i18n/no-literal-ui-text
+
+/Users/home/Desktop/2k26/teeech/DeepTutor-course-chat-c1/web/components/courses/CourseChatRoute.tsx
+  106:83  warning  Avoid literal UI text in JSX. Use t("...") instead  i18n/no-literal-ui-text
+  121:36  warning  Avoid literal UI text in JSX. Use t("...") instead  i18n/no-literal-ui-text
+  147:36  warning  Avoid literal UI text in JSX. Use t("...") instead  i18n/no-literal-ui-text
+  185:83  warning  Avoid literal UI text in JSX. Use t("...") instead  i18n/no-literal-ui-text
+  201:38  warning  Avoid literal UI text in JSX. Use t("...") instead  i18n/no-literal-ui-text
+
+/Users/home/Desktop/2k26/teeech/DeepTutor-course-chat-c1/web/components/courses/CourseMaterials.tsx
+   95:34  warning  Avoid literal UI text in JSX. Use t("...") instead  i18n/no-literal-ui-text
+  100:79  warning  Avoid literal UI text in JSX. Use t("...") instead  i18n/no-literal-ui-text
+  104:92  warning  Avoid literal UI text in JSX. Use t("...") instead  i18n/no-literal-ui-text
+  115:80  warning  Avoid literal UI text in JSX. Use t("...") instead  i18n/no-literal-ui-text
+  130:38  warning  Avoid literal UI text in JSX. Use t("...") instead  i18n/no-literal-ui-text
+  147:73  warning  Avoid literal UI text in JSX. Use t("...") instead  i18n/no-literal-ui-text
+  170:20  warning  Avoid literal UI text in JSX. Use t("...") instead  i18n/no-literal-ui-text
+  179:76  warning  Avoid literal UI text in JSX. Use t("...") instead  i18n/no-literal-ui-text
+  180:99  warning  Avoid literal UI text in JSX. Use t("...") instead  i18n/no-literal-ui-text
+
+/Users/home/Desktop/2k26/teeech/DeepTutor-course-chat-c1/web/components/courses/CourseOverview.tsx
+   53:83   warning  Avoid literal UI text in JSX. Use t("...") instead                    i18n/no-literal-ui-text
+   68:36   warning  Avoid literal UI text in JSX. Use t("...") instead                    i18n/no-literal-ui-text
+   81:83   warning  Avoid literal UI text in JSX. Use t("...") instead                    i18n/no-literal-ui-text
+   97:34   warning  Avoid literal UI text in JSX. Use t("...") instead                    i18n/no-literal-ui-text
+  102:79   warning  Avoid literal UI text in JSX. Use t("...") instead                    i18n/no-literal-ui-text
+  107:21   warning  Avoid literal UI text in JSX. Use t("...") instead                    i18n/no-literal-ui-text
+  108:21   warning  Avoid literal UI text in JSX. Use t("...") instead                    i18n/no-literal-ui-text
+  112:125  warning  Avoid literal UI text in JSX. Use t("...") instead                    i18n/no-literal-ui-text
+  120:64   warning  Avoid literal UI text in JSX. Use t("...") instead                    i18n/no-literal-ui-text
+  127:109  warning  Avoid literal UI text in JSX. Use t("...") instead                    i18n/no-literal-ui-text
+  130:72   warning  Avoid literal UI text in JSX. Use t("...") instead                    i18n/no-literal-ui-text
+  137:21   warning  Avoid literal UI text in JSX attribute 'title'. Use t("...") instead  i18n/no-literal-ui-text
+  145:21   warning  Avoid literal UI text in JSX attribute 'title'. Use t("...") instead  i18n/no-literal-ui-text
+  152:21   warning  Avoid literal UI text in JSX attribute 'title'. Use t("...") instead  i18n/no-literal-ui-text
+  175:72   warning  Avoid literal UI text in JSX. Use t("...") instead                    i18n/no-literal-ui-text
+  176:86   warning  Avoid literal UI text in JSX. Use t("...") instead                    i18n/no-literal-ui-text
+  183:68   warning  Avoid literal UI text in JSX. Use t("...") instead                    i18n/no-literal-ui-text
+  184:82   warning  Avoid literal UI text in JSX. Use t("...") instead                    i18n/no-literal-ui-text
+
+/Users/home/Desktop/2k26/teeech/DeepTutor-course-chat-c1/web/components/launch/BlueWayLaunch.tsx
+  76:75   warning  Avoid literal UI text in JSX. Use t("...") instead  i18n/no-literal-ui-text
+  85:133  warning  Avoid literal UI text in JSX. Use t("...") instead  i18n/no-literal-ui-text
+  93:12   warning  Avoid literal UI text in JSX. Use t("...") instead  i18n/no-literal-ui-text
+
+/Users/home/Desktop/2k26/teeech/DeepTutor-course-chat-c1/web/components/layout/AppShell.tsx
+  116:21  warning  Avoid literal UI text in JSX attribute 'alt'. Use t("...") instead  i18n/no-literal-ui-text
+  123:21  warning  Avoid literal UI text in JSX attribute 'alt'. Use t("...") instead  i18n/no-literal-ui-text
+
+/Users/home/Desktop/2k26/teeech/DeepTutor-course-chat-c1/web/components/math-animator/MathAnimatorViewer.tsx
+  114:17  warning  Using `<img>` could result in slower LCP and higher bandwidth. Consider using `<Image />` from `next/image` or a custom image loader to automatically optimize images. This may incur additional usage or cost from your provider. See: https://nextjs.org/docs/messages/no-img-element  @next/next/no-img-element
+  144:40  warning  Avoid literal UI text in JSX. Use t("...") instead                                                                                                                                                                                                                                       i18n/no-literal-ui-text
+  162:86  warning  Avoid literal UI text in JSX. Use t("...") instead                                                                                                                                                                                                                                       i18n/no-literal-ui-text
+  167:86  warning  Avoid literal UI text in JSX. Use t("...") instead                                                                                                                                                                                                                                       i18n/no-literal-ui-text
+  187:11  warning  Using `<img>` could result in slower LCP and higher bandwidth. Consider using `<Image />` from `next/image` or a custom image loader to automatically optimize images. This may incur additional usage or cost from your provider. See: https://nextjs.org/docs/messages/no-img-element  @next/next/no-img-element
+
+/Users/home/Desktop/2k26/teeech/DeepTutor-course-chat-c1/web/components/mcp/McpServerForm.tsx
+  186:25  warning  Avoid literal UI text in JSX attribute 'placeholder'. Use t("...") instead  i18n/no-literal-ui-text
+  224:27  warning  Avoid literal UI text in JSX attribute 'placeholder'. Use t("...") instead  i18n/no-literal-ui-text
+  249:27  warning  Avoid literal UI text in JSX attribute 'placeholder'. Use t("...") instead  i18n/no-literal-ui-text
+  275:27  warning  Avoid literal UI text in JSX attribute 'placeholder'. Use t("...") instead  i18n/no-literal-ui-text
+
+/Users/home/Desktop/2k26/teeech/DeepTutor-course-chat-c1/web/components/memory/MemoryGraph.tsx
+  549:14  warning  Avoid literal UI text in JSX. Use t("...") instead  i18n/no-literal-ui-text
+
+/Users/home/Desktop/2k26/teeech/DeepTutor-course-chat-c1/web/components/memory/MemorySection.tsx
+  1467:69  warning  Avoid literal UI text in JSX. Use t("...") instead  i18n/no-literal-ui-text
+  1482:68  warning  Avoid literal UI text in JSX. Use t("...") instead  i18n/no-literal-ui-text
+  1487:68  warning  Avoid literal UI text in JSX. Use t("...") instead  i18n/no-literal-ui-text
+  1492:68  warning  Avoid literal UI text in JSX. Use t("...") instead  i18n/no-literal-ui-text
+  1493:44  warning  Avoid literal UI text in JSX. Use t("...") instead  i18n/no-literal-ui-text
+  1502:68  warning  Avoid literal UI text in JSX. Use t("...") instead  i18n/no-literal-ui-text
+
+/Users/home/Desktop/2k26/teeech/DeepTutor-course-chat-c1/web/components/partners/PartnerConfigure.tsx
+  341:34  warning  Avoid literal UI text in JSX. Use t("...") instead  i18n/no-literal-ui-text
+  342:34  warning  Avoid literal UI text in JSX. Use t("...") instead  i18n/no-literal-ui-text
+
+/Users/home/Desktop/2k26/teeech/DeepTutor-course-chat-c1/web/components/partners/SoulEditor.tsx
+  39:94  warning  Avoid literal UI text in JSX. Use t("...") instead  i18n/no-literal-ui-text
+
+/Users/home/Desktop/2k26/teeech/DeepTutor-course-chat-c1/web/components/partners/schema-form.tsx
+  139:76  warning  Avoid literal UI text in JSX. Use t("...") instead  i18n/no-literal-ui-text
+
+/Users/home/Desktop/2k26/teeech/DeepTutor-course-chat-c1/web/components/practice/PracticeWorkspace.tsx
+   909:52    warning  Avoid literal UI text in JSX. Use t("...") instead                          i18n/no-literal-ui-text
+   910:72    warning  Avoid literal UI text in JSX. Use t("...") instead                          i18n/no-literal-ui-text
+   912:169   warning  Avoid literal UI text in JSX. Use t("...") instead                          i18n/no-literal-ui-text
+   915:121   warning  Avoid literal UI text in JSX. Use t("...") instead                          i18n/no-literal-ui-text
+   916:137   warning  Avoid literal UI text in JSX. Use t("...") instead                          i18n/no-literal-ui-text
+   917:298   warning  Avoid literal UI text in JSX. Use t("...") instead                          i18n/no-literal-ui-text
+   917:326   warning  Avoid literal UI text in JSX. Use t("...") instead                          i18n/no-literal-ui-text
+   918:68    warning  Avoid literal UI text in JSX attribute 'aria-label'. Use t("...") instead   i18n/no-literal-ui-text
+   924:51    warning  Avoid literal UI text in JSX. Use t("...") instead                          i18n/no-literal-ui-text
+   925:72    warning  Avoid literal UI text in JSX. Use t("...") instead                          i18n/no-literal-ui-text
+   928:69    warning  Avoid literal UI text in JSX. Use t("...") instead                          i18n/no-literal-ui-text
+   929:57    warning  Avoid literal UI text in JSX. Use t("...") instead                          i18n/no-literal-ui-text
+   929:91    warning  Avoid literal UI text in JSX attribute 'aria-label'. Use t("...") instead   i18n/no-literal-ui-text
+   930:57    warning  Avoid literal UI text in JSX. Use t("...") instead                          i18n/no-literal-ui-text
+   930:127   warning  Avoid literal UI text in JSX attribute 'aria-label'. Use t("...") instead   i18n/no-literal-ui-text
+   930:265   warning  Avoid literal UI text in JSX attribute 'placeholder'. Use t("...") instead  i18n/no-literal-ui-text
+   932:59    warning  Avoid literal UI text in JSX. Use t("...") instead                          i18n/no-literal-ui-text
+   932:93    warning  Avoid literal UI text in JSX attribute 'aria-label'. Use t("...") instead   i18n/no-literal-ui-text
+   933:59    warning  Avoid literal UI text in JSX. Use t("...") instead                          i18n/no-literal-ui-text
+   933:95    warning  Avoid literal UI text in JSX attribute 'aria-label'. Use t("...") instead   i18n/no-literal-ui-text
+   933:376   warning  Avoid literal UI text in JSX. Use t("...") instead                          i18n/no-literal-ui-text
+   933:417   warning  Avoid literal UI text in JSX. Use t("...") instead                          i18n/no-literal-ui-text
+   933:457   warning  Avoid literal UI text in JSX. Use t("...") instead                          i18n/no-literal-ui-text
+   934:59    warning  Avoid literal UI text in JSX. Use t("...") instead                          i18n/no-literal-ui-text
+   934:91    warning  Avoid literal UI text in JSX attribute 'aria-label'. Use t("...") instead   i18n/no-literal-ui-text
+   934:365   warning  Avoid literal UI text in JSX. Use t("...") instead                          i18n/no-literal-ui-text
+   934:412   warning  Avoid literal UI text in JSX. Use t("...") instead                          i18n/no-literal-ui-text
+   936:153   warning  Avoid literal UI text in JSX. Use t("...") instead                          i18n/no-literal-ui-text
+   936:712   warning  Avoid literal UI text in JSX. Use t("...") instead                          i18n/no-literal-ui-text
+   936:873   warning  Avoid literal UI text in JSX. Use t("...") instead                          i18n/no-literal-ui-text
+   936:1067  warning  Avoid literal UI text in JSX. Use t("...") instead                          i18n/no-literal-ui-text
+   937:392   warning  Avoid literal UI text in JSX. Use t("...") instead                          i18n/no-literal-ui-text
+   938:110   warning  Avoid literal UI text in JSX. Use t("...") instead                          i18n/no-literal-ui-text
+   938:215   warning  Avoid literal UI text in JSX. Use t("...") instead                          i18n/no-literal-ui-text
+   938:430   warning  Avoid literal UI text in JSX. Use t("...") instead                          i18n/no-literal-ui-text
+   942:49    warning  Avoid literal UI text in JSX. Use t("...") instead                          i18n/no-literal-ui-text
+   946:316   warning  Avoid literal UI text in JSX. Use t("...") instead                          i18n/no-literal-ui-text
+   947:269   warning  Avoid literal UI text in JSX. Use t("...") instead                          i18n/no-literal-ui-text
+   947:429   warning  Avoid literal UI text in JSX. Use t("...") instead                          i18n/no-literal-ui-text
+   948:87    warning  Avoid literal UI text in JSX. Use t("...") instead                          i18n/no-literal-ui-text
+   953:46    warning  Avoid literal UI text in JSX. Use t("...") instead                          i18n/no-literal-ui-text
+   955:33    warning  Avoid literal UI text in JSX attribute 'aria-label'. Use t("...") instead   i18n/no-literal-ui-text
+   955:172   warning  Avoid literal UI text in JSX attribute 'placeholder'. Use t("...") instead  i18n/no-literal-ui-text
+   956:220   warning  Avoid literal UI text in JSX. Use t("...") instead                          i18n/no-literal-ui-text
+   962:195   warning  Avoid literal UI text in JSX. Use t("...") instead                          i18n/no-literal-ui-text
+   962:639   warning  Avoid literal UI text in JSX. Use t("...") instead                          i18n/no-literal-ui-text
+   963:102   warning  Avoid literal UI text in JSX. Use t("...") instead                          i18n/no-literal-ui-text
+   974:50    warning  Avoid literal UI text in JSX. Use t("...") instead                          i18n/no-literal-ui-text
+   977:27    warning  Avoid literal UI text in JSX. Use t("...") instead                          i18n/no-literal-ui-text
+   978:150   warning  Avoid literal UI text in JSX attribute 'placeholder'. Use t("...") instead  i18n/no-literal-ui-text
+   981:27    warning  Avoid literal UI text in JSX. Use t("...") instead                          i18n/no-literal-ui-text
+   982:147   warning  Avoid literal UI text in JSX attribute 'placeholder'. Use t("...") instead  i18n/no-literal-ui-text
+   985:27    warning  Avoid literal UI text in JSX. Use t("...") instead                          i18n/no-literal-ui-text
+   985:88    warning  Avoid literal UI text in JSX. Use t("...") instead                          i18n/no-literal-ui-text
+   986:160   warning  Avoid literal UI text in JSX attribute 'placeholder'. Use t("...") instead  i18n/no-literal-ui-text
+   989:27    warning  Avoid literal UI text in JSX. Use t("...") instead                          i18n/no-literal-ui-text
+   989:90    warning  Avoid literal UI text in JSX. Use t("...") instead                          i18n/no-literal-ui-text
+   990:159   warning  Avoid literal UI text in JSX attribute 'placeholder'. Use t("...") instead  i18n/no-literal-ui-text
+   993:330   warning  Avoid literal UI text in JSX. Use t("...") instead                          i18n/no-literal-ui-text
+   993:577   warning  Avoid literal UI text in JSX. Use t("...") instead                          i18n/no-literal-ui-text
+   995:373   warning  Avoid literal UI text in JSX. Use t("...") instead                          i18n/no-literal-ui-text
+   995:474   warning  Avoid literal UI text in JSX. Use t("...") instead                          i18n/no-literal-ui-text
+   995:661   warning  Avoid literal UI text in JSX. Use t("...") instead                          i18n/no-literal-ui-text
+   996:392   warning  Avoid literal UI text in JSX. Use t("...") instead                          i18n/no-literal-ui-text
+   999:73    warning  Avoid literal UI text in JSX. Use t("...") instead                          i18n/no-literal-ui-text
+  1006:133   warning  Avoid literal UI text in JSX. Use t("...") instead                          i18n/no-literal-ui-text
+  1006:223   warning  Avoid literal UI text in JSX. Use t("...") instead                          i18n/no-literal-ui-text
+  1006:381   warning  Avoid literal UI text in JSX attribute 'aria-label'. Use t("...") instead   i18n/no-literal-ui-text
+  1007:165   warning  Avoid literal UI text in JSX. Use t("...") instead                          i18n/no-literal-ui-text
+  1007:287   warning  Avoid literal UI text in JSX. Use t("...") instead                          i18n/no-literal-ui-text
+  1007:331   warning  Avoid literal UI text in JSX. Use t("...") instead                          i18n/no-literal-ui-text
+  1007:418   warning  Avoid literal UI text in JSX. Use t("...") instead                          i18n/no-literal-ui-text
+  1007:535   warning  Avoid literal UI text in JSX. Use t("...") instead                          i18n/no-literal-ui-text
+  1007:687   warning  Avoid literal UI text in JSX. Use t("...") instead                          i18n/no-literal-ui-text
+  1007:814   warning  Avoid literal UI text in JSX. Use t("...") instead                          i18n/no-literal-ui-text
+  1007:953   warning  Avoid literal UI text in JSX. Use t("...") instead                          i18n/no-literal-ui-text
+  1007:1122  warning  Avoid literal UI text in JSX. Use t("...") instead                          i18n/no-literal-ui-text
+  1007:1199  warning  Avoid literal UI text in JSX. Use t("...") instead                          i18n/no-literal-ui-text
+  1007:1271  warning  Avoid literal UI text in JSX. Use t("...") instead                          i18n/no-literal-ui-text
+  1007:1312  warning  Avoid literal UI text in JSX. Use t("...") instead                          i18n/no-literal-ui-text
+  1008:203   warning  Avoid literal UI text in JSX. Use t("...") instead                          i18n/no-literal-ui-text
+  1008:522   warning  Avoid literal UI text in JSX. Use t("...") instead                          i18n/no-literal-ui-text
+  1050:357   warning  Avoid literal UI text in JSX. Use t("...") instead                          i18n/no-literal-ui-text
+  1050:384   warning  Avoid literal UI text in JSX. Use t("...") instead                          i18n/no-literal-ui-text
+  1052:23    warning  Avoid literal UI text in JSX attribute 'aria-label'. Use t("...") instead   i18n/no-literal-ui-text
+  1054:99    warning  Avoid literal UI text in JSX. Use t("...") instead                          i18n/no-literal-ui-text
+  1056:66    warning  Avoid literal UI text in JSX. Use t("...") instead                          i18n/no-literal-ui-text
+  1056:471   warning  Avoid literal UI text in JSX attribute 'placeholder'. Use t("...") instead  i18n/no-literal-ui-text
+  1057:68    warning  Avoid literal UI text in JSX. Use t("...") instead                          i18n/no-literal-ui-text
+  1058:291   warning  Avoid literal UI text in JSX. Use t("...") instead                          i18n/no-literal-ui-text
+  1058:962   warning  Avoid literal UI text in JSX. Use t("...") instead                          i18n/no-literal-ui-text
+  1060:321   warning  Avoid literal UI text in JSX. Use t("...") instead                          i18n/no-literal-ui-text
+  1060:499   warning  Avoid literal UI text in JSX. Use t("...") instead                          i18n/no-literal-ui-text
+  1060:557   warning  Avoid literal UI text in JSX. Use t("...") instead                          i18n/no-literal-ui-text
+  1060:726   warning  Avoid literal UI text in JSX. Use t("...") instead                          i18n/no-literal-ui-text
+  1060:867   warning  Avoid literal UI text in JSX. Use t("...") instead                          i18n/no-literal-ui-text
+  1060:964   warning  Avoid literal UI text in JSX. Use t("...") instead                          i18n/no-literal-ui-text
+  1060:1087  warning  Avoid literal UI text in JSX. Use t("...") instead                          i18n/no-literal-ui-text
+  1062:132   warning  Avoid literal UI text in JSX. Use t("...") instead                          i18n/no-literal-ui-text
+  1062:233   warning  Avoid literal UI text in JSX. Use t("...") instead                          i18n/no-literal-ui-text
+  1062:513   warning  Avoid literal UI text in JSX. Use t("...") instead                          i18n/no-literal-ui-text
+  1063:182   warning  Avoid literal UI text in JSX. Use t("...") instead                          i18n/no-literal-ui-text
+  1063:1013  warning  Avoid literal UI text in JSX. Use t("...") instead                          i18n/no-literal-ui-text
+  1063:1883  warning  Avoid literal UI text in JSX. Use t("...") instead                          i18n/no-literal-ui-text
+  1063:2077  warning  Avoid literal UI text in JSX. Use t("...") instead                          i18n/no-literal-ui-text
+  1063:2232  warning  Avoid literal UI text in JSX. Use t("...") instead                          i18n/no-literal-ui-text
+  1076:98    warning  Avoid literal UI text in JSX. Use t("...") instead                          i18n/no-literal-ui-text
+  1077:57    warning  Avoid literal UI text in JSX. Use t("...") instead                          i18n/no-literal-ui-text
+  1082:52    warning  Avoid literal UI text in JSX. Use t("...") instead                          i18n/no-literal-ui-text
+  1082:739   warning  Avoid literal UI text in JSX. Use t("...") instead                          i18n/no-literal-ui-text
+  1082:837   warning  Avoid literal UI text in JSX. Use t("...") instead                          i18n/no-literal-ui-text
+
+/Users/home/Desktop/2k26/teeech/DeepTutor-course-chat-c1/web/components/quiz/QuizConfigPanel.tsx
+  749:24  warning  Avoid literal UI text in JSX attribute 'aria-label'. Use t("...") instead  i18n/no-literal-ui-text
+
+/Users/home/Desktop/2k26/teeech/DeepTutor-course-chat-c1/web/components/research/ResearchOutlineEditor.tsx
+  136:79  warning  Avoid literal UI text in JSX. Use t("...") instead  i18n/no-literal-ui-text
+
+/Users/home/Desktop/2k26/teeech/DeepTutor-course-chat-c1/web/components/settings/ServiceConfigEditor.tsx
+   499:37  warning  Avoid literal UI text in JSX attribute 'placeholder'. Use t("...") instead  i18n/no-literal-ui-text
+   586:41  warning  Avoid literal UI text in JSX attribute 'placeholder'. Use t("...") instead  i18n/no-literal-ui-text
+   639:41  warning  Avoid literal UI text in JSX attribute 'placeholder'. Use t("...") instead  i18n/no-literal-ui-text
+   732:43  warning  Avoid literal UI text in JSX attribute 'placeholder'. Use t("...") instead  i18n/no-literal-ui-text
+  1150:27  warning  Avoid literal UI text in JSX attribute 'placeholder'. Use t("...") instead  i18n/no-literal-ui-text
+  1236:33  warning  Avoid literal UI text in JSX attribute 'placeholder'. Use t("...") instead  i18n/no-literal-ui-text
+
+/Users/home/Desktop/2k26/teeech/DeepTutor-course-chat-c1/web/components/sidebar/SidebarShell.tsx
+  232:24  warning  Avoid literal UI text in JSX attribute 'aria-label'. Use t("...") instead  i18n/no-literal-ui-text
+  237:19  warning  Avoid literal UI text in JSX attribute 'alt'. Use t("...") instead         i18n/no-literal-ui-text
+  346:19  warning  Avoid literal UI text in JSX attribute 'title'. Use t("...") instead       i18n/no-literal-ui-text
+  347:24  warning  Avoid literal UI text in JSX attribute 'aria-label'. Use t("...") instead  i18n/no-literal-ui-text
+  366:17  warning  Avoid literal UI text in JSX attribute 'alt'. Use t("...") instead         i18n/no-literal-ui-text
+  373:17  warning  Avoid literal UI text in JSX attribute 'alt'. Use t("...") instead         i18n/no-literal-ui-text
+  530:19  warning  Avoid literal UI text in JSX attribute 'title'. Use t("...") instead       i18n/no-literal-ui-text
+  531:24  warning  Avoid literal UI text in JSX attribute 'aria-label'. Use t("...") instead  i18n/no-literal-ui-text
+
+/Users/home/Desktop/2k26/teeech/DeepTutor-course-chat-c1/web/dist/node-tests/components/common/RichMarkdownRenderer.js
+  377:5  warning  Unused eslint-disable directive (no problems were reported from 'react-hooks/exhaustive-deps')
+
+/Users/home/Desktop/2k26/teeech/DeepTutor-course-chat-c1/web/dist/node-tests/components/common/SimpleMarkdownRenderer.js
+  235:5  warning  Unused eslint-disable directive (no problems were reported from 'react-hooks/exhaustive-deps')
+
+/Users/home/Desktop/2k26/teeech/DeepTutor-course-chat-c1/web/dist/node-tests/context/AppShellContext.js
+  26:9  warning  Unused eslint-disable directive (no problems were reported from 'react-hooks/set-state-in-effect')
+
+/Users/home/Desktop/2k26/teeech/DeepTutor-course-chat-c1/web/dist/node-tests/context/UnifiedChatContext.js
+  981:13  warning  Unused eslint-disable directive (no problems were reported from 'react-hooks/exhaustive-deps')
+
+/Users/home/Desktop/2k26/teeech/DeepTutor-course-chat-c1/web/eslint/i18n-plugin.mjs
+  14:1  warning  Assign object to a variable before exporting as module default  import/no-anonymous-default-export
+
+✖ 241 problems (0 errors, 241 warnings)
+  0 errors and 4 warnings potentially fixable with the `--fix` option.

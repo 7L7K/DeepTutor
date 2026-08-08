@@ -1,0 +1,2594 @@
+
+> opentutor-web@1.0.0 test:node
+> node ./scripts/run-node-tests.mjs
+
+TAP version 13
+# Subtest: empty or whitespace-only query returns the list unchanged
+ok 1 - empty or whitespace-only query returns the list unchanged
+  ---
+  duration_ms: 0.586209
+  type: 'test'
+  ...
+# Subtest: matching is case-insensitive and substring-based
+ok 2 - matching is case-insensitive and substring-based
+  ---
+  duration_ms: 0.630209
+  type: 'test'
+  ...
+# Subtest: query is trimmed before matching
+ok 3 - query is trimmed before matching
+  ---
+  duration_ms: 0.09625
+  type: 'test'
+  ...
+# Subtest: non-latin usernames are searchable
+ok 4 - non-latin usernames are searchable
+  ---
+  duration_ms: 0.051625
+  type: 'test'
+  ...
+# Subtest: no match yields an empty list, not an error
+ok 5 - no match yields an empty list, not an error
+  ---
+  duration_ms: 0.04475
+  type: 'test'
+  ...
+# Subtest: apiFetch redirects to /login on 401 when auth is enabled and no opt-out
+ok 6 - apiFetch redirects to /login on 401 when auth is enabled and no opt-out
+  ---
+  duration_ms: 32.644125
+  type: 'test'
+  ...
+# Subtest: apiFetch does NOT redirect on 401 when auth is disabled (default)
+ok 7 - apiFetch does NOT redirect on 401 when auth is disabled (default)
+  ---
+  duration_ms: 0.196959
+  type: 'test'
+  ...
+# Subtest: apiFetch does NOT redirect on 401 when skipAuthRedirect is set
+ok 8 - apiFetch does NOT redirect on 401 when skipAuthRedirect is set
+  ---
+  duration_ms: 0.995417
+  type: 'test'
+  ...
+# Subtest: apiFetch preserves launch query identity when recovering an expired session
+ok 9 - apiFetch preserves launch query identity when recovering an expired session
+  ---
+  duration_ms: 1.629291
+  type: 'test'
+  ...
+# Subtest: apiFetch passes successful responses through without redirecting
+ok 10 - apiFetch passes successful responses through without redirecting
+  ---
+  duration_ms: 0.247
+  type: 'test'
+  ...
+# Subtest: login continuation accepts only relative exact launch state
+ok 11 - login continuation accepts only relative exact launch state
+  ---
+  duration_ms: 0.180458
+  type: 'test'
+  ...
+# Subtest: launch continuation rejects malformed or ambiguous query state
+ok 12 - launch continuation rejects malformed or ambiguous query state
+  ---
+  duration_ms: 0.254125
+  type: 'test'
+  ...
+# Subtest: app-shell-storage: code block theme defaults to oneDark
+ok 13 - app-shell-storage: code block theme defaults to oneDark
+  ---
+  duration_ms: 0.639
+  type: 'test'
+  ...
+# Subtest: app-shell-storage: code block show line numbers defaults to false
+ok 14 - app-shell-storage: code block show line numbers defaults to false
+  ---
+  duration_ms: 0.124958
+  type: 'test'
+  ...
+# Subtest: app-shell-storage: code block wrap long lines defaults to false
+ok 15 - app-shell-storage: code block wrap long lines defaults to false
+  ---
+  duration_ms: 0.053291
+  type: 'test'
+  ...
+# Subtest: app-shell-storage: write and read code block theme
+ok 16 - app-shell-storage: write and read code block theme
+  ---
+  duration_ms: 0.080417
+  type: 'test'
+  ...
+# Subtest: app-shell-storage: write and read code block show line numbers
+ok 17 - app-shell-storage: write and read code block show line numbers
+  ---
+  duration_ms: 0.098291
+  type: 'test'
+  ...
+# Subtest: app-shell-storage: write and read code block wrap long lines
+ok 18 - app-shell-storage: write and read code block wrap long lines
+  ---
+  duration_ms: 0.062208
+  type: 'test'
+  ...
+# Subtest: app-shell-storage: CODE_BLOCK_SETTINGS_EVENT constant exists
+ok 19 - app-shell-storage: CODE_BLOCK_SETTINGS_EVENT constant exists
+  ---
+  duration_ms: 0.071333
+  type: 'test'
+  ...
+# Subtest: app-shell-storage: write dispatches CODE_BLOCK_SETTINGS_EVENT
+ok 20 - app-shell-storage: write dispatches CODE_BLOCK_SETTINGS_EVENT
+  ---
+  duration_ms: 0.114459
+  type: 'test'
+  ...
+# Subtest: appearance settings page: adds the code blocks section after the theme section
+ok 21 - appearance settings page: adds the code blocks section after the theme section
+  ---
+  duration_ms: 1.030916
+  type: 'test'
+  ...
+# Subtest: appearance settings page: wires syntax theme select and toggle controls to settings context
+ok 22 - appearance settings page: wires syntax theme select and toggle controls to settings context
+  ---
+  duration_ms: 0.166916
+  type: 'test'
+  ...
+# Subtest: appearance settings page: renders code-block switch checked state from the settings context
+ok 23 - appearance settings page: renders code-block switch checked state from the settings context
+  ---
+  duration_ms: 1.459083
+  type: 'test'
+  ...
+# Subtest: appearance settings page: exposes every registered code block theme option in the select
+ok 24 - appearance settings page: exposes every registered code block theme option in the select
+  ---
+  duration_ms: 0.197625
+  type: 'test'
+  ...
+# Subtest: appearance settings page: preview includes a line long enough to demonstrate wrapping
+ok 25 - appearance settings page: preview includes a line long enough to demonstrate wrapping
+  ---
+  duration_ms: 0.176417
+  type: 'test'
+  ...
+# Subtest: hasPendingAskUser detects unresolved ask_user tool results
+ok 26 - hasPendingAskUser detects unresolved ask_user tool results
+  ---
+  duration_ms: 0.746166
+  type: 'test'
+  ...
+# Subtest: hasPendingAskUser clears the matching card after ask_user_resolved
+ok 27 - hasPendingAskUser clears the matching card after ask_user_resolved
+  ---
+  duration_ms: 0.074041
+  type: 'test'
+  ...
+# Subtest: hasPendingAskUserInMessages ignores ask_user cards from other turns
+ok 28 - hasPendingAskUserInMessages ignores ask_user cards from other turns
+  ---
+  duration_ms: 0.059792
+  type: 'test'
+  ...
+# Subtest: parseAuthEnabled is true for accepted truthy flags
+ok 29 - parseAuthEnabled is true for accepted truthy flags
+  ---
+  duration_ms: 0.724
+  type: 'test'
+  ...
+# Subtest: parseAuthEnabled is false for falsy / empty / undefined
+ok 30 - parseAuthEnabled is false for falsy / empty / undefined
+  ---
+  duration_ms: 0.100125
+  type: 'test'
+  ...
+# Subtest: parseAuthEnabled treats an unsubstituted Docker placeholder as disabled
+ok 31 - parseAuthEnabled treats an unsubstituted Docker placeholder as disabled
+  ---
+  duration_ms: 0.056958
+  type: 'test'
+  ...
+# Subtest: icon and color tables are well-formed
+ok 32 - icon and color tables are well-formed
+  ---
+  duration_ms: 0.695917
+  type: 'test'
+  ...
+# Subtest: fallbackAvatarFor is deterministic and always valid
+ok 33 - fallbackAvatarFor is deterministic and always valid
+  ---
+  duration_ms: 0.750417
+  type: 'test'
+  ...
+# Subtest: fallback assignment is pinned — a hash change would shuffle every user's avatar
+ok 34 - fallback assignment is pinned — a hash change would shuffle every user's avatar
+  ---
+  duration_ms: 0.135583
+  type: 'test'
+  ...
+# Subtest: fallback color index uses an unsigned shift (regression)
+ok 35 - fallback color index uses an unsigned shift (regression)
+  ---
+  duration_ms: 0.051667
+  type: 'test'
+  ...
+# Subtest: parseAvatarMarker classifies image markers
+ok 36 - parseAvatarMarker classifies image markers
+  ---
+  duration_ms: 0.067
+  type: 'test'
+  ...
+# Subtest: parseAvatarMarker classifies known icon markers
+ok 37 - parseAvatarMarker classifies known icon markers
+  ---
+  duration_ms: 0.084625
+  type: 'test'
+  ...
+# Subtest: parseAvatarMarker degrades everything else to the fallback
+ok 38 - parseAvatarMarker degrades everything else to the fallback
+  ---
+  duration_ms: 0.097625
+  type: 'test'
+  ...
+# Subtest: BlueWay status keeps connection and indexing readiness separate
+ok 39 - BlueWay status keeps connection and indexing readiness separate
+  ---
+  duration_ms: 0.613
+  type: 'test'
+  ...
+# Subtest: delayed BlueWay actions cannot mutate a replacement identity
+ok 40 - delayed BlueWay actions cannot mutate a replacement identity
+  ---
+  duration_ms: 0.78825
+  type: 'test'
+  ...
+# Subtest: BlueWay responses cannot cross an identity or request epoch
+ok 41 - BlueWay responses cannot cross an identity or request epoch
+  ---
+  duration_ms: 0.129125
+  type: 'test'
+  ...
+# Subtest: BlueWay approval links require HTTPS except explicit loopback development
+ok 42 - BlueWay approval links require HTTPS except explicit loopback development
+  ---
+  duration_ms: 0.313375
+  type: 'test'
+  ...
+# Subtest: browser integration payloads reject credential material recursively
+ok 43 - browser integration payloads reject credential material recursively
+  ---
+  duration_ms: 0.409667
+  type: 'test'
+  ...
+# Subtest: launch API sends exact external Course and term hints
+ok 44 - launch API sends exact external Course and term hints
+  ---
+  duration_ms: 23.07325
+  type: 'test'
+  ...
+# Subtest: launch API exposes a bounded login-required state
+ok 45 - launch API exposes a bounded login-required state
+  ---
+  duration_ms: 0.182625
+  type: 'test'
+  ...
+# Subtest: long-running Book operations use the streaming WebSocket transport
+ok 46 - long-running Book operations use the streaming WebSocket transport
+  ---
+  duration_ms: 0.710083
+  type: 'test'
+  ...
+# Subtest: long-running book operation stays pending through progress and resolves on its result event
+ok 47 - long-running book operation stays pending through progress and resolves on its result event
+  ---
+  duration_ms: 1.569959
+  type: 'test'
+  ...
+# Subtest: book operation rejects backend error frames and closes its socket
+ok 48 - book operation rejects backend error frames and closes its socket
+  ---
+  duration_ms: 0.456208
+  type: 'test'
+  ...
+# Subtest: book operation rejects when the socket closes before a result
+ok 49 - book operation rejects when the socket closes before a result
+  ---
+  duration_ms: 0.159834
+  type: 'test'
+  ...
+# Subtest: every curated slug is present in the generated data
+ok 50 - every curated slug is present in the generated data
+  ---
+  duration_ms: 0.742167
+  type: 'test'
+  ...
+# Subtest: the generated data carries nothing the catalogs do not reference
+ok 51 - the generated data carries nothing the catalogs do not reference
+  ---
+  duration_ms: 0.142417
+  type: 'test'
+  ...
+# Subtest: every mark is a usable 24x24 path
+ok 52 - every mark is a usable 24x24 path
+  ---
+  duration_ms: 0.220333
+  type: 'test'
+  ...
+# Subtest: a known entry resolves in its own namespace only
+ok 53 - a known entry resolves in its own namespace only
+  ---
+  duration_ms: 0.165208
+  type: 'test'
+  ...
+# Subtest: an unknown entry resolves to null rather than a wrong logo
+ok 54 - an unknown entry resolves to null rather than a wrong logo
+  ---
+  duration_ms: 0.056792
+  type: 'test'
+  ...
+# Subtest: a renamed install still finds its mark
+ok 55 - a renamed install still finds its mark
+  ---
+  duration_ms: 0.107375
+  type: 'test'
+  ...
+# Subtest: resolution never throws on junk
+ok 56 - resolution never throws on junk
+  ---
+  duration_ms: 0.095333
+  type: 'test'
+  ...
+# Subtest: the two namespaces stay in sync with what is generated
+ok 57 - the two namespaces stay in sync with what is generated
+  ---
+  duration_ms: 0.095917
+  type: 'test'
+  ...
+# Subtest: initials are word-aware and never empty
+ok 58 - initials are word-aware and never empty
+  ---
+  duration_ms: 0.271375
+  type: 'test'
+  ...
+# Subtest: a CJK name still renders something
+ok 59 - a CJK name still renders something
+  ---
+  duration_ms: 0.264166
+  type: 'test'
+  ...
+# Subtest: capabilityForPath maps LLM features to llm
+ok 60 - capabilityForPath maps LLM features to llm
+  ---
+  duration_ms: 0.607292
+  type: 'test'
+  ...
+# Subtest: capabilityForPath matches nested routes by prefix
+ok 61 - capabilityForPath matches nested routes by prefix
+  ---
+  duration_ms: 0.095625
+  type: 'test'
+  ...
+# Subtest: capabilityForPath matches on a segment boundary, not a bare prefix
+ok 62 - capabilityForPath matches on a segment boundary, not a bare prefix
+  ---
+  duration_ms: 0.051875
+  type: 'test'
+  ...
+# Subtest: capabilityForPath returns null for ungated routes
+ok 63 - capabilityForPath returns null for ungated routes
+  ---
+  duration_ms: 0.043041
+  type: 'test'
+  ...
+# Subtest: one entry per user turn, numbered and paired with its reply
+ok 64 - one entry per user turn, numbered and paired with its reply
+  ---
+  duration_ms: 1.766125
+  type: 'test'
+  ...
+# Subtest: entry keys match the anchor the bubble renders
+ok 65 - entry keys match the anchor the bubble renders
+  ---
+  duration_ms: 0.166459
+  type: 'test'
+  ...
+# Subtest: id-less rows fall back to a positional key
+ok 66 - id-less rows fall back to a positional key
+  ---
+  duration_ms: 0.051708
+  type: 'test'
+  ...
+# Subtest: only the selected edit branch earns ticks
+ok 67 - only the selected edit branch earns ticks
+  ---
+  duration_ms: 0.26725
+  type: 'test'
+  ...
+# Subtest: backend-synthesised user rows are not navigable
+ok 68 - backend-synthesised user rows are not navigable
+  ---
+  duration_ms: 0.10625
+  type: 'test'
+  ...
+# Subtest: system grounding rows never break the question/reply pairing
+ok 69 - system grounding rows never break the question/reply pairing
+  ---
+  duration_ms: 0.050125
+  type: 'test'
+  ...
+# Subtest: a content-free planning turn does not hide the real answer
+ok 70 - a content-free planning turn does not hide the real answer
+  ---
+  duration_ms: 0.084042
+  type: 'test'
+  ...
+# Subtest: weights are relative to the longest question in the session
+ok 71 - weights are relative to the longest question in the session
+  ---
+  duration_ms: 0.07925
+  type: 'test'
+  ...
+# Subtest: empty session yields no ticks
+ok 72 - empty session yields no ticks
+  ---
+  duration_ms: 0.226458
+  type: 'test'
+  ...
+# Subtest: preview flattens markdown to one readable line
+ok 73 - preview flattens markdown to one readable line
+  ---
+  duration_ms: 0.268042
+  type: 'test'
+  ...
+# Subtest: preview survives an unterminated code fence mid-stream
+ok 74 - preview survives an unterminated code fence mid-stream
+  ---
+  duration_ms: 0.0845
+  type: 'test'
+  ...
+# Subtest: preview truncates on a character budget with an ellipsis
+ok 75 - preview truncates on a character budget with an ellipsis
+  ---
+  duration_ms: 0.048458
+  type: 'test'
+  ...
+# Subtest: an app row keeps the two separate facts about availability
+ok 76 - an app row keeps the two separate facts about availability
+  ---
+  duration_ms: 23.000333
+  type: 'test'
+  ...
+# Subtest: an app the response says nothing about still reads as catalogued
+ok 77 - an app the response says nothing about still reads as catalogued
+  ---
+  duration_ms: 0.2415
+  type: 'test'
+  ...
+# Subtest: a refused install carries its code and its output
+ok 78 - a refused install carries its code and its output
+  ---
+  duration_ms: 0.438042
+  type: 'test'
+  ...
+# Subtest: a refusal without a structured detail still surfaces something readable
+ok 79 - a refusal without a structured detail still surfaces something readable
+  ---
+  duration_ms: 0.2225
+  type: 'test'
+  ...
+# Subtest: the catalog only sends installable_only when it is being turned off
+ok 80 - the catalog only sends installable_only when it is being turned off
+  ---
+  duration_ms: 0.757125
+  type: 'test'
+  ...
+# Subtest: an app id with URL-significant characters is escaped in the path
+ok 81 - an app id with URL-significant characters is escaped in the path
+  ---
+  duration_ms: 0.867833
+  type: 'test'
+  ...
+# Subtest: a category count of zero is dropped rather than rendered as a chip
+ok 82 - a category count of zero is dropped rather than rendered as a chip
+  ---
+  duration_ms: 0.32125
+  type: 'test'
+  ...
+# Subtest: code-block-themes: registry has exactly 46 options
+ok 83 - code-block-themes: registry has exactly 46 options
+  ---
+  duration_ms: 0.712583
+  type: 'test'
+  ...
+# Subtest: code-block-themes: every option has a non-null style object
+ok 84 - code-block-themes: every option has a non-null style object
+  ---
+  duration_ms: 0.922541
+  type: 'test'
+  ...
+# Subtest: code-block-themes: default theme ID is oneDark
+ok 85 - code-block-themes: default theme ID is oneDark
+  ---
+  duration_ms: 0.100917
+  type: 'test'
+  ...
+# Subtest: code-block-themes: every option ID is unique
+ok 86 - code-block-themes: every option ID is unique
+  ---
+  duration_ms: 0.053166
+  type: 'test'
+  ...
+# Subtest: code-block-themes: every option has a non-empty label
+ok 87 - code-block-themes: every option has a non-empty label
+  ---
+  duration_ms: 0.10975
+  type: 'test'
+  ...
+# Subtest: code-block-themes: getCodeBlockTheme returns the correct style for valid IDs
+ok 88 - code-block-themes: getCodeBlockTheme returns the correct style for valid IDs
+  ---
+  duration_ms: 0.060625
+  type: 'test'
+  ...
+# Subtest: code-block-themes: getCodeBlockTheme falls back to oneDark for invalid IDs
+ok 89 - code-block-themes: getCodeBlockTheme falls back to oneDark for invalid IDs
+  ---
+  duration_ms: 0.092875
+  type: 'test'
+  ...
+# Subtest: code-block-themes: getCodeBlockThemeBackground extracts background color
+ok 90 - code-block-themes: getCodeBlockThemeBackground extracts background color
+  ---
+  duration_ms: 0.05025
+  type: 'test'
+  ...
+# Subtest: code-block-themes: getCodeBlockThemeBackground returns undefined when no background
+ok 91 - code-block-themes: getCodeBlockThemeBackground returns undefined when no background
+  ---
+  duration_ms: 0.305291
+  type: 'test'
+  ...
+# Subtest: code-block-themes: getCodeBlockThemeBackground handles backgroundColor-only themes
+ok 92 - code-block-themes: getCodeBlockThemeBackground handles backgroundColor-only themes
+  ---
+  duration_ms: 0.2785
+  type: 'test'
+  ...
+# Subtest: code-block-themes: getCodeBlockThemeBackground prefers backgroundColor over background
+ok 93 - code-block-themes: getCodeBlockThemeBackground prefers backgroundColor over background
+  ---
+  duration_ms: 0.093458
+  type: 'test'
+  ...
+# Subtest: code-block-themes: all 46 theme IDs are from the installed Prism files
+ok 94 - code-block-themes: all 46 theme IDs are from the installed Prism files
+  ---
+  duration_ms: 0.6615
+  type: 'test'
+  ...
+# Subtest: code-block-themes: every theme in expected list has a style
+ok 95 - code-block-themes: every theme in expected list has a style
+  ---
+  duration_ms: 0.1035
+  type: 'test'
+  ...
+# Subtest: app-shell-context: theme change subscription is registered exactly once
+ok 96 - app-shell-context: theme change subscription is registered exactly once
+  ---
+  duration_ms: 0.17875
+  type: 'test'
+  ...
+# Subtest: Codex OAuth response types expose remote-login guidance
+ok 97 - Codex OAuth response types expose remote-login guidance
+  ---
+  duration_ms: 0.76425
+  type: 'test'
+  ...
+# Subtest: Codex remote guidance recovers from a complete waiting status
+ok 98 - Codex remote guidance recovers from a complete waiting status
+  ---
+  duration_ms: 0.654542
+  type: 'test'
+  ...
+# Subtest: Codex remote guidance requires waiting state and complete operation fields
+ok 99 - Codex remote guidance requires waiting state and complete operation fields
+  ---
+  duration_ms: 0.0715
+  type: 'test'
+  ...
+# Subtest: Codex remote guidance prefers status expiry and only falls back to the matching start
+ok 100 - Codex remote guidance prefers status expiry and only falls back to the matching start
+  ---
+  duration_ms: 0.100875
+  type: 'test'
+  ...
+# Subtest: Codex OAuth recognizes loopback hostnames
+ok 101 - Codex OAuth recognizes loopback hostnames
+  ---
+  duration_ms: 0.201834
+  type: 'test'
+  ...
+# Subtest: Codex OAuth builds SSH forwarding guidance for the current server
+ok 102 - Codex OAuth builds SSH forwarding guidance for the current server
+  ---
+  duration_ms: 0.054459
+  type: 'test'
+  ...
+# Subtest: SSH forwarding source contract requires distinct callback and forward ports
+ok 103 - SSH forwarding source contract requires distinct callback and forward ports
+  ---
+  duration_ms: 0.300292
+  type: 'test'
+  ...
+# Subtest: Codex OAuth reports a stable error for an invalid successful response
+ok 104 - Codex OAuth reports a stable error for an invalid successful response
+  ---
+  duration_ms: 22.659083
+  type: 'test'
+  ...
+# Subtest: Codex OAuth preserves structured errors from non-successful responses
+ok 105 - Codex OAuth preserves structured errors from non-successful responses
+  ---
+  duration_ms: 0.432375
+  type: 'test'
+  ...
+# Subtest: Codex terminal operation states stop polling
+ok 106 - Codex terminal operation states stop polling
+  ---
+  duration_ms: 0.292917
+  type: 'test'
+  ...
+# Subtest: Codex public client types contain no secret fields
+ok 107 - Codex public client types contain no secret fields
+  ---
+  duration_ms: 0.228667
+  type: 'test'
+  ...
+# Subtest: A connected account reports connected regardless of which models it has
+ok 108 - A connected account reports connected regardless of which models it has
+  ---
+  duration_ms: 0.057875
+  type: 'test'
+  ...
+# Subtest: Codex error codes map to stable translation keys
+ok 109 - Codex error codes map to stable translation keys
+  ---
+  duration_ms: 0.047
+  type: 'test'
+  ...
+# Subtest: Codex status polling waits for each request and stops state updates after cleanup
+ok 110 - Codex status polling waits for each request and stops state updates after cleanup
+  ---
+  duration_ms: 0.492208
+  type: 'test'
+  ...
+# Subtest: Codex status request epochs reject stale responses across user actions
+ok 111 - Codex status request epochs reject stale responses across user actions
+  ---
+  duration_ms: 0.415083
+  type: 'test'
+  ...
+# Subtest: Local Codex sign-in opens its browser window before awaiting the API
+ok 112 - Local Codex sign-in opens its browser window before awaiting the API
+  ---
+  duration_ms: 0.095334
+  type: 'test'
+  ...
+# Subtest: Codex sign-in detects remote browsers and retains the login start
+ok 113 - Codex sign-in detects remote browsers and retains the login start
+  ---
+  duration_ms: 0.08525
+  type: 'test'
+  ...
+# Subtest: Remote Codex sign-in never opens or redirects the browser automatically
+ok 114 - Remote Codex sign-in never opens or redirects the browser automatically
+  ---
+  duration_ms: 0.057125
+  type: 'test'
+  ...
+# Subtest: Remote Codex guidance uses the real callback port and explicit user actions
+ok 115 - Remote Codex guidance uses the real callback port and explicit user actions
+  ---
+  duration_ms: 0.263833
+  type: 'test'
+  ...
+# Subtest: Cancelling Codex sign-in clears remote guidance
+ok 116 - Cancelling Codex sign-in clears remote guidance
+  ---
+  duration_ms: 0.05675
+  type: 'test'
+  ...
+# Subtest: Terminal Codex status clears guidance only for the matching operation
+ok 117 - Terminal Codex status clears guidance only for the matching operation
+  ---
+  duration_ms: 0.0855
+  type: 'test'
+  ...
+# Subtest: Logging out clears remote authorization guidance after success
+ok 118 - Logging out clears remote authorization guidance after success
+  ---
+  duration_ms: 0.052875
+  type: 'test'
+  ...
+# Subtest: Codex OAuth profile renders the OAuth card from provider metadata
+ok 119 - Codex OAuth profile renders the OAuth card from provider metadata
+  ---
+  duration_ms: 1.753458
+  type: 'test'
+  ...
+# Subtest: the Codex profile predicates live in one place
+ok 120 - the Codex profile predicates live in one place
+  ---
+  duration_ms: 0.351833
+  type: 'test'
+  ...
+# Subtest: managed Codex profiles cannot expose profile or model editing
+ok 121 - managed Codex profiles cannot expose profile or model editing
+  ---
+  duration_ms: 0.1815
+  type: 'test'
+  ...
+# Subtest: Codex OAuth copy stays in sync across locales
+ok 122 - Codex OAuth copy stays in sync across locales
+  ---
+  duration_ms: 9.523541
+  type: 'test'
+  ...
+# Subtest: Codex OAuth callback copy interpolates real ports and has a safe unknown-port fallback
+ok 123 - Codex OAuth callback copy interpolates real ports and has a safe unknown-port fallback
+  ---
+  duration_ms: 5.41175
+  type: 'test'
+  ...
+# Subtest: shouldSubmitOnEnter allows plain Enter
+ok 124 - shouldSubmitOnEnter allows plain Enter
+  ---
+  duration_ms: 0.581166
+  type: 'test'
+  ...
+# Subtest: shouldSubmitOnEnter ignores Shift+Enter and non-Enter keys
+ok 125 - shouldSubmitOnEnter ignores Shift+Enter and non-Enter keys
+  ---
+  duration_ms: 0.06225
+  type: 'test'
+  ...
+# Subtest: shouldSubmitOnEnter ignores active composition tracked by the textarea
+ok 126 - shouldSubmitOnEnter ignores active composition tracked by the textarea
+  ---
+  duration_ms: 0.040042
+  type: 'test'
+  ...
+# Subtest: shouldSubmitOnEnter ignores browser IME composition flags
+ok 127 - shouldSubmitOnEnter ignores browser IME composition flags
+  ---
+  duration_ms: 0.043625
+  type: 'test'
+  ...
+# Subtest: isImeComposing handles process key fallbacks used by some IMEs
+ok 128 - isImeComposing handles process key fallbacks used by some IMEs
+  ---
+  duration_ms: 0.051875
+  type: 'test'
+  ...
+# Subtest: general Chat Flashcard intent is explicit, bounded, and defaults to eight
+ok 129 - general Chat Flashcard intent is explicit, bounded, and defaults to eight
+  ---
+  duration_ms: 1.762542
+  type: 'test'
+  ...
+# Subtest: learner-action responses require exact Course, session, message, and epoch
+ok 130 - learner-action responses require exact Course, session, message, and epoch
+  ---
+  duration_ms: 0.240458
+  type: 'test'
+  ...
+# Subtest: learner-action chips appear only on the last persisted completed Course assistant turn
+ok 131 - learner-action chips appear only on the last persisted completed Course assistant turn
+  ---
+  duration_ms: 0.109041
+  type: 'test'
+  ...
+# Subtest: unavailable grounded generation leaves only the model-free learner action
+ok 132 - unavailable grounded generation leaves only the model-free learner action
+  ---
+  duration_ms: 0.752334
+  type: 'test'
+  ...
+# Subtest: learner-action request carries identity bindings but no prompt or source authority
+ok 133 - learner-action request carries identity bindings but no prompt or source authority
+  ---
+  duration_ms: 24.553416
+  type: 'test'
+  ...
+# Subtest: general Study request carries only the frozen conversation authority
+ok 134 - general Study request carries only the frozen conversation authority
+  ---
+  duration_ms: 0.724041
+  type: 'test'
+  ...
+# Subtest: Course detail reads the owner-scoped Course route with its nullable term
+ok 135 - Course detail reads the owner-scoped Course route with its nullable term
+  ---
+  duration_ms: 22.60175
+  type: 'test'
+  ...
+# Subtest: Course capability status comes from the authenticated server
+ok 136 - Course capability status comes from the authenticated server
+  ---
+  duration_ms: 0.919666
+  type: 'test'
+  ...
+# Subtest: Course source replacement preserves supersession lineage
+ok 137 - Course source replacement preserves supersession lineage
+  ---
+  duration_ms: 1.62875
+  type: 'test'
+  ...
+# Subtest: Course source archive carries the current source revision
+ok 138 - Course source archive carries the current source revision
+  ---
+  duration_ms: 0.503166
+  type: 'test'
+  ...
+# Subtest: Course Chat routes preserve exact Course and optional session identity
+ok 139 - Course Chat routes preserve exact Course and optional session identity
+  ---
+  duration_ms: 1.4055
+  type: 'test'
+  ...
+# Subtest: canonical academic term keeps identity while rendering a human label
+ok 140 - canonical academic term keeps identity while rendering a human label
+  ---
+  duration_ms: 0.150459
+  type: 'test'
+  ...
+# Subtest: Course Chat hides internal managed knowledge references
+ok 141 - Course Chat hides internal managed knowledge references
+  ---
+  duration_ms: 0.887958
+  type: 'test'
+  ...
+# Subtest: readiness presentation blocks zero, processing, and failed source states
+ok 142 - readiness presentation blocks zero, processing, and failed source states
+  ---
+  duration_ms: 0.179917
+  type: 'test'
+  ...
+# Subtest: mixed readiness allows Chat and discloses unavailable materials
+ok 143 - mixed readiness allows Chat and discloses unavailable materials
+  ---
+  duration_ms: 0.079167
+  type: 'test'
+  ...
+# Subtest: persisted Course citations survive reload and become unavailable safely
+ok 144 - persisted Course citations survive reload and become unavailable safely
+  ---
+  duration_ms: 0.146292
+  type: 'test'
+  ...
+# Subtest: Course readiness API uses the exact owner-scoped Course route
+ok 145 - Course readiness API uses the exact owner-scoped Course route
+  ---
+  duration_ms: 28.810875
+  type: 'test'
+  ...
+# Subtest: course selection persistence is namespaced by immutable user identity
+ok 146 - course selection persistence is namespaced by immutable user identity
+  ---
+  duration_ms: 0.582042
+  type: 'test'
+  ...
+# Subtest: stale course responses cannot apply after identity or request epoch changes
+ok 147 - stale course responses cannot apply after identity or request epoch changes
+  ---
+  duration_ms: 0.065583
+  type: 'test'
+  ...
+# Subtest: archived and unknown course ids cannot become the active browser course
+ok 148 - archived and unknown course ids cannot become the active browser course
+  ---
+  duration_ms: 0.057333
+  type: 'test'
+  ...
+# Subtest: a delayed archive response cannot clear a newer same-user Course selection
+ok 149 - a delayed archive response cannot clear a newer same-user Course selection
+  ---
+  duration_ms: 0.059292
+  type: 'test'
+  ...
+# Subtest: loaded course sessions are validated as views without changing the selector
+ok 150 - loaded course sessions are validated as views without changing the selector
+  ---
+  duration_ms: 0.616875
+  type: 'test'
+  ...
+# Subtest: only an unbound draft inherits the selected course
+ok 151 - only an unbound draft inherits the selected course
+  ---
+  duration_ms: 0.052375
+  type: 'test'
+  ...
+# Subtest: classifyFile: image via MIME
+ok 152 - classifyFile: image via MIME
+  ---
+  duration_ms: 0.965125
+  type: 'test'
+  ...
+# Subtest: classifyFile: doc via MIME
+ok 153 - classifyFile: doc via MIME
+  ---
+  duration_ms: 0.144833
+  type: 'test'
+  ...
+# Subtest: classifyFile: doc via extension fallback when MIME empty
+ok 154 - classifyFile: doc via extension fallback when MIME empty
+  ---
+  duration_ms: 0.06025
+  type: 'test'
+  ...
+# Subtest: classifyFile: accepts text & code
+ok 155 - classifyFile: accepts text & code
+  ---
+  duration_ms: 0.17225
+  type: 'test'
+  ...
+# Subtest: classifyFile: SVG classified as doc (not image)
+ok 156 - classifyFile: SVG classified as doc (not image)
+  ---
+  duration_ms: 0.05725
+  type: 'test'
+  ...
+# Subtest: isSvgFilename: case-insensitive extension check
+ok 157 - isSvgFilename: case-insensitive extension check
+  ---
+  duration_ms: 0.045833
+  type: 'test'
+  ...
+# Subtest: docIconFor: SVG gets its own label
+ok 158 - docIconFor: SVG gets its own label
+  ---
+  duration_ms: 0.147041
+  type: 'test'
+  ...
+# Subtest: classifyFile: rejects unsupported
+ok 159 - classifyFile: rejects unsupported
+  ---
+  duration_ms: 0.055875
+  type: 'test'
+  ...
+# Subtest: formatBytes: B / KB / MB
+ok 160 - formatBytes: B / KB / MB
+  ---
+  duration_ms: 0.236334
+  type: 'test'
+  ...
+# Subtest: formatBytes: negative / NaN returns empty string
+ok 161 - formatBytes: negative / NaN returns empty string
+  ---
+  duration_ms: 0.269917
+  type: 'test'
+  ...
+# Subtest: docIconFor: office labels & tints
+ok 162 - docIconFor: office labels & tints
+  ---
+  duration_ms: 0.11325
+  type: 'test'
+  ...
+# Subtest: docIconFor: code files share a code icon
+ok 163 - docIconFor: code files share a code icon
+  ---
+  duration_ms: 0.109958
+  type: 'test'
+  ...
+# Subtest: docIconFor: json/config/data/markup categories
+ok 164 - docIconFor: json/config/data/markup categories
+  ---
+  duration_ms: 0.061958
+  type: 'test'
+  ...
+# Subtest: docIconFor: fallback for unknown extension
+ok 165 - docIconFor: fallback for unknown extension
+  ---
+  duration_ms: 0.104041
+  type: 'test'
+  ...
+# Subtest: DEFAULT_MAX_ATTACHMENT_BYTES is 20 MB
+ok 166 - DEFAULT_MAX_ATTACHMENT_BYTES is 20 MB
+  ---
+  duration_ms: 0.029209
+  type: 'test'
+  ...
+# Subtest: Course source labels hide internal BlueWay bundle terminology
+ok 167 - Course source labels hide internal BlueWay bundle terminology
+  ---
+  duration_ms: 0.661458
+  type: 'test'
+  ...
+# Subtest: Flashcard views are typed learner navigation with Study as the safe default
+ok 168 - Flashcard views are typed learner navigation with Study as the safe default
+  ---
+  duration_ms: 1.464167
+  type: 'test'
+  ...
+# Subtest: Flashcard generation operation states use learner-facing copy
+ok 169 - Flashcard generation operation states use learner-facing copy
+  ---
+  duration_ms: 0.131167
+  type: 'test'
+  ...
+# Subtest: Flashcard failure codes map to safe learner categories
+ok 170 - Flashcard failure codes map to safe learner categories
+  ---
+  duration_ms: 0.085334
+  type: 'test'
+  ...
+# Subtest: Flashcard failure presentation hides raw codes and only retries with server permission
+ok 171 - Flashcard failure presentation hides raw codes and only retries with server permission
+  ---
+  duration_ms: 0.231666
+  type: 'test'
+  ...
+# Subtest: Flashcard provider-unavailable copy keeps manual fallback visible
+ok 172 - Flashcard provider-unavailable copy keeps manual fallback visible
+  ---
+  duration_ms: 0.110625
+  type: 'test'
+  ...
+# Subtest: Flashcard provider-unavailable copy does not duplicate fallback
+ok 173 - Flashcard provider-unavailable copy does not duplicate fallback
+  ---
+  duration_ms: 0.135167
+  type: 'test'
+  ...
+# Subtest: study-session actions preserve the existing scheduler ratings behind learner copy
+ok 174 - study-session actions preserve the existing scheduler ratings behind learner copy
+  ---
+  duration_ms: 1.086917
+  type: 'test'
+  ...
+# Subtest: numbered navigation advances to every unfinished card after arbitrary jumps
+ok 175 - numbered navigation advances to every unfinished card after arbitrary jumps
+  ---
+  duration_ms: 0.089958
+  type: 'test'
+  ...
+# Subtest: study-session progress is count-only and does not reveal scheduling dates
+ok 176 - study-session progress is count-only and does not reveal scheduling dates
+  ---
+  duration_ms: 0.051666
+  type: 'test'
+  ...
+# Subtest: study completion reports reviewed cards without next-review timing
+ok 177 - study completion reports reviewed cards without next-review timing
+  ---
+  duration_ms: 0.052792
+  type: 'test'
+  ...
+# Subtest: Flashcard results require the exact identity, Course, and request epoch
+ok 178 - Flashcard results require the exact identity, Course, and request epoch
+  ---
+  duration_ms: 0.651959
+  type: 'test'
+  ...
+# Subtest: logout and deck selection invalidate delayed Flashcard results
+ok 179 - logout and deck selection invalidate delayed Flashcard results
+  ---
+  duration_ms: 0.117292
+  type: 'test'
+  ...
+# Subtest: Again requeues a missed card while other ratings complete the pass
+ok 180 - Again requeues a missed card while other ratings complete the pass
+  ---
+  duration_ms: 0.704041
+  type: 'test'
+  ...
+# Subtest: archived or missing Courses cannot start or mutate Flashcard work
+ok 181 - archived or missing Courses cannot start or mutate Flashcard work
+  ---
+  duration_ms: 0.100958
+  type: 'test'
+  ...
+# Subtest: grounded Flashcard requests use the Course authority routes and idempotency header
+ok 182 - grounded Flashcard requests use the Course authority routes and idempotency header
+  ---
+  duration_ms: 26.254833
+  type: 'test'
+  ...
+# Subtest: brief, publish, and cancel use separate Course authority routes
+ok 183 - brief, publish, and cancel use separate Course authority routes
+  ---
+  duration_ms: 0.6395
+  type: 'test'
+  ...
+# Subtest: flashcard proposals are isolated by identity and Course and consumed once
+ok 184 - flashcard proposals are isolated by identity and Course and consumed once
+  ---
+  duration_ms: 0.301833
+  type: 'test'
+  ...
+# Subtest: grounded Flashcard operation listing is Course scoped
+ok 185 - grounded Flashcard operation listing is Course scoped
+  ---
+  duration_ms: 0.48375
+  type: 'test'
+  ...
+# Subtest: Flashcard deck history requests bounded pages
+ok 186 - Flashcard deck history requests bounded pages
+  ---
+  duration_ms: 0.423292
+  type: 'test'
+  ...
+# Subtest: en locale en/app.json has no untranslated placeholder values
+ok 187 - en locale en/app.json has no untranslated placeholder values
+  ---
+  duration_ms: 2.899584
+  type: 'test'
+  ...
+# Subtest: en locale en/common.json has no untranslated placeholder values
+ok 188 - en locale en/common.json has no untranslated placeholder values
+  ---
+  duration_ms: 0.533625
+  type: 'test'
+  ...
+# Subtest: kbCanReindex allows failed knowledge bases with source files
+ok 189 - kbCanReindex allows failed knowledge bases with source files
+  ---
+  duration_ms: 0.648792
+  type: 'test'
+  ...
+# Subtest: kbCanReindex keeps empty failed knowledge bases disabled
+ok 190 - kbCanReindex keeps empty failed knowledge bases disabled
+  ---
+  duration_ms: 0.057875
+  type: 'test'
+  ...
+# Subtest: kbCanReindex preserves mismatch and needs-reindex behavior
+ok 191 - kbCanReindex preserves mismatch and needs-reindex behavior
+  ---
+  duration_ms: 0.0525
+  type: 'test'
+  ...
+# Subtest: convertLatexDelimiters: \\\\[...\\\\] → block $$...$$
+ok 192 - convertLatexDelimiters: \\\\[...\\\\] → block $$...$$
+  ---
+  duration_ms: 1.073875
+  type: 'test'
+  ...
+# Subtest: convertLatexDelimiters: \\\\(...\\\\) → inline $...$
+ok 193 - convertLatexDelimiters: \\\\(...\\\\) → inline $...$
+  ---
+  duration_ms: 0.165792
+  type: 'test'
+  ...
+# Subtest: convertLatexDelimiters: strips \\\\(\\\\) inside $$...$$
+ok 194 - convertLatexDelimiters: strips \\\\(\\\\) inside $$...$$
+  ---
+  duration_ms: 0.0675
+  type: 'test'
+  ...
+# Subtest: convertLatexDelimiters: multiline \\\\[...\\\\]
+ok 195 - convertLatexDelimiters: multiline \\\\[...\\\\]
+  ---
+  duration_ms: 0.051583
+  type: 'test'
+  ...
+# Subtest: convertLatexDelimiters: preserves expr containing $& replacement char
+ok 196 - convertLatexDelimiters: preserves expr containing $& replacement char
+  ---
+  duration_ms: 0.105667
+  type: 'test'
+  ...
+# Subtest: convertLatexDelimiters: returns empty-ish input unchanged
+ok 197 - convertLatexDelimiters: returns empty-ish input unchanged
+  ---
+  duration_ms: 0.057166
+  type: 'test'
+  ...
+# Subtest: convertLatexDelimiters: collapses triple+ newlines
+ok 198 - convertLatexDelimiters: collapses triple+ newlines
+  ---
+  duration_ms: 0.104167
+  type: 'test'
+  ...
+# Subtest: processLatexContent: delegates to convertLatexDelimiters
+ok 199 - processLatexContent: delegates to convertLatexDelimiters
+  ---
+  duration_ms: 0.054459
+  type: 'test'
+  ...
+# Subtest: headings: inserts space when missing
+ok 200 - headings: inserts space when missing
+  ---
+  duration_ms: 0.678667
+  type: 'test'
+  ...
+# Subtest: headings: leaves properly-spaced headings alone
+ok 201 - headings: leaves properly-spaced headings alone
+  ---
+  duration_ms: 0.408959
+  type: 'test'
+  ...
+# Subtest: headings: does not split 7+ consecutive hashes
+ok 202 - headings: does not split 7+ consecutive hashes
+  ---
+  duration_ms: 0.095875
+  type: 'test'
+  ...
+# Subtest: inline math: $$x$$ on a line with other text → $x$
+ok 203 - inline math: $$x$$ on a line with other text → $x$
+  ---
+  duration_ms: 0.055083
+  type: 'test'
+  ...
+# Subtest: inline math: standalone one-line $$...$$ → split to block
+ok 204 - inline math: standalone one-line $$...$$ → split to block
+  ---
+  duration_ms: 0.110584
+  type: 'test'
+  ...
+# Subtest: loose block math: single-$ lines wrapping LaTeX → promoted to $$
+ok 205 - loose block math: single-$ lines wrapping LaTeX → promoted to $$
+  ---
+  duration_ms: 0.080542
+  type: 'test'
+  ...
+# Subtest: loose block math: single-$ lines with non-LaTeX content → not promoted
+ok 206 - loose block math: single-$ lines with non-LaTeX content → not promoted
+  ---
+  duration_ms: 0.045958
+  type: 'test'
+  ...
+# Subtest: loose block math: recognises \\\\ (line break) as LaTeX
+ok 207 - loose block math: recognises \\\\ (line break) as LaTeX
+  ---
+  duration_ms: 0.032958
+  type: 'test'
+  ...
+# Subtest: loose block math: recognises _ and ^ as LaTeX
+ok 208 - loose block math: recognises _ and ^ as LaTeX
+  ---
+  duration_ms: 0.031209
+  type: 'test'
+  ...
+# Subtest: pipeline: combined heading + inline math + delimiter conversion
+ok 209 - pipeline: combined heading + inline math + delimiter conversion
+  ---
+  duration_ms: 0.046208
+  type: 'test'
+  ...
+# Subtest: pipeline: preserves fenced code blocks
+ok 210 - pipeline: preserves fenced code blocks
+  ---
+  duration_ms: 0.031584
+  type: 'test'
+  ...
+# Subtest: flow fence: keeps yes/no branch labels from the source side
+ok 211 - flow fence: keeps yes/no branch labels from the source side
+  ---
+  duration_ms: 0.3795
+  type: 'test'
+  ...
+# Subtest: flow fence: layout hints are not edge labels
+ok 212 - flow fence: layout hints are not edge labels
+  ---
+  duration_ms: 0.061666
+  type: 'test'
+  ...
+# Subtest: seq fence: converts messages and notes
+ok 213 - seq fence: converts messages and notes
+  ---
+  duration_ms: 0.304167
+  type: 'test'
+  ...
+# Subtest: normalizeMarkdownForDisplay removes empty details blocks
+ok 214 - normalizeMarkdownForDisplay removes empty details blocks
+  ---
+  duration_ms: 1.876417
+  type: 'test'
+  ...
+# Subtest: normalizeMarkdownForDisplay removes raw html control placeholders
+ok 215 - normalizeMarkdownForDisplay removes raw html control placeholders
+  ---
+  duration_ms: 0.375792
+  type: 'test'
+  ...
+# Subtest: normalizeMarkdownForDisplay removes empty markdown tables
+ok 216 - normalizeMarkdownForDisplay removes empty markdown tables
+  ---
+  duration_ms: 0.252083
+  type: 'test'
+  ...
+# Subtest: normalizeMarkdownForDisplay removes empty html tables
+ok 217 - normalizeMarkdownForDisplay removes empty html tables
+  ---
+  duration_ms: 0.123208
+  type: 'test'
+  ...
+# Subtest: normalizeMarkdownForDisplay keeps meaningful tables
+ok 218 - normalizeMarkdownForDisplay keeps meaningful tables
+  ---
+  duration_ms: 0.133291
+  type: 'test'
+  ...
+# Subtest: normalizeMarkdownForDisplay linkifies bare citations in prose
+ok 219 - normalizeMarkdownForDisplay linkifies bare citations in prose
+  ---
+  duration_ms: 0.184208
+  type: 'test'
+  ...
+# Subtest: normalizeMarkdownForDisplay links research citations to exact references
+ok 220 - normalizeMarkdownForDisplay links research citations to exact references
+  ---
+  duration_ms: 0.147583
+  type: 'test'
+  ...
+# Subtest: normalizeMarkdownForDisplay numbers research citations from reference list order
+ok 221 - normalizeMarkdownForDisplay numbers research citations from reference list order
+  ---
+  duration_ms: 1.436667
+  type: 'test'
+  ...
+# Subtest: normalizeMarkdownForDisplay keeps array indexes inside fenced code
+ok 222 - normalizeMarkdownForDisplay keeps array indexes inside fenced code
+  ---
+  duration_ms: 0.299667
+  type: 'test'
+  ...
+# Subtest: normalizeMarkdownForDisplay keeps array indexes inside inline code
+ok 223 - normalizeMarkdownForDisplay keeps array indexes inside inline code
+  ---
+  duration_ms: 0.296125
+  type: 'test'
+  ...
+# Subtest: normalizeMarkdownForDisplay keeps bracketed vectors inside display math
+ok 224 - normalizeMarkdownForDisplay keeps bracketed vectors inside display math
+  ---
+  duration_ms: 0.116417
+  type: 'test'
+  ...
+# Subtest: normalizeMarkdownForDisplay keeps bracketed vectors inside weighted math
+ok 225 - normalizeMarkdownForDisplay keeps bracketed vectors inside weighted math
+  ---
+  duration_ms: 0.047375
+  type: 'test'
+  ...
+# Subtest: normalizeMarkdownForDisplay keeps number arrays in prose untouched
+ok 226 - normalizeMarkdownForDisplay keeps number arrays in prose untouched
+  ---
+  duration_ms: 0.103834
+  type: 'test'
+  ...
+# Subtest: normalizeMarkdownForDisplay keeps number arrays inside inline math
+ok 227 - normalizeMarkdownForDisplay keeps number arrays inside inline math
+  ---
+  duration_ms: 0.040625
+  type: 'test'
+  ...
+# Subtest: normalizeMarkdownForDisplay still linkifies small distinct numeric citation groups
+ok 228 - normalizeMarkdownForDisplay still linkifies small distinct numeric citation groups
+  ---
+  duration_ms: 0.042417
+  type: 'test'
+  ...
+# Subtest: normalizeMarkdownForDisplay keeps backticked number arrays as code
+ok 229 - normalizeMarkdownForDisplay keeps backticked number arrays as code
+  ---
+  duration_ms: 0.042625
+  type: 'test'
+  ...
+# Subtest: normalizeMarkdownForDisplay unwraps explicit citation code spans outside code
+ok 230 - normalizeMarkdownForDisplay unwraps explicit citation code spans outside code
+  ---
+  duration_ms: 0.037834
+  type: 'test'
+  ...
+# Subtest: normalizeMarkdownForDisplay unwraps research citation code spans
+ok 231 - normalizeMarkdownForDisplay unwraps research citation code spans
+  ---
+  duration_ms: 0.041
+  type: 'test'
+  ...
+# Subtest: normalizeMarkdownForDisplay does not linkify research reference list ids
+ok 232 - normalizeMarkdownForDisplay does not linkify research reference list ids
+  ---
+  duration_ms: 0.056833
+  type: 'test'
+  ...
+# Subtest: escapeUnknownHtmlTagsForDisplay escapes LLM pseudo tags
+ok 233 - escapeUnknownHtmlTagsForDisplay escapes LLM pseudo tags
+  ---
+  duration_ms: 0.063959
+  type: 'test'
+  ...
+# Subtest: escapeUnknownHtmlTagsForDisplay preserves line count for previews
+ok 234 - escapeUnknownHtmlTagsForDisplay preserves line count for previews
+  ---
+  duration_ms: 0.031625
+  type: 'test'
+  ...
+# Subtest: escapeUnknownHtmlTagsForDisplay keeps allowed html tags
+ok 235 - escapeUnknownHtmlTagsForDisplay keeps allowed html tags
+  ---
+  duration_ms: 0.028833
+  type: 'test'
+  ...
+# Subtest: escapeUnknownHtmlTagsForDisplay escapes active html containers
+ok 236 - escapeUnknownHtmlTagsForDisplay escapes active html containers
+  ---
+  duration_ms: 0.026333
+  type: 'test'
+  ...
+# Subtest: escapeUnknownHtmlTagsForDisplay strips unsafe html attributes
+ok 237 - escapeUnknownHtmlTagsForDisplay strips unsafe html attributes
+  ---
+  duration_ms: 0.035541
+  type: 'test'
+  ...
+# Subtest: markdownUrlTransform keeps raster data images on img src
+ok 238 - markdownUrlTransform keeps raster data images on img src
+  ---
+  duration_ms: 0.115
+  type: 'test'
+  ...
+# Subtest: markdownUrlTransform rejects active data URLs
+ok 239 - markdownUrlTransform rejects active data URLs
+  ---
+  duration_ms: 0.127
+  type: 'test'
+  ...
+# Subtest: markdownUrlTransform only allows data images on img src
+ok 240 - markdownUrlTransform only allows data images on img src
+  ---
+  duration_ms: 0.027208
+  type: 'test'
+  ...
+# Subtest: safeDecodeURIComponent decodes valid hash components
+ok 241 - safeDecodeURIComponent decodes valid hash components
+  ---
+  duration_ms: 0.030042
+  type: 'test'
+  ...
+# Subtest: safeDecodeURIComponent keeps malformed hash components intact
+ok 242 - safeDecodeURIComponent keeps malformed hash components intact
+  ---
+  duration_ms: 0.076625
+  type: 'test'
+  ...
+# Subtest: hasVisibleMarkdownContent rejects empty raw-html placeholders
+ok 243 - hasVisibleMarkdownContent rejects empty raw-html placeholders
+  ---
+  duration_ms: 0.055958
+  type: 'test'
+  ...
+# Subtest: hasVisibleMarkdownContent rejects raw html control placeholders
+ok 244 - hasVisibleMarkdownContent rejects raw html control placeholders
+  ---
+  duration_ms: 0.760083
+  type: 'test'
+  ...
+# Subtest: hasVisibleMarkdownContent rejects empty markdown tables
+ok 245 - hasVisibleMarkdownContent rejects empty markdown tables
+  ---
+  duration_ms: 0.121167
+  type: 'test'
+  ...
+# Subtest: hasVisibleMarkdownContent keeps meaningful markdown
+ok 246 - hasVisibleMarkdownContent keeps meaningful markdown
+  ---
+  duration_ms: 0.156875
+  type: 'test'
+  ...
+# Subtest: rich-markdown-renderer: non-rich multiline fallback documents settings boundary
+ok 247 - rich-markdown-renderer: non-rich multiline fallback documents settings boundary
+  ---
+  duration_ms: 0.687417
+  type: 'test'
+  ...
+# Subtest: simple-markdown-renderer: compatibility fallback documents settings boundary
+ok 248 - simple-markdown-renderer: compatibility fallback documents settings boundary
+  ---
+  duration_ms: 0.244583
+  type: 'test'
+  ...
+# Subtest: rich-markdown-renderer: enableCode=false keeps multiline code as static readable fallback
+ok 249 - rich-markdown-renderer: enableCode=false keeps multiline code as static readable fallback
+  ---
+  duration_ms: 0.146
+  type: 'test'
+  ...
+# Subtest: simple-markdown-renderer: multiline code remains a static compatibility block
+ok 250 - simple-markdown-renderer: multiline code remains a static compatibility block
+  ---
+  duration_ms: 0.067125
+  type: 'test'
+  ...
+# Subtest: extractMathAnimatorResult ignores generic response-only payloads
+ok 251 - extractMathAnimatorResult ignores generic response-only payloads
+  ---
+  duration_ms: 0.81375
+  type: 'test'
+  ...
+# Subtest: extractMathAnimatorResult keeps actual math animator payloads
+ok 252 - extractMathAnimatorResult keeps actual math animator payloads
+  ---
+  duration_ms: 0.112042
+  type: 'test'
+  ...
+# Subtest: a hand-written disabled_tools blocklist survives GET → edit → PUT
+ok 253 - a hand-written disabled_tools blocklist survives GET → edit → PUT
+  ---
+  duration_ms: 24.863792
+  type: 'test'
+  ...
+# Subtest: the request path comes from the caller's surface, not a hardcoded base
+ok 254 - the request path comes from the caller's surface, not a hardcoded base
+  ---
+  duration_ms: 0.243292
+  type: 'test'
+  ...
+# Subtest: normalizeServerConfig defaults disabled_tools and coerces its items
+ok 255 - normalizeServerConfig defaults disabled_tools and coerces its items
+  ---
+  duration_ms: 0.073792
+  type: 'test'
+  ...
+# Subtest: buildMcpServerConfig carries over the fields the form cannot edit
+ok 256 - buildMcpServerConfig carries over the fields the form cannot edit
+  ---
+  duration_ms: 0.127291
+  type: 'test'
+  ...
+# Subtest: buildMcpServerConfig trims text fields and falls back to enabled_tools=*
+ok 257 - buildMcpServerConfig trims text fields and falls back to enabled_tools=*
+  ---
+  duration_ms: 0.165625
+  type: 'test'
+  ...
+# Subtest: resolveMcpTransport mirrors the backend's resolved_type
+ok 258 - resolveMcpTransport mirrors the backend's resolved_type
+  ---
+  duration_ms: 0.128709
+  type: 'test'
+  ...
+# Subtest: line/array conversion drops blanks and trims each entry
+ok 259 - line/array conversion drops blanks and trims each entry
+  ---
+  duration_ms: 0.101125
+  type: 'test'
+  ...
+# Subtest: pair/dict conversion trims keys, drops empty ones, keeps empty values
+ok 260 - pair/dict conversion trims keys, drops empty ones, keeps empty values
+  ---
+  duration_ms: 0.076
+  type: 'test'
+  ...
+# Subtest: the server-name rule matches the backend validator
+ok 261 - the server-name rule matches the backend validator
+  ---
+  duration_ms: 0.283041
+  type: 'test'
+  ...
+# Subtest: a disabled server reads Disabled, not a stuck Connecting
+ok 262 - a disabled server reads Disabled, not a stuck Connecting
+  ---
+  duration_ms: 0.309542
+  type: 'test'
+  ...
+# Subtest: the per-user surface reads its own route and keeps the additive fields
+ok 263 - the per-user surface reads its own route and keeps the additive fields
+  ---
+  duration_ms: 26.716916
+  type: 'test'
+  ...
+# Subtest: a missing server cap reads as 0 rather than an invented limit
+ok 264 - a missing server cap reads as 0 rather than an invented limit
+  ---
+  duration_ms: 0.240125
+  type: 'test'
+  ...
+# Subtest: toggling one server writes only that server
+ok 265 - toggling one server writes only that server
+  ---
+  duration_ms: 0.468959
+  type: 'test'
+  ...
+# Subtest: a rename adds the new server before removing the old one
+ok 266 - a rename adds the new server before removing the old one
+  ---
+  duration_ms: 0.428291
+  type: 'test'
+  ...
+# Subtest: a refused rename never reaches the delete
+ok 267 - a refused rename never reaches the delete
+  ---
+  duration_ms: 0.488333
+  type: 'test'
+  ...
+# Subtest: a name with URL-significant characters is escaped in the path
+ok 268 - a name with URL-significant characters is escaped in the path
+  ---
+  duration_ms: 0.181125
+  type: 'test'
+  ...
+# Subtest: removing the last server still refreshes from the response
+ok 269 - removing the last server still refreshes from the response
+  ---
+  duration_ms: 0.564208
+  type: 'test'
+  ...
+# Subtest: a no-op write re-reads instead of PUTting anything
+ok 270 - a no-op write re-reads instead of PUTting anything
+  ---
+  duration_ms: 0.521958
+  type: 'test'
+  ...
+# Subtest: the admin registry keeps its whole-map PUT
+ok 271 - the admin registry keeps its whole-map PUT
+  ---
+  duration_ms: 0.451833
+  type: 'test'
+  ...
+# Subtest: every refusal code the per-user API can send maps to its own copy
+ok 272 - every refusal code the per-user API can send maps to its own copy
+  ---
+  duration_ms: 0.965541
+  type: 'test'
+  ...
+# Subtest: a blocked URL keeps the backend's diagnosis after the translated sentence
+ok 273 - a blocked URL keeps the backend's diagnosis after the translated sentence
+  ---
+  duration_ms: 0.076292
+  type: 'test'
+  ...
+# Subtest: a refusal whose cause is already in the copy does not repeat the raw text
+ok 274 - a refusal whose cause is already in the copy does not repeat the raw text
+  ---
+  duration_ms: 0.123083
+  type: 'test'
+  ...
+# Subtest: an unmapped refusal keeps the backend's own message
+ok 275 - an unmapped refusal keeps the backend's own message
+  ---
+  duration_ms: 0.06
+  type: 'test'
+  ...
+# Subtest: category chips hide the empty buckets and keep the catalog's order
+ok 276 - category chips hide the empty buckets and keep the catalog's order
+  ---
+  duration_ms: 0.820125
+  type: 'test'
+  ...
+# Subtest: a category the frontend has not heard of still gets a chip
+ok 277 - a category the frontend has not heard of still gets a chip
+  ---
+  duration_ms: 0.112292
+  type: 'test'
+  ...
+# Subtest: a required credential left blank blocks Install
+ok 278 - a required credential left blank blocks Install
+  ---
+  duration_ms: 0.149709
+  type: 'test'
+  ...
+# Subtest: an entry with no credentials is installable immediately
+ok 279 - an entry with no credentials is installable immediately
+  ---
+  duration_ms: 0.038125
+  type: 'test'
+  ...
+# Subtest: blank optional values are dropped instead of clearing a stored field
+ok 280 - blank optional values are dropped instead of clearing a stored field
+  ---
+  duration_ms: 0.244792
+  type: 'test'
+  ...
+# Subtest: Load more accumulates pages and stops at the last cursor
+ok 281 - Load more accumulates pages and stops at the last cursor
+  ---
+  duration_ms: 0.431292
+  type: 'test'
+  ...
+# Subtest: re-serving a cursor cannot double a row
+ok 282 - re-serving a cursor cannot double a row
+  ---
+  duration_ms: 0.123166
+  type: 'test'
+  ...
+# Subtest: a new query restarts the list rather than appending to the old one
+ok 283 - a new query restarts the list rather than appending to the old one
+  ---
+  duration_ms: 0.072208
+  type: 'test'
+  ...
+# Subtest: the catalog request carries the filters and the cursor
+ok 284 - the catalog request carries the filters and the cursor
+  ---
+  duration_ms: 27.750167
+  type: 'test'
+  ...
+# Subtest: catalog text degrades from a regional tag to the base language, then English
+ok 285 - catalog text degrades from a regional tag to the base language, then English
+  ---
+  duration_ms: 0.102166
+  type: 'test'
+  ...
+# Subtest: initials stand in for the logos the catalog deliberately does not ship
+ok 286 - initials stand in for the logos the catalog deliberately does not ship
+  ---
+  duration_ms: 1.115416
+  type: 'test'
+  ...
+# Subtest: a saved credential is recognised as a reference, not as a value
+ok 287 - a saved credential is recognised as a reference, not as a value
+  ---
+  duration_ms: 0.084292
+  type: 'test'
+  ...
+# Subtest: groupProviderTools folds by provider and keeps backend order
+ok 288 - groupProviderTools folds by provider and keeps backend order
+  ---
+  duration_ms: 1.239667
+  type: 'test'
+  ...
+# Subtest: providerGroupId falls back to the legacy server field then to other
+ok 289 - providerGroupId falls back to the legacy server field then to other
+  ---
+  duration_ms: 0.08875
+  type: 'test'
+  ...
+# Subtest: groupSelection reports all / none / partial for the group only
+ok 290 - groupSelection reports all / none / partial for the group only
+  ---
+  duration_ms: 0.133292
+  type: 'test'
+  ...
+# Subtest: setGroupSelected flattens back to tool names and leaves others alone
+ok 291 - setGroupSelected flattens back to tool names and leaves others alone
+  ---
+  duration_ms: 0.146375
+  type: 'test'
+  ...
+# Subtest: toggleToolName flips a single name in the flat list
+ok 292 - toggleToolName flips a single name in the flat list
+  ---
+  duration_ms: 0.06075
+  type: 'test'
+  ...
+# Subtest: normalizeMessageContent joins multimodal content parts
+ok 293 - normalizeMessageContent joins multimodal content parts
+  ---
+  duration_ms: 0.713291
+  type: 'test'
+  ...
+# Subtest: normalizeMessageContent renders object payloads without React-unsafe objects
+ok 294 - normalizeMessageContent renders object payloads without React-unsafe objects
+  ---
+  duration_ms: 0.084083
+  type: 'test'
+  ...
+# Subtest: truncateText preserves short strings and ellipsizes long strings
+ok 295 - truncateText preserves short strings and ellipsizes long strings
+  ---
+  duration_ms: 0.060459
+  type: 'test'
+  ...
+# Subtest: optimistic ids are negative and strictly decreasing
+ok 296 - optimistic ids are negative and strictly decreasing
+  ---
+  duration_ms: 0.860417
+  type: 'test'
+  ...
+# Subtest: a turn's two optimistic rows reconcile to distinct persisted ids
+ok 297 - a turn's two optimistic rows reconcile to distinct persisted ids
+  ---
+  duration_ms: 0.929709
+  type: 'test'
+  ...
+# Subtest: the previous reply stays visible once the next turn is queued
+ok 298 - the previous reply stays visible once the next turn is queued
+  ---
+  duration_ms: 0.085917
+  type: 'test'
+  ...
+# Subtest: partner chat delegates streaming scroll control to useChatAutoScroll
+ok 299 - partner chat delegates streaming scroll control to useChatAutoScroll
+  ---
+  duration_ms: 1.044334
+  type: 'test'
+  ...
+# Subtest: partner stream events do not imperatively fight user scrolling
+ok 300 - partner stream events do not imperatively fight user scrolling
+  ---
+  duration_ms: 0.159791
+  type: 'test'
+  ...
+# Subtest: sending a new partner turn re-arms live-follow mode
+ok 301 - sending a new partner turn re-arms live-follow mode
+  ---
+  duration_ms: 0.072666
+  type: 'test'
+  ...
+# Subtest: Practice remediation asks the server for an owned flashcard brief
+ok 302 - Practice remediation asks the server for an owned flashcard brief
+  ---
+  duration_ms: 26.391958
+  type: 'test'
+  ...
+# Subtest: Practice responses require the same immutable identity, Course, and request epoch
+ok 303 - Practice responses require the same immutable identity, Course, and request epoch
+  ---
+  duration_ms: 0.0895
+  type: 'test'
+  ...
+# Subtest: Practice stale-response guard fails closed when sign-out clears identity and Course
+ok 304 - Practice stale-response guard fails closed when sign-out clears identity and Course
+  ---
+  duration_ms: 0.05425
+  type: 'test'
+  ...
+# Subtest: delayed Practice set A detail cannot overwrite a newer set B selection
+ok 305 - delayed Practice set A detail cannot overwrite a newer set B selection
+  ---
+  duration_ms: 0.116666
+  type: 'test'
+  ...
+# Subtest: delayed attempt A detail cannot overwrite a newer attempt B selection
+ok 306 - delayed attempt A detail cannot overwrite a newer attempt B selection
+  ---
+  duration_ms: 0.050459
+  type: 'test'
+  ...
+# Subtest: a new view scope stays current for its own operation completion
+ok 307 - a new view scope stays current for its own operation completion
+  ---
+  duration_ms: 0.042167
+  type: 'test'
+  ...
+# Subtest: Practice scores render as percentage and exact ratio
+ok 308 - Practice scores render as percentage and exact ratio
+  ---
+  duration_ms: 0.132209
+  type: 'test'
+  ...
+# Subtest: Practice submission is blocked until local answer text matches the durable answer revision
+ok 309 - Practice submission is blocked until local answer text matches the durable answer revision
+  ---
+  duration_ms: 0.202584
+  type: 'test'
+  ...
+# Subtest: publishing clears draft answer contracts from the learner-side question state
+ok 310 - publishing clears draft answer contracts from the learner-side question state
+  ---
+  duration_ms: 0.292375
+  type: 'test'
+  ...
+# Subtest: failed unpublished generation shells stay in Activity instead of the Practice library
+ok 311 - failed unpublished generation shells stay in Activity instead of the Practice library
+  ---
+  duration_ms: 0.318583
+  type: 'test'
+  ...
+# Subtest: Practice attempt history requests bounded pages
+ok 312 - Practice attempt history requests bounded pages
+  ---
+  duration_ms: 0.495625
+  type: 'test'
+  ...
+# Subtest: Practice plan updates serialize only the strict update contract
+ok 313 - Practice plan updates serialize only the strict update contract
+  ---
+  duration_ms: 0.487334
+  type: 'test'
+  ...
+# Subtest: an auto name (matching the previous provider) tracks the new provider
+ok 314 - an auto name (matching the previous provider) tracks the new provider
+  ---
+  duration_ms: 0.676417
+  type: 'test'
+  ...
+# Subtest: an empty name is filled from the new provider
+ok 315 - an empty name is filled from the new provider
+  ---
+  duration_ms: 0.069458
+  type: 'test'
+  ...
+# Subtest: a user-customized name is never overwritten
+ok 316 - a user-customized name is never overwritten
+  ---
+  duration_ms: 0.044958
+  type: 'test'
+  ...
+# Subtest: never overwrites with an empty provider label (e.g. deselected)
+ok 317 - never overwrites with an empty provider label (e.g. deselected)
+  ---
+  duration_ms: 0.0465
+  type: 'test'
+  ...
+# Subtest: matching against the previous label ignores surrounding whitespace
+ok 318 - matching against the previous label ignores surrounding whitespace
+  ---
+  duration_ms: 0.045875
+  type: 'test'
+  ...
+# Subtest: a name equal to the new provider is effectively unchanged
+ok 319 - a name equal to the new provider is effectively unchanged
+  ---
+  duration_ms: 0.105167
+  type: 'test'
+  ...
+# Subtest: a recorded CLI app call resolves to a row naming the app and its arguments
+ok 320 - a recorded CLI app call resolves to a row naming the app and its arguments
+  ---
+  duration_ms: 1.645208
+  type: 'test'
+  ...
+# Subtest: a recorded MCP call resolves to a row naming the service and its tool
+ok 321 - a recorded MCP call resolves to a row naming the service and its tool
+  ---
+  duration_ms: 0.113292
+  type: 'test'
+  ...
+# Subtest: every event of a recorded call carries the identity, not only the first
+ok 322 - every event of a recorded call carries the identity, not only the first
+  ---
+  duration_ms: 0.172042
+  type: 'test'
+  ...
+# Subtest: a recorded built-in call is not mistaken for a provider row
+ok 323 - a recorded built-in call is not mistaken for a provider row
+  ---
+  duration_ms: 0.073416
+  type: 'test'
+  ...
+# Subtest: the newest progress line wins, and non-progress events are ignored
+ok 324 - the newest progress line wins, and non-progress events are ignored
+  ---
+  duration_ms: 0.086625
+  type: 'test'
+  ...
+# Subtest: a call that reported no progress leaves the row's own detail in place
+ok 325 - a call that reported no progress leaves the row's own detail in place
+  ---
+  duration_ms: 0.05325
+  type: 'test'
+  ...
+# Subtest: a call_status event is never mistaken for a progress line
+ok 326 - a call_status event is never mistaken for a progress line
+  ---
+  duration_ms: 0.109917
+  type: 'test'
+  ...
+# Subtest: isBackendPath matches /api and /ws paths only
+ok 327 - isBackendPath matches /api and /ws paths only
+  ---
+  duration_ms: 0.9335
+  type: 'test'
+  ...
+# Subtest: isCodexCallbackPath matches only the exact public callback path
+ok 328 - isCodexCallbackPath matches only the exact public callback path
+  ---
+  duration_ms: 0.334958
+  type: 'test'
+  ...
+# Subtest: proxy rewrites the exact callback before backend routing and auth gating
+ok 329 - proxy rewrites the exact callback before backend routing and auth gating
+  ---
+  duration_ms: 0.312625
+  type: 'test'
+  ...
+# Subtest: proxy login continuation preserves launch query identity
+ok 330 - proxy login continuation preserves launch query identity
+  ---
+  duration_ms: 0.114833
+  type: 'test'
+  ...
+# Subtest: isAuthExempt allows public static assets through the auth gate (issue \#599)
+ok 331 - isAuthExempt allows public static assets through the auth gate (issue \#599)
+  ---
+  duration_ms: 0.264584
+  type: 'test'
+  ...
+# Subtest: isAuthExempt allows auth pages and Next internals
+ok 332 - isAuthExempt allows auth pages and Next internals
+  ---
+  duration_ms: 0.04675
+  type: 'test'
+  ...
+# Subtest: isAuthExempt does NOT exempt protected app routes
+ok 333 - isAuthExempt does NOT exempt protected app routes
+  ---
+  duration_ms: 0.09925
+  type: 'test'
+  ...
+# Subtest: classifyToken reports missing for absent or empty cookie
+ok 334 - classifyToken reports missing for absent or empty cookie
+  ---
+  duration_ms: 0.060167
+  type: 'test'
+  ...
+# Subtest: classifyToken reports malformed for non-JWT shapes
+ok 335 - classifyToken reports malformed for non-JWT shapes
+  ---
+  duration_ms: 0.395125
+  type: 'test'
+  ...
+# Subtest: classifyToken honors expiry and accepts unexpired / expiry-less tokens
+ok 336 - classifyToken honors expiry and accepts unexpired / expiry-less tokens
+  ---
+  duration_ms: 0.484291
+  type: 'test'
+  ...
+# Subtest: QuizViewer renders multiple-choice options through MarkdownRenderer
+ok 337 - QuizViewer renders multiple-choice options through MarkdownRenderer
+  ---
+  duration_ms: 1.767167
+  type: 'test'
+  ...
+# Subtest: normalizeQuizQuestionType maps legacy choice aliases to choice
+ok 338 - normalizeQuizQuestionType maps legacy choice aliases to choice
+  ---
+  duration_ms: 0.685292
+  type: 'test'
+  ...
+# Subtest: normalizeQuizQuestionType preserves every canonical type
+ok 339 - normalizeQuizQuestionType preserves every canonical type
+  ---
+  duration_ms: 0.130375
+  type: 'test'
+  ...
+# Subtest: resolveConceptAnswer normalizes T/F variants
+ok 340 - resolveConceptAnswer normalizes T/F variants
+  ---
+  duration_ms: 0.076375
+  type: 'test'
+  ...
+# Subtest: resolveChoiceAnswerKey accepts either the option key or label text
+ok 341 - resolveChoiceAnswerKey accepts either the option key or label text
+  ---
+  duration_ms: 0.077375
+  type: 'test'
+  ...
+# Subtest: extractQuizQuestions normalizes legacy question types from payloads
+ok 342 - extractQuizQuestions normalizes legacy question types from payloads
+  ---
+  duration_ms: 0.125917
+  type: 'test'
+  ...
+# Subtest: extractQuizTurnId reads the turn id from streamed events before result
+ok 343 - extractQuizTurnId reads the turn id from streamed events before result
+  ---
+  duration_ms: 0.873
+  type: 'test'
+  ...
+# Subtest: extractQuizTurnId prefers the result event's turn id
+ok 344 - extractQuizTurnId prefers the result event's turn id
+  ---
+  duration_ms: 0.07575
+  type: 'test'
+  ...
+# Subtest: extractQuizTurnId skips events without a turn id
+ok 345 - extractQuizTurnId skips events without a turn id
+  ---
+  duration_ms: 0.050667
+  type: 'test'
+  ...
+# Subtest: extractQuizTurnId returns null for legacy turn-less events
+ok 346 - extractQuizTurnId returns null for legacy turn-less events
+  ---
+  duration_ms: 0.0505
+  type: 'test'
+  ...
+# Subtest: rich-code-block: highlighted blocks use selected theme background instead of hardcoded dark styling
+ok 347 - rich-code-block: highlighted blocks use selected theme background instead of hardcoded dark styling
+  ---
+  duration_ms: 18.917333
+  type: 'test'
+  ...
+# Subtest: rich-code-block: highlighted blocks honor line-number and wrap preferences
+ok 348 - rich-code-block: highlighted blocks honor line-number and wrap preferences
+  ---
+  duration_ms: 4.843959
+  type: 'test'
+  ...
+# Subtest: rich-code-block: plain text blocks honor line-number and wrap preferences
+ok 349 - rich-code-block: plain text blocks honor line-number and wrap preferences
+  ---
+  duration_ms: 1.845958
+  type: 'test'
+  ...
+# Subtest: rich-code-block: wrap disabled keeps the outer <pre> unwrapped and horizontally scrollable
+ok 350 - rich-code-block: wrap disabled keeps the outer <pre> unwrapped and horizontally scrollable
+  ---
+  duration_ms: 2.601333
+  type: 'test'
+  ...
+# Subtest: rich-code-block: wrap mode breaks long unbroken tokens instead of clipping them
+ok 351 - rich-code-block: wrap mode breaks long unbroken tokens instead of clipping them
+  ---
+  duration_ms: 1.477458
+  type: 'test'
+  ...
+# Subtest: rich-code-block: wrap + line-numbers does not let per-line flex wrappers defeat overflow-wrap
+ok 352 - rich-code-block: wrap + line-numbers does not let per-line flex wrappers defeat overflow-wrap
+  ---
+  duration_ms: 1.414917
+  type: 'test'
+  ...
+# Subtest: firstParam returns undefined for missing param
+ok 353 - firstParam returns undefined for missing param
+  ---
+  duration_ms: 0.660292
+  type: 'test'
+  ...
+# Subtest: firstParam returns scalar param unchanged
+ok 354 - firstParam returns scalar param unchanged
+  ---
+  duration_ms: 0.062042
+  type: 'test'
+  ...
+# Subtest: firstParam returns first element for catch-all array
+ok 355 - firstParam returns first element for catch-all array
+  ---
+  duration_ms: 0.04725
+  type: 'test'
+  ...
+# Subtest: node test runner launches TypeScript through the current Node runtime
+ok 356 - node test runner launches TypeScript through the current Node runtime
+  ---
+  duration_ms: 0.77325
+  type: 'test'
+  ...
+# Subtest: key-based providers show only the API key field
+ok 357 - key-based providers show only the API key field
+  ---
+  duration_ms: 1.259
+  type: 'test'
+  ...
+# Subtest: searxng shows only a required Base URL
+ok 358 - searxng shows only a required Base URL
+  ---
+  duration_ms: 0.117375
+  type: 'test'
+  ...
+# Subtest: zero-config providers show no connection fields
+ok 359 - zero-config providers show no connection fields
+  ---
+  duration_ms: 0.062792
+  type: 'test'
+  ...
+# Subtest: unknown, deprecated, and empty providers fall back to showing every field
+ok 360 - unknown, deprecated, and empty providers fall back to showing every field
+  ---
+  duration_ms: 0.119333
+  type: 'test'
+  ...
+# Subtest: provider name is matched case-insensitively and trimmed
+ok 361 - provider name is matched case-insensitively and trimmed
+  ---
+  duration_ms: 0.053459
+  type: 'test'
+  ...
+# Subtest: a required Base URL is never hidden (baseUrlRequired implies baseUrl)
+ok 362 - a required Base URL is never hidden (baseUrlRequired implies baseUrl)
+  ---
+  duration_ms: 0.075791
+  type: 'test'
+  ...
+# Subtest: searxng is the only provider that requires a Base URL
+ok 363 - searxng is the only provider that requires a Base URL
+  ---
+  duration_ms: 0.106292
+  type: 'test'
+  ...
+# Subtest: splits generated files out of user uploads
+ok 364 - splits generated files out of user uploads
+  ---
+  duration_ms: 0.874333
+  type: 'test'
+  ...
+# Subtest: keeps the originating message index on both lists
+ok 365 - keeps the originating message index on both lists
+  ---
+  duration_ms: 0.131875
+  type: 'test'
+  ...
+# Subtest: collects generated files across every turn in order
+ok 366 - collects generated files across every turn in order
+  ---
+  duration_ms: 0.666875
+  type: 'test'
+  ...
+# Subtest: a session with only generated files is not empty
+ok 367 - a session with only generated files is not empty
+  ---
+  duration_ms: 0.1335
+  type: 'test'
+  ...
+# Subtest: a session with nothing at all is empty
+ok 368 - a session with nothing at all is empty
+  ---
+  duration_ms: 0.0645
+  type: 'test'
+  ...
+# Subtest: counts tool calls and orders them by frequency
+ok 369 - counts tool calls and orders them by frequency
+  ---
+  duration_ms: 0.109709
+  type: 'test'
+  ...
+# Subtest: dedupes knowledge bases across turns
+ok 370 - dedupes knowledge bases across turns
+  ---
+  duration_ms: 0.128292
+  type: 'test'
+  ...
+# Subtest: derives the data-root-relative path from an outputs URL
+ok 371 - derives the data-root-relative path from an outputs URL
+  ---
+  duration_ms: 0.054042
+  type: 'test'
+  ...
+# Subtest: decodes percent-escaped segments
+ok 372 - decodes percent-escaped segments
+  ---
+  duration_ms: 0.250625
+  type: 'test'
+  ...
+# Subtest: falls back to the raw form on a malformed escape
+ok 373 - falls back to the raw form on a malformed escape
+  ---
+  duration_ms: 0.277542
+  type: 'test'
+  ...
+# Subtest: returns null for uploads and for missing URLs
+ok 374 - returns null for uploads and for missing URLs
+  ---
+  duration_ms: 0.109833
+  type: 'test'
+  ...
+# Subtest: readStoredCodeBlockShowLineNumbers returns true when localStorage has string 'true'
+ok 375 - readStoredCodeBlockShowLineNumbers returns true when localStorage has string 'true'
+  ---
+  duration_ms: 0.709167
+  type: 'test'
+  ...
+# Subtest: readStoredCodeBlockWrapLongLines returns true when localStorage has string 'true'
+ok 376 - readStoredCodeBlockWrapLongLines returns true when localStorage has string 'true'
+  ---
+  duration_ms: 0.149542
+  type: 'test'
+  ...
+# Subtest: readStoredCodeBlockShowLineNumbers returns false when localStorage is undefined (SSR)
+ok 377 - readStoredCodeBlockShowLineNumbers returns false when localStorage is undefined (SSR)
+  ---
+  duration_ms: 0.051542
+  type: 'test'
+  ...
+# Subtest: readStoredCodeBlockWrapLongLines returns false when localStorage is undefined (SSR)
+ok 378 - readStoredCodeBlockWrapLongLines returns false when localStorage is undefined (SSR)
+  ---
+  duration_ms: 0.044667
+  type: 'test'
+  ...
+# Subtest: settings-context: sources code-block switches from the app-shell single source
+ok 379 - settings-context: sources code-block switches from the app-shell single source
+  ---
+  duration_ms: 0.442125
+  type: 'test'
+  ...
+# Subtest: app-shell-context: hydrates code-block switches after the SSR-safe first render
+ok 380 - app-shell-context: hydrates code-block switches after the SSR-safe first render
+  ---
+  duration_ms: 0.214667
+  type: 'test'
+  ...
+# Subtest: settings-context: syncLoadedCodeBlockSettingsToAppShell writes backend-loaded values into app-shell storage
+ok 381 - settings-context: syncLoadedCodeBlockSettingsToAppShell writes backend-loaded values into app-shell storage
+  ---
+  duration_ms: 1.744917
+  type: 'test'
+  ...
+# Subtest: settings-context: persistUiSettingsPatch sends only the changed code-block field
+ok 382 - settings-context: persistUiSettingsPatch sends only the changed code-block field
+  ---
+  duration_ms: 0.204584
+  type: 'test'
+  ...
+# Subtest: settings-context: persistUiSettingsPatch can save theme without sending code-block fields
+ok 383 - settings-context: persistUiSettingsPatch can save theme without sending code-block fields
+  ---
+  duration_ms: 0.088875
+  type: 'test'
+  ...
+# Subtest: settings-context: boolean values survive reload cycle from localStorage
+ok 384 - settings-context: boolean values survive reload cycle from localStorage
+  ---
+  duration_ms: 0.190209
+  type: 'test'
+  ...
+# Subtest: settings-context: syncLoadedCodeBlockSettingsToAppShell handles string boolean representations from backend
+ok 385 - settings-context: syncLoadedCodeBlockSettingsToAppShell handles string boolean representations from backend
+  ---
+  duration_ms: 0.132292
+  type: 'test'
+  ...
+# Subtest: settings-context: backend values override localStorage values during sync
+ok 386 - settings-context: backend values override localStorage values during sync
+  ---
+  duration_ms: 0.070833
+  type: 'test'
+  ...
+# Subtest: settings-context: routes code-block state through the AppShell single source
+ok 387 - settings-context: routes code-block state through the AppShell single source
+  ---
+  duration_ms: 0.352084
+  type: 'test'
+  ...
+# Subtest: slugifySkillName normalizes common free-text names
+ok 388 - slugifySkillName normalizes common free-text names
+  ---
+  duration_ms: 0.793125
+  type: 'test'
+  ...
+# Subtest: slugifySkillName preserves valid hyphenated names
+ok 389 - slugifySkillName preserves valid hyphenated names
+  ---
+  duration_ms: 0.068709
+  type: 'test'
+  ...
+# Subtest: isValidSkillName mirrors backend skill name contract
+ok 390 - isValidSkillName mirrors backend skill name contract
+  ---
+  duration_ms: 0.128958
+  type: 'test'
+  ...
+# Subtest: returns a single text segment when there is no <think> tag
+ok 391 - returns a single text segment when there is no <think> tag
+  ---
+  duration_ms: 1.966625
+  type: 'test'
+  ...
+# Subtest: splits raw streaming form into think + trailing text
+ok 392 - splits raw streaming form into think + trailing text
+  ---
+  duration_ms: 0.501709
+  type: 'test'
+  ...
+# Subtest: captures leading text before the <think> block
+ok 393 - captures leading text before the <think> block
+  ---
+  duration_ms: 0.129541
+  type: 'test'
+  ...
+# Subtest: recognises post-normalized backtick-wrapped tags
+ok 394 - recognises post-normalized backtick-wrapped tags
+  ---
+  duration_ms: 0.121375
+  type: 'test'
+  ...
+# Subtest: treats unclosed <think> as still-streaming
+ok 395 - treats unclosed <think> as still-streaming
+  ---
+  duration_ms: 0.167417
+  type: 'test'
+  ...
+# Subtest: supports the <thinking> alias
+ok 396 - supports the <thinking> alias
+  ---
+  duration_ms: 0.363666
+  type: 'test'
+  ...
+# Subtest: ignores <think> that lives inside a fenced code block
+ok 397 - ignores <think> that lives inside a fenced code block
+  ---
+  duration_ms: 0.231959
+  type: 'test'
+  ...
+# Subtest: handles consecutive <think> blocks
+ok 398 - handles consecutive <think> blocks
+  ---
+  duration_ms: 0.1205
+  type: 'test'
+  ...
+# Subtest: trims surrounding whitespace inside the think block
+ok 399 - trims surrounding whitespace inside the think block
+  ---
+  duration_ms: 0.329459
+  type: 'test'
+  ...
+# Subtest: hasModelThinking detects raw and post-normalized tags
+ok 400 - hasModelThinking detects raw and post-normalized tags
+  ---
+  duration_ms: 0.453542
+  type: 'test'
+  ...
+# Subtest: an MCP tool is named without its generated prefix
+ok 401 - an MCP tool is named without its generated prefix
+  ---
+  duration_ms: 1.11475
+  type: 'test'
+  ...
+# Subtest: a server whose own name contains an underscore is still stripped correctly
+ok 402 - a server whose own name contains an underscore is still stripped correctly
+  ---
+  duration_ms: 0.147542
+  type: 'test'
+  ...
+# Subtest: a name that does not carry the expected prefix is left alone
+ok 403 - a name that does not carry the expected prefix is left alone
+  ---
+  duration_ms: 0.07925
+  type: 'test'
+  ...
+# Subtest: a missing server id does not produce a bogus prefix
+ok 404 - a missing server id does not produce a bogus prefix
+  ---
+  duration_ms: 0.055375
+  type: 'test'
+  ...
+# Subtest: CLI arguments join for display and nothing re-splits them
+ok 405 - CLI arguments join for display and nothing re-splits them
+  ---
+  duration_ms: 0.166542
+  type: 'test'
+  ...
+# Subtest: an argument containing a space is shown as it is
+ok 406 - an argument containing a space is shown as it is
+  ---
+  duration_ms: 0.098459
+  type: 'test'
+  ...
+# Subtest: a non-array args value degrades instead of rendering [object Object]
+ok 407 - a non-array args value degrades instead of rendering [object Object]
+  ---
+  duration_ms: 0.160458
+  type: 'test'
+  ...
+# Subtest: a short label is untouched
+ok 408 - a short label is untouched
+  ---
+  duration_ms: 0.075667
+  type: 'test'
+  ...
+# Subtest: a long label is clipped on a word boundary when one is near the cut
+ok 409 - a long label is clipped on a word boundary when one is near the cut
+  ---
+  duration_ms: 0.484291
+  type: 'test'
+  ...
+# Subtest: a long unbroken label is still cut rather than overflowing
+ok 410 - a long unbroken label is still cut rather than overflowing
+  ---
+  duration_ms: 0.374083
+  type: 'test'
+  ...
+# Subtest: surrounding whitespace never survives into the row
+ok 411 - surrounding whitespace never survives into the row
+  ---
+  duration_ms: 0.207709
+  type: 'test'
+  ...
+# Subtest: an MCP call names the service, with its tool trailing
+ok 412 - an MCP call names the service, with its tool trailing
+  ---
+  duration_ms: 0.974708
+  type: 'test'
+  ...
+# Subtest: a CLI call names the app, with its arguments trailing
+ok 413 - a CLI call names the app, with its arguments trailing
+  ---
+  duration_ms: 0.105792
+  type: 'test'
+  ...
+# Subtest: a CLI call with no arguments still reads as a row
+ok 414 - a CLI call with no arguments still reads as a row
+  ---
+  duration_ms: 0.055292
+  type: 'test'
+  ...
+# Subtest: a long argument list is clipped rather than pushing the row wide
+ok 415 - a long argument list is clipped rather than pushing the row wide
+  ---
+  duration_ms: 0.059875
+  type: 'test'
+  ...
+# Subtest: a built-in tool is not a provider row
+ok 416 - a built-in tool is not a provider row
+  ---
+  duration_ms: 0.041375
+  type: 'test'
+  ...
+# Subtest: a provider kind this build does not know falls through to the generic row
+ok 417 - a provider kind this build does not know falls through to the generic row
+  ---
+  duration_ms: 0.061041
+  type: 'test'
+  ...
+# Subtest: a provider with no id still names something rather than nothing
+ok 418 - a provider with no id still names something rather than nothing
+  ---
+  duration_ms: 0.064833
+  type: 'test'
+  ...
+# Subtest: swaps optimistic user+assistant ids and parent pointers
+ok 419 - swaps optimistic user+assistant ids and parent pointers
+  ---
+  duration_ms: 1.111959
+  type: 'test'
+  ...
+# Subtest: does not touch rows that already carry persisted ids
+ok 420 - does not touch rows that already carry persisted ids
+  ---
+  duration_ms: 0.192125
+  type: 'test'
+  ...
+# Subtest: a stale done replay for an old turn cannot restamp a newer turn
+ok 421 - a stale done replay for an old turn cannot restamp a newer turn
+  ---
+  duration_ms: 0.11
+  type: 'test'
+  ...
+# Subtest: regenerate turns reconcile the assistant id only
+ok 422 - regenerate turns reconcile the assistant id only
+  ---
+  duration_ms: 0.073042
+  type: 'test'
+  ...
+# Subtest: falls back to the last assistant bubble when turn id is missing
+ok 423 - falls back to the last assistant bubble when turn id is missing
+  ---
+  duration_ms: 0.202167
+  type: 'test'
+  ...
+# Subtest: remaps selectedBranches keys and values that used optimistic ids
+ok 424 - remaps selectedBranches keys and values that used optimistic ids
+  ---
+  duration_ms: 0.905875
+  type: 'test'
+  ...
+# Subtest: returns original references when there is nothing to reconcile
+ok 425 - returns original references when there is nothing to reconcile
+  ---
+  duration_ms: 0.203875
+  type: 'test'
+  ...
+# Subtest: reconnect and control messages use explicit session-bound course identity
+ok 426 - reconnect and control messages use explicit session-bound course identity
+  ---
+  duration_ms: 29.495916
+  type: 'test'
+  ...
+# Subtest: normalizeVersionTag accepts bare semver
+ok 427 - normalizeVersionTag accepts bare semver
+  ---
+  duration_ms: 1.071292
+  type: 'test'
+  ...
+# Subtest: normalizeVersionTag keeps the v prefix
+ok 428 - normalizeVersionTag keeps the v prefix
+  ---
+  duration_ms: 0.146083
+  type: 'test'
+  ...
+# Subtest: normalizeVersionTag supports PEP 440-style pre-releases
+ok 429 - normalizeVersionTag supports PEP 440-style pre-releases
+  ---
+  duration_ms: 0.103542
+  type: 'test'
+  ...
+# Subtest: normalizeVersionTag rejects unparseable inputs
+ok 430 - normalizeVersionTag rejects unparseable inputs
+  ---
+  duration_ms: 0.084833
+  type: 'test'
+  ...
+1..430
+# tests 430
+# suites 0
+# pass 430
+# fail 0
+# cancelled 0
+# skipped 0
+# todo 0
+# duration_ms 801.863917

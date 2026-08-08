@@ -1,0 +1,13 @@
+
+Running 4 tests using 1 worker
+
+(node:22734) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+(Use `node --trace-warnings ...` to show where the warning was created)
+(node:22734) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+(Use `node --trace-warnings ...` to show where the warning was created)
+  ✓  1 [phase4-authenticated] › tests/e2e/course-chat-c1.spec.ts:81:5 › Alice opens exact Course Chat, persists its citation, and reopens it (6.2s)
+  ✓  2 [phase4-authenticated] › tests/e2e/course-chat-c1.spec.ts:266:5 › unsupported and provider-unavailable turns fail truthfully (3.0s)
+  ✓  3 [phase4-authenticated] › tests/e2e/course-chat-c1.spec.ts:361:5 › Bob cannot open Alice Course or Course session URLs (1.4s)
+  ✓  4 [phase4-authenticated] › tests/e2e/course-chat-c1.spec.ts:399:5 › zero-ready and zero-Course states stay truthful without a Chat session (2.7s)
+
+  4 passed (14.0s)
