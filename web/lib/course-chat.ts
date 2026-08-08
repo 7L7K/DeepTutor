@@ -39,6 +39,16 @@ export function academicTermLabel(term: string | null | undefined): string {
     .join(" ");
 }
 
+export function visibleChatKnowledgeReferences(
+  references: string[],
+  courseMode: boolean,
+): string[] {
+  if (!courseMode) return references;
+  return references.filter(
+    (reference) => !reference.startsWith("personal:kb:course_"),
+  );
+}
+
 export function courseChatReadinessPresentation(readiness: CourseChatReadiness): {
   allowChat: boolean;
   title: string;

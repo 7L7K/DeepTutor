@@ -53,6 +53,7 @@ import type { CourseChatReadiness } from "@/lib/course-api";
 import {
   courseCitationIsAvailable,
   extractCourseCitations,
+  visibleChatKnowledgeReferences,
 } from "@/lib/course-chat";
 import { hasVisibleMarkdownContent } from "@/lib/markdown-display";
 import type { SelectedBookReference } from "@/lib/book-references";
@@ -938,6 +939,7 @@ const UserMessage = memo(function UserMessage({
   onCopy,
   onEdit,
   editDisabled,
+  courseMode,
   siblingInfo,
   onSwitchBranch,
 }: {
@@ -947,6 +949,7 @@ const UserMessage = memo(function UserMessage({
   onCopy?: (content: string) => void | Promise<void>;
   onEdit?: (messageId: number, newContent: string) => void;
   editDisabled?: boolean;
+  courseMode?: boolean;
   siblingInfo?: SiblingInfo;
   onSwitchBranch?: (parentMessageId: number | null, childId: number) => void;
 }) {
@@ -1005,7 +1008,10 @@ const UserMessage = memo(function UserMessage({
         onClick: onPreviewAttachment ? () => onPreviewAttachment(a) : undefined,
       };
     }),
-    ...(snap?.knowledgeBases ?? []).map((name): ContextTreeItem => {
+    ...visibleChatKnowledgeReferences(
+      snap?.knowledgeBases ?? [],
+      Boolean(courseMode),
+    ).map((name): ContextTreeItem => {
       const agentKind = agentKinds[name];
       if (agentKind) {
         return {
@@ -1447,6 +1453,7 @@ export const ChatMessageList = memo(function ChatMessageList({
               onCopy={onCopyAssistantMessage}
               onEdit={onEditMessage}
               editDisabled={isStreaming}
+              courseMode={courseReadiness !== null}
               siblingInfo={sib}
               onSwitchBranch={onSwitchBranch}
             />

@@ -99,6 +99,7 @@ import { listLLMOptions, type LLMOption } from '@/lib/llm-options'
 import { getEnabledOptionalTools, invalidateEnabledOptionalToolsCache } from '@/lib/tools-settings'
 import { downloadChatMarkdown } from '@/lib/chat-export'
 import { buildChatOutline } from '@/lib/chat-outline'
+import { visibleChatKnowledgeReferences } from '@/lib/course-chat'
 import type { SpaceMemoryFile } from '@/lib/space-items'
 import { selectedBooksToPayload, type SelectedBookReference } from '@/lib/book-references'
 
@@ -1359,7 +1360,14 @@ export default function UnifiedChatPage({
 
   // Fold all messages once per state.messages change to power the
   // SessionActivityPanel on the right (tools, KBs, space refs, attachments).
-  const sessionActivity = useMemo(() => buildSessionActivity(state.messages), [state.messages])
+  const sessionActivity = useMemo(() => {
+    const activity = buildSessionActivity(state.messages)
+    if (!courseMode) return activity
+    return {
+      ...activity,
+      knowledgeBases: visibleChatKnowledgeReferences(activity.knowledgeBases, true),
+    }
+  }, [courseMode, state.messages])
 
   // Context-window readout for the composer chip: the newest turn that was
   // actually measured. Walking newest-first is what keeps the number steady

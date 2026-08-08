@@ -30,6 +30,19 @@ test("canonical academic term keeps identity while rendering a human label", asy
   assert.equal(academicTermLabel(null), "Term not linked yet");
 });
 
+test("Course Chat hides internal managed knowledge references", async () => {
+  const { visibleChatKnowledgeReferences } = await import("../lib/course-chat");
+  const references = [
+    "personal:kb:course_crs_bio_src_notes",
+    "personal:kb:general-study",
+  ];
+
+  assert.deepEqual(visibleChatKnowledgeReferences(references, true), [
+    "personal:kb:general-study",
+  ]);
+  assert.deepEqual(visibleChatKnowledgeReferences(references, false), references);
+});
+
 test("readiness presentation blocks zero, processing, and failed source states", async () => {
   const { courseChatReadinessPresentation } = await import("../lib/course-chat");
 
