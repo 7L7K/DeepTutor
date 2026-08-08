@@ -567,6 +567,15 @@ async def get_course(course_id: str):
     return _call(lambda: _service().get(course_id)).model_dump()
 
 
+@router.get("/{course_id}/chat-readiness")
+async def get_course_chat_readiness(course_id: str):
+    readiness = _call(lambda: _service().chat_readiness(course_id))
+    return {
+        "course_id": course_id,
+        **readiness.model_dump(mode="json"),
+    }
+
+
 @router.patch("/{course_id}")
 async def update_course(course_id: str, body: UpdateCourseRequest):
     async with course_operation_lock(course_id):

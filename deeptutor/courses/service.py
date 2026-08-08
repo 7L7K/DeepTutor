@@ -137,6 +137,19 @@ class CourseService:
             return self.repository.list_sources(course_id)
         return sources
 
+    def chat_readiness(self, course_id: str):
+        """Return the safe, owner-scoped source projection for Course Chat."""
+
+        from .chat_contract import classify_course_chat_sources
+
+        course = self.get(course_id)
+        if course.workspace_kind != "academic_course":
+            raise CourseUnavailableError("General Study cannot be used as Course Chat")
+        return classify_course_chat_sources(
+            self.list_sources(course_id),
+            course_id=course.id,
+        )
+
     def get_source(self, course_id: str, source_id: str) -> CourseSource:
         return self.repository.get_source(course_id, source_id)
 
@@ -247,10 +260,17 @@ def resolve_course_turn_payload(
             raise CourseUnavailableError(f"{field} is not available in private course mode")
 
     all_sources = service.list_sources(course_id)
+    from .chat_contract import classify_course_chat_sources, readiness_error_message
+
+    readiness = classify_course_chat_sources(all_sources, course_id=course.id)
     if preserved_context is not None:
         if str(preserved_context.get("course_id") or "") != course.id:
             raise CourseUnavailableError("Regeneration Course provenance is invalid")
-        by_id = {source.id: source for source in all_sources}
+        by_id = {
+            source.id: source
+            for source in all_sources
+            if source.course_id == course.id
+        }
         source_ids = [str(item) for item in preserved_context.get("source_ids") or []]
         revisions = dict(preserved_context.get("source_revisions") or {})
         fingerprints = dict(preserved_context.get("source_fingerprints") or {})
@@ -276,15 +296,13 @@ def resolve_course_turn_payload(
                 )
             sources.append(source)
     else:
-        superseded_ids = {
-            source.supersedes_source_id
-            for source in all_sources
-            if source.supersedes_source_id and source.state in {"ready", "archived"}
-        }
+        if not readiness.ready_sources:
+            raise CourseUnavailableError(readiness_error_message(readiness))
+        ready_ids = {source.source_id for source in readiness.ready_sources}
         sources = [
             source
             for source in all_sources
-            if source.state == "ready" and source.id not in superseded_ids
+            if source.course_id == course.id and source.id in ready_ids
         ]
     # ``managed_kb_ref`` is the one logical Course Knowledge authority.  Each
     # immutable source is indexed into an opaque physical shard so archived,
@@ -313,6 +331,9 @@ def resolve_course_turn_payload(
             "source_fingerprints": {
                 source.id: source.content_sha256 for source in sources
             },
+            "source_titles": {
+                source.id: source.display_name for source in sources
+            },
         }
     )
     return {
@@ -339,4 +360,5 @@ def resolve_course_turn_payload(
         "book_references": [],
         "memory_references": [],
         "course_context": course_context,
+        "course_readiness": readiness.model_dump(mode="json"),
     }

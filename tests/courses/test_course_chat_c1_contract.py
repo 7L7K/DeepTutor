@@ -205,7 +205,7 @@ def test_mixed_course_turn_resolves_only_biology_ready_sources(monkeypatch) -> N
         "processing": 1,
         "failed": 1,
         "unavailable": 2,
-        "total": 4,
+        "total": 3,
     }
 
 
