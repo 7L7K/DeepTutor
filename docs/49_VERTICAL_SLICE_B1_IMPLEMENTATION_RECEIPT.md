@@ -9,6 +9,8 @@ Status:
   viewport/focus harness did not apply the requested controls.
 - CHAT PARKED
 
+Closeout verdict: `BLOCKED_MISSING_PROOF`
+
 Branch: `feature/teeechr-web-course-hub-slice-b1`
 
 Base: `ffa8233763ad621c170575f27f41d7fdec623691`
