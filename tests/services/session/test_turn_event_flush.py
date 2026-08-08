@@ -132,19 +132,25 @@ def stub_workspace(monkeypatch, tmp_path):
 
     class _StubPathService:
         def get_task_workspace(self, feature: str, task_id: str) -> Path:
-            return tmp_path / "workspace" / feature / task_id
+            return tmp_path / "user" / "workspace" / feature / feature / task_id
 
     monkeypatch.setattr(
         "deeptutor.services.session.turn_runtime.get_path_service",
         lambda: _StubPathService(),
     )
-    return tmp_path / "workspace"
+    # The real SQLite path contract is ``<root>/user/chat_history.db``;
+    # PathService derives ``<root>/user/workspace/chat/chat`` for the
+    # ``chat`` capability. Assertions append the first ``chat`` segment.
+    return tmp_path / "user" / "workspace" / "chat"
 
 
 async def test_flush_mirrors_whole_batch_in_one_file_write(
     tmp_path, stub_workspace, monkeypatch
 ) -> None:
-    store = SQLiteSessionStore(tmp_path / "chat_history.db")
+    # SQLite-backed mirrors derive their workspace root from the database
+    # location. Put the fixture DB under the same isolated workspace root the
+    # assertion expects.
+    store = SQLiteSessionStore(tmp_path / "user" / "chat_history.db")
     runtime = TurnRuntimeManager(store)
     session = await store.ensure_session(None)
     turn = await store.create_turn(session["id"], capability="chat")
@@ -180,7 +186,7 @@ async def test_flush_mirrors_whole_batch_in_one_file_write(
 
 
 async def test_flush_is_idempotent_per_execution(tmp_path, stub_workspace) -> None:
-    store = SQLiteSessionStore(tmp_path / "chat_history.db")
+    store = SQLiteSessionStore(tmp_path / "user" / "chat_history.db")
     runtime = TurnRuntimeManager(store)
     session = await store.ensure_session(None)
     turn = await store.create_turn(session["id"], capability="chat")

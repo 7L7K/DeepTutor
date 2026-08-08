@@ -181,13 +181,15 @@ def test_relocation_ignores_a_symlinked_legacy_directory(
     user_root = service_module._codex_user_root()
     outside = _seed_store(isolated_roots / "elsewhere")
     legacy = CodexCredentialStore(user_root).root
+    # Resolve the owner before introducing the hostile legacy link. The
+    # private-workspace guard must reject the link when a workspace is opened;
+    # this test exercises relocation's separate fail-closed handling.
+    secrets_root = get_owner_secrets_dir()
     legacy.parent.mkdir(parents=True, exist_ok=True)
     try:
         legacy.symlink_to(outside, target_is_directory=True)
     except OSError:
         pytest.skip("Creating symlinks is unavailable on this platform")
-    secrets_root = get_owner_secrets_dir()
-
     service_module._relocate_legacy_store(user_root, secrets_root)
 
     assert not CodexCredentialStore(secrets_root).root.exists()
@@ -210,13 +212,15 @@ def test_relocation_refuses_a_symlinked_private_parent(
     victim_store = _seed_store(isolated_roots / "users" / "u_victim" / "user")
     attacker_root = service_module._codex_user_root()
     attacker_private = CodexCredentialStore(attacker_root).root.parent
+    # Resolve the owner before introducing the hostile private-parent link.
+    # The workspace path guard remains responsible for rejecting links at
+    # workspace-open time; relocation is tested independently below.
+    secrets_root = get_owner_secrets_dir()
     attacker_private.parent.mkdir(parents=True, exist_ok=True)
     try:
         attacker_private.symlink_to(victim_store.parent, target_is_directory=True)
     except OSError:
         pytest.skip("Creating symlinks is unavailable on this platform")
-    secrets_root = get_owner_secrets_dir()
-
     service_module._relocate_legacy_store(attacker_root, secrets_root)
 
     assert not CodexCredentialStore(secrets_root).root.exists()

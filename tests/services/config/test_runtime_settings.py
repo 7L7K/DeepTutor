@@ -197,6 +197,14 @@ def test_startup_ensure_creates_missing_runtime_jsons_with_defaults(
         "get_settings_file",
         lambda name: settings_dir / f"{name}.json",
     )
+    # The catalog is deployment-owned and now resolves through the explicit
+    # admin path service. Keep this test fully isolated without touching a
+    # user-local config directory.
+    monkeypatch.setattr(
+        model_catalog_module,
+        "get_model_catalog_service",
+        lambda: model_catalog_module.ModelCatalogService(settings_dir / "model_catalog.json"),
+    )
 
     ensure_runtime_settings_files()
 
