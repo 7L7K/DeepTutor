@@ -314,7 +314,9 @@ def _ready_source(client: TestClient, owner: str, course: dict, *, manifest: lis
     return ready.model_dump(mode="json")
 
 
-def _assistant_binding(client: TestClient, owner: str, course: dict) -> tuple[str, int]:
+def _assistant_binding(
+    client: TestClient, owner: str, course: dict, source: dict
+) -> tuple[str, int]:
     from deeptutor.multi_user.paths import get_personal_path_service
     from deeptutor.services.session.sqlite_store import SQLiteSessionStore
 
@@ -323,7 +325,49 @@ def _assistant_binding(client: TestClient, owner: str, course: dict) -> tuple[st
     session = asyncio.run(
         store.create_session(session_id=f"phase4_{course['id']}", course_id=course["id"])
     )
-    message_id = asyncio.run(store.add_message(session["id"], "assistant", "Persisted answer"))
+    citation = {
+        "schema_version": 1,
+        "course_id": course["id"],
+        "source_id": source["id"],
+        "source_revision": source["revision"],
+        "source_content_hash": source["content_sha256"],
+        "source_title_snapshot": source["display_name"],
+        "locator_type": "section",
+        "locator_value": "Course notes",
+        "retrieval_fragment_id": "fragment-phase4-1",
+    }
+    events = [
+        {
+            "type": "sources",
+            "source": "course_grounding",
+            "metadata": {
+                "trace_kind": "course_citations",
+                "course_citations": [citation],
+            },
+        },
+        {
+            "type": "content",
+            "source": "course_grounding",
+            "content": "Persisted answer",
+            "metadata": {
+                "course_grounding": "supported",
+                "call_kind": "llm_final_response",
+            },
+        },
+        {
+            "type": "done",
+            "source": "course_grounding",
+            "metadata": {"status": "completed"},
+        },
+    ]
+    message_id = asyncio.run(
+        store.add_message(
+            session["id"],
+            "assistant",
+            "Persisted answer",
+            events=events,
+        )
+    )
     return str(session["id"]), int(message_id)
 
 
@@ -737,7 +781,7 @@ def test_phase4_malicious_source_cannot_grant_learner_or_generation_authority(
         ],
     )
     course = _current_course(phase4_client, "alice", course["id"])
-    session_id, message_id = _assistant_binding(phase4_client, "alice", course)
+    session_id, message_id = _assistant_binding(phase4_client, "alice", course, source)
     action_body = {
         "action": "quiz_me",
         "session_id": session_id,
