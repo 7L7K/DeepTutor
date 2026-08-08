@@ -5,6 +5,7 @@ export interface Course {
   id: string;
   owner_user_id: string;
   title: string;
+  term?: string | null;
   workspace_kind: "academic_course" | "general_study";
   state: "active" | "archived";
   revision: number;
@@ -46,6 +47,15 @@ async function json<T>(response: Response): Promise<T> {
 export async function listCourses(): Promise<Course[]> {
   const response = await apiFetch(apiUrl("/api/v1/courses"), { cache: "no-store" });
   return (await json<{ courses: Course[] }>(response)).courses;
+}
+
+export async function getCourse(courseId: string): Promise<Course> {
+  return json<Course>(
+    await apiFetch(
+      apiUrl(`/api/v1/courses/${encodeURIComponent(courseId)}`),
+      { cache: "no-store" },
+    ),
+  );
 }
 
 export async function getCourseCapabilities(): Promise<CourseCapabilities> {

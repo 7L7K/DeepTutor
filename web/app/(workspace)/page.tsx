@@ -4,7 +4,7 @@ import { useEffect } from "react";
 import { useRouter } from "next/navigation";
 
 /**
- * Root page now redirects to /home.
+ * Root page now redirects authenticated users to Classes first.
  * Handles backward compatibility for /?session=xxx URLs.
  */
 export default function HomePage() {
@@ -16,7 +16,7 @@ export default function HomePage() {
     const capability = params.get("capability");
     const tools = params.getAll("tool");
 
-    let target = sessionId ? `/home/${sessionId}` : "/home";
+    let target = sessionId ? `/home/${sessionId}` : "/classes";
 
     const query: string[] = [];
     if (capability) query.push(`capability=${encodeURIComponent(capability)}`);

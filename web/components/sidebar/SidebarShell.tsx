@@ -19,6 +19,7 @@ import {
   LayoutGrid,
   Library,
   Lock,
+  MessageSquare,
   PanelLeftClose,
   PanelLeftOpen,
   PenLine,
@@ -46,10 +47,16 @@ interface NavEntry {
 
 const PRIMARY_NAV: NavEntry[] = [
   {
-    href: "/home",
-    label: "Home",
+    href: "/classes",
+    label: "Classes",
     icon: House,
-    tooltipKey: "Home tooltip",
+    tooltipKey: "Classes",
+  },
+  {
+    href: "/home",
+    label: "Chat",
+    icon: MessageSquare,
+    tooltipKey: "Chat",
   },
   {
     href: "/partners",
@@ -202,7 +209,7 @@ export function SidebarShell({
     });
   };
 
-  const handleHomeClick = (event: React.MouseEvent) => {
+  const handleChatClick = (event: React.MouseEvent) => {
     // Always reset to a fresh session (mirrors the old "New Chat" affordance);
     // let modifier-clicks fall through to default Link behavior so middle-click
     // open-in-new-tab still works.
@@ -284,7 +291,7 @@ export function SidebarShell({
               >
                 <Link
                   href={item.href}
-                  onClick={item.href === "/home" ? handleHomeClick : undefined}
+                  onClick={item.href === "/home" ? handleChatClick : undefined}
                   aria-label={t(item.label)}
                   className={`relative flex h-9 w-9 items-center justify-center rounded-xl transition-all duration-150 ${
                     active
@@ -412,7 +419,7 @@ export function SidebarShell({
                 key={item.href}
                 href={item.href}
                 onClick={
-                  item.href === "/home" ? handleHomeClick : closeDrawerOnNav
+                  item.href === "/home" ? handleChatClick : closeDrawerOnNav
                 }
                 className={`flex items-center gap-2.5 rounded-lg px-3 py-2 text-[13.5px] transition-colors ${
                   active

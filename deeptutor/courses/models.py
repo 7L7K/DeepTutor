@@ -17,6 +17,10 @@ class Course(BaseModel):
     id: str
     owner_user_id: str
     title: str
+    # A standalone TEEECHR Course may not have provider term metadata yet.
+    # When a term-qualified BlueWay mapping exists, the repository projects
+    # its single unambiguous term here; ambiguous or absent mappings stay null.
+    term: str | None = None
     workspace_kind: CourseWorkspaceKind = "academic_course"
     state: CourseState = "active"
     revision: int = 1

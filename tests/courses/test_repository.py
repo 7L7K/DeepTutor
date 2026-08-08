@@ -45,6 +45,54 @@ def test_course_lifecycle_is_persistent_and_revision_guarded(tmp_path) -> None:
     assert reopened.get_course(created.id) == restored
 
 
+def test_course_term_is_projected_only_from_one_unambiguous_mapping(tmp_path) -> None:
+    repo = CourseRepository(tmp_path / "courses.db", "u_alice")
+    course = repo.create_course("Biology")
+    assert course.term is None
+
+    with repo._connect() as conn:
+        conn.execute(
+            """INSERT INTO blueway_connections
+               (id, owner_user_id, external_subject, state, scope_version,
+                revision, grant_generation, credential_ref, credential_status,
+                created_at, updated_at)
+               VALUES ('conn_one', 'u_alice', 'subject_one', 'active', 'v1',
+                       1, 1, NULL, 'healthy', 1, 1)"""
+        )
+        conn.execute(
+            """INSERT INTO blueway_course_maps
+               (connection_id, external_course_id, external_term_id, course_id,
+                remote_title, remote_state, remote_hash, first_seen_snapshot_id,
+                last_seen_snapshot_id, created_at, updated_at)
+               VALUES ('conn_one', 'bio', 'fall-2026', ?, 'Biology', 'active',
+                       'a', 'snap_one', 'snap_one', 1, 1)""",
+            (course.id,),
+        )
+
+    assert repo.get_course(course.id).term == "fall-2026"
+
+    with repo._connect() as conn:
+        conn.execute(
+            """INSERT INTO blueway_connections
+               (id, owner_user_id, external_subject, state, scope_version,
+                revision, grant_generation, credential_ref, credential_status,
+                created_at, updated_at)
+               VALUES ('conn_two', 'u_alice', 'subject_two', 'disconnected', 'v1',
+                       1, 1, NULL, 'healthy', 1, 1)"""
+        )
+        conn.execute(
+            """INSERT INTO blueway_course_maps
+               (connection_id, external_course_id, external_term_id, course_id,
+                remote_title, remote_state, remote_hash, first_seen_snapshot_id,
+                last_seen_snapshot_id, created_at, updated_at)
+               VALUES ('conn_two', 'bio', 'spring-2027', ?, 'Biology', 'active',
+                       'b', 'snap_two', 'snap_two', 1, 1)""",
+            (course.id,),
+        )
+
+    assert repo.get_course(course.id).term is None
+
+
 def test_course_sources_are_parent_bound_and_archive_fences_processing(tmp_path) -> None:
     repo = CourseRepository(tmp_path / "courses.db", "u_alice")
     course = repo.create_course("History")

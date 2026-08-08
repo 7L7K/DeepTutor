@@ -4,9 +4,43 @@ import test from "node:test";
 import {
   archiveCourseSource,
   attachCourseSource,
+  getCourse,
   getCourseCapabilities,
   type CourseSource,
 } from "../lib/course-api";
+
+test("Course detail reads the owner-scoped Course route with its nullable term", async (t) => {
+  const originalFetch = globalThis.fetch;
+  let requestedUrl = "";
+  t.after(() => {
+    globalThis.fetch = originalFetch;
+  });
+  globalThis.fetch = (async (input: RequestInfo | URL) => {
+    requestedUrl = String(input);
+    return new Response(
+      JSON.stringify({
+        id: "crs/bio",
+        owner_user_id: "u_alice",
+        title: "Biology",
+        term: null,
+        workspace_kind: "academic_course",
+        state: "active",
+        revision: 1,
+        write_epoch: 1,
+        managed_kb_ref: null,
+        created_at: 1,
+        updated_at: 1,
+        archived_at: null,
+      }),
+      { status: 200, headers: { "Content-Type": "application/json" } },
+    );
+  }) as typeof fetch;
+
+  const course = await getCourse("crs/bio");
+  assert.equal(course.title, "Biology");
+  assert.equal(course.term, null);
+  assert.equal(requestedUrl, "/api/v1/courses/crs%2Fbio");
+});
 
 test("Course capability status comes from the authenticated server", async (t) => {
   const originalFetch = globalThis.fetch;

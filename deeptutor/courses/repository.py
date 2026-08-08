@@ -118,6 +118,41 @@ class CourseRepository:
         return course
 
     @staticmethod
+    def _course_select(where: str, *, include_term: bool = True) -> str:
+        """Select Course rows with only an unambiguous provider term.
+
+        Term identity is persisted by the existing term-qualified mapping
+        migration, not inferred from a title. A Course with no mapping, or
+        conflicting mapped terms, deliberately returns ``NULL``.
+        """
+        if not include_term:
+            return f"SELECT c.*, NULL AS term FROM courses AS c {where}"
+        return f"""
+            SELECT c.*,
+                   CASE
+                       WHEN COUNT(DISTINCT map.external_term_id) = 1
+                       THEN MAX(map.external_term_id)
+                       ELSE NULL
+                   END AS term
+            FROM courses AS c
+            LEFT JOIN blueway_course_maps AS map
+              ON map.course_id = c.id
+             AND map.external_term_id IS NOT NULL
+            {where}
+            GROUP BY c.id
+        """
+
+    @classmethod
+    def _course_select_for_connection(
+        cls, conn: sqlite3.Connection, where: str
+    ) -> str:
+        columns = {
+            str(row[1])
+            for row in conn.execute("PRAGMA table_info(blueway_course_maps)")
+        }
+        return cls._course_select(where, include_term="external_term_id" in columns)
+
+    @staticmethod
     def _source_from_row(row: sqlite3.Row) -> CourseSource:
         payload = dict(row)
         payload["manifest"] = json.loads(payload.pop("manifest_json") or "[]")
@@ -134,7 +169,9 @@ class CourseRepository:
                    VALUES (?, ?, ?, 'active', 1, 1, NULL, ?, ?, NULL)""",
                 (cid, self.owner_user_id, self._clean_title(title), now, now),
             )
-            row = conn.execute("SELECT * FROM courses WHERE id = ?", (cid,)).fetchone()
+            row = conn.execute(
+                self._course_select_for_connection(conn, "WHERE c.id = ?"), (cid,)
+            ).fetchone()
         assert row is not None
         return self._course_from_row(row)
 
@@ -145,8 +182,10 @@ class CourseRepository:
         with self._write_lock, self._connect() as conn:
             conn.execute("BEGIN IMMEDIATE")
             row = conn.execute(
-                """SELECT * FROM courses
-                   WHERE owner_user_id = ? AND workspace_kind = 'general_study'""",
+                self._course_select_for_connection(
+                    conn,
+                    "WHERE c.owner_user_id = ? AND c.workspace_kind = 'general_study'"
+                ),
                 (self.owner_user_id,),
             ).fetchone()
             if row is None:
@@ -161,26 +200,29 @@ class CourseRepository:
                     (course_id, self.owner_user_id, now, now),
                 )
                 row = conn.execute(
-                    "SELECT * FROM courses WHERE id = ?",
+                    self._course_select_for_connection(conn, "WHERE c.id = ?"),
                     (course_id,),
                 ).fetchone()
         assert row is not None
         return self._course_from_row(row)
 
     def list_courses(self, *, include_archived: bool = True) -> list[Course]:
-        sql = "SELECT * FROM courses WHERE owner_user_id = ?"
+        where = "WHERE c.owner_user_id = ?"
         params: list[Any] = [self.owner_user_id]
         if not include_archived:
-            sql += " AND state = 'active'"
-        sql += " ORDER BY updated_at DESC, id"
+            where += " AND c.state = 'active'"
         with self._connect() as conn:
+            sql = self._course_select_for_connection(conn, where)
+            sql += " ORDER BY c.updated_at DESC, c.id"
             rows = conn.execute(sql, params).fetchall()
         return [self._course_from_row(row) for row in rows]
 
     def get_course(self, course_id: str) -> Course:
         with self._connect() as conn:
             row = conn.execute(
-                "SELECT * FROM courses WHERE id = ? AND owner_user_id = ?",
+                self._course_select_for_connection(
+                    conn, "WHERE c.id = ? AND c.owner_user_id = ?"
+                ),
                 (course_id, self.owner_user_id),
             ).fetchone()
         if row is None:
@@ -205,7 +247,9 @@ class CourseRepository:
             )
             if result.rowcount != 1:
                 self._raise_missing_or_stale(conn, course_id, expected_state="active")
-            row = conn.execute("SELECT * FROM courses WHERE id = ?", (course_id,)).fetchone()
+            row = conn.execute(
+                self._course_select_for_connection(conn, "WHERE c.id = ?"), (course_id,)
+            ).fetchone()
         assert row is not None
         return self._course_from_row(row)
 
@@ -326,7 +370,9 @@ class CourseRepository:
                 if active_generation is not None:
                     raise CourseConflictError("Course has an active learning operation")
                 self._raise_missing_or_stale(conn, course_id, expected_state="active")
-            row = conn.execute("SELECT * FROM courses WHERE id = ?", (course_id,)).fetchone()
+            row = conn.execute(
+                self._course_select_for_connection(conn, "WHERE c.id = ?"), (course_id,)
+            ).fetchone()
         assert row is not None
         return self._course_from_row(row)
 
@@ -342,7 +388,9 @@ class CourseRepository:
             )
             if result.rowcount != 1:
                 self._raise_missing_or_stale(conn, course_id, expected_state="archived")
-            row = conn.execute("SELECT * FROM courses WHERE id = ?", (course_id,)).fetchone()
+            row = conn.execute(
+                self._course_select_for_connection(conn, "WHERE c.id = ?"), (course_id,)
+            ).fetchone()
         assert row is not None
         return self._course_from_row(row)
 
@@ -359,7 +407,9 @@ class CourseRepository:
             )
             if result.rowcount != 1:
                 self._raise_missing_or_stale(conn, course_id, expected_state="active")
-            row = conn.execute("SELECT * FROM courses WHERE id = ?", (course_id,)).fetchone()
+            row = conn.execute(
+                self._course_select_for_connection(conn, "WHERE c.id = ?"), (course_id,)
+            ).fetchone()
         assert row is not None
         return self._course_from_row(row)
 
@@ -376,7 +426,9 @@ class CourseRepository:
                 (kb_ref, now, course_id, self.owner_user_id),
             )
             row = conn.execute(
-                "SELECT * FROM courses WHERE id = ? AND owner_user_id = ?",
+                self._course_select_for_connection(
+                    conn, "WHERE c.id = ? AND c.owner_user_id = ?"
+                ),
                 (course_id, self.owner_user_id),
             ).fetchone()
         if row is None:
