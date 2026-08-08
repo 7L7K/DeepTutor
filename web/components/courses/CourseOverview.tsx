@@ -50,7 +50,7 @@ export default function CourseOverview() {
     router.push(path);
   }
 
-  if (loading || coursesLoading || course?.id !== courseId) {
+  if (loading || coursesLoading) {
     return (
       <main className="px-6 py-10 sm:px-10">
         <div className="mx-auto max-w-5xl text-sm text-[var(--muted-foreground)]">
@@ -73,6 +73,16 @@ export default function CourseOverview() {
           <div role="alert" className="mt-8 rounded-2xl border border-red-300/60 bg-red-50/60 px-5 py-4 text-sm text-red-900 dark:border-red-900/60 dark:bg-red-950/20 dark:text-red-200">
             {error || "Course not found or not available to this account."}
           </div>
+        </div>
+      </main>
+    );
+  }
+
+  if (course.id !== courseId) {
+    return (
+      <main className="px-6 py-10 sm:px-10">
+        <div className="mx-auto max-w-5xl text-sm text-[var(--muted-foreground)]">
+          Loading Course Hub…
         </div>
       </main>
     );

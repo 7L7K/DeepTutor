@@ -96,7 +96,10 @@ export function CourseProvider({ children }: { children: React.ReactNode }) {
     setLoading(true);
     setError(null);
     try {
-      const userId = identity || (await resolveIdentity());
+      // Keep the initial load callback stable after auth identity resolves.
+      // Depending on the state value here recreates `refresh`, retriggers the
+      // mount effect, and sends a duplicate owner-scoped Course summary query.
+      const userId = identityRef.current || (await resolveIdentity());
       if (!userId) return;
       await loadForIdentity(userId);
     } catch (cause) {
@@ -106,7 +109,7 @@ export function CourseProvider({ children }: { children: React.ReactNode }) {
     } finally {
       setLoading(false);
     }
-  }, [identity, loadForIdentity, resolveIdentity]);
+  }, [loadForIdentity, resolveIdentity]);
 
   useEffect(() => {
     void refresh();
