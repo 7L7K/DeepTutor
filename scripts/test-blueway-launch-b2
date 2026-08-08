@@ -1,0 +1,227 @@
+#!/usr/bin/env bash
+# Hermetic authenticated browser proof for the B2 exact BlueWay Course launch.
+set -euo pipefail
+
+repo_root="$(cd "$(dirname "$0")/.." && pwd)"
+temp_parent="${TMPDIR:-/tmp}"
+temp_parent="${temp_parent%/}"
+runtime_root="$(mktemp -d "$temp_parent/teeechr-b2-browser.XXXXXX")"
+backend_port="${B2_BACKEND_PORT:-8033}"
+frontend_port="${B2_FRONTEND_PORT:-3813}"
+backend_url="http://127.0.0.1:${backend_port}"
+frontend_url="http://localhost:${frontend_port}"
+python_bin="${PYTHON_BIN:-/Users/home/.codex/runtimes/teeechr-b1-python311/bin/python}"
+node_bin_dir="/opt/homebrew/opt/node@22/bin"
+alice_password="$("$python_bin" -c 'import secrets; print(secrets.token_urlsafe(24))')"
+bob_password="$("$python_bin" -c 'import secrets; print(secrets.token_urlsafe(24))')"
+carol_password="$("$python_bin" -c 'import secrets; print(secrets.token_urlsafe(24))')"
+external_course_id="${B2_EXTERNAL_COURSE_ID:-blueway-b2-biology-101}"
+external_term_id="${B2_EXTERNAL_TERM_ID:-Fall 2026}"
+evidence_dir="${B2_EVIDENCE_DIR:-$repo_root/docs/verification/2026-08-07-teeechr-b2-browser}"
+backend_log="$runtime_root/backend.log"
+frontend_log="$runtime_root/frontend.log"
+cookie_jar="$runtime_root/alice.cookies"
+fixture_json="$runtime_root/fixture.json"
+backend_pid=""
+frontend_pid=""
+startup_attempts="${B2_STARTUP_ATTEMPTS:-480}"
+
+mkdir -p "$evidence_dir/playwright-results" "$evidence_dir/playwright-report"
+
+cleanup() {
+  if [ -n "$frontend_pid" ]; then
+    kill "$frontend_pid" 2>/dev/null || true
+    wait "$frontend_pid" 2>/dev/null || true
+  fi
+  if [ -n "$backend_pid" ]; then
+    kill "$backend_pid" 2>/dev/null || true
+    wait "$backend_pid" 2>/dev/null || true
+  fi
+  cp "$backend_log" "$evidence_dir/backend.log" 2>/dev/null || true
+  cp "$frontend_log" "$evidence_dir/frontend.log" 2>/dev/null || true
+  case "$runtime_root" in
+    "$temp_parent"/teeechr-b2-browser.*)
+      rm -rf -- "$runtime_root"
+      ;;
+  esac
+}
+trap cleanup EXIT INT TERM
+
+assert_port_free() {
+  local port="$1"
+  "$python_bin" - "$port" <<'PY'
+import socket
+import sys
+
+port = int(sys.argv[1])
+with socket.socket() as probe:
+    probe.settimeout(0.2)
+    if probe.connect_ex(("127.0.0.1", port)) == 0:
+        raise SystemExit(f"Refusing to use occupied port {port}")
+PY
+}
+
+wait_for_url() {
+  local url="$1"
+  local log_path="$2"
+  local process_id="$3"
+  for _attempt in $(seq 1 "$startup_attempts"); do
+    if curl --fail --silent --show-error "$url" >/dev/null 2>&1; then return 0; fi
+    if ! kill -0 "$process_id" 2>/dev/null; then
+      sed -n '1,240p' "$log_path" >&2
+      return 1
+    fi
+    sleep 0.25
+  done
+  sed -n '1,240p' "$log_path" >&2
+  return 1
+}
+
+start_backend() {
+  cd "$repo_root"
+  DEEPTUTOR_HOME="$runtime_root" \
+  AUTH_ENABLED=true \
+  BACKEND_PORT="$backend_port" \
+  FRONTEND_PORT="$frontend_port" \
+  CORS_ORIGIN="$frontend_url" \
+  CORS_ORIGINS="$frontend_url" \
+  "$python_bin" -m uvicorn deeptutor.api.main:app \
+    --host 127.0.0.1 --port "$backend_port" --no-access-log \
+    >"$backend_log" 2>&1 &
+  backend_pid=$!
+  wait_for_url "$backend_url/api/v1/auth/status" "$backend_log" "$backend_pid"
+}
+
+register_user() {
+  local username="$1"
+  local password="$2"
+  curl --fail --silent --show-error \
+    -X POST "$frontend_url/api/v1/auth/register" \
+    -H "Content-Type: application/json" \
+    --data "{\"username\":\"$username\",\"password\":\"$password\"}" >/dev/null
+}
+
+create_user_as_admin() {
+  local username="$1"
+  local password="$2"
+  curl --fail --silent --show-error \
+    -b "$cookie_jar" \
+    -X POST "$frontend_url/api/v1/auth/users" \
+    -H "Origin: $frontend_url" \
+    -H "Content-Type: application/json" \
+    --data "{\"username\":\"$username\",\"password\":\"$password\"}" >/dev/null
+}
+
+if [ ! -x "$python_bin" ]; then
+  echo "Python runtime is unavailable: $python_bin" >&2
+  exit 1
+fi
+assert_port_free "$backend_port"
+assert_port_free "$frontend_port"
+start_backend
+
+cd "$repo_root/web"
+env PATH="$node_bin_dir:$PATH" \
+  PORT="$frontend_port" \
+  HOSTNAME=127.0.0.1 \
+  DEEPTUTOR_API_BASE_URL="$backend_url" \
+  DEEPTUTOR_AUTH_ENABLED=true \
+  npm run dev >"$frontend_log" 2>&1 &
+frontend_pid=$!
+wait_for_url "$frontend_url/login" "$frontend_log" "$frontend_pid"
+
+register_user "b2_user_a" "$alice_password"
+curl --fail --silent --show-error \
+  -c "$cookie_jar" \
+  -X POST "$frontend_url/api/v1/auth/login" \
+  -H "Content-Type: application/json" \
+  --data "{\"username\":\"b2_user_a\",\"password\":\"$alice_password\"}" >/dev/null
+create_user_as_admin "b2_user_b" "$bob_password"
+create_user_as_admin "b2_user_c" "$carol_password"
+alice_identity="$(curl --fail --silent --show-error -b "$cookie_jar" "$frontend_url/api/v1/auth/status" | "$python_bin" -c 'import json, sys; print(json.load(sys.stdin)["user_id"])')"
+
+cd "$repo_root"
+DEEPTUTOR_HOME="$runtime_root" "$python_bin" - "$alice_identity" "$external_course_id" "$external_term_id" "$fixture_json" <<'PY'
+import json
+import sys
+import time
+from pathlib import Path
+
+from deeptutor.courses.repository import CourseRepository
+from deeptutor.integrations.blueway.repository import BlueWayRepository
+from deeptutor.multi_user.paths import get_personal_path_service
+
+owner_user_id, external_course_id, external_term_id, fixture_path = sys.argv[1:]
+paths = get_personal_path_service(owner_user_id)
+courses = CourseRepository(paths.get_courses_db(), owner_user_id)
+blueway = BlueWayRepository(courses)
+connection = blueway.create_active_connection(
+    external_subject="blueway-b2-local-user-a",
+    scope_version="v1",
+)
+course = blueway.create_course_map(
+    connection_id=connection.id,
+    external_course_id=external_course_id,
+    external_term_id=external_term_id,
+    remote_title="Biology 101",
+    remote_state="active",
+    remote_hash="a" * 64,
+    snapshot_id="blueway-b2-snapshot-fall-2026",
+    expected_generation=connection.grant_generation,
+)
+source = courses.create_source(
+    course.id,
+    kind="blueway snapshot",
+    display_name="Biology 101 Fall 2026 materials",
+    manifest=[],
+    content_sha256="b" * 64,
+)
+manual_course = courses.create_course("Psychology 201")
+with courses._write_lock, courses._connect() as conn:  # noqa: SLF001
+    conn.execute(
+        "UPDATE blueway_connections SET last_sync_at = ? WHERE id = ?",
+        (time.time(), connection.id),
+    )
+    conn.execute(
+        "UPDATE course_sources SET state = 'ready' WHERE id = ?",
+        (source.id,),
+    )
+Path(fixture_path).write_text(
+    json.dumps(
+        {
+            "owner_user_id": owner_user_id,
+            "internal_course_id": course.id,
+            "external_course_id": external_course_id,
+            "external_term_id": external_term_id,
+            "manual_course_id": manual_course.id,
+            "course_count": 2,
+        }
+    ),
+    encoding="utf-8",
+)
+Path(fixture_path).chmod(0o600)
+PY
+
+internal_course_id="$("$python_bin" -c 'import json, sys; print(json.load(open(sys.argv[1]))["internal_course_id"])' "$fixture_json")"
+
+cd "$repo_root/web"
+env PATH="$node_bin_dir:$PATH" \
+  B2_USER_A_PASSWORD="$alice_password" \
+  B2_USER_B_PASSWORD="$bob_password" \
+  B2_USER_C_PASSWORD="$carol_password" \
+  B2_EXTERNAL_COURSE_ID="$external_course_id" \
+  B2_EXTERNAL_TERM_ID="$external_term_id" \
+  B2_INTERNAL_COURSE_ID="$internal_course_id" \
+  B2_EVIDENCE_DIR="$evidence_dir" \
+  WEB_BASE_URL="$frontend_url" \
+  PW_SERIAL=1 \
+  PW_OUTPUT_DIR="$evidence_dir/playwright-results" \
+  PW_HTML_REPORT_DIR="$evidence_dir/playwright-report" \
+  npx playwright test tests/e2e/blueway-launch-b2.spec.ts --project=phase4-authenticated
+
+cp "$fixture_json" "$evidence_dir/fixture.json"
+chmod 600 "$evidence_dir/fixture.json"
+printf 'backend_port=%s\nfrontend_port=%s\nnode=%s\npython=%s\n' \
+  "$backend_port" "$frontend_port" \
+  "$(env PATH="$node_bin_dir:$PATH" node --version)" \
+  "$("$python_bin" --version 2>&1)" > "$evidence_dir/runtime.txt"

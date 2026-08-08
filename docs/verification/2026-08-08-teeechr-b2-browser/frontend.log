@@ -1,0 +1,53 @@
+
+> opentutor-web@1.0.0 predev
+> node ./scripts/check-node-version.mjs
+
+
+> opentutor-web@1.0.0 dev
+> node --max-old-space-size=4096 ./node_modules/next/dist/bin/next dev
+
+▲ Next.js 16.2.3 (Turbopack)
+- Local:         http://localhost:3814
+- Network:       http://10.0.0.87:3814
+✓ Ready in 268ms
+- Experiments (use with caution):
+  · proxyClientMaxBodySize: 220200960
+
+Browserslist: browsers data (caniuse-lite) is 8 months old. Please run:
+  npx update-browserslist-db@latest
+  Why you should do it regularly: https://github.com/browserslist/update-db#readme
+ GET /login 200 in 941ms (next.js: 790ms, proxy.ts: 62ms, application-code: 88ms)
+ GET /login 200 in 26ms (next.js: 3ms, proxy.ts: 2ms, application-code: 21ms)
+ GET / 200 in 27ms (next.js: 9ms, proxy.ts: 3ms, application-code: 15ms)
+ GET /classes 200 in 34ms (next.js: 14ms, proxy.ts: 6ms, application-code: 14ms)
+ GET /classes 200 in 86ms (next.js: 1943µs, proxy.ts: 3ms, application-code: 81ms)
+ GET /launch/blueway?external_course_id=blueway-b2-biology-101&external_term_id=Fall%202026 200 in 32ms (next.js: 7ms, proxy.ts: 1317µs, application-code: 24ms)
+ GET /classes/crs_f85ece2874f84e4ead17453bc306eb7f 200 in 222ms (next.js: 204ms, proxy.ts: 1410µs, application-code: 16ms)
+ GET /launch/blueway?external_course_id=blueway-b2-biology-101&external_term_id=Fall%202026 200 in 23ms (next.js: 1280µs, proxy.ts: 1166µs, application-code: 21ms)
+ GET /classes/crs_f85ece2874f84e4ead17453bc306eb7f 200 in 17ms (next.js: 4ms, proxy.ts: 1273µs, application-code: 11ms)
+ GET /login?next=%2Flaunch%2Fblueway%3Fexternal_course_id%3Dblueway-b2-biology-101%26external_term_id%3DFall%2B2026 200 in 18ms (next.js: 1637µs, proxy.ts: 1233µs, application-code: 15ms)
+ GET /launch/blueway?external_course_id=blueway-b2-biology-101&external_term_id=Fall+2026 200 in 13ms (next.js: 1912µs, proxy.ts: 1358µs, application-code: 10ms)
+ GET /classes/crs_f85ece2874f84e4ead17453bc306eb7f 200 in 14ms (next.js: 3ms, proxy.ts: 1261µs, application-code: 9ms)
+ GET /login 200 in 17ms (next.js: 1056µs, proxy.ts: 1126µs, application-code: 15ms)
+ GET / 200 in 12ms (next.js: 1504µs, proxy.ts: 1929µs, application-code: 9ms)
+ GET /classes 200 in 16ms (next.js: 3ms, proxy.ts: 4ms, application-code: 9ms)
+ GET /classes 200 in 9ms (next.js: 1235µs, proxy.ts: 1049µs, application-code: 7ms)
+ GET /launch/blueway?external_course_id=blueway-b2-biology-101&external_term_id=Fall%202026 200 in 23ms (next.js: 1662µs, proxy.ts: 1148µs, application-code: 20ms)
+ GET /login 200 in 19ms (next.js: 1191µs, proxy.ts: 1144µs, application-code: 16ms)
+ GET / 200 in 10ms (next.js: 1037µs, proxy.ts: 2ms, application-code: 7ms)
+ GET /classes 200 in 15ms (next.js: 3ms, proxy.ts: 5ms, application-code: 8ms)
+ GET /classes 200 in 9ms (next.js: 1632µs, proxy.ts: 1151µs, application-code: 6ms)
+ GET /classes 200 in 40ms (next.js: 920µs, proxy.ts: 1534µs, application-code: 38ms)
+ GET /login 200 in 21ms (next.js: 1455µs, proxy.ts: 1452µs, application-code: 18ms)
+ GET / 200 in 12ms (next.js: 1433µs, proxy.ts: 2ms, application-code: 9ms)
+ GET /classes 200 in 25ms (next.js: 6ms, proxy.ts: 6ms, application-code: 13ms)
+ GET /classes 200 in 13ms (next.js: 1113µs, proxy.ts: 2ms, application-code: 10ms)
+ GET /launch/blueway?external_course_id=blueway-b2-biology-101&external_term_id=winter-2027 200 in 35ms (next.js: 2ms, proxy.ts: 3ms, application-code: 30ms)
+ GET /login 200 in 19ms (next.js: 995µs, proxy.ts: 1250µs, application-code: 16ms)
+ GET / 200 in 14ms (next.js: 1347µs, proxy.ts: 3ms, application-code: 10ms)
+ GET /classes 200 in 21ms (next.js: 4ms, proxy.ts: 4ms, application-code: 14ms)
+ GET /classes 200 in 14ms (next.js: 1005µs, proxy.ts: 1050µs, application-code: 12ms)
+ GET /launch/blueway?external_course_id=blueway-b2-biology-101&external_term_id=Fall%202026 200 in 33ms (next.js: 2ms, proxy.ts: 1922µs, application-code: 29ms)
+ GET /classes/crs_f85ece2874f84e4ead17453bc306eb7f 200 in 13ms (next.js: 3ms, proxy.ts: 1428µs, application-code: 9ms)
+ GET /classes 200 in 11ms (next.js: 1701µs, proxy.ts: 1514µs, application-code: 8ms)
+[?25h

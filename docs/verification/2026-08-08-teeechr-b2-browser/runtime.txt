@@ -1,0 +1,4 @@
+backend_port=8034
+frontend_port=3814
+node=v22.23.2
+python=Python 3.11.15
