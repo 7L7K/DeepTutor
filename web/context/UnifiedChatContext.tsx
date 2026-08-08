@@ -1068,12 +1068,12 @@ export function UnifiedChatProvider({ children }: { children: React.ReactNode })
         // (the previous approach) re-downloaded, re-normalized, and
         // re-rendered the entire transcript after every turn, freezing
         // the tab for seconds on long conversations.
+        const doneMeta = event.metadata as {
+          user_message_id?: number
+          assistant_message_id?: number
+        } | null
+        const assistantMessageId = doneMeta?.assistant_message_id ?? null
         if (status === 'completed') {
-          const doneMeta = event.metadata as {
-            user_message_id?: number
-            assistant_message_id?: number
-          } | null
-          const assistantMessageId = doneMeta?.assistant_message_id ?? null
           if (assistantMessageId != null) {
             dispatch({
               type: 'RECONCILE_TURN',
@@ -1092,6 +1092,18 @@ export function UnifiedChatProvider({ children }: { children: React.ReactNode })
                 /* non-fatal — local state remains usable */
               })
             }
+          }
+        } else if (assistantMessageId != null) {
+          // Course Chat persists a structured terminal-error event row so a
+          // route remount cannot erase the visible provider-unavailable
+          // state. The failed DONE is published only after that row commits;
+          // refresh once here to replace any pre-commit route snapshot.
+          const failedSession = stateRef.current.sessions[effectiveKey]
+          const sessionId = failedSession?.sessionId
+          if (sessionId) {
+            loadSessionRef.current?.(sessionId).catch(() => {
+              /* live terminal event remains visible when refresh fails */
+            })
           }
         }
         return

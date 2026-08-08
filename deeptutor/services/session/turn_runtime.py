@@ -1323,6 +1323,8 @@ class TurnRuntimeManager:
         attachment_records = []
         assistant_events: list[dict[str, Any]] = []
         assistant_content = ""
+        new_user_message_id: int | str | None = None
+        assistant_message_id: int | str | None = None
         # Per-round content segments + narration call_ids: a chat-loop round's
         # text is captured live but a round that resolves as narration is
         # dropped from the persisted answer (mirrors the frontend bubble).
@@ -1769,8 +1771,6 @@ class TurnRuntimeManager:
             # SQLite returns integer rowids; PocketBase returns its string
             # record ids. Both are opaque to this layer — they only flow into
             # ``parent_message_id`` chaining and the DONE reconcile metadata.
-            new_user_message_id: int | str | None = None
-            assistant_message_id: int | str | None = None
             if persist_user_message:
                 self._assert_execution_owner_current(execution)
                 # Pass parent explicitly only when the FE pinned it (covers
@@ -1901,9 +1901,14 @@ class TurnRuntimeManager:
                 # and a falsely completed turn. Preserve only content that was
                 # actually streamed before the failure.
                 partial_content = _persisted_answer()
-                if partial_content or generated_attachments:
+                persist_course_failure = bool(
+                    payload.get("course_id")
+                    and capability_name == "chat"
+                    and assistant_events
+                )
+                if partial_content or generated_attachments or persist_course_failure:
                     self._assert_execution_owner_current(execution)
-                    await self.store.add_message(
+                    assistant_message_id = await self.store.add_message(
                         session_id=session_id,
                         role="assistant",
                         content=partial_content,
@@ -1926,6 +1931,19 @@ class TurnRuntimeManager:
                     **failed_done.metadata,
                     "status": "failed",
                 }
+                persisted_ids = {
+                    key: value
+                    for key, value in (
+                        ("user_message_id", new_user_message_id),
+                        ("assistant_message_id", assistant_message_id),
+                    )
+                    if value
+                }
+                if persisted_ids:
+                    failed_done.metadata = {
+                        **failed_done.metadata,
+                        **persisted_ids,
+                    }
                 await self._publish_live_event(execution, failed_done)
                 stream_done_sent = True
                 return

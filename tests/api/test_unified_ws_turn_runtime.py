@@ -158,10 +158,19 @@ def test_turn_commit_revalidation_rejects_disable_and_role_change(monkeypatch) -
     assert TurnRuntimeManager._execution_owner_is_current(execution) is False
 
 
+@pytest.mark.parametrize(
+    ("course_id", "expected_roles"),
+    [
+        (None, ["user"]),
+        ("crs_one", ["user", "assistant"]),
+    ],
+)
 @pytest.mark.asyncio
-async def test_terminal_capability_error_marks_turn_failed_without_blank_assistant(
+async def test_terminal_capability_error_persists_only_course_failure_receipt(
     monkeypatch,
     tmp_path,
+    course_id,
+    expected_roles,
 ) -> None:
     store = SQLiteSessionStore(tmp_path / "chat_history.db")
     runtime = TurnRuntimeManager(store)
@@ -209,6 +218,20 @@ async def test_terminal_capability_error_marks_turn_failed_without_blank_assista
     )
     monkeypatch.setattr("deeptutor.services.skill.get_skill_service", _fake_skill_service)
     monkeypatch.setattr("deeptutor.services.persona.get_persona_service", _fake_persona_service)
+    monkeypatch.setattr(
+        "deeptutor.courses.service.resolve_course_turn_payload",
+        lambda requested_course_id, payload, **_kwargs: {
+            **payload,
+            "course_context": {
+                "course_id": requested_course_id,
+                "course_revision": 1,
+                "source_ids": ["src_one"],
+                "source_revisions": {"src_one": 1},
+                "source_fingerprints": {"src_one": "a" * 64},
+                "source_titles": {"src_one": "Source one"},
+            },
+        },
+    )
 
     session, turn = await runtime.start_turn(
         {
@@ -221,6 +244,7 @@ async def test_terminal_capability_error_marks_turn_failed_without_blank_assista
             "attachments": [],
             "language": "en",
             "config": {},
+            "course_id": course_id,
         }
     )
     events = [event async for event in runtime.subscribe_turn(turn["id"], after_seq=0)]
@@ -231,9 +255,15 @@ async def test_terminal_capability_error_marks_turn_failed_without_blank_assista
     assert persisted["status"] == "failed"
     assert persisted["error"] == "provider rejected request"
     assert detail is not None
-    assert [message["role"] for message in detail["messages"]] == ["user"]
+    assert [message["role"] for message in detail["messages"]] == expected_roles
+    if course_id:
+        assistant = detail["messages"][-1]
+        assert assistant["content"] == ""
+        assert [event["type"] for event in assistant["events"]] == ["error"]
+        assert assistant["events"][0]["content"] == "provider rejected request"
     assert [event["type"] for event in events] == ["session", "error", "done"]
     assert events[-1]["metadata"]["status"] == "failed"
+    assert ("assistant_message_id" in events[-1]["metadata"]) is bool(course_id)
 
 
 @pytest.mark.asyncio
