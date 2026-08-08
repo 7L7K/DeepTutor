@@ -1,0 +1,24 @@
+C2 authenticated local browser evidence manifest
+
+Slice: Vertical Slice C2 — Course Learning Loop
+Branch: feature/teeechr-course-learning-loop-c2
+Source head before docs closeout: 08c0d809
+Runtime: Node v22.23.2; Python 3.11.15; local backend 8045; local frontend 3825
+Provider: deterministic local test provider
+Fixture: c2_alice Biology 101 / fall-2026; c2_bob private Course; c2_carol zero Courses
+
+Proof layers:
+- source: Course-scoped Chat handoff, Practice, Attempt, grading, remediation,
+  and Review provenance are in the committed source/tests.
+- test: 3887 backend tests passed in the parallel xdist gate; 431 web Node
+  tests passed; lint/typecheck/build passed.
+- browser: authenticated local IAB campaign completed the Chat -> Practice ->
+  Attempt -> Results -> Review proposal -> approval -> Course loop.
+- backend: JSON receipts record the Course, ready revision, Attempt score,
+  ownership denial, zero-Course response, and Review origin.
+
+Evidence directories:
+- backend/: JSON and HTTP status receipts
+- screenshots/: desktop and 390x844 mobile captures
+- performance-check.txt: one owner-scoped Course list request-shape check
+- artifact/: this manifest and SHA256SUMS.txt

@@ -1,0 +1,21 @@
+C2 /classes performance check
+
+Surface: /classes
+Fixture: User A (c2_alice), one owner-scoped Biology 101 Course
+
+Browser/source result:
+- web/context/CourseContext.tsx loadForIdentity calls listCourses() once for the
+  owner-scoped Course summary.
+- web/components/courses/ClassesHome.tsx renders the returned summary and does
+  not call getCourse, list sources, Course Chat readiness, Practice, Review, or
+  any provider for each card.
+- deeptutor/courses/repository.py list_courses executes one owner-scoped
+  courses SELECT and returns the Course rows; it does not call a provider.
+- the CourseContext comment explicitly guards the initial load callback against
+  duplicate owner-scoped summary queries.
+
+Count conclusion:
+1 owner-scoped Course summary query for /classes; 0 per-Course provider calls.
+The IAB browser campaign did not expose a network-event listener, so this is a
+source-backed request-shape check plus the live /classes render, not a low-level
+HTTP trace of every browser request.

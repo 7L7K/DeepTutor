@@ -1,0 +1,16 @@
+{
+    "id": "prv_5e31cb9489b34b89b376a29f951f6830",
+    "practice_set_id": "prc_7de79a91b080461781cb9a377e24346b",
+    "revision_number": 1,
+    "state": "ready",
+    "source_snapshot": [
+        {
+            "source_id": "src_4451ae7e7399487db2f47409c11a761b",
+            "source_revision": 2,
+            "content_sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+        }
+    ],
+    "objective_ids": [],
+    "created_at": 1786231594.546535,
+    "ready_at": 1786231594.815114
+}

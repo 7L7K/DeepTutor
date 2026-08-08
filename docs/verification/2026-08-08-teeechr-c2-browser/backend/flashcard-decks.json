@@ -1,0 +1,32 @@
+{
+  "flashcard_decks": [
+    {
+      "archived_at": null,
+      "course_id": "crs_5eed00ef127f446082ccaadf81263f41",
+      "created_at": 1786231714.858882,
+      "generation_receipt": {
+        "item_limit": 8,
+        "operation_id": "ofg_2488292685e2407283107329b2f6afd7",
+        "source_count": 1
+      },
+      "id": "dck_1680ade31db6495ab0deb1fb7ec13db6",
+      "mode": "generated",
+      "owner_user_id": "u_514ad1c6b9d54054905310e13aac20aa",
+      "ready_at": 1786231728.198247,
+      "revision": 2,
+      "source_snapshot": [
+        {
+          "content_sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+          "source_id": "src_4451ae7e7399487db2f47409c11a761b",
+          "source_revision": 2
+        }
+      ],
+      "state": "ready",
+      "supersedes_deck_id": null,
+      "title": "Course flashcards",
+      "updated_at": 1786231728.198247,
+      "write_epoch": 2
+    }
+  ],
+  "next_offset": null
+}

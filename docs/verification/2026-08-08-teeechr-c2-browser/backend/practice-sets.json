@@ -1,0 +1,60 @@
+{
+  "practice_sets": [
+    {
+      "archived_at": null,
+      "course_id": "crs_5eed00ef127f446082ccaadf81263f41",
+      "created_at": 1786231594.546535,
+      "current_revision_id": "prv_5e31cb9489b34b89b376a29f951f6830",
+      "id": "prc_7de79a91b080461781cb9a377e24346b",
+      "mode": "generated",
+      "owner_user_id": "u_514ad1c6b9d54054905310e13aac20aa",
+      "revision": 2,
+      "state": "draft",
+      "title": "Course quiz",
+      "updated_at": 1786231594.815114,
+      "write_epoch": 2
+    },
+    {
+      "archived_at": null,
+      "course_id": "crs_5eed00ef127f446082ccaadf81263f41",
+      "created_at": 1786231560.285217,
+      "current_revision_id": "prv_ffd59317f39b4aef922335e470797a29",
+      "id": "prc_b509f03ce6024f3ba432da3d9766ddef",
+      "mode": "generated",
+      "owner_user_id": "u_514ad1c6b9d54054905310e13aac20aa",
+      "revision": 2,
+      "state": "draft",
+      "title": "Course quiz",
+      "updated_at": 1786231560.390305,
+      "write_epoch": 2
+    },
+    {
+      "archived_at": null,
+      "course_id": "crs_5eed00ef127f446082ccaadf81263f41",
+      "created_at": 1786231365.171251,
+      "current_revision_id": "prv_e7042f8e732345e1aac7b30fc68499c4",
+      "id": "prc_d71a5c229e1f4ec79b29c198f80cd3f7",
+      "mode": "generated",
+      "owner_user_id": "u_514ad1c6b9d54054905310e13aac20aa",
+      "revision": 2,
+      "state": "draft",
+      "title": "Course quiz",
+      "updated_at": 1786231365.2717628,
+      "write_epoch": 2
+    },
+    {
+      "archived_at": null,
+      "course_id": "crs_5eed00ef127f446082ccaadf81263f41",
+      "created_at": 1786231336.587531,
+      "current_revision_id": null,
+      "id": "prc_d3201a62232d4a7babe92d71fe266a28",
+      "mode": "generated",
+      "owner_user_id": "u_514ad1c6b9d54054905310e13aac20aa",
+      "revision": 1,
+      "state": "draft",
+      "title": "Course quiz",
+      "updated_at": 1786231336.587531,
+      "write_epoch": 1
+    }
+  ]
+}

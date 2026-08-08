@@ -33,6 +33,7 @@ worktree is in scope.
 - Base provenance: published `fork/feature/teeechr-course-chat-c1`
 - Runtime: Node `v22.23.2`, npm `10.9.8`, Python `3.11.15`
 - Python environment: `/Users/home/.codex/runtimes/teeechr-b1-python311`
+- Implementation head before the docs closeout: `08c0d809`
 
 Unchanged C1 baseline on this worktree:
 
@@ -48,6 +49,20 @@ The pytest warnings are temporary-directory cleanup warnings from the existing
 suite. The lint warnings are the accepted C1 backlog. The fresh worktree's
 ignored `data/user/settings/main.yaml`, `data/user/settings/agents.yaml`, and
 `web/node_modules` are local setup artifacts and are never staged.
+
+Final C2 source/test/build gate after the implementation fixes:
+
+```text
+backend: 3887 passed, 8 skipped, 34 warnings, 193.28s, pytest-xdist -n 4 --dist loadfile
+web test: 431 passed, 0 failed
+lint: 0 errors, 243 warnings
+typecheck: passed
+production build: passed; C2 Course routes compiled
+```
+
+The backend warnings are the existing temporary-directory cleanup and Python
+deprecation warnings. The lint warnings are the existing localization/image
+warning backlog; C2 added no lint errors.
 
 ## Current-system audit
 
@@ -78,6 +93,9 @@ Current browser routes:
 /classes/{courseId}/chat
 /classes/{courseId}/chat/{sessionId}
 /classes/{courseId}/materials
+/classes/{courseId}/practice
+/classes/{courseId}/practice/{practiceSetId}/attempts/{attemptId}
+/classes/{courseId}/review
 /practice
 /flashcards
 ```
@@ -223,6 +241,27 @@ provider failure, zero-ready/processing-only state, unauthorized resources,
 archived Course, and Course/session mismatch. Chat reading is not learning
 evidence; only Attempt answers and committed grading evidence count.
 
+The final local fixture materialized these exact records:
+
+```text
+Course: Biology 101 / fall-2026
+Course id: crs_5eed00ef127f446082ccaadf81263f41
+Ready source: src_4451ae7e7399487db2f47409c11a761b
+Practice set: prc_7de79a91b080461781cb9a377e24346b
+Ready revision: prv_5e31cb9489b34b89b376a29f951f6830
+Attempt: att_2cfbb798c5a44c6299f1261bcbdc4173
+Result: 3 correct out of 5; two missed items
+Review operation: ofg_2488292685e2407283107329b2f6afd7
+Approved deck: dck_1680ade31db6495ab0deb1fb7ec13db6
+```
+
+The authenticated browser campaign also proved the lifecycle evidence that
+the source tests require: the supported Course Chat turn persisted its
+completed lifecycle marker, the Practice route reopened the same Attempt after
+refresh, the two missed question IDs and their grading evidence IDs became the
+Review operation origin, and approval produced eight ready cards without a
+second Course or cross-owner record.
+
 ## Failure and safety contracts
 
 | Failure | Required C2 behavior |
@@ -312,6 +351,14 @@ Review proposal, approved Review, Course return, cross-user denial,
 Course/session/Attempt mismatch, and keyboard/focus order. The receipt must
 also retain runtime versions, exact fixture IDs, routes, backend/web outputs,
 screenshots, and checksums.
+
+Completed local browser evidence is archived under
+`docs/verification/2026-08-08-teeechr-c2-browser/`. It includes desktop Course,
+Review, unauthorized, and zero-Course captures; 390×844 Classes, Course,
+Materials/source-state, Results, and approved Review captures; JSON backend
+receipts; and the campaign summary. The direct-link Attempt route was reopened
+as the same owner and Course after refresh. The browser campaign used the
+deterministic local provider and is not hosted/provider/device/release proof.
 
 ## Non-goals and stop conditions
 

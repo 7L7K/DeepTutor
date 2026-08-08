@@ -1,0 +1,14 @@
+{
+  "archived_at": null,
+  "created_at": 1786231139.0471659,
+  "id": "crs_5eed00ef127f446082ccaadf81263f41",
+  "managed_kb_ref": null,
+  "owner_user_id": "u_514ad1c6b9d54054905310e13aac20aa",
+  "revision": 1,
+  "state": "active",
+  "term": "fall-2026",
+  "title": "Biology 101",
+  "updated_at": 1786231139.0471659,
+  "workspace_kind": "academic_course",
+  "write_epoch": 1
+}

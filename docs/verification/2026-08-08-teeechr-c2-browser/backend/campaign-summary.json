@@ -1,0 +1,77 @@
+{
+  "attempt": {
+    "course_id": "crs_5eed00ef127f446082ccaadf81263f41",
+    "graded_at": 1786231707.4761422,
+    "id": "att_2cfbb798c5a44c6299f1261bcbdc4173",
+    "practice_set_id": "prc_7de79a91b080461781cb9a377e24346b",
+    "practice_set_revision_id": "prv_5e31cb9489b34b89b376a29f951f6830",
+    "score": {
+      "correct": 3,
+      "fraction": 0.6,
+      "total": 5
+    },
+    "state": "graded",
+    "submitted_at": 1786231703.823731
+  },
+  "bob_alice_course_http": "404",
+  "carol_courses_http": "200",
+  "course": {
+    "id": "crs_5eed00ef127f446082ccaadf81263f41",
+    "owner_user_id": "u_514ad1c6b9d54054905310e13aac20aa",
+    "state": "active",
+    "term": "fall-2026",
+    "title": "Biology 101"
+  },
+  "decks": [
+    {
+      "id": "dck_1680ade31db6495ab0deb1fb7ec13db6",
+      "revision": 2,
+      "state": "ready",
+      "title": "Course flashcards"
+    }
+  ],
+  "generation_operations": [
+    {
+      "candidate_count": 8,
+      "candidate_revision": 1,
+      "id": "ofg_2488292685e2407283107329b2f6afd7",
+      "origin": {
+        "context_sha256": null,
+        "context_summary": null,
+        "grading_evidence_ids": [
+          "grd_3d80a6dafb2442ca9bc718eed581ecd4",
+          "grd_88473a0b5f8947e794f555a556fd9e7f"
+        ],
+        "kind": "practice_remediation",
+        "message_id": null,
+        "practice_attempt_id": "att_2cfbb798c5a44c6299f1261bcbdc4173",
+        "practice_question_ids": [
+          "qst_07ccbe90900347348c1b43a358475491",
+          "qst_5e2622a6a56d4288b1247a48df541d74"
+        ],
+        "practice_set_id": "prc_7de79a91b080461781cb9a377e24346b",
+        "practice_set_revision_id": "prv_5e31cb9489b34b89b376a29f951f6830",
+        "selected_message_ids": [],
+        "session_id": null
+      },
+      "state": "completed"
+    }
+  ],
+  "practice_set": {
+    "course_id": "crs_5eed00ef127f446082ccaadf81263f41",
+    "current_revision_id": "prv_5e31cb9489b34b89b376a29f951f6830",
+    "id": "prc_7de79a91b080461781cb9a377e24346b",
+    "state": "draft",
+    "title": "Course quiz",
+    "write_epoch": 2
+  },
+  "results": {
+    "correct": 3,
+    "fraction": 0.6,
+    "missed_item_ids": [
+      "ati_92310e6f907f4308bb774dbbcf304a0f",
+      "ati_7cf1e58197b643a981464342925e1c5f"
+    ],
+    "total": 5
+  }
+}

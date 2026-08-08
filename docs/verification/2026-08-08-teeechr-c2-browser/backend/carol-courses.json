@@ -1,0 +1,10 @@
+{
+  "capabilities": {
+    "flashcard_generation": true,
+    "flashcard_generation_reason": null,
+    "grounded_generation": true,
+    "grounded_generation_reason": null,
+    "practice_generation": true
+  },
+  "courses": []
+}
