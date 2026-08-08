@@ -96,9 +96,11 @@ are exercised:
 - TEEECHR implementation commits: backend `d8486d51`, web/auth `77ad469d`.
   BlueWay commits: checkpoint timeout `c3d11e7` and `634a5f2`, launch
   card/URL/state gate `eb4914e`. The documentation/proof receipt is committed
-  in the final TEEECHR docs commit.
-- Push state: pending; TEEECHR will use `fork`, BlueWay will use `origin`, and
-  neither canonical main branch will be modified.
+  in the TEEECHR docs commit `074587e0`; this push-state receipt is the final
+  post-push docs commit.
+- Push state: TEEECHR was pushed to `fork/feature/blueway-exact-course-launch-b2`;
+  BlueWay was pushed to `origin/feature/teeechr-web-course-launch-b2`. Neither
+  canonical main branch or TEEECHR upstream `origin` was modified.
 
 No hosted, production-secret, physical-device, TestFlight, native simulator,
 or release claim is made by this receipt until a separate proof packet records
