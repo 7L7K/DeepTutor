@@ -343,8 +343,17 @@ class AgenticChatPipeline:
         tool_schemas = (
             self._build_llm_tool_schemas(enabled_tools, context) if use_native_tools else None
         )
-        if tool_schemas is not None and self._tool_view is not None:
-            self._tool_view.attach(tool_schemas)
+        if tool_schemas is not None:
+            if self._tool_view is not None:
+                self._tool_view.attach(tool_schemas)
+            elif self._deferred_loader is not None:
+                # Keep the loader contract intact for alternate preparation
+                # paths (and lightweight pipeline doubles): schemas loaded by
+                # the first round must enter the live list before the next
+                # request is authorized. The normal provider path uses the
+                # equivalent ProviderToolView.attach() operation above.
+                tool_schemas.extend(self._deferred_loader.initial_schemas())
+                self._deferred_loader.bind_live_schemas(tool_schemas)
 
         loop = AgentLoop(
             pipeline=self,
