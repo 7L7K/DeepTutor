@@ -1,0 +1,12 @@
+B1 responsive proof boundary
+
+The in-app Browser viewport capability was requested with width=390 and
+height=844. The browser page still reported window.innerWidth=845,
+window.innerHeight=998, and max-width:767px=false after the override and
+reload. A fresh tab reported its fixed 1280x720 viewport as well.
+
+The resulting fixed-viewport screenshots are retained as diagnostic attempts,
+not accepted narrow-mobile proof. The source layout still contains the
+responsive contract (AppShell max-md drawer and Course card md:grid-cols-2),
+but this campaign does not claim browser-level narrow-mobile proof until the
+in-app viewport capability is operational.

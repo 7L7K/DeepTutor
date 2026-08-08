@@ -1,0 +1,16 @@
+B1 local browser fixtures
+
+User A: user_a / u_a199c17d13c342059ddcd892b05145ca
+- Biology 101: crs_2990d73a0be64dd3864b9375b4b9f57a
+  - BlueWay-connected mapping: external course biology-101, term Fall 2026
+  - Failed source fixture: lab-notes.pdf / src_0655185fe38d42a385255e3fe7e73801
+- Psychology 201: crs_ac18fd6c89644bf2afc40915345c3ba7
+  - Manual Course; term remains null / "Term not linked yet"
+
+User B: user_b / u_e42fe49aa6db4bab8bf5cfcd525b69b3
+- Separate Course: crs_043f88620ad04d9f9b5ccf3a3dcd9c5b
+
+User C: user_c / u_feb4b81d44e245bc997fd3738b5a824c
+- Zero Courses
+
+Passwords and auth tokens are intentionally not preserved.

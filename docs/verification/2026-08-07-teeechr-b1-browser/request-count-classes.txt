@@ -1,0 +1,19 @@
+B1 browser performance check
+
+Runtime: local frontend http://localhost:3812, local backend http://127.0.0.1:8031
+Fixture: User A (user_a), authenticated browser session
+Navigation: fresh GET /classes after the runtime fix
+
+Observed backend requests for that navigation:
+
+- GET /api/v1/auth/status — 200
+- GET /api/v1/settings — 200
+- GET /api/v1/sessions?limit=50&offset=0 — 200
+- GET /api/v1/auth/status — 200
+- GET /api/v1/auth/status — 200
+- GET /api/v1/courses — 200 (exactly one owner-scoped Course summary request)
+
+No per-Course source-count, mapping, or provider requests were observed in the
+fresh /classes trace. The first trace, before the closeout fix, made two
+identical /api/v1/courses requests during initial identity resolution; commit
+b91b1315 removes that duplicate.
