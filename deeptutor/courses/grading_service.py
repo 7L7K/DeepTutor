@@ -33,6 +33,11 @@ class CourseGradingService:
     ) -> tuple[str, list[str], list[str]]:
         return self.repository.remediation_scope(course_id, attempt_id)
 
+    def remediation_provenance(
+        self, course_id: str, attempt_id: str
+    ) -> dict[str, object]:
+        return self.repository.remediation_provenance(course_id, attempt_id)
+
     def _deliver_pending(
         self, course_id: str, practice_set_id: str, attempt_id: str
     ) -> None:

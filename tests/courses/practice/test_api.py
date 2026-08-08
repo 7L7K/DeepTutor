@@ -226,15 +226,16 @@ def test_manual_practice_api_lifecycle_autosave_idempotency_and_results(
             "content_sha256": source["content_sha256"],
         }
     ]
-    assert remediation.json()["origin"] == {
-        "kind": "practice_remediation",
-        "session_id": None,
-        "message_id": None,
-        "practice_attempt_id": view["attempt"]["id"],
-        "selected_message_ids": [],
-        "context_sha256": None,
-        "context_summary": None,
-    }
+    remediation_origin = remediation.json()["origin"]
+    assert remediation_origin["kind"] == "practice_remediation"
+    assert remediation_origin["practice_attempt_id"] == view["attempt"]["id"]
+    assert remediation_origin["practice_set_id"] == practice_set["id"]
+    assert remediation_origin["practice_set_revision_id"] == revision["id"]
+    assert remediation_origin["practice_question_ids"] == [
+        view["items"][0]["question_id"]
+    ]
+    assert len(remediation_origin["grading_evidence_ids"]) == 1
+    assert remediation_origin["grading_evidence_ids"][0].startswith("grd_")
     assert "focus_not_supported" not in remediation.json()["warnings"]
     forged = practice_client.post(
         f"/api/v1/courses/{course_id}/flashcard-generation",

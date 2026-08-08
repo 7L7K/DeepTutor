@@ -348,6 +348,47 @@ class CourseGradingRepository:
                 )
             return str(attempt["practice_set_id"]), objectives, sorted(source_ids)
 
+    def remediation_provenance(
+        self, course_id: str, attempt_id: str
+    ) -> dict[str, Any]:
+        """Return the immutable missed-item receipt for a Review proposal.
+
+        The caller still receives the bounded source/objective scope from
+        ``remediation_scope``.  This companion receipt adds only opaque
+        Practice revision, question, and grading-evidence identities; it
+        never exports the learner response or question text.
+        """
+
+        practice_set_id, objective_ids, source_ids = self.remediation_scope(
+            course_id, attempt_id
+        )
+        with self.course_repository._connect() as conn:
+            attempt = conn.execute(
+                """SELECT practice_set_revision_id
+                   FROM quiz_attempts
+                   WHERE id = ? AND course_id = ? AND owner_user_id = ?""",
+                (attempt_id, course_id, self.owner_user_id),
+            ).fetchone()
+            rows = conn.execute(
+                """SELECT id, question_id
+                   FROM quiz_item_grading_evidence
+                   WHERE attempt_id = ? AND course_id = ?
+                     AND owner_user_id = ? AND is_correct = 0
+                   ORDER BY question_id, id""",
+                (attempt_id, course_id, self.owner_user_id),
+            ).fetchall()
+        if attempt is None or not rows:
+            raise self._not_found()
+        return {
+            "practice_attempt_id": attempt_id,
+            "practice_set_id": practice_set_id,
+            "practice_set_revision_id": str(attempt["practice_set_revision_id"]),
+            "practice_question_ids": sorted({str(row["question_id"]) for row in rows}),
+            "grading_evidence_ids": [str(row["id"]) for row in rows],
+            "objective_ids": objective_ids,
+            "source_ids": source_ids,
+        }
+
     def has_course_evidence(self, course_id: str) -> bool:
         """Return whether the owned Course has immutable grading history."""
         self.course_repository.get_course(course_id)

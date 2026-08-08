@@ -383,8 +383,8 @@ async def _authoritative_flashcard_generation_arguments(
         and parsed.session_id is None
         and parsed.message_id is None
     ):
-        _practice_set_id, objective_ids, source_ids = _practice_call(
-            lambda: _practice_grading_service().remediation_scope(
+        provenance = _practice_call(
+            lambda: _practice_grading_service().remediation_provenance(
                 course_id, parsed.practice_attempt_id or ""
             )
         )
@@ -392,9 +392,13 @@ async def _authoritative_flashcard_generation_arguments(
             origin=FlashcardGenerationOrigin(
                 kind="practice_remediation",
                 practice_attempt_id=parsed.practice_attempt_id,
+                practice_set_id=provenance["practice_set_id"],
+                practice_set_revision_id=provenance["practice_set_revision_id"],
+                practice_question_ids=provenance["practice_question_ids"],
+                grading_evidence_ids=provenance["grading_evidence_ids"],
             ),
-            source_ids=source_ids,
-            objective_ids=objective_ids,
+            source_ids=provenance["source_ids"],
+            objective_ids=provenance["objective_ids"],
             focus="Review the concepts missed in this quiz attempt",
             item_limit=8,
             card_type_mix=["recall", "application"],
@@ -1340,12 +1344,12 @@ async def prepare_practice_remediation_flashcard_brief(
     course_id: str, practice_set_id: str, attempt_id: str
 ):
     course = _practice_call(lambda: _service().get(course_id))
-    resolved_set_id, objective_ids, source_ids = _practice_call(
-        lambda: _practice_grading_service().remediation_scope(
+    provenance = _practice_call(
+        lambda: _practice_grading_service().remediation_provenance(
             course_id, attempt_id
         )
     )
-    if resolved_set_id != practice_set_id:
+    if provenance["practice_set_id"] != practice_set_id:
         raise HTTPException(
             status_code=404, detail="Practice remediation resource not found"
         )
@@ -1353,8 +1357,8 @@ async def prepare_practice_remediation_flashcard_brief(
         lambda: _flashcard_generation_service().prepare_brief(
             course_id,
             focus="Review the concepts missed in this quiz attempt",
-            source_ids=source_ids,
-            objective_ids=objective_ids,
+            source_ids=provenance["source_ids"],
+            objective_ids=provenance["objective_ids"],
             expected_course_write_epoch=course.write_epoch,
             item_limit=8,
             card_type_mix=["recall", "application"],
@@ -1364,6 +1368,12 @@ async def prepare_practice_remediation_flashcard_brief(
             origin={
                 "kind": "practice_remediation",
                 "practice_attempt_id": attempt_id,
+                "practice_set_id": provenance["practice_set_id"],
+                "practice_set_revision_id": provenance[
+                    "practice_set_revision_id"
+                ],
+                "practice_question_ids": provenance["practice_question_ids"],
+                "grading_evidence_ids": provenance["grading_evidence_ids"],
             },
         )
     )

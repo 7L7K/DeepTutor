@@ -70,6 +70,10 @@ class FlashcardGenerationOrigin(BaseModel):
     session_id: str | None = Field(default=None, max_length=160)
     message_id: int | None = Field(default=None, ge=1)
     practice_attempt_id: str | None = Field(default=None, max_length=80)
+    practice_set_id: str | None = Field(default=None, max_length=80)
+    practice_set_revision_id: str | None = Field(default=None, max_length=80)
+    practice_question_ids: list[str] = Field(default_factory=list, max_length=64)
+    grading_evidence_ids: list[str] = Field(default_factory=list, max_length=128)
     selected_message_ids: list[int] = Field(default_factory=list, max_length=32)
     context_sha256: str | None = Field(default=None, max_length=64)
     context_summary: str | None = Field(default=None, max_length=160)
@@ -104,6 +108,26 @@ class FlashcardGenerationOrigin(BaseModel):
             raise ValueError("context_sha256 must be a SHA-256 digest")
         return value
 
+    @field_validator(
+        "practice_attempt_id",
+        "practice_set_id",
+        "practice_set_revision_id",
+    )
+    @classmethod
+    def opaque_practice_ids(cls, value: str | None) -> str | None:
+        if value is not None and (not value.strip() or len(value) > 80):
+            raise ValueError("Practice provenance IDs are invalid")
+        return value
+
+    @field_validator("practice_question_ids", "grading_evidence_ids")
+    @classmethod
+    def unique_practice_ids(cls, value: list[str]) -> list[str]:
+        if any(not item.strip() or len(item) > 80 for item in value):
+            raise ValueError("Practice provenance IDs are invalid")
+        if len(value) != len(set(value)):
+            raise ValueError("Practice provenance IDs must be unique")
+        return value
+
     @model_validator(mode="after")
     def provenance_matches_kind(self) -> "FlashcardGenerationOrigin":
         if self.kind == "general_chat":
@@ -132,6 +156,14 @@ class FlashcardGenerationOrigin(BaseModel):
     @model_serializer(mode="wrap")
     def serialize_origin(self, handler: SerializerFunctionWrapHandler):
         payload = handler(self)
+        if self.practice_set_id is None:
+            for key in (
+                "practice_set_id",
+                "practice_set_revision_id",
+                "practice_question_ids",
+                "grading_evidence_ids",
+            ):
+                payload.pop(key, None)
         if self.kind != "general_chat":
             for key in ("context_title", "context_topics", "session_scope"):
                 payload.pop(key, None)
