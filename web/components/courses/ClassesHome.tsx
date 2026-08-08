@@ -5,10 +5,7 @@ import { ArrowRight, BookOpen, Plus, RefreshCw } from "lucide-react";
 import { useState } from "react";
 import { useCourses } from "@/context/CourseContext";
 import type { Course } from "@/lib/course-api";
-
-function termLabel(course: Course): string {
-  return course.term?.trim() || "Term not linked yet";
-}
+import { academicTermLabel } from "@/lib/course-chat";
 
 function CourseCard({
   course,
@@ -33,7 +30,7 @@ function CourseCard({
             {course.title}
           </h2>
           <p className="mt-1 text-sm text-[var(--muted-foreground)]">
-            {termLabel(course)}
+            {academicTermLabel(course.term)}
           </p>
         </div>
         <span className="rounded-full border border-[var(--border)] px-2 py-1 text-[11px] text-[var(--muted-foreground)]">
