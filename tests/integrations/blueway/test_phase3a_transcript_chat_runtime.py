@@ -227,13 +227,20 @@ async def test_phase3a_imported_transcript_stays_passive_in_course_chat_runtime(
 
         source_events = [event for event in events if event["type"] == "sources"]
         assert len(source_events) == 1
-        assert source_events[0]["metadata"]["sources"] == [
+        assert source_events[0]["metadata"]["course_citations"] == [
             {
-                "type": "knowledge_base",
-                "name": source_kb_name(course.id, source.id),
-                "path": "blueway-course-bundle.json",
+                "schema_version": 1,
+                "course_id": course.id,
+                "source_id": source.id,
+                "source_revision": source.revision,
+                "source_content_hash": source.content_sha256,
+                "source_title_snapshot": source.display_name,
+                "locator_type": None,
+                "locator_value": None,
+                "retrieval_fragment_id": None,
             }
         ]
+        assert "blueway-course-bundle.json" not in json.dumps(source_events)
         answer_events = [event for event in events if event["type"] == "content"]
         assert len(answer_events) == 1
         assert _TRANSCRIPT_MARKER in str(answer_events[0]["content"])
