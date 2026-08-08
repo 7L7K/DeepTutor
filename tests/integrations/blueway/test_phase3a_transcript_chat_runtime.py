@@ -185,12 +185,6 @@ async def test_phase3a_imported_transcript_stays_passive_in_course_chat_runtime(
         "get_personal_path_service",
         lambda _owner_id: paths,
     )
-    # This proof owns passive transcript retrieval and Course isolation. Keep
-    # it hermetic from the operator's separately configured provider policy.
-    monkeypatch.setattr(
-        "deeptutor.services.model_selection.runtime.set_text_generation_feature",
-        lambda *_args, **_kwargs: None,
-    )
     observed_contexts: list[object] = []
     original_course_chat_events = deterministic_provider.course_chat_events
 

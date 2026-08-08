@@ -1517,13 +1517,22 @@ class TurnRuntimeManager:
                         capability=capability_name or "chat",
                     )
 
+            from deeptutor.courses.deterministic_provider import (
+                enabled as deterministic_provider_enabled,
+            )
+
+            deterministic_course_turn = (
+                deterministic_provider_enabled() and bool(payload.get("course_id"))
+            )
             text_generation_feature = None
-            if (capability_name or "") in {"", "chat"}:
+            if not deterministic_course_turn and (capability_name or "") in {"", "chat"}:
                 text_generation_feature = (
                     "course_chat" if payload.get("course_id") else "general_chat"
                 )
             text_generation_feature_token = set_text_generation_feature(text_generation_feature)
-            llm_config, llm_scope_token = activate_llm_selection(payload.get("llm_selection"))
+            llm_config, llm_scope_token = activate_llm_selection(
+                None if deterministic_course_turn else payload.get("llm_selection")
+            )
             builder = ContextBuilder(self.store)
 
             async def _emit_context_event(event: StreamEvent) -> None:
@@ -1848,13 +1857,10 @@ class TurnRuntimeManager:
             from deeptutor.courses.deterministic_provider import (
                 course_chat_events,
             )
-            from deeptutor.courses.deterministic_provider import (
-                enabled as deterministic_provider_enabled,
-            )
 
             event_stream = (
                 course_chat_events(context)
-                if deterministic_provider_enabled() and payload.get("course_id")
+                if deterministic_course_turn
                 else ChatOrchestrator().handle(context)
             )
             if payload.get("course_id") and capability_name == "chat":
@@ -2013,9 +2019,7 @@ class TurnRuntimeManager:
                 pending_done_event.metadata = {**pending_done_event.metadata, **persisted_ids}
             await self._publish_live_event(execution, pending_done_event)
             stream_done_sent = True
-            if not is_regenerate and not (
-                deterministic_provider_enabled() and payload.get("course_id")
-            ):
+            if not is_regenerate and not deterministic_course_turn:
                 # Title generation is post-turn metadata. Keep it after DONE
                 # so the composer and duration clock stop as soon as the
                 # assistant answer is saved; the frontend keeps this socket
