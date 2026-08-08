@@ -122,7 +122,11 @@ focus marker is retained in the browser DOM snapshot used for the campaign.
 User B’s direct request for Alice’s Course returned HTTP 404 and the browser
 rendered `Course resource not found`. User C’s `/classes` returned an empty
 Course list and the truthful `No Classes yet` state. No foreign Course or
-Attempt data was displayed.
+Attempt data was displayed. Course/session/Attempt mismatch authorization is
+covered by the focused C1/C2 contract suites in the source gate; a separate
+browser mismatch capture was not retained because the attempted rerun used a
+frontend proxy setup pointed at `localhost:8001` instead of the isolated
+backend on `8045`.
 
 The `/classes` performance check is archived at
 `docs/verification/2026-08-08-teeechr-c2-browser/performance-check.txt`.
@@ -169,12 +173,12 @@ fdd4069a feat(web): complete the Course learning loop
 71b58bde fix(c2): persist supported Course Chat lifecycle evidence
 a2849adc fix(c2): honor requested deterministic Practice item count
 08c0d809 fix(web): keep generated Attempts Course scoped
+ebf34860 docs(c2): archive Course learning-loop runtime proof
 ```
 
-The final documentation closeout commit will add this receipt and the
-targeted `docs/verification/2026-08-08-teeechr-c2-browser/**` evidence tree
-only. Because the repository ignores `/docs/*`, those exact documentation
-paths must be added with `git add -f`; the entire ignored docs tree must not be
+The documentation closeout and this bounded mismatch-evidence follow-up are
+docs-only. Because the repository ignores `/docs/*`, the exact documentation
+paths were added with `git add -f`; the entire ignored docs tree was not
 force-added.
 
 ## Push state and remaining proof
