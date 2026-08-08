@@ -1050,8 +1050,10 @@ class TurnRuntimeManager:
                 "source_ids": list(snapshot.get("sourceIds") or []),
                 "source_revisions": dict(snapshot.get("sourceRevisions") or {}),
                 "source_fingerprints": dict(snapshot.get("sourceFingerprints") or {}),
-                "source_titles": dict(snapshot.get("sourceTitles") or {}),
             }
+            source_titles = dict(snapshot.get("sourceTitles") or {})
+            if source_titles:
+                preserved_course_context["source_titles"] = source_titles
         return await self.start_turn(
             payload,
             preserved_course_context=preserved_course_context,
