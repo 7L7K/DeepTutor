@@ -206,6 +206,7 @@ def _request_snapshot_metadata(
                 "sourceIds": list(course_context.get("source_ids") or []),
                 "sourceRevisions": dict(course_context.get("source_revisions") or {}),
                 "sourceFingerprints": dict(course_context.get("source_fingerprints") or {}),
+                "sourceTitles": dict(course_context.get("source_titles") or {}),
             }
         )
     return {"request_snapshot": snapshot}
@@ -1049,6 +1050,7 @@ class TurnRuntimeManager:
                 "source_ids": list(snapshot.get("sourceIds") or []),
                 "source_revisions": dict(snapshot.get("sourceRevisions") or {}),
                 "source_fingerprints": dict(snapshot.get("sourceFingerprints") or {}),
+                "source_titles": dict(snapshot.get("sourceTitles") or {}),
             }
         return await self.start_turn(
             payload,
@@ -1853,6 +1855,13 @@ class TurnRuntimeManager:
                 if deterministic_provider_enabled() and payload.get("course_id")
                 else ChatOrchestrator().handle(context)
             )
+            if payload.get("course_id") and capability_name == "chat":
+                from deeptutor.courses.chat_contract import finalize_course_chat_stream
+
+                event_stream = finalize_course_chat_stream(
+                    dict(payload.get("course_context") or {}),
+                    event_stream,
+                )
             async for event in event_stream:
                 if event.type == StreamEventType.SESSION:
                     continue
