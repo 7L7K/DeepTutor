@@ -110,6 +110,7 @@ FRONTEND_PORT="$frontend_port" \
 CORS_ORIGIN="$frontend_url" \
 CORS_ORIGINS="$frontend_url" \
 TEEECHR_TEST_DETERMINISTIC_PROVIDER=1 \
+TEEECHR_TEST_DETERMINISTIC_INGESTION_DELAY_MS=15000 \
 "$python_bin" -m uvicorn deeptutor.api.main:app \
   --host 127.0.0.1 --port "$backend_port" --no-access-log \
   >"$backend_log" 2>&1 &
@@ -164,6 +165,36 @@ alice_id, bob_id, carol_id, fixture_path = sys.argv[1:]
 alice_paths = get_personal_path_service(alice_id)
 alice_courses = CourseRepository(alice_paths.get_courses_db(), alice_id)
 blueway = BlueWayRepository(alice_courses)
+
+def create_source(course_id, *, name, operation_id, state, hash_char):
+    source = alice_courses.create_source(
+        course_id,
+        kind="notes",
+        display_name=name,
+        manifest=[],
+        content_sha256=hash_char * 64,
+        operation_id=operation_id,
+    )
+    current = alice_courses.get_course(course_id)
+    return alice_courses.transition_source(
+        course_id,
+        source.id,
+        operation_id=operation_id,
+        expected_source_revision=source.revision,
+        expected_course_revision=current.revision,
+        expected_write_epoch=current.write_epoch,
+        state=state,
+    )
+
+def write_index(course_id, source_id, payload):
+    index_path = (
+        alice_paths.get_knowledge_bases_root()
+        / source_kb_name(course_id, source_id)
+        / "deterministic-index.json"
+    )
+    index_path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+    index_path.write_text(json.dumps(payload), encoding="utf-8")
+
 connection = blueway.create_active_connection(
     external_subject="c1-local-alice",
     scope_version="academic.read.v1",
@@ -224,24 +255,87 @@ alice_courses.create_source(
 )
 no_ready = alice_courses.create_course("Empty Course Lab")
 
-index_path = (
-    alice_paths.get_knowledge_bases_root()
-    / source_kb_name(biology.id, ready.id)
-    / "deterministic-index.json"
+write_index(
+    biology.id,
+    ready.id,
+    {
+        "chunks": [
+            {
+                "path": "biology-private-source.txt",
+                "text": "ATP stores usable cellular energy for Biology 101.",
+            }
+        ]
+    },
 )
-index_path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
-index_path.write_text(
-    json.dumps(
-        {
-            "chunks": [
-                {
-                    "path": "biology-private-source.txt",
-                    "text": "ATP stores usable cellular energy for Biology 101.",
-                }
-            ]
-        }
-    ),
-    encoding="utf-8",
+
+psychology = blueway.create_course_map(
+    connection_id=connection.id,
+    external_course_id="c1-psychology-201",
+    external_term_id="fall-2026",
+    remote_title="Psychology 201",
+    remote_state="active",
+    remote_hash="e" * 64,
+    snapshot_id="c1-browser-snapshot",
+    expected_generation=connection.grant_generation,
+)
+psychology_ready = create_source(
+    psychology.id,
+    name="Psychology cognition notes.txt",
+    operation_id="c1_psychology_ready",
+    state="ready",
+    hash_char="f",
+)
+write_index(
+    psychology.id,
+    psychology_ready.id,
+    {
+        "chunks": [
+            {
+                "path": "psychology-private-source.txt",
+                "text": "Working memory temporarily holds information for Psychology 201.",
+            }
+        ]
+    },
+)
+
+processing_only = alice_courses.create_course("Processing Course")
+failed_only = alice_courses.create_course("Failed Course")
+create_source(
+    failed_only.id,
+    name="Failed-only notes.txt",
+    operation_id="c1_failed_only",
+    state="failed",
+    hash_char="2",
+)
+unsupported = alice_courses.create_course("Unsupported Question Course")
+unsupported_ready = create_source(
+    unsupported.id,
+    name="Unsupported source notes.txt",
+    operation_id="c1_unsupported_ready",
+    state="ready",
+    hash_char="3",
+)
+# A ready source with no deterministic index proves retrieval produced no
+# support; the C1 finalizer must replace the provider text with abstention.
+provider_unavailable = alice_courses.create_course("Provider Unavailable Course")
+provider_ready = create_source(
+    provider_unavailable.id,
+    name="Provider unavailable notes.txt",
+    operation_id="c1_provider_unavailable",
+    state="ready",
+    hash_char="4",
+)
+write_index(
+    provider_unavailable.id,
+    provider_ready.id,
+    {
+        "chunks": [
+            {
+                "text": "This content must never reach the learner.",
+                "provider_error": "Deterministic provider unavailable for C1 proof",
+            }
+        ]
+    },
 )
 
 bob_paths = get_personal_path_service(bob_id)
@@ -256,6 +350,14 @@ Path(fixture_path).write_text(
             "alice_no_ready_course_id": no_ready.id,
             "alice_ready_source_id": ready.id,
             "alice_ready_source_title": ready.display_name,
+            "psychology_course_id": psychology.id,
+            "psychology_ready_source_id": psychology_ready.id,
+            "psychology_ready_source_title": psychology_ready.display_name,
+            "processing_only_course_id": processing_only.id,
+            "failed_only_course_id": failed_only.id,
+            "unsupported_course_id": unsupported.id,
+            "unsupported_ready_source_id": unsupported_ready.id,
+            "provider_unavailable_course_id": provider_unavailable.id,
             "bob_identity": bob_id,
             "bob_course_id": bob_course.id,
             "carol_identity": carol_id,
@@ -302,42 +404,79 @@ paths = get_personal_path_service(fixture["alice_identity"])
 store = SQLiteSessionStore(paths.get_chat_history_db())
 
 async def receipt():
-    session = await store.get_session_with_messages(browser["sessionId"])
+    biology = await store.get_session_with_messages(browser["sessionId"])
+    psychology = await store.get_session_with_messages(browser["psychologySessionId"])
+    provider_failure = await store.get_session_with_messages(
+        browser["providerUnavailableSessionId"]
+    )
     sessions = await store.list_sessions()
-    assert session is not None
-    user = next(message for message in session["messages"] if message["role"] == "user")
-    assistant = next(message for message in session["messages"] if message["role"] == "assistant")
-    citations = [
-        citation
-        for event in assistant.get("events") or []
-        for citation in (event.get("metadata") or {}).get("course_citations") or []
-    ]
-    no_ready_sessions = [
-        item
-        for item in sessions
-        if item.get("course_id") == fixture["alice_no_ready_course_id"]
-    ]
+    assert biology is not None and psychology is not None and provider_failure is not None
+
+    def summarize(session):
+        user = next(message for message in session["messages"] if message["role"] == "user")
+        assistant = next(
+            message for message in session["messages"] if message["role"] == "assistant"
+        )
+        citations = [
+            citation
+            for event in assistant.get("events") or []
+            for citation in (event.get("metadata") or {}).get("course_citations") or []
+        ]
+        return {
+            "session_id": session["id"],
+            "course_id": session.get("course_id"),
+            "message_count": len(session["messages"]),
+            "knowledge_bases": (
+                (user.get("metadata") or {}).get("request_snapshot") or {}
+            ).get("knowledgeBases"),
+            "citations": citations,
+            "raw_provider_path_persisted": "private-source.txt" in json.dumps(session),
+        }
+
+    blocked_course_session_counts = {
+        key: sum(1 for item in sessions if item.get("course_id") == fixture[key])
+        for key in (
+            "alice_no_ready_course_id",
+            "processing_only_course_id",
+            "failed_only_course_id",
+        )
+    }
+    provider_assistant = next(
+        message for message in provider_failure["messages"] if message["role"] == "assistant"
+    )
+    provider_error = next(
+        event for event in provider_assistant.get("events") or [] if event["type"] == "error"
+    )
     return {
-        "session_id": session["id"],
-        "course_id": session.get("course_id"),
-        "message_count": len(session["messages"]),
-        "knowledge_bases": (
-            (user.get("metadata") or {}).get("request_snapshot") or {}
-        ).get("knowledgeBases"),
-        "citations": citations,
-        "no_ready_course_session_count": len(no_ready_sessions),
+        "biology": summarize(biology),
+        "psychology": summarize(psychology),
+        "provider_failure": {
+            "session_id": provider_failure["id"],
+            "course_id": provider_failure.get("course_id"),
+            "message_count": len(provider_failure["messages"]),
+            "error": provider_error["content"],
+            "turn_terminal": provider_error["metadata"]["turn_terminal"],
+        },
+        "blocked_course_session_counts": blocked_course_session_counts,
         "classes_landing_course_list_calls": browser["classesLandingCourseListCalls"],
         "full_journey_course_list_calls": browser["totalCourseListCalls"],
-        "raw_provider_path_persisted": "biology-private-source.txt" in json.dumps(session),
     }
 
 payload = asyncio.run(receipt())
 receipt_path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
-assert payload["course_id"] == fixture["alice_course_id"], payload
-assert payload["citations"][0]["source_id"] == fixture["alice_ready_source_id"], payload
-assert payload["no_ready_course_session_count"] == 0, payload
+assert payload["biology"]["course_id"] == fixture["alice_course_id"], payload
+assert payload["psychology"]["course_id"] == fixture["psychology_course_id"], payload
+assert payload["biology"]["citations"][0]["source_id"] == fixture["alice_ready_source_id"], payload
+assert payload["psychology"]["citations"][0]["source_id"] == fixture["psychology_ready_source_id"], payload
+assert fixture["psychology_ready_source_id"] not in json.dumps(payload["biology"]), payload
+assert fixture["alice_ready_source_id"] not in json.dumps(payload["psychology"]), payload
+assert payload["provider_failure"]["course_id"] == fixture["provider_unavailable_course_id"], payload
+assert payload["provider_failure"]["message_count"] == 2, payload
+assert payload["provider_failure"]["turn_terminal"] is True, payload
+assert all(value == 0 for value in payload["blocked_course_session_counts"].values()), payload
 assert payload["classes_landing_course_list_calls"] <= 1, payload
-assert payload["raw_provider_path_persisted"] is False, payload
+assert payload["biology"]["raw_provider_path_persisted"] is False, payload
+assert payload["psychology"]["raw_provider_path_persisted"] is False, payload
 PY
 
 printf 'backend_port=%s\nfrontend_port=%s\nnode=%s\nnpm=%s\npython=%s\nbranch=%s\nhead=%s\n' \

@@ -22,6 +22,7 @@ from deeptutor.services.file_io import atomic_write_json
 
 _ENV_NAME = "TEEECHR_TEST_DETERMINISTIC_PROVIDER"
 _DELAY_ENV_NAME = "TEEECHR_TEST_DETERMINISTIC_DELAY_MS"
+_INGESTION_DELAY_ENV_NAME = "TEEECHR_TEST_DETERMINISTIC_INGESTION_DELAY_MS"
 
 
 def enabled() -> bool:
@@ -34,6 +35,25 @@ def _delay_seconds() -> float:
     except ValueError:
         return 0
     return max(0, min(delay_ms, 5_000)) / 1_000
+
+
+async def delay_ingestion_for_runtime_proof() -> None:
+    """Hold only the explicit test provider's source task in processing.
+
+    Browser proof needs a real, live task registration to distinguish a
+    processing source from the restart-safe orphan reconciliation path.  The
+    hook is unreachable unless the deterministic provider is explicitly
+    enabled, and its separate environment variable never affects Chat turns.
+    """
+
+    if not enabled():
+        return
+    try:
+        delay_ms = int(os.getenv(_INGESTION_DELAY_ENV_NAME, "0"))
+    except ValueError:
+        return
+    if delay_ms > 0:
+        await asyncio.sleep(min(delay_ms, 30_000) / 1_000)
 
 
 def _embedding(text: str) -> list[int]:
@@ -111,6 +131,19 @@ async def course_chat_events(context: Any) -> AsyncIterator[StreamEvent]:
     chunks = _authorized_chunks(list(context.knowledge_bases or []))
     if chunks:
         selected = chunks[0]
+        if provider_error := str(selected.get("provider_error") or "").strip():
+            yield StreamEvent(
+                type=StreamEventType.ERROR,
+                source="deterministic_course_provider",
+                content=provider_error,
+                metadata={"turn_terminal": True, "status": "failed"},
+            )
+            yield StreamEvent(
+                type=StreamEventType.DONE,
+                source="deterministic_course_provider",
+                metadata={"status": "failed", "provider": "deterministic-local"},
+            )
+            return
         text = str(selected["text"])
         answer = f"Deterministic course answer: {text}"
         yield StreamEvent(

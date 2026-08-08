@@ -338,10 +338,14 @@ async def run_source_operation(task: dict[str, Any]) -> None:
         from deeptutor.courses.deterministic_provider import (
             build_index as build_deterministic_index,
         )
+        from deeptutor.courses.deterministic_provider import (
+            delay_ingestion_for_runtime_proof,
+        )
         from deeptutor.courses.deterministic_provider import enabled as deterministic_enabled
         from deeptutor.knowledge.initializer import KnowledgeBaseInitializer
 
         if deterministic_enabled():
+            await delay_ingestion_for_runtime_proof()
             provider_succeeded = build_deterministic_index(
                 Path(str(task["base_dir"])) / str(task["kb_name"]),
                 [str(item) for item in task["uploaded_paths"]],

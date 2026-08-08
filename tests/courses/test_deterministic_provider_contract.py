@@ -8,7 +8,12 @@ import pytest
 
 from deeptutor.core.context import UnifiedContext
 from deeptutor.core.stream import StreamEventType
-from deeptutor.courses.deterministic_provider import build_index, course_chat_events, enabled
+from deeptutor.courses.deterministic_provider import (
+    build_index,
+    course_chat_events,
+    delay_ingestion_for_runtime_proof,
+    enabled,
+)
 from deeptutor.courses.ingestion import run_source_operation
 from deeptutor.courses.repository import CourseRepository
 from deeptutor.courses.service import CourseService, resolve_course_turn_payload, source_kb_name
@@ -20,6 +25,29 @@ from deeptutor.services.session.sqlite_store import SQLiteSessionStore
 def _embedding(text: str) -> list[int]:
     digest = hashlib.sha256(text.lower().encode()).digest()
     return [digest[0], digest[1], digest[2], digest[3]]
+
+
+@pytest.mark.asyncio
+async def test_runtime_proof_ingestion_delay_is_explicit_and_bounded(
+    monkeypatch,
+) -> None:
+    delays: list[float] = []
+
+    async def capture_delay(seconds: float) -> None:
+        delays.append(seconds)
+
+    monkeypatch.setattr(
+        "deeptutor.courses.deterministic_provider.asyncio.sleep",
+        capture_delay,
+    )
+    monkeypatch.setenv("TEEECHR_TEST_DETERMINISTIC_INGESTION_DELAY_MS", "90000")
+
+    await delay_ingestion_for_runtime_proof()
+    assert delays == []
+
+    monkeypatch.setenv("TEEECHR_TEST_DETERMINISTIC_PROVIDER", "1")
+    await delay_ingestion_for_runtime_proof()
+    assert delays == [30.0]
 
 
 @pytest.mark.asyncio
@@ -66,6 +94,58 @@ async def test_explicit_deterministic_provider_is_local_and_course_scoped(
     assert events[1].content == (
         "Deterministic course answer: Known local-only course fact."
     )
+
+
+@pytest.mark.asyncio
+async def test_deterministic_provider_can_prove_unavailable_runtime_state(
+    monkeypatch, tmp_path
+) -> None:
+    monkeypatch.setenv("TEEECHR_TEST_DETERMINISTIC_PROVIDER", "1")
+    kb_root = tmp_path / "knowledge_bases"
+    kb_dir = kb_root / "course_crs_offline_src_offline"
+    kb_dir.mkdir(parents=True)
+    (kb_dir / "deterministic-index.json").write_text(
+        json.dumps(
+            {
+                "chunks": [
+                    {
+                        "text": "This content must not be returned.",
+                        "provider_error": "Deterministic provider unavailable for C1 proof",
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+    user = CurrentUser(
+        id="u_browser",
+        username="browser",
+        role="admin",
+        scope=UserScope(kind="user", user_id="u_browser", root=tmp_path),
+    )
+    monkeypatch.setattr(
+        "deeptutor.courses.deterministic_provider.get_personal_path_service",
+        lambda _owner: SimpleNamespace(get_knowledge_bases_root=lambda: kb_root),
+    )
+    token = set_current_user(user)
+    try:
+        events = [
+            event
+            async for event in course_chat_events(
+                UnifiedContext(
+                    knowledge_bases=["personal:kb:course_crs_offline_src_offline"]
+                )
+            )
+        ]
+    finally:
+        reset_current_user(token)
+
+    assert [event.type for event in events] == [
+        StreamEventType.ERROR,
+        StreamEventType.DONE,
+    ]
+    assert events[0].content == "Deterministic provider unavailable for C1 proof"
+    assert events[0].metadata == {"turn_terminal": True, "status": "failed"}
 
 
 @pytest.mark.asyncio

@@ -15,6 +15,14 @@ interface C1Fixture {
   alice_no_ready_course_id: string;
   alice_ready_source_id: string;
   alice_ready_source_title: string;
+  psychology_course_id: string;
+  psychology_ready_source_id: string;
+  psychology_ready_source_title: string;
+  processing_only_course_id: string;
+  failed_only_course_id: string;
+  unsupported_course_id: string;
+  unsupported_ready_source_id: string;
+  provider_unavailable_course_id: string;
   bob_identity: string;
   bob_course_id: string;
   carol_identity: string;
@@ -23,6 +31,9 @@ interface C1Fixture {
 interface C1BrowserState {
   sessionId: string;
   sessionUrl: string;
+  psychologySessionId: string;
+  psychologySessionUrl: string;
+  providerUnavailableSessionId?: string;
   classesLandingCourseListCalls: number;
   totalCourseListCalls: number;
 }
@@ -89,7 +100,11 @@ test("Alice opens exact Course Chat, persists its citation, and reopens it", asy
   });
   await page.goto("/classes");
   await expect(page.getByRole("heading", { name: "Biology 101" })).toBeVisible();
-  await expect(page.getByText("Fall 2026", { exact: true })).toBeVisible();
+  await expect(
+    page
+      .getByTestId(`course-card-${proof.alice_course_id}`)
+      .getByText("Fall 2026", { exact: true }),
+  ).toBeVisible();
   const classesLandingCourseListCalls = courseListCalls;
   expect(classesLandingCourseListCalls).toBeLessThanOrEqual(1);
 
@@ -190,16 +205,157 @@ test("Alice opens exact Course Chat, persists its citation, and reopens it", asy
     fullPage: true,
   });
 
+  await page.setViewportSize({ width: 1280, height: 720 });
+  await page.goto(
+    `/classes/${encodeURIComponent(proof.psychology_course_id)}/chat/${encodeURIComponent(sessionId)}`,
+  );
+  await expect(
+    page.getByText(
+      "Course Chat was not found or is not available to this account.",
+      { exact: true },
+    ),
+  ).toBeVisible();
+  await page.screenshot({
+    path: join(evidenceDir!, "screenshots", "course-chat-session-mismatch.png"),
+    fullPage: true,
+  });
+
+  await page.goto(
+    `/classes/${encodeURIComponent(proof.psychology_course_id)}/chat`,
+  );
+  await expect(page.getByRole("heading", { name: "Psychology 201" })).toBeVisible();
+  const psychologyComposer = page.locator("textarea").last();
+  await psychologyComposer.fill("What does working memory do?");
+  await psychologyComposer.press("Enter");
+  await expect(
+    page.getByText(
+      /Deterministic course answer: Working memory temporarily holds information/,
+    ),
+  ).toBeVisible({ timeout: 30_000 });
+  await expect(
+    page.getByTestId(`course-citation-${proof.psychology_ready_source_id}`),
+  ).toContainText(proof.psychology_ready_source_title);
+  await expect(
+    page.getByTestId(`course-citation-${proof.alice_ready_source_id}`),
+  ).toHaveCount(0);
+  await expect(page.getByText(/ATP stores usable cellular energy/)).toHaveCount(0);
+  const psychologySessionUrl = new URL(page.url()).pathname;
+  const psychologySessionId = decodeURIComponent(
+    psychologySessionUrl.split("/").at(-1) || "",
+  );
+  expect(psychologySessionId).not.toBe("");
+  await page.screenshot({
+    path: join(evidenceDir!, "screenshots", "course-chat-psychology-grounded.png"),
+    fullPage: true,
+  });
+
   writeFileSync(
     browserStateFile!,
     JSON.stringify({
       sessionId,
       sessionUrl,
+      psychologySessionId,
+      psychologySessionUrl,
       classesLandingCourseListCalls,
       totalCourseListCalls: courseListCalls,
     } satisfies C1BrowserState),
     { encoding: "utf8", mode: 0o600 },
   );
+});
+
+test("unsupported and provider-unavailable turns fail truthfully", async ({ page }) => {
+  test.skip(
+    !alicePassword || !browserStateFile || !evidenceDir,
+    "Run through scripts/test-course-chat-c1 with disposable fixtures.",
+  );
+  const proof = fixture();
+  const terminalFramesPath = join(
+    evidenceDir!,
+    "backend",
+    "provider-unavailable-terminal-frames.ndjson",
+  );
+  const terminalFrames: Array<{
+    type?: string;
+    content?: string;
+    metadata?: Record<string, unknown>;
+    session_id?: string;
+    turn_id?: string;
+    seq?: number;
+  }> = [];
+  page.on("websocket", (socket) => {
+    socket.on("framereceived", ({ payload }) => {
+      if (typeof payload !== "string") return;
+      try {
+        const event = JSON.parse(payload) as {
+          type?: string;
+          content?: string;
+          metadata?: Record<string, unknown>;
+          session_id?: string;
+          turn_id?: string;
+          seq?: number;
+        };
+        if (!["session", "error", "done"].includes(event.type || "")) return;
+        terminalFrames.push(event);
+      } catch {
+        // Non-JSON heartbeat or development traffic is not proof evidence.
+      }
+    });
+  });
+  await signIn(page, "c1_alice", alicePassword!);
+
+  await page.goto(
+    `/classes/${encodeURIComponent(proof.unsupported_course_id)}/chat`,
+  );
+  const unsupportedComposer = page.locator("textarea").last();
+  await unsupportedComposer.fill("What is the answer outside these materials?");
+  await unsupportedComposer.press("Enter");
+  await expect(
+    page.getByText(
+      "I could not find support for that answer in the available Course materials.",
+      { exact: true },
+    ),
+  ).toBeVisible({ timeout: 30_000 });
+  await expect(page.getByTestId("course-citations")).toHaveCount(0);
+  await page.screenshot({
+    path: join(evidenceDir!, "screenshots", "course-chat-unsupported.png"),
+    fullPage: true,
+  });
+
+  await page.goto(
+    `/classes/${encodeURIComponent(proof.provider_unavailable_course_id)}/chat`,
+  );
+  const unavailableComposer = page.locator("textarea").last();
+  await unavailableComposer.fill("Can the Course provider answer?");
+  await unavailableComposer.press("Enter");
+  await expect(
+    page.getByText("Deterministic provider unavailable for C1 proof", {
+      exact: true,
+    }),
+  ).toBeVisible({ timeout: 30_000 });
+  await expect(page).toHaveURL(
+    new RegExp(`/classes/${proof.provider_unavailable_course_id}/chat/[^/]+$`),
+  );
+  const providerUnavailableSessionId = decodeURIComponent(
+    new URL(page.url()).pathname.split("/").at(-1) || "",
+  );
+  const browserState = JSON.parse(
+    readFileSync(browserStateFile!, "utf8"),
+  ) as C1BrowserState;
+  writeFileSync(
+    browserStateFile!,
+    JSON.stringify({ ...browserState, providerUnavailableSessionId }),
+  );
+  writeFileSync(
+    terminalFramesPath,
+    `${terminalFrames
+      .filter((event) => event.session_id === providerUnavailableSessionId)
+      .map((event) => JSON.stringify(event))
+      .join("\n")}\n`,
+  );
+  await page.screenshot({
+    path: join(evidenceDir!, "screenshots", "course-chat-provider-unavailable.png"),
+    fullPage: true,
+  });
 });
 
 test("Bob cannot open Alice Course or Course session URLs", async ({ page }) => {
@@ -261,6 +417,55 @@ test("zero-ready and zero-Course states stay truthful without a Chat session", a
   await expect(page.getByTestId("course-chat-route")).toHaveCount(0);
   await page.screenshot({
     path: join(evidenceDir!, "screenshots", "course-chat-zero-ready.png"),
+    fullPage: true,
+  });
+
+  const processingUpload = await page.evaluate(async (courseId) => {
+    const body = new FormData();
+    body.append(
+      "files",
+      new File(["Processing-state proof source."], "processing-proof.txt", {
+        type: "text/plain",
+      }),
+    );
+    body.append("kind", "notes");
+    body.append("display_name", "Processing proof notes.txt");
+    const response = await fetch(
+      `/api/v1/courses/${encodeURIComponent(courseId)}/sources`,
+      {
+        method: "POST",
+        headers: { "Idempotency-Key": "c1-processing-runtime-proof" },
+        body,
+      },
+    );
+    return { status: response.status, body: await response.json() };
+  }, proof.processing_only_course_id);
+  expect(processingUpload.status).toBe(202);
+  expect(processingUpload.body.state).toBe("processing");
+
+  await page.goto(
+    `/classes/${encodeURIComponent(proof.processing_only_course_id)}/chat`,
+  );
+  await expect(
+    page.getByRole("heading", { name: "Course materials are still processing." }),
+  ).toBeVisible();
+  await expect(page.getByTestId("course-chat-route")).toHaveCount(0);
+  await page.screenshot({
+    path: join(evidenceDir!, "screenshots", "course-chat-processing-only.png"),
+    fullPage: true,
+  });
+
+  await page.goto(
+    `/classes/${encodeURIComponent(proof.failed_only_course_id)}/chat`,
+  );
+  await expect(
+    page.getByRole("heading", {
+      name: "Course materials could not be prepared for Chat.",
+    }),
+  ).toBeVisible();
+  await expect(page.getByTestId("course-chat-route")).toHaveCount(0);
+  await page.screenshot({
+    path: join(evidenceDir!, "screenshots", "course-chat-failed-only.png"),
     fullPage: true,
   });
 
