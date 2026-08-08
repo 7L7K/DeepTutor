@@ -5,11 +5,11 @@ from __future__ import annotations
 import logging
 import re
 
-from fastapi import APIRouter, Header, HTTPException
+from fastapi import APIRouter, Header, HTTPException, Query
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, ConfigDict, Field
 
-from .repository import BlueWayNotFoundError, Connection, SyncRun
+from .repository import BlueWayNotFoundError, BlueWayRepository, Connection, SyncRun
 from .service import (
     BlueWayCredentialRecoveryRequired,
     BlueWayService,
@@ -19,6 +19,8 @@ from .service import (
 from .transport import BlueWayTransportError
 from .assertion import AssertionError as WorkspaceAssertionError, verify_assertion
 from .workspace import ConsentRequiredError, project_workspace
+from .launch import resolve_course_launch
+from deeptutor.courses.service import CourseUnavailableError, get_current_course_service
 
 router = APIRouter()
 workspace_router = APIRouter()
@@ -34,6 +36,30 @@ class WorkspaceReadRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
     course_id: str = Field(min_length=1, max_length=256)
     term_id: str | None = Field(default=None, min_length=1, max_length=256)
+
+
+@router.get("/launch")
+def launch(
+    external_course_id: str = Query(min_length=1, max_length=256),
+    external_term_id: str | None = Query(default=None, max_length=256),
+):
+    """Resolve a BlueWay launch hint inside the authenticated Course scope."""
+    try:
+        course_service = get_current_course_service()
+    except CourseUnavailableError as exc:
+        raise HTTPException(
+            status_code=503,
+            detail="Course launch is temporarily unavailable",
+        ) from exc
+    payload = resolve_course_launch(
+        BlueWayRepository(course_service.repository),
+        external_course_id=external_course_id,
+        external_term_id=external_term_id,
+    ).as_dict()
+    return JSONResponse(
+        content=payload,
+        headers={"Cache-Control": "private, no-store"},
+    )
 
 
 def set_test_service(service: BlueWayService | None) -> None:
