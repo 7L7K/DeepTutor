@@ -351,7 +351,11 @@ async def test_index_written_before_stale_commit_never_becomes_course_authority(
     monkeypatch, tmp_path
 ) -> None:
     from deeptutor.courses.repository import CourseRepository
-    from deeptutor.courses.service import CourseService, resolve_course_turn_payload
+    from deeptutor.courses.service import (
+        CourseService,
+        CourseUnavailableError,
+        resolve_course_turn_payload,
+    )
     from deeptutor.multi_user.models import CurrentUser, UserScope
 
     owner = "u_owner"
@@ -425,6 +429,5 @@ async def test_index_written_before_stale_commit_never_becomes_course_authority(
         "deeptutor.courses.service.get_current_course_service",
         lambda: CourseService(repo),
     )
-    resolved = resolve_course_turn_payload(course.id, {"knowledge_bases": []})
-    assert resolved["knowledge_bases"] == []
-    assert resolved["course_context"]["source_ids"] == []
+    with pytest.raises(CourseUnavailableError, match="could not be prepared"):
+        resolve_course_turn_payload(course.id, {"knowledge_bases": []})
