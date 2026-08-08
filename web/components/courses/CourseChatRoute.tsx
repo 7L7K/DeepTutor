@@ -226,7 +226,6 @@ export default function CourseChatRoute() {
           courseRouteBase={courseChatPath(course.id)}
           courseReadiness={readiness}
           hideCourseBar
-          disableCourseLearnerActions
         />
       </div>
     </main>

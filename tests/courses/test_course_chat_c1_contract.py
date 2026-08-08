@@ -340,6 +340,8 @@ async def test_course_citation_survives_session_reload_and_later_archive(tmp_pat
     )
     source_event = next(event for event in finalized if event.type == StreamEventType.SOURCES)
     citation = source_event.metadata["course_citations"][0]
+    content_event = next(event for event in finalized if event.type == StreamEventType.CONTENT)
+    assert content_event.metadata["course_grounding"] == "supported"
 
     store = SQLiteSessionStore(tmp_path / "chat_history.db")
     session = await store.create_session(course_id="crs_biology")

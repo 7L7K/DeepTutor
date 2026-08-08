@@ -1963,6 +1963,16 @@ class TurnRuntimeManager:
             # that; if we did not (regenerate path) and the caller pinned a
             # parent, we use it; otherwise we let the store auto-append
             # (legacy behavior).
+            if (
+                payload.get("course_id")
+                and capability_name == "chat"
+                and pending_done_event is not None
+            ):
+                # Course learner actions authorize only a persisted, completed
+                # grounded turn.  The live DONE frame is held until after the
+                # assistant row is written, so retain a status-only copy in
+                # the Course message as durable lifecycle evidence.
+                assistant_events.append(pending_done_event.to_dict())
             if new_user_message_id is not None:
                 self._assert_execution_owner_current(execution)
                 assistant_message_id = await self.store.add_message(

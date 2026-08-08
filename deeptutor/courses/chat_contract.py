@@ -299,6 +299,12 @@ def finalize_course_chat_events(
             "course_citations": citations,
         },
     )
+    for event in event_list:
+        if event.type == StreamEventType.CONTENT:
+            event.metadata = {
+                **event.metadata,
+                "course_grounding": "supported",
+            }
     insert_at = next(
         (
             index
