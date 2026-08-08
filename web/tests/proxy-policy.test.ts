@@ -58,6 +58,12 @@ test("proxy rewrites the exact callback before backend routing and auth gating",
   );
 });
 
+test("proxy login continuation preserves launch query identity", () => {
+  const source = readFileSync(path.resolve(process.cwd(), "proxy.ts"), "utf8");
+  assert.match(source, /normalizeAuthNext\(req\.nextUrl\.pathname \+ req\.nextUrl\.search\)/);
+  assert.match(source, /Cache-Control/, "launch responses must be private and non-cacheable");
+});
+
 test("isAuthExempt allows public static assets through the auth gate (issue #599)", () => {
   // The Next image optimizer re-fetches these over a cookie-less loopback; if
   // the gate blocked them the sidebar logo/banner would render broken.

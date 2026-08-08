@@ -40,6 +40,7 @@ export default defineConfig({
       testMatch: [
         "**/phase4-authenticated.spec.ts",
         "**/phase5-flashcards-ux.spec.ts",
+        "**/blueway-launch-b2.spec.ts",
       ],
       use: { ...devices["Desktop Chrome"], channel: "chrome" },
     },

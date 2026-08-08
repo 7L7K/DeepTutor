@@ -1,5 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import { normalizeAuthNext } from "../lib/auth-redirect";
 
 // Auth state is resolved at runtime, not from a build-time env var: apiFetch's
 // 401 → /login redirect is gated by a flag set via setRuntimeAuthEnabled (which
@@ -17,11 +18,11 @@ async function loadApiModule(): Promise<typeof import("../lib/api")> {
 
 // Install a fake `window` whose `location.href` assignment is recorded instead
 // of triggering a real navigation, so we can assert whether apiFetch redirected.
-function installWindow(pathname: string): {
+function installWindow(pathname: string, search = ""): {
   redirectedTo: () => string | null;
 } {
   let redirect: string | null = null;
-  const location = { pathname, href: "" };
+  const location = { pathname, search, href: "" };
   Object.defineProperty(location, "href", {
     get: () => redirect ?? "",
     set: (value: string) => {
@@ -117,6 +118,27 @@ test("apiFetch does NOT redirect on 401 when skipAuthRedirect is set", async () 
   }
 });
 
+test("apiFetch preserves launch query identity when recovering an expired session", async () => {
+  const { apiFetch, setRuntimeAuthEnabled } = await loadApiModule();
+  setRuntimeAuthEnabled(true);
+  const win = installWindow(
+    "/launch/blueway",
+    "?external_course_id=biology-101&external_term_id=fall-2026",
+  );
+  const restore = stubFetch(jsonResponse(401, { detail: "unauthorized" }));
+  try {
+    void apiFetch("/api/v1/integrations/blueway/launch");
+    await tick();
+    assert.equal(
+      win.redirectedTo(),
+      "/login?next=%2Flaunch%2Fblueway%3Fexternal_course_id%3Dbiology-101%26external_term_id%3Dfall-2026",
+    );
+  } finally {
+    restore();
+    clearWindow();
+  }
+});
+
 test("apiFetch passes successful responses through without redirecting", async () => {
   const { apiFetch } = await loadApiModule();
   const win = installWindow("/dashboard");
@@ -129,4 +151,29 @@ test("apiFetch passes successful responses through without redirecting", async (
     restore();
     clearWindow();
   }
+});
+
+test("login continuation accepts only relative exact launch state", () => {
+  assert.equal(
+    normalizeAuthNext("/launch/blueway?external_course_id=biology-101&external_term_id=fall-2026"),
+    "/launch/blueway?external_course_id=biology-101&external_term_id=fall-2026",
+  );
+  assert.equal(
+    normalizeAuthNext("/launch/blueway?external_course_id=legacy-101"),
+    "/launch/blueway?external_course_id=legacy-101",
+  );
+  assert.equal(normalizeAuthNext("https://foreign.example/steal"), "/");
+  assert.equal(normalizeAuthNext("//foreign.example/steal"), "/");
+  assert.equal(normalizeAuthNext("javascript:alert(1)"), "/");
+  assert.equal(normalizeAuthNext("data:text/html,evil"), "/");
+  assert.equal(normalizeAuthNext("file:///etc/passwd"), "/");
+  assert.equal(normalizeAuthNext("/%2F%2Fforeign.example"), "/");
+});
+
+test("launch continuation rejects malformed or ambiguous query state", () => {
+  assert.equal(normalizeAuthNext("/launch/blueway"), "/");
+  assert.equal(normalizeAuthNext("/launch/blueway?external_course_id=   "), "/");
+  assert.equal(normalizeAuthNext("/launch/blueway?external_course_id=biology&external_term_id=   "), "/");
+  assert.equal(normalizeAuthNext("/launch/blueway?external_course_id=a&external_course_id=b"), "/");
+  assert.equal(normalizeAuthNext("/launch/blueway?external_course_id=biology&unexpected=value"), "/");
 });

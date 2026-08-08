@@ -8,6 +8,8 @@
 // stay as one-liner pass-throughs so the dozens of existing call sites continue
 // to compile and work without modification.
 
+import { normalizeAuthNext } from "./auth-redirect";
+
 /**
  * Construct a full API URL from a path.
  *
@@ -87,7 +89,9 @@ export async function apiFetch(
     !skipAuthRedirect &&
     typeof window !== "undefined"
   ) {
-    const next = encodeURIComponent(window.location.pathname);
+    const next = encodeURIComponent(
+      normalizeAuthNext(window.location.pathname + window.location.search),
+    );
     window.location.href = `/login?next=${next}`;
     return new Promise(() => {});
   }

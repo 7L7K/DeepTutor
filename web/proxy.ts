@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { parseAuthEnabled } from "./lib/api";
+import { normalizeAuthNext } from "./lib/auth-redirect";
 import {
   CODEX_CALLBACK_API_PATH,
   COOKIE_NAME,
@@ -29,7 +30,11 @@ function redirectToLogin(
 ): NextResponse {
   const loginUrl = req.nextUrl.clone();
   loginUrl.pathname = LOGIN_PATH;
-  loginUrl.searchParams.set("next", req.nextUrl.pathname);
+  loginUrl.search = "";
+  loginUrl.searchParams.set(
+    "next",
+    normalizeAuthNext(req.nextUrl.pathname + req.nextUrl.search),
+  );
   const response = NextResponse.redirect(loginUrl);
   if (clearCookie) response.cookies.delete(COOKIE_NAME);
   return response;
@@ -56,7 +61,11 @@ export function proxy(req: NextRequest): NextResponse {
   //    isAuthExempt: that exemption is what keeps the logo/banner images
   //    loading once login is enabled — issue #599).
   if (!AUTH_ENABLED || isAuthExempt(pathname)) {
-    return NextResponse.next();
+    const response = NextResponse.next();
+    if (pathname === "/launch/blueway") {
+      response.headers.set("Cache-Control", "private, no-store");
+    }
+    return response;
   }
 
   const token = req.cookies.get(COOKIE_NAME)?.value;
@@ -64,7 +73,11 @@ export function proxy(req: NextRequest): NextResponse {
     return redirectToLogin(req, { clearCookie: Boolean(token) });
   }
 
-  return NextResponse.next();
+  const response = NextResponse.next();
+  if (pathname === "/launch/blueway") {
+    response.headers.set("Cache-Control", "private, no-store");
+  }
+  return response;
 }
 
 export const config = {
