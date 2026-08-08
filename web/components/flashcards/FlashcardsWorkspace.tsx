@@ -358,6 +358,18 @@ export default function FlashcardsWorkspace() {
           : ready.map((source) => source.id);
       });
       setGenerationOperations(operations);
+      const pendingRemediation = operations.find(
+        (operation) =>
+          operation.state === "awaiting_review" &&
+          operation.origin.kind === "practice_remediation",
+      );
+      if (pendingRemediation) {
+        setActiveGenerationOperationId(pendingRemediation.id);
+        setPageView("create");
+        setCreateMode("grounded");
+        setGroundedCreateStage("reviewing");
+        setProposalOrigin("practice_remediation");
+      }
       setCandidateOrder(
         Object.fromEntries(
           operations
@@ -930,6 +942,12 @@ export default function FlashcardsWorkspace() {
   useEffect(() => {
     if (!activeGenerationOperation) return;
     if (activeGenerationOperation.state === "awaiting_review") {
+      if (activeGenerationOperation.origin.kind === "practice_remediation") {
+        setPageView("create");
+        setCreateMode("grounded");
+        setGroundedCreateStage("reviewing");
+        return;
+      }
       if (autoPublishingOperationRef.current === activeGenerationOperation.id) {
         return;
       }
@@ -2032,7 +2050,8 @@ export default function FlashcardsWorkspace() {
                   </div>
                 ) : activeGenerationOperation &&
                   activeCandidate &&
-                  legacyCandidateReviewEnabled ? (
+                  (legacyCandidateReviewEnabled ||
+                    groundedCreateStage === "reviewing") ? (
                   <div className="space-y-4 rounded-xl border border-[var(--border)] p-5">
                     <div>
                       <h3 className="text-lg font-semibold">

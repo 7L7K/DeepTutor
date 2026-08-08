@@ -1,6 +1,7 @@
 import { apiFetch, apiUrl } from "./api";
 import type { FlashcardGenerationBriefReceipt } from "./flashcards-api";
 import type { PracticeGenerationPlan } from "./practice-api";
+import type { StreamEvent } from "./unified-ws";
 
 export type CourseLearnerAction =
   | "quiz_me"
@@ -28,19 +29,53 @@ export function requestedFlashcardCount(value: string): number | null {
 export function visibleCourseLearnerActions(
   practiceGenerationEnabled: boolean,
   flashcardGenerationEnabled: boolean,
+  practiceEligible = true,
 ): CourseLearnerAction[] {
   return [
-    ...(practiceGenerationEnabled
+    ...(practiceGenerationEnabled && practiceEligible
       ? (["quiz_me"] as CourseLearnerAction[])
       : []),
     "explain_simpler",
     ...(flashcardGenerationEnabled
       ? (["make_flashcards"] as CourseLearnerAction[])
       : []),
-    ...(practiceGenerationEnabled
+    ...(practiceGenerationEnabled && practiceEligible
       ? (["review_weak_topics"] as CourseLearnerAction[])
       : []),
   ];
+}
+
+/** UI hint only; the server re-derives and validates this same boundary. */
+export function hasSupportedCourseGrounding(
+  events: StreamEvent[] | undefined,
+): boolean {
+  if (!events?.length) return false;
+  if (
+    events.some(
+      (event) =>
+        event.type === "error" ||
+        event.metadata?.course_grounding === "unsupported",
+    )
+  ) {
+    return false;
+  }
+  const hasCitationEvent = events.some(
+    (event) =>
+      event.type === "sources" &&
+      event.metadata?.trace_kind === "course_citations" &&
+      Array.isArray(event.metadata?.course_citations) &&
+      event.metadata.course_citations.length > 0,
+  );
+  const hasSupportedContent = events.some(
+    (event) =>
+      event.type === "content" &&
+      event.metadata?.course_grounding === "supported",
+  );
+  const hasCompletedTurn = events.some(
+    (event) =>
+      event.type === "done" && event.metadata?.status === "completed",
+  );
+  return hasCitationEvent && hasSupportedContent && hasCompletedTurn;
 }
 
 export type CourseLearnerActionDestination =

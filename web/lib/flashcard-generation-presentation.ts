@@ -12,7 +12,8 @@ export type GroundedCreateStage =
   | "editing"
   | "confirming"
   | "generating"
-  | "publishing";
+  | "publishing"
+  | "reviewing";
 
 export interface FlashcardsViewPresentation {
   label: string;

@@ -62,6 +62,7 @@ import { turnAnchorKey } from "@/lib/chat-outline";
 import { shouldSubmitOnEnter } from "@/lib/composer-keyboard";
 import {
   canShowCourseLearnerActions,
+  hasSupportedCourseGrounding,
   type CourseLearnerAction,
   visibleCourseLearnerActions,
 } from "@/lib/course-actions-api";
@@ -1576,6 +1577,7 @@ export const ChatMessageList = memo(function ChatMessageList({
                   : visibleCourseLearnerActions(
                       practiceGenerationEnabled,
                       flashcardGenerationEnabled,
+                      hasSupportedCourseGrounding(msg.events),
                     )
                 ).map(
                   (action) => {

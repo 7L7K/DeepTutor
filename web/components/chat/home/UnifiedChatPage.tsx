@@ -1735,13 +1735,13 @@ export default function UnifiedChatPage({
             throw new Error('The Course action did not return an editable quiz plan.')
           }
           storePracticePlanHandoff(courseIdentity, plan.course_id, plan.plan_id)
-          router.push('/practice')
+          router.push(`/classes/${encodeURIComponent(plan.course_id)}/practice`)
         } else if (plan.destination === 'flashcards') {
           if (!plan.generation_brief) {
             throw new Error('The Course action did not return a generation brief.')
           }
           storeFlashcardProposal(courseIdentity, plan.course_id, plan.generation_brief)
-          router.push('/flashcards')
+          router.push(`/classes/${encodeURIComponent(plan.course_id)}/review`)
         } else if (plan.destination === 'learning') router.push('/space/learning')
       } catch (cause) {
         if (isCurrentCourseLearnerAction(requested, learnerActionScopeRef.current)) {

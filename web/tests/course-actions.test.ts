@@ -3,6 +3,7 @@ import test from "node:test";
 
 import {
   canShowCourseLearnerActions,
+  hasSupportedCourseGrounding,
   isCurrentCourseLearnerAction,
   requestedFlashcardCount,
   requestCourseLearnerAction,
@@ -113,6 +114,43 @@ test("unavailable grounded generation leaves only the model-free learner action"
     "make_flashcards",
     "review_weak_topics",
   ]);
+  assert.deepEqual(visibleCourseLearnerActions(true, true, false), [
+    "explain_simpler",
+    "make_flashcards",
+  ]);
+});
+
+test("Practice chips require a completed citation-bearing supported Course turn", () => {
+  const base = {
+    source: "course_grounding",
+    stage: "",
+    content: "",
+    metadata: {},
+    timestamp: 1,
+  } as const;
+  assert.equal(
+    hasSupportedCourseGrounding([
+      { ...base, type: "sources", metadata: { trace_kind: "course_citations", course_citations: [{ source_id: "src_1" }] } },
+      { ...base, type: "content", metadata: { course_grounding: "supported" } },
+      { ...base, type: "done", metadata: { status: "completed" } },
+    ]),
+    true,
+  );
+  assert.equal(
+    hasSupportedCourseGrounding([
+      { ...base, type: "content", metadata: { course_grounding: "unsupported" } },
+      { ...base, type: "done", metadata: { status: "completed" } },
+    ]),
+    false,
+  );
+  assert.equal(
+    hasSupportedCourseGrounding([
+      { ...base, type: "sources", metadata: { trace_kind: "course_citations", course_citations: [{ source_id: "src_1" }] } },
+      { ...base, type: "content", metadata: { course_grounding: "supported" } },
+      { ...base, type: "error", metadata: { turn_terminal: true } },
+    ]),
+    false,
+  );
 });
 
 test("learner-action request carries identity bindings but no prompt or source authority", async (t) => {

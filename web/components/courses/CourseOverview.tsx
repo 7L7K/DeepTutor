@@ -143,16 +143,18 @@ export default function CourseOverview() {
             <DestinationCard
               icon={<ClipboardCheck size={19} />}
               title="Practice"
-              description="Use the existing Course practice workspace."
+              description="Take persistent Practice grounded in this Course."
+              href={`/classes/${encodeURIComponent(course.id)}/practice`}
               disabled={disabled}
-              onOpen={() => openDestination("/practice")}
+              onOpen={() => openDestination(`/classes/${encodeURIComponent(course.id)}/practice`)}
             />
             <DestinationCard
               icon={<RotateCcw size={19} />}
               title="Review"
-              description="Open the existing flashcard review workspace."
+              description="Review approved cards from this Course."
+              href={`/classes/${encodeURIComponent(course.id)}/review`}
               disabled={disabled}
-              onOpen={() => openDestination("/flashcards")}
+              onOpen={() => openDestination(`/classes/${encodeURIComponent(course.id)}/review`)}
             />
           </div>
         </section>

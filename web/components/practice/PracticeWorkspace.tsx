@@ -103,7 +103,13 @@ const emptyQuestion: QuestionDraft = {
 };
 
 /** Private Course Practice workspace with durable manual and grounded quiz flows. */
-export default function PracticeWorkspace() {
+export default function PracticeWorkspace({
+  initialPracticeSetId = null,
+  initialAttemptId = null,
+}: {
+  initialPracticeSetId?: string | null;
+  initialAttemptId?: string | null;
+}) {
   const router = useRouter();
   const { activeCourse, refresh: refreshCourses } = useCourses();
   const [identity, setIdentity] = useState<string | null>(null);
@@ -214,14 +220,24 @@ export default function PracticeWorkspace() {
     return next;
   }, []);
 
-  const loadSetDetail = useCallback(async (scope: PracticeRequestScope, practiceSet: PracticeSet, revisionId: string | null) => {
-    const [history, loadedRevision] = await Promise.all([
+  const loadSetDetail = useCallback(async (scope: PracticeRequestScope, practiceSet: PracticeSet, revisionId: string | null, requestedAttemptId: string | null = null) => {
+    const [history, initialRevision] = await Promise.all([
       listPracticeAttempts(practiceSet.course_id, practiceSet.id),
       revisionId ? getPracticeRevision(practiceSet.course_id, practiceSet.id, revisionId) : Promise.resolve(null),
     ]);
     if (!current(scope)) return;
     setAttempts(history);
     setAttemptsHaveMore(history.length === 50);
+    const requestedAttempt = requestedAttemptId
+      ? history.find((attempt) => attempt.id === requestedAttemptId) ?? null
+      : null;
+    const targetRevisionId = requestedAttempt?.practice_set_revision_id ?? revisionId;
+    const loadedRevision = targetRevisionId === initialRevision?.id
+      ? initialRevision
+      : targetRevisionId
+        ? await getPracticeRevision(practiceSet.course_id, practiceSet.id, targetRevisionId)
+        : null;
+    if (!current(scope)) return;
     setRevision(loadedRevision);
     if (!loadedRevision) {
       setQuestions([]);
@@ -230,12 +246,12 @@ export default function PracticeWorkspace() {
     const loadedQuestions = await listPracticeQuestions(practiceSet.course_id, practiceSet.id, loadedRevision.id);
     if (!current(scope)) return;
     setQuestions(loadedQuestions);
-    const inProgress = history.find(
+    const selectedAttempt = requestedAttempt ?? history.find(
       (attempt) =>
         attempt.state === "in_progress" &&
         attempt.practice_set_revision_id === loadedRevision.id,
-    );
-    if (!inProgress) {
+    ) ?? null;
+    if (!selectedAttempt) {
       setAttemptView(null);
       setResultView(null);
       return;
@@ -243,11 +259,15 @@ export default function PracticeWorkspace() {
     const resumed = await getPracticeAttempt(
       practiceSet.course_id,
       practiceSet.id,
-      inProgress.id,
+      selectedAttempt.id,
     );
     if (!current(scope)) return;
     setAttemptView(resumed);
-    setResultView(null);
+    if (resumed.attempt.state === "graded") {
+      setResultView(await getPracticeResults(practiceSet.course_id, practiceSet.id, resumed.attempt.id));
+    } else {
+      setResultView(null);
+    }
   }, [current]);
 
   const loadCourse = useCallback(async (scope: PracticeRequestScope) => {
@@ -295,7 +315,11 @@ export default function PracticeWorkspace() {
         .filter((operation) => operation.state === "failed")
         .map((operation) => operation.practice_set_id),
     );
+    const requested = initialPracticeSetId
+      ? listed.find((item) => item.id === initialPracticeSetId) ?? null
+      : null;
     const usable =
+      requested ??
       (generated?.state !== "archived" ? generated : null) ??
       listed.find((set) => set.state === "draft" && set.current_revision_id) ??
       listed.find(
@@ -306,7 +330,12 @@ export default function PracticeWorkspace() {
     if (usable) {
       const detailScope = advanceView();
       try {
-        await loadSetDetail(detailScope, usable, usable.current_revision_id);
+        await loadSetDetail(
+          detailScope,
+          usable,
+          usable.current_revision_id,
+          initialAttemptId,
+        );
       } catch (cause) {
         if (current(detailScope)) setError(errorText(cause));
       }
@@ -319,7 +348,7 @@ export default function PracticeWorkspace() {
       setLoadedCourseId(scope.courseId);
       setCourseLoading(false);
     }
-  }, [advanceView, current, loadSetDetail]);
+  }, [advanceView, current, initialAttemptId, initialPracticeSetId, loadSetDetail]);
 
   useEffect(() => {
     let alive = true;
@@ -750,6 +779,7 @@ export default function PracticeWorkspace() {
       const view = await startPracticeAttempt(activeCourse.id, selectedSet, revision.id, activeCourse.write_epoch);
       if (!current(scope)) return;
       setAttemptView(view); setResultView(null); setStatus(view.attempt.state === "in_progress" ? "Quiz resumed." : "Quiz loaded.");
+      router.replace(`/classes/${encodeURIComponent(activeCourse.id)}/practice/${encodeURIComponent(selectedSet.id)}/attempts/${encodeURIComponent(view.attempt.id)}`);
       const history = await listPracticeAttempts(activeCourse.id, selectedSet.id);
       if (current(scope)) {
         setAttempts(history);
@@ -757,7 +787,7 @@ export default function PracticeWorkspace() {
       }
     } catch (cause) { if (current(scope)) setError(errorText(cause)); }
     finally { if (current(scope)) setBusy(false); }
-  }, [activeCourse, current, readOnly, revision, selectedSet]);
+  }, [activeCourse, current, readOnly, revision, router, selectedSet]);
 
   const openAttempt = useCallback(async (attempt: QuizAttempt) => {
     if (!activeCourse || !selectedSet) return;
@@ -777,9 +807,10 @@ export default function PracticeWorkspace() {
         const results = await getPracticeResults(activeCourse.id, selectedSet.id, view.attempt.id);
         if (current(scope)) setResultView(results);
       } else setResultView(null);
+      router.replace(`/classes/${encodeURIComponent(activeCourse.id)}/practice/${encodeURIComponent(selectedSet.id)}/attempts/${encodeURIComponent(view.attempt.id)}`);
     } catch (cause) { if (current(scope)) setError(errorText(cause)); }
     finally { if (current(scope)) setBusy(false); }
-  }, [activeCourse, advanceView, current, selectedSet]);
+  }, [activeCourse, advanceView, current, router, selectedSet]);
 
   const answerFor = useCallback((itemId: string): QuizAttemptAnswer | null =>
     attemptView?.answers.find((answer) => answer.attempt_item_id === itemId) ?? null,
@@ -855,7 +886,7 @@ export default function PracticeWorkspace() {
       );
       if (!current(scope)) return;
       storeFlashcardProposal(identity, activeCourse.id, proposal);
-      router.push("/flashcards");
+      router.push(`/classes/${encodeURIComponent(activeCourse.id)}/review`);
     } catch (cause) {
       if (current(scope)) setError(errorText(cause));
     } finally {
@@ -994,7 +1025,7 @@ export default function PracticeWorkspace() {
               </div> : null}
               {!attemptView && revision?.state === "ready" && !readOnly ? <div className="mb-5 flex flex-wrap gap-2">{revision.id === selectedSet.current_revision_id ? <button disabled={busy} onClick={() => void startOrResume()} className="inline-flex items-center gap-1 rounded-lg bg-[var(--primary)] px-3 py-2 text-sm text-[var(--primary-foreground)]"><Play size={15} />Start or resume quiz</button> : <span className="self-center text-sm text-[var(--muted-foreground)]">Historical revision — attempts are read-only.</span>}<button disabled={busy} onClick={() => void createSuccessor()} className="rounded-lg border border-[var(--border)] px-3 py-2 text-sm">Create successor revision</button></div> : null}
               {!attemptView && questions.length ? <ol className="mb-6 space-y-3">{questions.map((question) => <li key={question.id} className="rounded-lg border border-[var(--border)] p-3"><span className="mr-2 text-xs text-[var(--muted-foreground)]">{question.ordinal}.</span>{question.prompt}{revision?.state === "ready" ? null : <p className="mt-2 text-xs text-[var(--muted-foreground)]">Answer: {question.answer_contract?.answer ?? "Stored server-side"}</p>}</li>)}</ol> : null}
-              {attemptView ? <AttemptRunner key={attemptView.attempt.id} view={attemptView} questions={questions} sourceNames={sourceNames} readOnly={readOnly || busy} answerFor={answerFor} onSave={saveAnswer} onTransition={(action) => void transitionAttempt(action)} onReviewMisses={() => void reviewMissesAsFlashcards()} onStartAgain={() => void startOrResume()} onClose={() => { setAttemptView(null); setResultView(null); }} resultView={resultView} /> : null}
+              {attemptView ? <AttemptRunner key={attemptView.attempt.id} view={attemptView} questions={questions} sourceNames={sourceNames} readOnly={readOnly || busy} answerFor={answerFor} onSave={saveAnswer} onTransition={(action) => void transitionAttempt(action)} onReviewMisses={() => void reviewMissesAsFlashcards()} onStartAgain={() => void startOrResume()} onClose={() => { setAttemptView(null); setResultView(null); router.replace(`/classes/${encodeURIComponent(activeCourse.id)}/practice`); }} resultView={resultView} /> : null}
               {!attemptView ? <AttemptHistory attempts={attempts} onOpen={(item) => void openAttempt(item)} busy={busy} hasMore={attemptsHaveMore} onLoadMore={() => void loadMoreAttempts()} /> : null}
             </> : <p className="text-sm text-[var(--muted-foreground)]">Choose a Practice set or create one.</p>}
           </section>
