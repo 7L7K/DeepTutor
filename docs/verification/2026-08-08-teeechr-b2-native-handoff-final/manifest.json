@@ -1,0 +1,41 @@
+{
+  "schemaVersion": 1,
+  "kind": "blueway-ios-simulator-qa-run",
+  "createdAt": "2026-08-08T16:16:12Z",
+  "startedAt": "2026-08-08T16:15:43Z",
+  "status": "passed",
+  "exitCode": 0,
+  "target": {
+    "platform": "iOS Simulator",
+    "simulatorUdid": "7459A96D-A43F-4FB8-99CC-2BCD221DE77D",
+    "bundleId": "com.bleeew.copilot.authqa"
+  },
+  "artifact": {
+    "appPath": "/private/tmp/blueway-b2-native-derived-final/Build/Products/Release-iphonesimulator/BlueWay.app",
+    "installedAppPath": "/Users/home/Library/Developer/CoreSimulator/Devices/7459A96D-A43F-4FB8-99CC-2BCD221DE77D/data/Containers/Bundle/Application/F951E363-6B8B-4D36-A385-A00FB719CDA2/BlueWay.app",
+    "jsBundleSha256": "7e3731dce4e0d3e69ce79a3f85b97f6b67a27dc74de28c1c3fd369d8874e28f4",
+    "nativeExecutableSha256": "1f13a6f58078076be12fb597a3ea6f9d3cc2986a04bd8e517f9f4b52a6ecd9fb",
+    "sourceCommit": "634a5f258e037010472a6293fbacd23616f2d873",
+    "sourceDirty": true,
+    "sourceStateSha256": "7503bd84a736091aa8f1021aaa7fabe4867db0318e8ecab710915582a1f52185"
+  },
+  "selection": {
+    "flows": [
+      "/private/tmp/b2-native-authenticated-handoff.yaml"
+    ],
+    "includeTags": []
+  },
+  "actions": {
+    "buildRequested": false,
+    "installRequested": true,
+    "dryRun": false
+  },
+  "evidence": {
+    "root": "/Users/home/Desktop/2k26/teeech/DeepTutor-blueway-launch-b2/docs/verification/2026-08-08-teeechr-b2-native-handoff-final",
+    "junit": "/Users/home/Desktop/2k26/teeech/DeepTutor-blueway-launch-b2/docs/verification/2026-08-08-teeechr-b2-native-handoff-final/junit/maestro.xml",
+    "artifacts": "/Users/home/Desktop/2k26/teeech/DeepTutor-blueway-launch-b2/docs/verification/2026-08-08-teeechr-b2-native-handoff-final/artifacts",
+    "preciseCoordinatesRedacted": true,
+    "binaryArtifactsUnmodified": true,
+    "rawArtifactsRetained": false
+  }
+}

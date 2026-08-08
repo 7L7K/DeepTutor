@@ -1,0 +1,224 @@
+12:15:44.237 [ INFO] maestro.cli.report.TestDebugReporter.logSystemInfo: Debug output path: /tmp/blueway-b2-native-final-raw.MIqmsQ/debug/.maestro/tests/2026-08-08_121544
+12:15:44.238 [ INFO] MAESTRO.logSystemInfo: ---- System Info ----
+12:15:44.238 [ INFO] MAESTRO.logSystemInfo: Maestro Version: 2.6.1
+12:15:44.238 [ INFO] MAESTRO.logSystemInfo: CI: Undefined
+12:15:44.239 [ INFO] MAESTRO.logSystemInfo: OS Name: Mac OS X
+12:15:44.239 [ INFO] MAESTRO.logSystemInfo: OS Version: 27.0
+12:15:44.239 [ INFO] MAESTRO.logSystemInfo: Architecture: aarch64
+12:15:44.239 [ INFO] MAESTRO.logSystemInfo: Java Version: 17
+12:15:44.286 [ INFO] MAESTRO.logSystemInfo: Xcode Version: 27.0
+12:15:44.289 [ INFO] MAESTRO.logSystemInfo: Flutter Version: Undefined
+12:15:44.292 [ INFO] MAESTRO.logSystemInfo: Flutter Channel: Undefined
+12:15:44.292 [ INFO] MAESTRO.logSystemInfo: ---------------------
+12:15:44.388 [DEBUG] io.micrometer.common.util.internal.logging.InternalLoggerFactory.newDefaultFactory: Using SLF4J as the default logging framework
+12:15:45.154 [ INFO] maestro.cli.command.TestCommand.runShardSuite: [shard 1] Selected device 7459A96D-A43F-4FB8-99CC-2BCD221DE77D using port 52487 with execution plan ExecutionPlan(flowsToRun=[/private/tmp/b2-native-authenticated-handoff.yaml], sequence=FlowSequence(flows=[], continueOnFailure=true), workspaceConfig=WorkspaceConfig(flows=null, includeTags=null, excludeTags=null, executionOrder=null, baselineBranch=null, notifications=null, disableRetries=false, platform=PlatformConfiguration(android=AndroidConfiguration(disableAnimations=false), ios=IOSConfiguration(disableAnimations=false, snapshotKeyHonorModalViews=null)), testOutputDir=null))
+12:15:45.413 [TRACE] ios.xctest.XCTestIOSDevice.open: Opening a connection
+12:15:45.413 [TRACE] xcuitest.XCTestDriverClient.restartXCTestRunner: Restarting XCTest Runner (uninstalling, installing and starting)
+12:15:45.414 [ INFO] xcuitest.installer.LocalXCTestInstaller.xcTestDriverStatusCheck: [Start] Perform XCUITest driver status check on 7459A96D-A43F-4FB8-99CC-2BCD221DE77D
+12:15:45.416 [ INFO] xcuitest.installer.LocalXCTestInstaller.xcTestDriverStatusCheck: [Failed] Perform XCUITest driver status check on 7459A96D-A43F-4FB8-99CC-2BCD221DE77D, exception: java.net.ConnectException: Failed to connect to /127.0.0.1:52487
+12:15:45.416 [TRACE] xcuitest.XCTestDriverClient.restartXCTestRunner: XCTest Runner uninstalled, will install and start it
+12:15:45.416 [ INFO] xcuitest.installer.LocalXCTestInstaller.start$lambda$3: start()
+12:15:45.416 [ INFO] xcuitest.installer.LocalXCTestInstaller.start$lambda$3: [Start] Install XCUITest runner on 7459A96D-A43F-4FB8-99CC-2BCD221DE77D
+12:15:45.416 [ INFO] xcuitest.installer.LocalXCTestInstaller.xcTestDriverStatusCheck: [Start] Perform XCUITest driver status check on 7459A96D-A43F-4FB8-99CC-2BCD221DE77D
+12:15:45.417 [ INFO] xcuitest.installer.LocalXCTestInstaller.xcTestDriverStatusCheck: [Failed] Perform XCUITest driver status check on 7459A96D-A43F-4FB8-99CC-2BCD221DE77D, exception: java.net.ConnectException: Failed to connect to /127.0.0.1:52487
+12:15:45.417 [ INFO] xcuitest.installer.IOSBuildProductsExtractor.extract: [Start] Writing build products
+12:15:45.444 [ INFO] xcuitest.installer.IOSBuildProductsExtractor.extract: [Done] Writing build products
+12:15:45.444 [ INFO] xcuitest.installer.IOSBuildProductsExtractor.extract: [Start] Writing maestro-driver-iosUITests-Runner app
+12:15:45.576 [ INFO] xcuitest.installer.IOSBuildProductsExtractor.extract: [Done] Writing maestro-driver-iosUITests-Runner app
+12:15:45.576 [ INFO] xcuitest.installer.IOSBuildProductsExtractor.extract: [Start] Writing maestro-driver-ios app
+12:15:45.581 [ INFO] xcuitest.installer.IOSBuildProductsExtractor.extract: [Done] Writing maestro-driver-ios app
+12:15:45.582 [ INFO] xcuitest.installer.LocalXCTestInstaller.startXCTestRunner: Installing driver with xcodebuild
+12:15:45.583 [ INFO] xcuitest.installer.LocalXCTestInstaller.startXCTestRunner: [Start] Running XcUITest with `xcodebuild test-without-building` with 52487 and config: IOSDriverConfig(prebuiltRunner=false, sourceDirectory=driver-iPhoneSimulator, context=CLI, snapshotKeyHonorModalViews=null)
+12:15:45.584 [ INFO] util.CommandLineUtils.runCommand: Running command line operation: [xcodebuild, test-without-building, -xctestrun, /var/folders/th/9_1tm93n26v0bgzd8ng3c3yh0000gn/T/7459A96D-A43F-4FB8-99CC-2BCD221DE77D11768640102516835599/maestro-driver-ios-config.xctestrun, -destination, id=7459A96D-A43F-4FB8-99CC-2BCD221DE77D, -derivedDataPath, /var/folders/th/9_1tm93n26v0bgzd8ng3c3yh0000gn/T/maestro_xctestrunner_xcodebuild_output2196099381517158783] with {TEST_RUNNER_PORT=52487}
+12:15:45.587 [ INFO] xcuitest.installer.LocalXCTestInstaller.startXCTestRunner: [Done] Running XcUITest with `xcodebuild test-without-building`
+12:15:45.587 [ INFO] xcuitest.installer.LocalXCTestInstaller.start$lambda$3: [Done] Install XCUITest runner on 7459A96D-A43F-4FB8-99CC-2BCD221DE77D
+12:15:45.587 [ INFO] xcuitest.installer.LocalXCTestInstaller.xcTestDriverStatusCheck: [Start] Perform XCUITest driver status check on 7459A96D-A43F-4FB8-99CC-2BCD221DE77D
+12:15:45.588 [ INFO] xcuitest.installer.LocalXCTestInstaller.xcTestDriverStatusCheck: [Failed] Perform XCUITest driver status check on 7459A96D-A43F-4FB8-99CC-2BCD221DE77D, exception: java.net.ConnectException: Failed to connect to /127.0.0.1:52487
+12:15:46.091 [ INFO] xcuitest.installer.LocalXCTestInstaller.xcTestDriverStatusCheck: [Start] Perform XCUITest driver status check on 7459A96D-A43F-4FB8-99CC-2BCD221DE77D
+12:15:46.091 [ INFO] xcuitest.installer.LocalXCTestInstaller.xcTestDriverStatusCheck: [Failed] Perform XCUITest driver status check on 7459A96D-A43F-4FB8-99CC-2BCD221DE77D, exception: java.net.ConnectException: Failed to connect to /127.0.0.1:52487
+12:15:46.594 [ INFO] xcuitest.installer.LocalXCTestInstaller.xcTestDriverStatusCheck: [Start] Perform XCUITest driver status check on 7459A96D-A43F-4FB8-99CC-2BCD221DE77D
+12:15:46.595 [ INFO] xcuitest.installer.LocalXCTestInstaller.xcTestDriverStatusCheck: [Failed] Perform XCUITest driver status check on 7459A96D-A43F-4FB8-99CC-2BCD221DE77D, exception: java.net.ConnectException: Failed to connect to /127.0.0.1:52487
+12:15:47.095 [ INFO] xcuitest.installer.LocalXCTestInstaller.xcTestDriverStatusCheck: [Start] Perform XCUITest driver status check on 7459A96D-A43F-4FB8-99CC-2BCD221DE77D
+12:15:47.096 [ INFO] xcuitest.installer.LocalXCTestInstaller.xcTestDriverStatusCheck: [Failed] Perform XCUITest driver status check on 7459A96D-A43F-4FB8-99CC-2BCD221DE77D, exception: java.net.ConnectException: Failed to connect to /127.0.0.1:52487
+12:15:47.602 [ INFO] xcuitest.installer.LocalXCTestInstaller.xcTestDriverStatusCheck: [Start] Perform XCUITest driver status check on 7459A96D-A43F-4FB8-99CC-2BCD221DE77D
+12:15:47.602 [ INFO] xcuitest.installer.LocalXCTestInstaller.xcTestDriverStatusCheck: [Failed] Perform XCUITest driver status check on 7459A96D-A43F-4FB8-99CC-2BCD221DE77D, exception: java.net.ConnectException: Failed to connect to /127.0.0.1:52487
+12:15:48.107 [ INFO] xcuitest.installer.LocalXCTestInstaller.xcTestDriverStatusCheck: [Start] Perform XCUITest driver status check on 7459A96D-A43F-4FB8-99CC-2BCD221DE77D
+12:15:48.108 [ INFO] xcuitest.installer.LocalXCTestInstaller.xcTestDriverStatusCheck: [Failed] Perform XCUITest driver status check on 7459A96D-A43F-4FB8-99CC-2BCD221DE77D, exception: java.net.ConnectException: Failed to connect to /127.0.0.1:52487
+12:15:48.613 [ INFO] xcuitest.installer.LocalXCTestInstaller.xcTestDriverStatusCheck: [Start] Perform XCUITest driver status check on 7459A96D-A43F-4FB8-99CC-2BCD221DE77D
+12:15:48.614 [ INFO] xcuitest.installer.LocalXCTestInstaller.xcTestDriverStatusCheck: [Failed] Perform XCUITest driver status check on 7459A96D-A43F-4FB8-99CC-2BCD221DE77D, exception: java.net.ConnectException: Failed to connect to /127.0.0.1:52487
+12:15:49.119 [ INFO] xcuitest.installer.LocalXCTestInstaller.xcTestDriverStatusCheck: [Start] Perform XCUITest driver status check on 7459A96D-A43F-4FB8-99CC-2BCD221DE77D
+12:15:49.119 [ INFO] xcuitest.installer.LocalXCTestInstaller.xcTestDriverStatusCheck: [Failed] Perform XCUITest driver status check on 7459A96D-A43F-4FB8-99CC-2BCD221DE77D, exception: java.net.ConnectException: Failed to connect to /127.0.0.1:52487
+12:15:49.623 [ INFO] xcuitest.installer.LocalXCTestInstaller.xcTestDriverStatusCheck: [Start] Perform XCUITest driver status check on 7459A96D-A43F-4FB8-99CC-2BCD221DE77D
+12:15:49.624 [ INFO] xcuitest.installer.LocalXCTestInstaller.xcTestDriverStatusCheck: [Failed] Perform XCUITest driver status check on 7459A96D-A43F-4FB8-99CC-2BCD221DE77D, exception: java.net.ConnectException: Failed to connect to /127.0.0.1:52487
+12:15:50.128 [ INFO] xcuitest.installer.LocalXCTestInstaller.xcTestDriverStatusCheck: [Start] Perform XCUITest driver status check on 7459A96D-A43F-4FB8-99CC-2BCD221DE77D
+12:15:50.143 [ INFO] xcuitest.installer.LocalXCTestInstaller.xcTestDriverStatusCheck: [Done] Perform XCUITest driver status check on 7459A96D-A43F-4FB8-99CC-2BCD221DE77D
+12:15:50.161 [ INFO] maestro.cli.runner.TestSuiteInteractor.runFlow:  Running flow B2 native authenticated exact Course handoff
+12:15:50.165 [ INFO] maestro.Maestro.cachedDeviceInfo_delegate$lambda$0: Getting device info
+12:15:50.224 [ INFO] maestro.Maestro.cachedDeviceInfo_delegate$lambda$0: Got device info: DeviceInfo(platform=IOS, widthPixels=1320, heightPixels=2868, widthGrid=440, heightGrid=956)
+12:15:50.256 [ INFO] maestro.cli.runner.TestSuiteInteractor.runFlow$lambda$17$lambda$5: Define variables RUNNING
+12:15:50.257 [ INFO] maestro.cli.runner.TestSuiteInteractor.runFlow$lambda$17$lambda$7: Define variables COMPLETED
+12:15:50.258 [ INFO] maestro.cli.runner.TestSuiteInteractor.runFlow$lambda$17$lambda$5: Apply configuration RUNNING
+12:15:50.258 [ INFO] maestro.cli.runner.TestSuiteInteractor.runFlow$lambda$17$lambda$7: Apply configuration COMPLETED
+12:15:50.258 [ INFO] maestro.cli.runner.TestSuiteInteractor.runFlow$lambda$17$lambda$5: Launch app "com.bleeew.copilot.authqa" with clear state RUNNING
+12:15:50.259 [ INFO] maestro.Maestro.clearAppState$lambda$5: Clearing app state com.bleeew.copilot.authqa
+12:15:50.259 [ INFO] util.LocalSimulatorUtils.clearAppState: Clearing app com.bleeew.copilot.authqa state
+12:15:50.259 [ INFO] util.LocalSimulatorUtils.terminate: [Start] Terminating app com.bleeew.copilot.authqa
+12:15:50.260 [ INFO] util.CommandLineUtils.runCommand: Running command line operation: [xcrun, simctl, terminate, 7459A96D-A43F-4FB8-99CC-2BCD221DE77D, com.bleeew.copilot.authqa] with {}
+12:15:50.358 [ERROR] util.CommandLineUtils.runCommand: Process failed with exit code 3
+12:15:50.359 [ERROR] util.CommandLineUtils.runCommand: Error output An error was encountered processing the command (domain=NSPOSIXErrorDomain, code=3):
+Simulator device failed to terminate com.bleeew.copilot.authqa.
+found nothing to terminate
+Underlying error (domain=NSPOSIXErrorDomain, code=3):
+	The request to terminate "com.bleeew.copilot.authqa" failed. found nothing to terminate
+	found nothing to terminate
+
+12:15:50.359 [ INFO] util.LocalSimulatorUtils.terminate: [Done] Terminating app com.bleeew.copilot.authqa
+12:15:50.581 [ INFO] util.LocalSimulatorUtils.reinstallApp: Copying app binary from /Users/home/Library/Developer/CoreSimulator/Devices/7459A96D-A43F-4FB8-99CC-2BCD221DE77D/data/Containers/Bundle/Application/F951E363-6B8B-4D36-A385-A00FB719CDA2/BlueWay.app to /var/folders/th/9_1tm93n26v0bgzd8ng3c3yh0000gn/T/16205629164390083165/com.bleeew.copilot.authqa-1786205750580.app
+12:15:50.699 [ INFO] util.LocalSimulatorUtils.reinstallApp: Reinstalling and launching com.bleeew.copilot.authqa
+12:15:50.699 [ INFO] util.CommandLineUtils.runCommand: Running command line operation: [xcrun, simctl, uninstall, 7459A96D-A43F-4FB8-99CC-2BCD221DE77D, com.bleeew.copilot.authqa] with {}
+12:15:50.834 [ INFO] util.CommandLineUtils.runCommand: Running command line operation: [xcrun, simctl, install, 7459A96D-A43F-4FB8-99CC-2BCD221DE77D, /var/folders/th/9_1tm93n26v0bgzd8ng3c3yh0000gn/T/16205629164390083165/com.bleeew.copilot.authqa-1786205750580.app] with {}
+12:15:51.212 [ INFO] util.LocalSimulatorUtils.reinstallApp: App com.bleeew.copilot.authqa reinstalled and launched
+12:15:51.213 [ INFO] device.SimctlIOSDevice.setPermissions: [Start] Setting permissions all=allow through applesimutils
+12:15:51.214 [ INFO] util.LocalSimulatorUtils.setAppleSimutilsPermissions: [Start] Setting permissions via pinned applesimutils
+12:15:51.214 [ INFO] util.CommandLineUtils.runCommand: Running command line operation: [/tmp/blueway-b2-native-maestro-home-final.leSlwC/.maestro/deps/applesimutils, --byId, 7459A96D-A43F-4FB8-99CC-2BCD221DE77D, --bundle, com.bleeew.copilot.authqa, --setPermissions, calendar=YES,camera=YES,contacts=YES,faceid=YES,homekit=YES,medialibrary=YES,microphone=YES,motion=YES,photos=YES,reminders=YES,siri=YES,speech=YES,userTracking=YES] with {}
+12:15:51.384 [ INFO] util.LocalSimulatorUtils.setAppleSimutilsPermissions: [Done] Setting permissions pinned applesimutils
+12:15:51.384 [ INFO] device.SimctlIOSDevice.setPermissions: [Done] Setting permissions through applesimutils
+12:15:51.384 [ INFO] device.SimctlIOSDevice.setPermissions: [Start] Setting Permissions all=allow through simctl
+12:15:51.385 [ INFO] util.CommandLineUtils.runCommand: Running command line operation: [xcrun, simctl, privacy, 7459A96D-A43F-4FB8-99CC-2BCD221DE77D, grant, location-always, com.bleeew.copilot.authqa] with {}
+12:15:51.477 [ INFO] device.SimctlIOSDevice.setPermissions: [Done] Setting Permissions all=allow through simctl
+12:15:51.485 [ INFO] maestro.Maestro.launchApp$lambda$2: Launching app com.bleeew.copilot.authqa
+12:15:51.485 [ INFO] maestro.Maestro.launchApp$lambda$2: Stopping com.bleeew.copilot.authqa app during launch
+12:15:51.493 [ INFO] util.CommandLineUtils.runCommand: Running command line operation: [xcrun, simctl, launch, 7459A96D-A43F-4FB8-99CC-2BCD221DE77D, com.bleeew.copilot.authqa] with {}
+12:15:51.615 [ INFO] maestro.cli.runner.TestSuiteInteractor.runFlow$lambda$17$lambda$7: Launch app "com.bleeew.copilot.authqa" with clear state COMPLETED
+12:15:51.615 [ INFO] maestro.cli.runner.TestSuiteInteractor.runFlow$lambda$17$lambda$5: Run flow when "Not now" is visible RUNNING
+12:15:55.388 [ INFO] maestro.cli.runner.TestSuiteInteractor.runFlow$lambda$17$lambda$5: Tap on "Not now" RUNNING
+12:15:55.511 [ INFO] maestro.Maestro.tap-HgV9Ck0: Tapping on element:  UiElement(treeNode=TreeNode(attributes={accessibilityText=Not now, title=, value=, text=, hintText=, resource-id=, bounds=[179,612][286,656], enabled=true, focused=false, selected=false, checked=false}, children=[], clickable=null, enabled=true, focused=false, checked=false, selected=false), bounds=Bounds(x=179, y=612, width=107, height=44))
+12:15:55.512 [ INFO] device.IOSDevice.invoke-F9mIFpk: Waiting for animation to end with timeout 3000
+12:15:55.647 [ INFO] maestro.Maestro.tap-HgV9Ck0: Refreshed element
+12:15:55.649 [ INFO] maestro.Maestro.screenshotBasedTap-ogj28Uc: Try tapping at (232, 634) using hierarchy based logic for wait
+12:15:55.650 [TRACE] maestro.utils.ScreenshotUtils.takeScreenshot: Taking screenshot to byte array
+12:15:55.650 [TRACE] maestro.utils.ScreenshotUtils.takeScreenshot: Taking screenshot to output sink
+12:15:56.178 [ INFO] device.IOSDevice.invoke-F9mIFpk: Waiting for animation to end with timeout 3000
+12:15:56.723 [ INFO] maestro.Maestro.screenshotBasedTap-ogj28Uc: Something have changed in the UI judging by view hierarchy. Proceed.
+12:15:56.723 [ INFO] maestro.cli.runner.TestSuiteInteractor.runFlow$lambda$17$lambda$7: Tap on "Not now" COMPLETED
+12:15:56.723 [ INFO] maestro.cli.runner.TestSuiteInteractor.runFlow$lambda$17$lambda$7: Run flow when "Not now" is visible COMPLETED
+12:15:56.723 [ INFO] maestro.cli.runner.TestSuiteInteractor.runFlow$lambda$17$lambda$5: Assert that id: simulator-qa-banner is visible RUNNING
+12:15:56.824 [ INFO] maestro.cli.runner.TestSuiteInteractor.runFlow$lambda$17$lambda$7: Assert that id: simulator-qa-banner is visible COMPLETED
+12:15:56.825 [ INFO] maestro.cli.runner.TestSuiteInteractor.runFlow$lambda$17$lambda$5: Tap on "Open Simulator QA fixtures" RUNNING
+12:15:56.919 [ INFO] maestro.Maestro.tap-HgV9Ck0: Tapping on element:  UiElement(treeNode=TreeNode(attributes={accessibilityText=Open Simulator QA fixtures, title=, value=, text=, hintText=, resource-id=, bounds=[0,62][440,106], enabled=true, focused=false, selected=false, checked=false}, children=[], clickable=null, enabled=true, focused=false, checked=false, selected=false), bounds=Bounds(x=0, y=62, width=440, height=44))
+12:15:56.919 [ INFO] device.IOSDevice.invoke-F9mIFpk: Waiting for animation to end with timeout 3000
+12:15:57.048 [ INFO] maestro.Maestro.tap-HgV9Ck0: Refreshed element
+12:15:57.048 [ INFO] maestro.Maestro.screenshotBasedTap-ogj28Uc: Try tapping at (220, 84) using hierarchy based logic for wait
+12:15:57.049 [TRACE] maestro.utils.ScreenshotUtils.takeScreenshot: Taking screenshot to byte array
+12:15:57.049 [TRACE] maestro.utils.ScreenshotUtils.takeScreenshot: Taking screenshot to output sink
+12:15:57.480 [ INFO] device.IOSDevice.invoke-F9mIFpk: Waiting for animation to end with timeout 3000
+12:15:58.028 [ INFO] maestro.Maestro.screenshotBasedTap-ogj28Uc: Something have changed in the UI judging by view hierarchy. Proceed.
+12:15:58.028 [ INFO] maestro.cli.runner.TestSuiteInteractor.runFlow$lambda$17$lambda$7: Tap on "Open Simulator QA fixtures" COMPLETED
+12:15:58.028 [ INFO] maestro.cli.runner.TestSuiteInteractor.runFlow$lambda$17$lambda$5: Assert that "Load teeechr-biology fixture" is visible RUNNING
+12:15:58.136 [ INFO] maestro.cli.runner.TestSuiteInteractor.runFlow$lambda$17$lambda$7: Assert that "Load teeechr-biology fixture" is visible COMPLETED
+12:15:58.137 [ INFO] maestro.cli.runner.TestSuiteInteractor.runFlow$lambda$17$lambda$5: Tap on "Load teeechr-biology fixture" RUNNING
+12:15:58.241 [ INFO] maestro.Maestro.tap-HgV9Ck0: Tapping on element:  UiElement(treeNode=TreeNode(attributes={accessibilityText=Load teeechr-biology fixture, title=, value=, text=, hintText=, resource-id=, bounds=[16,420][424,466], enabled=true, focused=false, selected=false, checked=false}, children=[], clickable=null, enabled=true, focused=false, checked=false, selected=false), bounds=Bounds(x=16, y=420, width=408, height=46))
+12:15:58.241 [ INFO] device.IOSDevice.invoke-F9mIFpk: Waiting for animation to end with timeout 3000
+12:15:58.375 [ INFO] maestro.Maestro.tap-HgV9Ck0: Refreshed element
+12:15:58.376 [ INFO] maestro.Maestro.screenshotBasedTap-ogj28Uc: Try tapping at (220, 443) using hierarchy based logic for wait
+12:15:58.376 [TRACE] maestro.utils.ScreenshotUtils.takeScreenshot: Taking screenshot to byte array
+12:15:58.376 [TRACE] maestro.utils.ScreenshotUtils.takeScreenshot: Taking screenshot to output sink
+12:15:58.812 [ INFO] device.IOSDevice.invoke-F9mIFpk: Waiting for animation to end with timeout 3000
+12:15:59.369 [ INFO] maestro.Maestro.screenshotBasedTap-ogj28Uc: Something have changed in the UI judging by view hierarchy. Proceed.
+12:15:59.369 [ INFO] maestro.cli.runner.TestSuiteInteractor.runFlow$lambda$17$lambda$7: Tap on "Load teeechr-biology fixture" COMPLETED
+12:15:59.369 [ INFO] maestro.cli.runner.TestSuiteInteractor.runFlow$lambda$17$lambda$5: Assert that "teeechr-biology fixture ready" is visible RUNNING
+12:15:59.481 [ INFO] maestro.cli.runner.TestSuiteInteractor.runFlow$lambda$17$lambda$7: Assert that "teeechr-biology fixture ready" is visible COMPLETED
+12:15:59.482 [ INFO] maestro.cli.runner.TestSuiteInteractor.runFlow$lambda$17$lambda$5: Stop com.bleeew.copilot.authqa RUNNING
+12:15:59.482 [ INFO] maestro.Maestro.stopApp$lambda$3: Stopping app com.bleeew.copilot.authqa
+12:16:00.538 [ INFO] maestro.cli.runner.TestSuiteInteractor.runFlow$lambda$17$lambda$7: Stop com.bleeew.copilot.authqa COMPLETED
+12:16:00.538 [ INFO] maestro.cli.runner.TestSuiteInteractor.runFlow$lambda$17$lambda$5: Launch app "com.bleeew.copilot.authqa" RUNNING
+12:16:00.539 [ INFO] device.SimctlIOSDevice.setPermissions: [Start] Setting permissions all=allow through applesimutils
+12:16:00.539 [ INFO] util.LocalSimulatorUtils.setAppleSimutilsPermissions: [Start] Setting permissions via pinned applesimutils
+12:16:00.539 [ INFO] util.CommandLineUtils.runCommand: Running command line operation: [/tmp/blueway-b2-native-maestro-home-final.leSlwC/.maestro/deps/applesimutils, --byId, 7459A96D-A43F-4FB8-99CC-2BCD221DE77D, --bundle, com.bleeew.copilot.authqa, --setPermissions, calendar=YES,camera=YES,contacts=YES,faceid=YES,homekit=YES,medialibrary=YES,microphone=YES,motion=YES,photos=YES,reminders=YES,siri=YES,speech=YES,userTracking=YES] with {}
+12:16:00.648 [ INFO] util.LocalSimulatorUtils.setAppleSimutilsPermissions: [Done] Setting permissions pinned applesimutils
+12:16:00.648 [ INFO] device.SimctlIOSDevice.setPermissions: [Done] Setting permissions through applesimutils
+12:16:00.648 [ INFO] device.SimctlIOSDevice.setPermissions: [Start] Setting Permissions all=allow through simctl
+12:16:00.648 [ INFO] util.CommandLineUtils.runCommand: Running command line operation: [xcrun, simctl, privacy, 7459A96D-A43F-4FB8-99CC-2BCD221DE77D, grant, location-always, com.bleeew.copilot.authqa] with {}
+12:16:00.735 [ INFO] device.SimctlIOSDevice.setPermissions: [Done] Setting Permissions all=allow through simctl
+12:16:00.737 [ INFO] maestro.Maestro.launchApp$lambda$2: Launching app com.bleeew.copilot.authqa
+12:16:00.737 [ INFO] maestro.Maestro.launchApp$lambda$2: Stopping com.bleeew.copilot.authqa app during launch
+12:16:00.743 [ INFO] util.CommandLineUtils.runCommand: Running command line operation: [xcrun, simctl, launch, 7459A96D-A43F-4FB8-99CC-2BCD221DE77D, com.bleeew.copilot.authqa] with {}
+12:16:00.856 [ INFO] maestro.cli.runner.TestSuiteInteractor.runFlow$lambda$17$lambda$7: Launch app "com.bleeew.copilot.authqa" COMPLETED
+12:16:00.856 [ INFO] maestro.cli.runner.TestSuiteInteractor.runFlow$lambda$17$lambda$5: Run flow when "Not now" is visible RUNNING
+12:16:04.427 [ INFO] maestro.cli.runner.TestSuiteInteractor.runFlow$lambda$17$lambda$5: Tap on "Not now" RUNNING
+12:16:04.543 [ INFO] maestro.Maestro.tap-HgV9Ck0: Tapping on element:  UiElement(treeNode=TreeNode(attributes={accessibilityText=Not now, title=, value=, text=, hintText=, resource-id=, bounds=[179,612][286,656], enabled=true, focused=false, selected=false, checked=false}, children=[], clickable=null, enabled=true, focused=false, checked=false, selected=false), bounds=Bounds(x=179, y=612, width=107, height=44))
+12:16:04.544 [ INFO] device.IOSDevice.invoke-F9mIFpk: Waiting for animation to end with timeout 3000
+12:16:04.677 [ INFO] maestro.Maestro.tap-HgV9Ck0: Refreshed element
+12:16:04.677 [ INFO] maestro.Maestro.screenshotBasedTap-ogj28Uc: Try tapping at (232, 634) using hierarchy based logic for wait
+12:16:04.677 [TRACE] maestro.utils.ScreenshotUtils.takeScreenshot: Taking screenshot to byte array
+12:16:04.677 [TRACE] maestro.utils.ScreenshotUtils.takeScreenshot: Taking screenshot to output sink
+12:16:05.112 [ INFO] device.IOSDevice.invoke-F9mIFpk: Waiting for animation to end with timeout 3000
+12:16:05.556 [ INFO] maestro.Maestro.screenshotBasedTap-ogj28Uc: Something have changed in the UI judging by view hierarchy. Proceed.
+12:16:05.556 [ INFO] maestro.cli.runner.TestSuiteInteractor.runFlow$lambda$17$lambda$7: Tap on "Not now" COMPLETED
+12:16:05.556 [ INFO] maestro.cli.runner.TestSuiteInteractor.runFlow$lambda$17$lambda$7: Run flow when "Not now" is visible COMPLETED
+12:16:05.556 [ INFO] maestro.cli.runner.TestSuiteInteractor.runFlow$lambda$17$lambda$5: Assert that id: simulator-qa-banner is visible RUNNING
+12:16:05.680 [ INFO] maestro.cli.runner.TestSuiteInteractor.runFlow$lambda$17$lambda$7: Assert that id: simulator-qa-banner is visible COMPLETED
+12:16:05.680 [ INFO] maestro.cli.runner.TestSuiteInteractor.runFlow$lambda$17$lambda$5: Tap on id: floating-tab-schedule RUNNING
+12:16:05.793 [ INFO] maestro.Maestro.tap-HgV9Ck0: Tapping on element:  UiElement(treeNode=TreeNode(attributes={accessibilityText=Schedule tab, title=, value=, text=, hintText=, resource-id=floating-tab-schedule, bounds=[123,855][220,905], enabled=true, focused=false, selected=false, checked=false}, children=[], clickable=null, enabled=true, focused=false, checked=false, selected=false), bounds=Bounds(x=123, y=855, width=97, height=50))
+12:16:05.793 [ INFO] device.IOSDevice.invoke-F9mIFpk: Waiting for animation to end with timeout 3000
+12:16:05.935 [ INFO] maestro.Maestro.tap-HgV9Ck0: Refreshed element
+12:16:05.936 [ INFO] maestro.Maestro.screenshotBasedTap-ogj28Uc: Try tapping at (171, 880) using hierarchy based logic for wait
+12:16:05.936 [TRACE] maestro.utils.ScreenshotUtils.takeScreenshot: Taking screenshot to byte array
+12:16:05.936 [TRACE] maestro.utils.ScreenshotUtils.takeScreenshot: Taking screenshot to output sink
+12:16:06.376 [ INFO] device.IOSDevice.invoke-F9mIFpk: Waiting for animation to end with timeout 3000
+12:16:06.671 [ INFO] maestro.Maestro.screenshotBasedTap-ogj28Uc: Something have changed in the UI judging by view hierarchy. Proceed.
+12:16:06.671 [ INFO] maestro.cli.runner.TestSuiteInteractor.runFlow$lambda$17$lambda$7: Tap on id: floating-tab-schedule COMPLETED
+12:16:06.671 [ INFO] maestro.cli.runner.TestSuiteInteractor.runFlow$lambda$17$lambda$5: Assert that "Schedule.*" is visible RUNNING
+12:16:06.788 [ INFO] maestro.cli.runner.TestSuiteInteractor.runFlow$lambda$17$lambda$7: Assert that "Schedule.*" is visible COMPLETED
+12:16:06.789 [ INFO] maestro.cli.runner.TestSuiteInteractor.runFlow$lambda$17$lambda$5: Tap on "Classes" RUNNING
+12:16:06.902 [ INFO] maestro.Maestro.tap-HgV9Ck0: Tapping on element:  UiElement(treeNode=TreeNode(attributes={accessibilityText=Classes, title=, value=, text=, hintText=, resource-id=segmented-option-classes, bounds=[223,241][419,285], enabled=true, focused=false, selected=false, checked=false}, children=[], clickable=null, enabled=true, focused=false, checked=false, selected=false), bounds=Bounds(x=223, y=241, width=196, height=44))
+12:16:06.903 [ INFO] device.IOSDevice.invoke-F9mIFpk: Waiting for animation to end with timeout 3000
+12:16:07.043 [ INFO] maestro.Maestro.tap-HgV9Ck0: Refreshed element
+12:16:07.043 [ INFO] maestro.Maestro.screenshotBasedTap-ogj28Uc: Try tapping at (321, 263) using hierarchy based logic for wait
+12:16:07.043 [TRACE] maestro.utils.ScreenshotUtils.takeScreenshot: Taking screenshot to byte array
+12:16:07.043 [TRACE] maestro.utils.ScreenshotUtils.takeScreenshot: Taking screenshot to output sink
+12:16:07.479 [ INFO] device.IOSDevice.invoke-F9mIFpk: Waiting for animation to end with timeout 3000
+12:16:07.632 [ INFO] maestro.Maestro.screenshotBasedTap-ogj28Uc: Something have changed in the UI judging by view hierarchy. Proceed.
+12:16:07.632 [ INFO] maestro.cli.runner.TestSuiteInteractor.runFlow$lambda$17$lambda$7: Tap on "Classes" COMPLETED
+12:16:07.632 [ INFO] maestro.cli.runner.TestSuiteInteractor.runFlow$lambda$17$lambda$5: Assert that ".*Biology 101 - Foundations of Biology.*" is visible RUNNING
+12:16:07.744 [ INFO] maestro.cli.runner.TestSuiteInteractor.runFlow$lambda$17$lambda$7: Assert that ".*Biology 101 - Foundations of Biology.*" is visible COMPLETED
+12:16:07.745 [ INFO] maestro.cli.runner.TestSuiteInteractor.runFlow$lambda$17$lambda$5: Tap on ".*Biology 101 - Foundations of Biology.*", Index: 0 RUNNING
+12:16:07.857 [ INFO] maestro.Maestro.tap-HgV9Ck0: Tapping on element:  UiElement(treeNode=TreeNode(attributes={accessibilityText=Biology 101 - Foundations of Biology, title=, value=, text=, hintText=, resource-id=, bounds=[46,403][368,426], enabled=true, focused=false, selected=false, checked=false}, children=[], clickable=null, enabled=true, focused=false, checked=false, selected=false), bounds=Bounds(x=46, y=403, width=322, height=23))
+12:16:07.858 [ INFO] device.IOSDevice.invoke-F9mIFpk: Waiting for animation to end with timeout 3000
+12:16:07.993 [ INFO] maestro.Maestro.screenshotBasedTap-ogj28Uc: Try tapping at (207, 414) using hierarchy based logic for wait
+12:16:07.994 [TRACE] maestro.utils.ScreenshotUtils.takeScreenshot: Taking screenshot to byte array
+12:16:07.994 [TRACE] maestro.utils.ScreenshotUtils.takeScreenshot: Taking screenshot to output sink
+12:16:08.430 [ INFO] device.IOSDevice.invoke-F9mIFpk: Waiting for animation to end with timeout 3000
+12:16:09.003 [ INFO] maestro.Maestro.screenshotBasedTap-ogj28Uc: Something have changed in the UI judging by view hierarchy. Proceed.
+12:16:09.003 [ INFO] maestro.cli.runner.TestSuiteInteractor.runFlow$lambda$17$lambda$7: Tap on ".*Biology 101 - Foundations of Biology.*", Index: 0 COMPLETED
+12:16:09.003 [ INFO] maestro.cli.runner.TestSuiteInteractor.runFlow$lambda$17$lambda$5: Assert that id: teeechr-workspace-card-ready is visible RUNNING
+12:16:09.132 [ INFO] maestro.cli.runner.TestSuiteInteractor.runFlow$lambda$17$lambda$7: Assert that id: teeechr-workspace-card-ready is visible COMPLETED
+12:16:09.132 [ INFO] maestro.cli.runner.TestSuiteInteractor.runFlow$lambda$17$lambda$5: Assert that "TEEECHR workspace ready" is visible RUNNING
+12:16:09.260 [ INFO] maestro.cli.runner.TestSuiteInteractor.runFlow$lambda$17$lambda$7: Assert that "TEEECHR workspace ready" is visible COMPLETED
+12:16:09.260 [ INFO] maestro.cli.runner.TestSuiteInteractor.runFlow$lambda$17$lambda$5: Assert that "1 connected sources · 1 meetings" is visible RUNNING
+12:16:09.389 [ INFO] maestro.cli.runner.TestSuiteInteractor.runFlow$lambda$17$lambda$7: Assert that "1 connected sources · 1 meetings" is visible COMPLETED
+12:16:09.389 [ INFO] maestro.cli.runner.TestSuiteInteractor.runFlow$lambda$17$lambda$5: Assert that "Study with TEEECHR" is visible RUNNING
+12:16:09.521 [ INFO] maestro.cli.runner.TestSuiteInteractor.runFlow$lambda$17$lambda$7: Assert that "Study with TEEECHR" is visible COMPLETED
+12:16:09.521 [ INFO] maestro.cli.runner.TestSuiteInteractor.runFlow$lambda$17$lambda$5: Take screenshot B2-native-final-biology-ready-study-with-teeechr RUNNING
+12:16:09.522 [ INFO] maestro.Maestro.takeScreenshot: Taking screenshot
+12:16:09.522 [TRACE] maestro.utils.ScreenshotUtils.takeScreenshot: Taking screenshot to output sink
+12:16:09.595 [ INFO] maestro.cli.runner.TestSuiteInteractor.runFlow$lambda$17$lambda$7: Take screenshot B2-native-final-biology-ready-study-with-teeechr COMPLETED
+12:16:09.595 [ INFO] maestro.cli.runner.TestSuiteInteractor.runFlow$lambda$17$lambda$5: Tap on "Study with TEEECHR" RUNNING
+12:16:09.729 [ INFO] maestro.Maestro.tap-HgV9Ck0: Tapping on element:  UiElement(treeNode=TreeNode(attributes={accessibilityText=Study with TEEECHR, title=, value=, text=, hintText=, resource-id=, bounds=[33,497][407,543], enabled=true, focused=false, selected=false, checked=false}, children=[], clickable=null, enabled=true, focused=false, checked=false, selected=false), bounds=Bounds(x=33, y=497, width=374, height=46))
+12:16:09.729 [ INFO] device.IOSDevice.invoke-F9mIFpk: Waiting for animation to end with timeout 3000
+12:16:09.871 [ INFO] maestro.Maestro.tap-HgV9Ck0: Refreshed element
+12:16:09.871 [ INFO] maestro.Maestro.screenshotBasedTap-ogj28Uc: Try tapping at (220, 520) using hierarchy based logic for wait
+12:16:09.871 [TRACE] maestro.utils.ScreenshotUtils.takeScreenshot: Taking screenshot to byte array
+12:16:09.871 [TRACE] maestro.utils.ScreenshotUtils.takeScreenshot: Taking screenshot to output sink
+12:16:10.317 [ INFO] device.IOSDevice.invoke-F9mIFpk: Waiting for animation to end with timeout 3000
+12:16:11.379 [ INFO] maestro.Maestro.screenshotBasedTap-ogj28Uc: Something have changed in the UI judging by view hierarchy. Proceed.
+12:16:11.379 [ INFO] maestro.cli.runner.TestSuiteInteractor.runFlow$lambda$17$lambda$7: Tap on "Study with TEEECHR" COMPLETED
+12:16:11.379 [ INFO] maestro.cli.runner.TestSuiteInteractor.runFlow$lambda$17$lambda$5: Assert that "Biology 101.*" is visible RUNNING
+12:16:11.552 [ INFO] maestro.cli.runner.TestSuiteInteractor.runFlow$lambda$17$lambda$7: Assert that "Biology 101.*" is visible COMPLETED
+12:16:11.552 [ INFO] maestro.cli.runner.TestSuiteInteractor.runFlow$lambda$17$lambda$5: Assert that "Biology 101 - Foundations of Biology" is visible RUNNING
+12:16:11.675 [ INFO] maestro.cli.runner.TestSuiteInteractor.runFlow$lambda$17$lambda$7: Assert that "Biology 101 - Foundations of Biology" is visible COMPLETED
+12:16:11.675 [ INFO] maestro.cli.runner.TestSuiteInteractor.runFlow$lambda$17$lambda$5: Take screenshot B2-native-final-teeechr-biology-course RUNNING
+12:16:11.676 [ INFO] maestro.Maestro.takeScreenshot: Taking screenshot
+12:16:11.676 [TRACE] maestro.utils.ScreenshotUtils.takeScreenshot: Taking screenshot to output sink
+12:16:11.747 [ INFO] maestro.cli.runner.TestSuiteInteractor.runFlow$lambda$17$lambda$7: Take screenshot B2-native-final-teeechr-biology-course COMPLETED
+12:16:11.840 [ INFO] maestro.cli.report.TestDebugReporter.deleteOldFiles: Performing purge of logs older than 14 days from /tmp/blueway-b2-native-final-raw.MIqmsQ/artifacts

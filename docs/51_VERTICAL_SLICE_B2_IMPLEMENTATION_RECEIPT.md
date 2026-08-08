@@ -5,16 +5,15 @@ Status:
 - SOURCE / TEST / BUILD PROVEN
 - AUTHENTICATED LOCAL BROWSER RUNTIME PROVEN
 - CHAT PARKED
-- NATIVE IOS SIMULATOR OPEN: local QA environment values are not present in
-  this shell, so a fresh B2 rebuild/install was not run
+- AUTHENTICATED LOCAL IOS SIMULATOR HANDOFF PROVEN: final local QA build and
+  exact Biology Course handoff are recorded in `docs/52_VERTICAL_SLICE_B2_NATIVE_HANDOFF_RECEIPT.md`
 
 ## Branch and base
 
 - Branch: `feature/blueway-exact-course-launch-b2`
 - TEEECHR worktree: `/Users/home/Desktop/2k26/teeech/DeepTutor-blueway-launch-b2`
 - Base: `a7e05848`
-- HEAD: `a7e05848` before the split B2 commits; implementation and proof files
-  are currently uncommitted pending final closeout.
+- HEAD: `bed8d78b22c114e7c37ffbe34ff3d02c8d97ab04` (`docs(b2): finalize branch receipt`)
 - BlueWay branch: `feature/teeechr-web-course-launch-b2`
 - BlueWay base: `d401a7b1`
 
@@ -42,7 +41,7 @@ creation.
 | Web launch route | PASS | `web/app/launch/blueway/page.tsx`, `web/components/launch/BlueWayLaunch.tsx`, 5 browser journeys passed |
 | BlueWay handoff URL and state gate | PASS | `tests/teeechrCourseLaunch.test.ts` — 4 tests passed |
 | Desktop browser launch | PASS | `docs/verification/2026-08-08-teeechr-b2-browser/user-a-exact-course-overview.png`, Playwright 5/5 |
-| Native iOS simulator launch | OPEN | Simulator and Maestro are available, but the B2 build requires local QA environment values absent from this shell; prior Slice A app is not B2 proof |
+| Native iOS simulator launch | PASS (local authQA) | `docs/52_VERTICAL_SLICE_B2_NATIVE_HANDOFF_RECEIPT.md` and `docs/verification/2026-08-08-teeechr-b2-native-handoff-final/`; hosted/device/release remain open |
 | Narrow mobile browser destination | PASS | `docs/verification/2026-08-08-teeechr-b2-browser/narrow-mobile-exact-course-overview.png`, `390x844` |
 | Keyboard/focus | PASS | narrow campaign focused and activated `Back to Classes` with Enter |
 | Hosted TEEECHR/Supabase | NOT RUN | explicitly outside B2 local proof |
@@ -50,16 +49,16 @@ creation.
 
 ## Final closeout fields
 
-These fields are intentionally blank until the exact final build and fixtures
-are exercised:
+The browser-era fields below are retained for provenance; the completed local
+native build and fixture details are now recorded in document 52.
 
 - Exact Node/npm/Python runtime: Node `v22.23.2`, npm `10.9.8`, Python
   `3.11.15` from `/Users/home/.codex/runtimes/teeechr-b1-python311`.
 - TEEECHR backend/frontend ports and process identity: disposable Uvicorn on
   `127.0.0.1:8034`, Next.js dev server on `localhost:3814` for the final
   browser run.
-- BlueWay simulator/device/build identity: not run; this receipt does not claim
-  native simulator proof.
+- BlueWay simulator/device/build identity: see document 52 and its durable
+  native verification card; hosted/device/release proof remains separate.
 - User A Biology Course + Fall 2026 mapping: owner
   `u_c8ad6002528849c78d92509b766c8601`, internal Course
   `crs_f85ece2874f84e4ead17453bc306eb7`, external Course

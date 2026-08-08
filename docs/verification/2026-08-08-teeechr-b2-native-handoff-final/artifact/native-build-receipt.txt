@@ -1,0 +1,18 @@
+B2 native local iOS Simulator artifact
+
+Source commit: 634a5f258e037010472a6293fbacd23616f2d873
+Bundle ID: com.bleeew.copilot.authqa
+Version: 1.8.11 (22)
+Platform: iPhoneSimulator
+Xcode: 27.0 (27A5218g)
+Simulator: BlueWay QA – iPhone 17 Pro Max
+Simulator UDID: 7459A96D-A43F-4FB8-99CC-2BCD221DE77D
+App path: /private/tmp/blueway-b2-native-derived-final/Build/Products/Release-iphonesimulator/BlueWay.app
+Build log: /private/tmp/blueway-b2-native-build-final.log
+Build result: ** BUILD SUCCEEDED **
+JavaScript bundle SHA-256: 7e3731dce4e0d3e69ce79a3f85b97f6b67a27dc74de28c1c3fd369d8874e28f4
+Native executable SHA-256: 1f13a6f58078076be12fb597a3ea6f9d3cc2986a04bd8e517f9f4b52a6ecd9fb
+
+The .app remains in the local temporary build directory. This durable receipt,
+the manifest, JUnit, and screenshots preserve its identity without claiming a
+hosted, physical-device, TestFlight, or release artifact.

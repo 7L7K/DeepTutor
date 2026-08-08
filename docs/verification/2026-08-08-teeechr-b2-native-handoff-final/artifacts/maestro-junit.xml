@@ -1,0 +1,10 @@
+<?xml version='1.0' encoding='UTF-8'?>
+<testsuites>
+  <testsuite name="BlueWay B2 native authenticated handoff" device="BlueWay QA – iPhone 17 Pro Max - iOS 27.0 - 7459A96D-A43F-4FB8-99CC-2BCD221DE77D" tests="1" failures="0" time="22.0">
+    <testcase id="B2 native authenticated exact Course handoff" name="B2 native authenticated exact Course handoff" classname="B2 native authenticated exact Course handoff" file="/private/tmp/b2-native-authenticated-handoff.yaml" time="22.0" status="SUCCESS">
+      <properties>
+        <property name="tags" value="teeechr, authenticated-simulator-qa, b2-native"/>
+      </properties>
+    </testcase>
+  </testsuite>
+</testsuites>
