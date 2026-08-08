@@ -151,8 +151,8 @@ were not staged or changed by this closeout.
 ## Push state and remaining gates
 
 - Pushed successfully to `fork/feature/teeechr-web-course-hub-slice-b1`.
-- Remote branch now contains commit `428c5bfb` and tracks the local feature
-  branch.
+- Remote branch now contains receipt history through commit `81122361` and
+  tracks the local feature branch.
 - `origin` and all canonical/main branches remain untouched.
 - The local worktree still has the two pre-existing Chat test edits; they were
   not staged, committed, or pushed by this closeout.
