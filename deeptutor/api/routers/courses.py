@@ -1686,6 +1686,99 @@ async def _resolve_learner_action_binding(
     return str(session["id"]), int(message["id"])
 
 
+async def _resolve_supported_course_chat_citations(
+    course_id: str,
+    *,
+    session_id: str,
+    assistant_message_id: int,
+) -> list[dict[str, Any]]:
+    """Resolve only persisted, validated provenance for a Practice handoff.
+
+    The browser may identify a Chat message, but it cannot promote that
+    message into Practice authority.  This resolver accepts only the durable
+    citation event emitted by the Course Chat finalizer, and rechecks each
+    source against the owner's current ready-source projection.
+    """
+
+    from deeptutor.courses.generation_models import CourseChatCitationAnchor
+    from deeptutor.courses.learner_actions import ready_current_source_ids
+
+    await _resolve_learner_action_binding(
+        course_id,
+        session_id=session_id,
+        assistant_message_id=assistant_message_id,
+    )
+    from deeptutor.services.session import get_personal_sqlite_session_store
+
+    store = get_personal_sqlite_session_store()
+    messages = await store.get_messages(session_id)
+    message = next(
+        (item for item in messages if int(item.get("id") or 0) == assistant_message_id),
+        None,
+    )
+    if message is None:
+        raise CourseNotFoundError("Course assistant message not found")
+    events = message.get("events")
+    if not isinstance(events, list) or not events:
+        raise CourseNotFoundError("Course Chat turn is not Practice eligible")
+    if any(str(event.get("type") or "") == "error" for event in events if isinstance(event, dict)):
+        raise CourseNotFoundError("Course Chat turn is not Practice eligible")
+    if any(
+        str((event.get("metadata") or {}).get("course_grounding") or "") == "unsupported"
+        for event in events
+        if isinstance(event, dict)
+    ):
+        raise CourseNotFoundError("Course Chat turn is not Practice eligible")
+    if not any(
+        str(event.get("type") or "") == "done"
+        and str((event.get("metadata") or {}).get("status") or "") == "completed"
+        for event in events
+        if isinstance(event, dict)
+    ):
+        raise CourseNotFoundError("Course Chat turn is not Practice eligible")
+    if not any(
+        str(event.get("type") or "") == "content"
+        and str((event.get("metadata") or {}).get("course_grounding") or "") == "supported"
+        for event in events
+        if isinstance(event, dict)
+    ):
+        raise CourseNotFoundError("Course Chat turn is not Practice eligible")
+
+    service = _service()
+    source_by_id = {source.id: source for source in service.list_sources(course_id)}
+    current_ready_ids = set(ready_current_source_ids(source_by_id.values()))
+    anchors: list[dict[str, Any]] = []
+    for event in events:
+        if not isinstance(event, dict) or str(event.get("type") or "") != "sources":
+            continue
+        metadata = event.get("metadata")
+        if not isinstance(metadata, dict) or metadata.get("trace_kind") != "course_citations":
+            continue
+        proposed = metadata.get("course_citations")
+        if not isinstance(proposed, list):
+            continue
+        for raw in proposed:
+            try:
+                anchor = CourseChatCitationAnchor.model_validate(raw)
+            except (TypeError, ValueError):
+                continue
+            source = source_by_id.get(anchor.source_id)
+            if (
+                source is None
+                or anchor.course_id != course_id
+                or anchor.source_id not in current_ready_ids
+                or source.revision != anchor.source_revision
+                or source.content_sha256 != anchor.source_content_hash
+                or source.display_name != anchor.source_title_snapshot
+            ):
+                continue
+            anchors.append(anchor.model_dump(mode="json"))
+
+    if not anchors:
+        raise CourseNotFoundError("Course Chat turn is not Practice eligible")
+    return anchors
+
+
 async def _resolve_general_chat_context(
     *,
     session_id: str,
@@ -1887,6 +1980,7 @@ async def create_course_learner_action(
 
             objective_ids: list[str] = []
             progress = None
+            citation_anchors: list[dict[str, Any]] = []
             if body.action == "review_weak_topics":
                 _course, store = _course_learning_store(course.id, require_active=False)
                 progress = store.load(course.learning_path_id)
@@ -1908,6 +2002,13 @@ async def create_course_learner_action(
 
             if not source_ids:
                 raise CourseConflictError("Course has no current ready sources")
+
+            if body.action in {"quiz_me", "review_weak_topics"}:
+                citation_anchors = await _resolve_supported_course_chat_citations(
+                    course.id,
+                    session_id=session_id,
+                    assistant_message_id=assistant_message_id,
+                )
 
             if body.action in {"quiz_me", "review_weak_topics"}:
                 title = (
@@ -1934,6 +2035,7 @@ async def create_course_learner_action(
                         "kind": "course_chat",
                         "session_id": session_id,
                         "assistant_message_id": assistant_message_id,
+                        "citation_anchors": citation_anchors,
                     },
                     idempotency_key=body.idempotency_key,
                 )

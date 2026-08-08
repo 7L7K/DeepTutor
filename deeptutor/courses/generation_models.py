@@ -82,6 +82,9 @@ class PracticeGenerationPlanOrigin(BaseModel):
     kind: PracticePlanOriginKind
     session_id: str | None = Field(default=None, max_length=160)
     assistant_message_id: int | None = Field(default=None, ge=1)
+    citation_anchors: list["CourseChatCitationAnchor"] = Field(
+        default_factory=list, max_length=32
+    )
 
     @field_validator("session_id")
     @classmethod
@@ -92,6 +95,65 @@ class PracticeGenerationPlanOrigin(BaseModel):
         if not cleaned:
             raise ValueError("session_id must be non-empty")
         return cleaned
+
+    @field_validator("citation_anchors")
+    @classmethod
+    def _citation_anchors_are_unique(
+        cls, value: list["CourseChatCitationAnchor"]
+    ) -> list["CourseChatCitationAnchor"]:
+        identities = [
+            (item.course_id, item.source_id, item.source_revision, item.source_content_hash)
+            for item in value
+        ]
+        if len(set(identities)) != len(identities):
+            raise ValueError("citation_anchors must not contain duplicate source versions")
+        return value
+
+
+class CourseChatCitationAnchor(BaseModel):
+    """Validated, text-free provenance copied from one persisted Course turn."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    schema_version: Literal[1] = 1
+    course_id: str = Field(min_length=1, max_length=80)
+    source_id: str = Field(min_length=5, max_length=80)
+    source_revision: int = Field(ge=1)
+    source_content_hash: str = Field(min_length=64, max_length=64)
+    source_title_snapshot: str = Field(min_length=1, max_length=500)
+    locator_type: str | None = Field(default=None, max_length=80)
+    locator_value: str | None = Field(default=None, max_length=500)
+    retrieval_fragment_id: str | None = Field(default=None, max_length=160)
+
+    @field_validator("course_id")
+    @classmethod
+    def _course_id_is_opaque(cls, value: str) -> str:
+        value = " ".join(value.split())
+        if not value:
+            raise ValueError("course_id must be non-empty")
+        return value
+
+    @field_validator("source_id")
+    @classmethod
+    def _source_id_is_opaque(cls, value: str) -> str:
+        if not value.startswith("src_"):
+            raise ValueError("source_id must be an opaque Course source ID")
+        return value
+
+    @field_validator("source_content_hash")
+    @classmethod
+    def _source_hash_is_sha256(cls, value: str) -> str:
+        if len(value) != 64 or any(char not in "0123456789abcdef" for char in value):
+            raise ValueError("source_content_hash must be a lowercase SHA-256 digest")
+        return value
+
+    @field_validator("source_title_snapshot", "locator_type", "locator_value", "retrieval_fragment_id")
+    @classmethod
+    def _bounded_text(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        cleaned = " ".join(value.split())
+        return cleaned or None
 
 
 class PracticeGenerationPlan(BaseModel):
