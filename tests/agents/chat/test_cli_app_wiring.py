@@ -92,5 +92,5 @@ def test_an_unrelated_tool_is_not_handed_a_sandbox(
 ) -> None:
     """The branch keys off the ``cli_`` prefix; a tool merely containing it must
     not pick up a workdir it never asked for."""
-    kwargs = _augment("rag", monkeypatch, tmp_path)
+    kwargs = _augment("web_search", monkeypatch, tmp_path)
     assert "_sandbox_workdir" not in kwargs

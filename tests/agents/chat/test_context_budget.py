@@ -503,6 +503,7 @@ async def test_forced_finish_still_reports_the_tools_the_turn_carried(
             session_id="s2",
             user_message="Explain gradient descent",
             language="en",
+            knowledge_bases=["kb"],
             metadata={"turn_id": "t2"},
         ),
         bus,
