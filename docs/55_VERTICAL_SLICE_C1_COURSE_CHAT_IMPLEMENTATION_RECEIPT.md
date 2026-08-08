@@ -31,8 +31,9 @@ add a database migration or a second Chat engine.
 - Branch: `feature/teeechr-course-chat-c1`
 - Base: `794651672b038f99e764b12ae50786dd6aefbc61`
 - Final implementation/proof HEAD: `1d6a36e5f76ce3db53e0e5971cc890945aaaa143`
-- Intended publication target:
-  `fork/feature/teeechr-course-chat-c1`
+- Archived runtime-proof commit:
+  `64af8d2d852a9cee88322c8fb40c184ce2d82165`
+- Publication target: `fork/feature/teeechr-course-chat-c1`
 - Upstream `origin`: not a push target for this slice
 - Merge state: unmerged
 - Luna delegation: unavailable in this session; the primary agent completed
@@ -339,20 +340,24 @@ d1205a4b fix(chat): present human Course source references
 fe9ae485 test(e2e): prove authenticated Course Chat closeout
 84ec7c4a fix(chat): persist Course provider failure receipts
 1d6a36e5 test(e2e): close Course Chat runtime state matrix
+64af8d2d docs(c1): archive Course Chat runtime proof
 ```
 
 ## Publication state
 
-At receipt creation, the intended push is pending:
+The archived runtime-proof commit was pushed only to the authorized fork
+branch:
 
 ```text
-fork/feature/teeechr-course-chat-c1
+64af8d2d852a9cee88322c8fb40c184ce2d82165
+refs/heads/feature/teeechr-course-chat-c1
 ```
 
-Do not push this branch to upstream `origin`, do not merge it into the current
-integration branch, and do not start C2 from an unpublished local-only head.
-The final push verification and docs closeout commit are recorded in the
-follow-up publication update to this receipt.
+The ref was verified with `git ls-remote fork` after the push. This receipt's
+publication-state update is the final docs-only follow-up commit; its exact
+remote equality is verified after publication and reported in the closeout
+handoff. Nothing was pushed to upstream `origin`, and the branch remains
+unmerged.
 
 ## Closeout verdict and remaining risks
 
