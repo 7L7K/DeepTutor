@@ -1,0 +1,47 @@
+{
+  "schema_version": "c3-assessment-contracts-v2-evaluation-only",
+  "source_packet_revision": "reference-course-c3-v1",
+  "status": "DESIGN_ONLY_NOT_RUN",
+  "contracts": [
+    {
+      "contract_id": "ac_resp_02_causal_role_v2",
+      "supersedes_contract_id": "ac_resp_02_causal_role_v1",
+      "objective_id": "OBJ-RESP-02",
+      "question_type": "single_answer_multiple_choice",
+      "cognitive_target": "Explain how oxygen accepting electrons and protons to form water permits electron flow through the aerobic electron transport chain to continue.",
+      "qualification_focus": "Ask which bounded causal statement correctly explains what oxygen does at the end of the aerobic electron transport chain and why electron flow depends on that role.",
+      "required_claim_ids": [
+        "oxygen_accepts_electrons_and_protons",
+        "oxygen_forms_water",
+        "terminal_acceptor_enables_flow"
+      ],
+      "correct_option_contract": "Oxygen accepts electrons and protons to form water, providing the final acceptor that allows electron flow through the chain to continue.",
+      "distractor_contracts": [
+        "identity-only terminal-acceptor recall without causal effect",
+        "oxygen supplies ATP directly",
+        "oxygen regenerates NAD+ through fermentation"
+      ],
+      "implementation_status": "PARKED_UNTIL_BOUNDED_CHOICE_GRADER_EXISTS"
+    },
+    {
+      "contract_id": "ac_resp_03_bounded_contrast_v2",
+      "supersedes_contract_id": "ac_resp_03_bounded_contrast_v1",
+      "objective_id": "OBJ-RESP-03",
+      "question_type": "single_answer_multiple_choice",
+      "cognitive_target": "Contrast fermentation and aerobic respiration using NAD+ regeneration, oxygen as terminal electron acceptor, and relative ATP yield.",
+      "qualification_focus": "Ask which bounded statement correctly contrasts fermentation and aerobic respiration across NAD+ regeneration, oxygen use, and ATP yield.",
+      "required_claim_ids": [
+        "fermentation_regenerates_nad",
+        "fermentation_no_oxygen_acceptor",
+        "fermentation_lower_atp"
+      ],
+      "correct_option_contract": "Fermentation regenerates NAD+ so glycolysis can continue without oxygen as terminal electron acceptor and yields much less ATP per glucose than aerobic respiration.",
+      "distractor_contracts": [
+        "fermentation replaces glycolysis",
+        "fermentation uses oxygen but yields more ATP",
+        "aerobic respiration regenerates NAD+ only through fermentation"
+      ],
+      "implementation_status": "PARKED_UNTIL_BOUNDED_CHOICE_GRADER_EXISTS"
+    }
+  ]
+}

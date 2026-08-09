@@ -200,7 +200,7 @@ an evidence-selection contract: Luna could still choose any exact line from the
 whole Course packet. C3 now carries a typed, server-owned objective-evidence
 binding containing the objective ID, exact source ID, source revision, content
 hash, and exact reachable physical source lines. The Biology fixture authority
-is `evals/reference_course/objective_evidence.json`; the generic provider does
+is `evals/reference_course/objective_evidence_roles_v2.json`; the generic provider does
 not hard-code Biology mappings.
 
 Before admission, the C3 provider verifies that requested objectives are an
@@ -236,3 +236,75 @@ boundary, the five-question primary, repeat, remediation, human-review, and
 browser gates remain `NOT_RUN`; this pass is not yet an educational-quality or
 private-beta claim. The durable campaign summary is
 `evals/reference_course/run_openai_2026-08-09_luna.json`.
+
+## C3-H1 start gate
+
+C3-H1 separates three authorities that must not be collapsed:
+
+1. Automated grounding and publication-fence validation.
+2. Human assessment-design review and signed amendments.
+3. Learner-visible Practice persistence, interaction, and deterministic grading.
+
+OBJ-RESP-01 has an artifact-bound, bounded candidate answer amendment, but it
+remains unsigned and evaluation-only. A signed approval may be materialized only
+through a successor Practice revision; the grader must not overlay amendments
+onto an immutable ready question or historical grading receipt.
+
+OBJ-RESP-02 and OBJ-RESP-03 require single-answer multiple choice for fair
+deterministic grading. The original v2 design is preserved unchanged. Its v3
+successor corrects missing claims, multi-fault distractors, cross-objective
+leakage, and answer-length cues, but remains pre-call blocked. Course Practice
+does not yet have a typed choice contract, learner-safe option projection,
+option-ID response validation, choice-aware database grading validation, or
+accessible radio UI. Therefore a model-only choice response cannot cross the
+publication fence or be called product proof.
+
+The H1 call rule is fail-closed: a provider request may run only after the
+bounded-choice product gate and its focused/broad regression pass. Until then:
+
+- provider requests attempted: `0`;
+- automatic retries: `0`;
+- human-qualified objectives: `0 / 3`;
+- primary/repeat campaign: `NOT_AUTHORIZED`;
+- browser and private beta: `NOT_RUN_GATE_BLOCKED`.
+
+The machine receipt is
+`evals/reference_course/run_c3_h1_2026-08-09.json` (SHA-256
+`1a7ef337aba35b306b6aa980dc6b82947812b5d5be32e9cbe73833a197743092`).
+
+## C3 validation ladder
+
+Use the external Python 3.11 runtime and keep proof layers separate.
+
+1. During implementation, run only the exact affected node IDs or files with
+   `python -m pytest -x -q <affected tests>`.
+2. Before any paid provider call, run the deterministic C3 gate:
+
+   ```text
+   python -m pytest -q \
+     tests/courses/practice/test_openai_practice_provider.py \
+     tests/courses/practice/test_content_quality_c3.py \
+     tests/courses/practice/test_grading_contract.py \
+     tests/courses/practice/test_c3_luna_probe_contracts.py \
+     tests/courses/practice/test_content_quality_replay.py
+   ```
+
+3. Run one closeout regression after the focused gate:
+   `python -m pytest -n 4 --dist loadfile -q tests`.
+4. Do not also run the complete `tests/courses/practice` suite when the focused
+   C3 gate is green and the broad suite is about to run or has passed. Use that
+   standalone suite only to diagnose a Practice failure, cover a changed shared
+   Practice surface missing from the focused files, or satisfy an explicit
+   request.
+5. After a failure, use `python -m pytest --lf -x -q` or rerun the exact failing
+   node, then rerun the affected focused gate and one clean broad closeout.
+6. Keep the paid Luna probe outside pytest. Run one first-attempt, no-retry
+   provider request only after both deterministic gates pass.
+
+Do not benchmark or change xdist worker strategy during C3 closeout. A separate
+tooling experiment may compare `-n 4 --dist loadfile` with
+`-n 6 --dist worksteal` using `--durations=30 --durations-min=1`; adopt a new
+default only if it matches the known baseline and remains deterministic.
+
+Focused tests, broad regression, provider qualification, genuine human review,
+browser proof, and private-beta eligibility are independent proof layers.

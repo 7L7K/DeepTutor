@@ -1,0 +1,60 @@
+{
+  "schema_version": "c3-h1-human-qualification-contract-repair-v1",
+  "date": "2026-08-09",
+  "branch": "feature/teeechr-content-quality-c3",
+  "head": "518b466ddfdacf83bcabbbea527972d42613f532",
+  "worktree_state": "DIRTY_UNCOMMITTED",
+  "status": "BLOCKED_GENUINE_HUMAN_SIGNATURE_AND_BOUNDED_CHOICE_RUNTIME",
+  "historical_v1_authority": {
+    "assessment_contracts_sha256": "411b2b000ef72402d4b18b602ff264d9c7b9c6434d090342f128b083acbf1d08",
+    "objective_evidence_sha256": "3e88864dae72665091e925c59ca6153f372e2bcba391b498da79abe29c6148ab",
+    "objective_qualification_summary_sha256": "59d92290919fd539388a69bca92db05e3458eec2f8908450e8b28127a42184c6"
+  },
+  "evidence_role_v2": {
+    "assessment_contracts": "assessment_contracts_evidence_roles_v2.json",
+    "assessment_contracts_sha256": "fa15d855e1468faf6bfe8183662dc5e74d2ee364f869d9e8c993ccd4a0696e25",
+    "objective_evidence": "objective_evidence_roles_v2.json",
+    "objective_evidence_sha256": "eb977b4f50963ef40a53a4e7a118f65f9caf8a6ded8cdb8ad0bf487a99f49cca",
+    "campaign_summary": "run_openai_2026-08-09_evidence_roles_v2.json",
+    "campaign_summary_sha256": "2d40f9f34d059947c5b3d8325aff5b38e5ea9f2eb4e7ea413195c65b09a381dd"
+  },
+  "obj_resp_01": {
+    "automated_publication_status": "PASS",
+    "provider_artifact": "provider_runs/2026-08-09-gpt-5.6-luna-c3-evidence-roles-v2/obj-resp-01.json",
+    "provider_artifact_sha256": "15dadd68d1ce95064cfcae6fb6e03605ccb299090504872cca7ef8a5b86029fc",
+    "raw_provider_output_sha256": "70283c25e23769df5cd217d7f37b707674e823f69816531a2303beee01f636ca",
+    "reviewer_amendment": "reviewer_amendments/obj-resp-01-answer-variants-v1.json",
+    "reviewer_amendment_sha256": "ef301ff80a8dd80afeb6af0bb28647354477544755a484b3c4f515d5e54ff0ab",
+    "reviewer_amendment_status": "PROPOSED_PENDING_HUMAN_SIGNATURE",
+    "candidate_grading_status": "EXACT_V1_DETERMINISTICALLY_PROVEN_NOT_RUNTIME_APPLIED",
+    "human_qualification_status": "OPEN"
+  },
+  "obj_resp_02_and_03": {
+    "v2_design": "assessment_contracts_v2.json",
+    "v2_design_sha256": "9d1deab3d5fa629883b44e3eca90ddc0b4628189a8bb8de2243b7c6df25bff29",
+    "v2_disposition": "PRESERVED_SUPERSEDED_DESIGN_ONLY_NOT_RUN",
+    "v3_design": "assessment_contracts_v3_evaluation_only.json",
+    "v3_design_sha256": "45c909a68d67442b77821d62c515d6e7f72d31ab048794a5b51720f777acd5aa",
+    "v3_disposition": "FROZEN_DESIGN_PRECALL_BLOCKED",
+    "runtime_gate": "PARKED_UNTIL_BOUNDED_CHOICE_GRADER_EXISTS"
+  },
+  "validation": {
+    "exact_h1_nodes": "9 passed in 0.79s",
+    "focused_c3_gate": "112 passed in 27.39s",
+    "broad_regression": "3947 passed, 8 skipped, 34 warnings in 218.88s",
+    "broad_command": "python -m pytest -n 4 --dist loadfile -q tests",
+    "post_broad_authority_label_nodes": "7 passed in 0.75s",
+    "broad_scope_note": "The one allowed broad regression preceded the final reviewer-field authority rename; the exact amendment loader, persisted grading, and tamper nodes were rerun after that non-product change."
+  },
+  "provider_campaign": {
+    "provider_requests_authorized_if_start_gate_passed": 2,
+    "provider_requests_attempted": 0,
+    "automatic_retries": 0,
+    "credential_loaded": false,
+    "reason_stopped": "Course Practice cannot yet persist, expose, autosave, grade, or render the bounded choice contract, and the v2 assessment designs failed deterministic preflight."
+  },
+  "human_qualified_objectives": 0,
+  "primary_five_question_campaign": "NOT_AUTHORIZED",
+  "browser_runtime": "NOT_RUN_GATE_BLOCKED",
+  "private_beta": "BLOCKED_QUALITY_GATE"
+}

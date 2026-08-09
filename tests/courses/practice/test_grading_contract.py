@@ -18,10 +18,12 @@ from deeptutor.courses.mastery_adapter import CourseMasteryAdapter
 from deeptutor.courses.migrations import runner
 from deeptutor.courses.migrations.runner import CourseMigrationError, ensure_course_schema
 from deeptutor.courses.practice_repository import CoursePracticeRepository
+from deeptutor.courses.practice_models import ExactAnswerContract
 from deeptutor.courses.practice_service import CoursePracticeService
 from deeptutor.courses.repository import CourseConflictError, CourseNotFoundError, CourseRepository
 from deeptutor.learning.models import KnowledgePoint, KnowledgeType, LearningModule
 from deeptutor.learning.storage import LearningConflictError, LearningStore
+from scripts.c3_reviewer_amendment import verify_reviewer_answer_amendment
 
 
 def _services(tmp_path: Path, owner: str = "u_alice"):
@@ -168,6 +170,177 @@ def test_exact_grading_accepts_only_explicit_bounded_variants(tmp_path: Path) ->
     )
     rejected = _grade(grading, courses, course.id, second_set.id, rejected_attempt)
     assert rejected.score == {"correct": 0, "total": 1, "fraction": 0.0}
+
+
+@pytest.mark.parametrize(
+    ("response", "accepted"),
+    [
+        ("ACETYL-COA", True),
+        ("acetyl CoA", True),
+        ("acetyl coenzyme A", True),
+        ("acetyl", False),
+    ],
+)
+def test_exact_grader_requires_explicit_acetyl_coa_variants(
+    response: str, accepted: bool
+) -> None:
+    contract = ExactAnswerContract(
+        kind="exact",
+        answer="acetyl-CoA",
+        accepted_answers=["acetyl CoA", "acetyl coenzyme A"],
+    )
+
+    assert CourseGradingRepository._exact(response, contract) is accepted
+
+
+def test_obj_resp_01_reviewer_amendment_is_bounded_and_artifact_bound() -> None:
+    reference_root = Path(__file__).resolve().parents[3] / "evals" / "reference_course"
+    amendment_path = (
+        reference_root
+        / "reviewer_amendments"
+        / "obj-resp-01-answer-variants-v1.json"
+    )
+    amendment = json.loads(amendment_path.read_text(encoding="utf-8"))
+    verified = verify_reviewer_answer_amendment(reference_root, amendment_path)
+    artifact_path = reference_root / amendment["provider_artifact"]
+
+    assert hashlib.sha256(artifact_path.read_bytes()).hexdigest() == amendment[
+        "provider_artifact_sha256"
+    ]
+    artifact = json.loads(artifact_path.read_text(encoding="utf-8"))
+    assert artifact["provider_runtime"]["raw_provider_output_sha256"] == amendment[
+        "raw_provider_output_sha256"
+    ]
+    provider_contract = artifact["validated_output"]["questions"][0][
+        "answer_contract"
+    ]
+    assert provider_contract["answer"] == amendment["primary_answer"]
+    assert provider_contract["accepted_answers"] == amendment[
+        "provider_accepted_answers"
+    ]
+    assert amendment["status"] == "PROPOSED_PENDING_HUMAN_SIGNATURE"
+    assert amendment["reviewer"] is None
+    assert amendment["reviewed_at"] is None
+    assert amendment["signature"] is None
+    assert verified.eligible_for_publication is False
+    contract = verified.effective_answer_contract
+    assert len(contract.accepted_answers) == 8
+
+    for answer in [contract.answer, *contract.accepted_answers]:
+        assert CourseGradingRepository._exact(answer, contract) is True
+        assert CourseGradingRepository._exact(
+            f"  {answer.swapcase()}  ", contract
+        ) is True
+
+    for answer in (
+        "Pyruvate enters the citric acid cycle unchanged.",
+        "Pyruvate becomes lactate.",
+        "Acetyl-CoA becomes pyruvate.",
+        "Pyruvate is oxidized.",
+        "Pyruvate becomes acetyl-CoA",
+        "Pyruvate  becomes acetyl-CoA.",
+        "Pyruvate becomes acetyl–CoA.",
+        "",
+    ):
+        assert CourseGradingRepository._exact(answer, contract) is False
+
+
+def test_obj_resp_01_unsigned_candidate_contract_round_trips_exact_grading(
+    tmp_path: Path,
+) -> None:
+    reference_root = Path(__file__).resolve().parents[3] / "evals" / "reference_course"
+    verified = verify_reviewer_answer_amendment(
+        reference_root,
+        reference_root
+        / "reviewer_amendments"
+        / "obj-resp-01-answer-variants-v1.json",
+    )
+    assert verified.eligible_for_publication is False
+    contract = verified.effective_answer_contract
+    courses, practice, attempts, adapter, grading = _services(tmp_path)
+    course = courses.create_course("Biology")
+    _init_objectives(adapter, course.id, "OBJ-RESP-01")
+    practice_set, revision, _ = _practice(
+        courses,
+        practice,
+        course.id,
+        objectives=("OBJ-RESP-01",),
+        answer=contract.answer,
+        accepted_answers=contract.accepted_answers,
+    )
+    attempt_id, _ = _submitted(
+        courses,
+        attempts,
+        course.id,
+        practice_set,
+        revision,
+        {"answer": "  PYRUVATE BECOMES ACETYL COA.  "},
+    )
+
+    result = _grade(grading, courses, course.id, practice_set.id, attempt_id)
+    replay = _grade(grading, courses, course.id, practice_set.id, attempt_id)
+
+    assert result.score == {"correct": 1, "total": 1, "fraction": 1.0}
+    assert replay == result
+    with courses._connect() as conn:
+        evidence = json.loads(
+            conn.execute(
+                "SELECT grading_json FROM quiz_item_grading_evidence WHERE attempt_id = ?",
+                (attempt_id,),
+            ).fetchone()[0]
+        )
+    assert evidence["algorithm"] == "exact-v1"
+    assert evidence["contract_sha256"] == CourseGradingRepository._digest(
+        contract.model_dump()
+    )
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    [
+        "artifact_hash",
+        "duplicate_variant",
+        "ninth_variant",
+        "partial_signature",
+        "objective",
+    ],
+)
+def test_obj_resp_01_reviewer_amendment_tampering_fails_closed(
+    tmp_path: Path,
+    mutation: str,
+) -> None:
+    source_root = Path(__file__).resolve().parents[3] / "evals" / "reference_course"
+    source_amendment = (
+        source_root
+        / "reviewer_amendments"
+        / "obj-resp-01-answer-variants-v1.json"
+    )
+    payload = json.loads(source_amendment.read_text(encoding="utf-8"))
+    root = tmp_path / mutation
+    artifact = root / payload["provider_artifact"]
+    artifact.parent.mkdir(parents=True)
+    artifact.write_bytes((source_root / payload["provider_artifact"]).read_bytes())
+    amendment = root / "reviewer_amendments" / source_amendment.name
+    amendment.parent.mkdir(parents=True)
+
+    if mutation == "artifact_hash":
+        payload["provider_artifact_sha256"] = "0" * 64
+    elif mutation == "duplicate_variant":
+        payload["additional_accepted_answers"][0] = payload[
+            "provider_accepted_answers"
+        ][0]
+    elif mutation == "ninth_variant":
+        payload["additional_accepted_answers"].append(
+            "Conversion of pyruvate into acetyl-CoA."
+        )
+    elif mutation == "partial_signature":
+        payload["reviewer"] = "reviewer-123"
+    else:
+        payload["objective_id"] = "OBJ-RESP-02"
+    amendment.write_text(json.dumps(payload), encoding="utf-8")
+
+    with pytest.raises(ValueError):
+        verify_reviewer_answer_amendment(root, amendment)
 
 
 @pytest.mark.parametrize(

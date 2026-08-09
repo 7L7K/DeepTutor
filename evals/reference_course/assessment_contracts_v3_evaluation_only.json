@@ -1,0 +1,210 @@
+{
+  "schema_version": "c3-assessment-contracts-v3-evaluation-only",
+  "source_packet_revision": "reference-course-c3-v1",
+  "status": "FROZEN_DESIGN_PRECALL_BLOCKED",
+  "assessment_format_precedence": {
+    "applies_to_objective_ids": [
+      "OBJ-RESP-02",
+      "OBJ-RESP-03"
+    ],
+    "source_packet_is_content_evidence_only": true,
+    "qualification_question_type": "single_answer_multiple_choice",
+    "supersedes_source_packet_short_answer_format_statement": true
+  },
+  "contracts": [
+    {
+      "contract_id": "ac_resp_02_causal_role_v3",
+      "supersedes_contract_id": "ac_resp_02_causal_role_v2",
+      "objective_id": "OBJ-RESP-02",
+      "question_type": "single_answer_multiple_choice",
+      "cognitive_target": "Explain that oxygen is the terminal electron acceptor, accepts electrons and protons to form water, and thereby permits electron flow through the aerobic electron transport chain to continue.",
+      "stem_contract": "Which statement correctly describes both what oxygen accepts and forms at the end of the aerobic electron transport chain and why its terminal-acceptor role matters?",
+      "required_claim_ids": [
+        "oxygen_is_terminal_acceptor",
+        "oxygen_accepts_electrons_and_protons",
+        "oxygen_forms_water",
+        "terminal_acceptor_enables_flow"
+      ],
+      "required_evidence_ids": [
+        "ev_resp02_terminal_acceptor",
+        "ev_resp02_accepts_electrons",
+        "ev_resp02_forms_water",
+        "ev_resp02_flow_continues"
+      ],
+      "correct_option_id": "opt_resp02_correct",
+      "options": [
+        {
+          "option_id": "opt_resp02_correct",
+          "role": "correct",
+          "text": "Oxygen accepts electrons and protons to form water; as the final acceptor, it allows electron flow through the chain to continue.",
+          "entailed_claim_ids": [
+            "oxygen_is_terminal_acceptor",
+            "oxygen_accepts_electrons_and_protons",
+            "oxygen_forms_water",
+            "terminal_acceptor_enables_flow"
+          ],
+          "defect": null
+        },
+        {
+          "option_id": "opt_resp02_wrong_product",
+          "role": "distractor",
+          "text": "Oxygen accepts electrons and protons to form ATP; as the final acceptor, it allows electron flow through the chain to continue.",
+          "entailed_claim_ids": [
+            "oxygen_is_terminal_acceptor",
+            "oxygen_accepts_electrons_and_protons",
+            "terminal_acceptor_enables_flow"
+          ],
+          "defect": {
+            "kind": "contradicted_claim",
+            "claim_id": "oxygen_forms_water",
+            "counterevidence_ids": [
+              "ev_resp02_forms_water"
+            ]
+          }
+        },
+        {
+          "option_id": "opt_resp02_wrong_flow",
+          "role": "distractor",
+          "text": "Oxygen accepts electrons and protons to form water; as the final acceptor, it causes electron flow through the chain to stop.",
+          "entailed_claim_ids": [
+            "oxygen_is_terminal_acceptor",
+            "oxygen_accepts_electrons_and_protons",
+            "oxygen_forms_water"
+          ],
+          "defect": {
+            "kind": "contradicted_claim",
+            "claim_id": "terminal_acceptor_enables_flow",
+            "counterevidence_ids": [
+              "ev_resp02_flow_continues"
+            ]
+          }
+        },
+        {
+          "option_id": "opt_resp02_wrong_input",
+          "role": "distractor",
+          "text": "Oxygen accepts ATP and protons to form water; as the final acceptor, it allows electron flow through the chain to continue.",
+          "entailed_claim_ids": [
+            "oxygen_is_terminal_acceptor",
+            "oxygen_forms_water",
+            "terminal_acceptor_enables_flow"
+          ],
+          "defect": {
+            "kind": "contradicted_claim",
+            "claim_id": "oxygen_accepts_electrons_and_protons",
+            "counterevidence_ids": [
+              "ev_resp02_accepts_electrons"
+            ]
+          }
+        }
+      ],
+      "option_constraints": {
+        "option_count": 4,
+        "exactly_one_correct": true,
+        "verbatim_surface_text": true,
+        "all_options_address_every_required_dimension": true,
+        "exactly_one_false_claim_per_distractor": true,
+        "maximum_word_count_delta": 0,
+        "all_or_none_options_prohibited": true
+      },
+      "implementation_status": "PARKED_UNTIL_BOUNDED_CHOICE_GRADER_EXISTS",
+      "provider_qualification_status": "BLOCKED_PRECALL"
+    },
+    {
+      "contract_id": "ac_resp_03_bounded_contrast_v3",
+      "supersedes_contract_id": "ac_resp_03_bounded_contrast_v2",
+      "objective_id": "OBJ-RESP-03",
+      "question_type": "single_answer_multiple_choice",
+      "cognitive_target": "Contrast fermentation and aerobic respiration using preservation of glycolysis through NAD+ regeneration, oxygen's terminal-acceptor role, and relative ATP yield per glucose.",
+      "stem_contract": "Which statement correctly contrasts fermentation with aerobic respiration in its effect on glycolysis, use of oxygen as the terminal electron acceptor, and ATP yield per glucose?",
+      "required_claim_ids": [
+        "fermentation_preserves_glycolysis",
+        "fermentation_regenerates_nad",
+        "fermentation_no_oxygen_acceptor",
+        "fermentation_lower_atp"
+      ],
+      "required_evidence_ids": [
+        "ev_resp03_fermentation_context",
+        "ev_resp03_regenerates_nad",
+        "ev_resp03_no_oxygen_low_atp",
+        "ev_resp03_aerobic_comparison"
+      ],
+      "correct_option_id": "opt_resp03_correct",
+      "options": [
+        {
+          "option_id": "opt_resp03_correct",
+          "role": "correct",
+          "text": "Fermentation regenerates NAD+ so glycolysis can continue, does not use oxygen as the terminal electron acceptor, and yields much less ATP per glucose than aerobic respiration.",
+          "entailed_claim_ids": [
+            "fermentation_preserves_glycolysis",
+            "fermentation_regenerates_nad",
+            "fermentation_no_oxygen_acceptor",
+            "fermentation_lower_atp"
+          ],
+          "defect": null
+        },
+        {
+          "option_id": "opt_resp03_wrong_nad",
+          "role": "distractor",
+          "text": "Fermentation consumes NAD+ so glycolysis can continue, does not use oxygen as the terminal electron acceptor, and yields much less ATP per glucose than aerobic respiration.",
+          "entailed_claim_ids": [
+            "fermentation_preserves_glycolysis",
+            "fermentation_no_oxygen_acceptor",
+            "fermentation_lower_atp"
+          ],
+          "defect": {
+            "kind": "contradicted_claim",
+            "claim_id": "fermentation_regenerates_nad",
+            "counterevidence_ids": [
+              "ev_resp03_regenerates_nad"
+            ]
+          }
+        },
+        {
+          "option_id": "opt_resp03_wrong_oxygen",
+          "role": "distractor",
+          "text": "Fermentation regenerates NAD+ so glycolysis can continue, does rely on oxygen as the terminal electron acceptor, and yields much less ATP per glucose than aerobic respiration.",
+          "entailed_claim_ids": [
+            "fermentation_preserves_glycolysis",
+            "fermentation_regenerates_nad",
+            "fermentation_lower_atp"
+          ],
+          "defect": {
+            "kind": "contradicted_claim",
+            "claim_id": "fermentation_no_oxygen_acceptor",
+            "counterevidence_ids": [
+              "ev_resp03_no_oxygen_low_atp"
+            ]
+          }
+        },
+        {
+          "option_id": "opt_resp03_wrong_yield",
+          "role": "distractor",
+          "text": "Fermentation regenerates NAD+ so glycolysis can continue, does not use oxygen as the terminal electron acceptor, and yields much more ATP per glucose than aerobic respiration.",
+          "entailed_claim_ids": [
+            "fermentation_preserves_glycolysis",
+            "fermentation_regenerates_nad",
+            "fermentation_no_oxygen_acceptor"
+          ],
+          "defect": {
+            "kind": "contradicted_claim",
+            "claim_id": "fermentation_lower_atp",
+            "counterevidence_ids": [
+              "ev_resp03_aerobic_comparison"
+            ]
+          }
+        }
+      ],
+      "option_constraints": {
+        "option_count": 4,
+        "exactly_one_correct": true,
+        "verbatim_surface_text": true,
+        "all_options_address_every_required_dimension": true,
+        "exactly_one_false_claim_per_distractor": true,
+        "maximum_word_count_delta": 0,
+        "all_or_none_options_prohibited": true
+      },
+      "implementation_status": "PARKED_UNTIL_BOUNDED_CHOICE_GRADER_EXISTS",
+      "provider_qualification_status": "BLOCKED_PRECALL"
+    }
+  ]
+}
