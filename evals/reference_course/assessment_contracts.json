@@ -1,0 +1,62 @@
+{
+  "schema_version": "c3-assessment-contracts-v1",
+  "source_packet_revision": "reference-course-c3-v1",
+  "contracts": [
+    {
+      "contract_id": "ac_resp_01_transition_v1",
+      "objective_id": "OBJ-RESP-01",
+      "objective_label": "Explain major stages of cellular respiration",
+      "cognitive_target": "Explain the role of pyruvate oxidation as the transition between glycolysis and the citric acid cycle.",
+      "question_type": "short_answer",
+      "qualification_focus": "Write one concise exact-gradeable question asking what conversion during pyruvate oxidation links glycolysis-derived pyruvate to the citric acid cycle. The supported answer must state that pyruvate is converted to acetyl-CoA.",
+      "expected_answer_concepts": [
+        "pyruvate oxidation",
+        "pyruvate",
+        "acetyl-CoA"
+      ],
+      "prohibited_prompt_patterns": [
+        "merely list the four stages",
+        "ask for an unrestricted paragraph",
+        "test an objective other than OBJ-RESP-01"
+      ]
+    },
+    {
+      "contract_id": "ac_resp_02_causal_role_v1",
+      "objective_id": "OBJ-RESP-02",
+      "objective_label": "Explain oxygen’s role as terminal electron acceptor",
+      "cognitive_target": "Explain how oxygen accepts electrons and protons to form water and why that permits electron flow to continue.",
+      "question_type": "short_answer",
+      "qualification_focus": "Write one concise exact-gradeable question asking what oxygen does at the end of the aerobic electron transport chain and why that role matters. The supported answer must include accepting electrons and protons to form water and permitting electron flow to continue.",
+      "expected_answer_concepts": [
+        "oxygen",
+        "accepts electrons and protons",
+        "forms water",
+        "electron flow continues"
+      ],
+      "prohibited_prompt_patterns": [
+        "ask only which molecule is the terminal acceptor",
+        "ask for an unrestricted paragraph",
+        "test an objective other than OBJ-RESP-02"
+      ]
+    },
+    {
+      "contract_id": "ac_resp_03_bounded_contrast_v1",
+      "objective_id": "OBJ-RESP-03",
+      "objective_label": "Compare aerobic respiration and fermentation",
+      "cognitive_target": "Contrast aerobic respiration and fermentation using oxygen’s terminal-acceptor role, NAD+ regeneration, and ATP yield.",
+      "question_type": "short_answer",
+      "qualification_focus": "Write one concise exact-gradeable contrast question. The supported answer must state that fermentation regenerates NAD+ so glycolysis can continue without oxygen as terminal acceptor and yields much less ATP per glucose than aerobic respiration.",
+      "expected_answer_concepts": [
+        "fermentation regenerates NAD+",
+        "glycolysis continues",
+        "no oxygen terminal acceptor",
+        "much less ATP than aerobic respiration"
+      ],
+      "prohibited_prompt_patterns": [
+        "ask only which pathway uses oxygen",
+        "accept any unspecified difference",
+        "test an objective other than OBJ-RESP-03"
+      ]
+    }
+  ]
+}

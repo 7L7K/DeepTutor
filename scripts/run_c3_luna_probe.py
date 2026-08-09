@@ -38,6 +38,7 @@ SOURCE_PACKET_REVISION = "reference-course-c3-v1"
 APPROVED_OBJECTIVE_IDS = ["OBJ-RESP-01", "OBJ-RESP-02", "OBJ-RESP-03"]
 SOURCE_FILENAMES = ["lecture_06_transcript.md", "lecture_06_slides.md"]
 OBJECTIVE_EVIDENCE_FILENAME = "objective_evidence.json"
+ASSESSMENT_CONTRACTS_FILENAME = "assessment_contracts.json"
 
 
 class _RecordingResponses:
@@ -117,7 +118,69 @@ def _objective_evidence(
     ]
 
 
-def _probe_contract(mode: str) -> dict[str, Any]:
+def _assessment_contracts(reference_root: Path) -> dict[str, dict[str, Any]]:
+    payload = json.loads(
+        (reference_root / ASSESSMENT_CONTRACTS_FILENAME).read_text(
+            encoding="utf-8"
+        )
+    )
+    required = {
+        "contract_id",
+        "objective_id",
+        "objective_label",
+        "cognitive_target",
+        "question_type",
+        "qualification_focus",
+        "expected_answer_concepts",
+        "prohibited_prompt_patterns",
+    }
+    if (
+        not isinstance(payload, dict)
+        or payload.get("schema_version") != "c3-assessment-contracts-v1"
+        or payload.get("source_packet_revision") != SOURCE_PACKET_REVISION
+        or not isinstance(payload.get("contracts"), list)
+    ):
+        raise ValueError("C3 assessment contract fixture is invalid")
+    contracts: dict[str, dict[str, Any]] = {}
+    for contract in payload["contracts"]:
+        if (
+            not isinstance(contract, dict)
+            or set(contract) != required
+            or contract.get("question_type") != "short_answer"
+            or not isinstance(contract.get("expected_answer_concepts"), list)
+            or not contract["expected_answer_concepts"]
+            or not isinstance(contract.get("prohibited_prompt_patterns"), list)
+            or not contract["prohibited_prompt_patterns"]
+        ):
+            raise ValueError("C3 assessment contract fixture is invalid")
+        objective_id = contract.get("objective_id")
+        if not isinstance(objective_id, str) or objective_id in contracts:
+            raise ValueError("C3 assessment contract fixture is invalid")
+        contracts[objective_id] = contract
+    if set(contracts) != set(APPROVED_OBJECTIVE_IDS):
+        raise ValueError("C3 assessment contracts must cover approved objectives")
+    return contracts
+
+
+def _probe_contract(
+    mode: str,
+    assessment_contracts: dict[str, dict[str, Any]],
+) -> dict[str, Any]:
+    qualification_objectives = {
+        "qualify-resp-01": "OBJ-RESP-01",
+        "qualify-resp-02": "OBJ-RESP-02",
+        "qualify-resp-03": "OBJ-RESP-03",
+    }
+    if mode in qualification_objectives:
+        objective_id = qualification_objectives[mode]
+        assessment_contract = assessment_contracts[objective_id]
+        return {
+            "requested_objective_ids": [objective_id],
+            "item_limit": 1,
+            "focus": assessment_contract["qualification_focus"],
+            "generation_purpose": "practice",
+            "assessment_contract": assessment_contract,
+        }
     contracts = {
         "unsupported": {
             "requested_objective_ids": [
@@ -127,24 +190,28 @@ def _probe_contract(mode: str) -> dict[str, Any]:
             "item_limit": 1,
             "focus": "photosynthesis and mitochondrial inheritance",
             "generation_purpose": "practice",
+            "assessment_contract": None,
         },
         "supported-one": {
             "requested_objective_ids": ["OBJ-RESP-02"],
             "item_limit": 1,
             "focus": "oxygen as the terminal electron acceptor in aerobic respiration",
             "generation_purpose": "practice",
+            "assessment_contract": None,
         },
         "primary": {
             "requested_objective_ids": APPROVED_OBJECTIVE_IDS,
             "item_limit": 5,
             "focus": "cellular respiration",
             "generation_purpose": "practice",
+            "assessment_contract": None,
         },
         "repeat": {
             "requested_objective_ids": APPROVED_OBJECTIVE_IDS,
             "item_limit": 5,
             "focus": "cellular respiration",
             "generation_purpose": "practice",
+            "assessment_contract": None,
         },
         "remediation": {
             "requested_objective_ids": ["OBJ-RESP-02", "OBJ-RESP-03"],
@@ -154,6 +221,7 @@ def _probe_contract(mode: str) -> dict[str, Any]:
                 "and fermentation versus aerobic respiration"
             ),
             "generation_purpose": "remediation",
+            "assessment_contract": None,
         },
     }
     return contracts[mode]
@@ -163,10 +231,18 @@ def _request(
     mode: str,
     material: list[GenerationSourceText],
     objective_evidence: list[PracticeObjectiveEvidenceBinding],
+    assessment_contracts: dict[str, dict[str, Any]],
 ) -> PracticeGenerationInput:
-    contract = _probe_contract(mode)
+    contract = _probe_contract(mode, assessment_contracts)
+    assessment_contract_id = (
+        contract["assessment_contract"]["contract_id"]
+        if contract["assessment_contract"] is not None
+        else "none"
+    )
     digest = hashlib.sha256(
-        f"c3-luna-objective-evidence-v1:{mode}".encode("utf-8")
+        f"c3-luna-assessment-v1:{mode}:{assessment_contract_id}".encode(
+            "utf-8"
+        )
     ).hexdigest()
     return PracticeGenerationInput(
         operation_id="opg_" + digest[:32],
@@ -192,7 +268,16 @@ def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument(
         "mode",
-        choices=["unsupported", "supported-one", "primary", "repeat", "remediation"],
+        choices=[
+            "unsupported",
+            "supported-one",
+            "qualify-resp-01",
+            "qualify-resp-02",
+            "qualify-resp-03",
+            "primary",
+            "repeat",
+            "remediation",
+        ],
     )
     parser.add_argument("--reference-root", required=True, type=Path)
     parser.add_argument("--state-dir", required=True, type=Path)
@@ -203,7 +288,14 @@ def main() -> int:
         raise SystemExit("OPENAI_API_KEY is not configured")
     material = _material(args.reference_root.resolve())
     objective_evidence = _objective_evidence(args.reference_root.resolve())
-    request = _request(args.mode, material, objective_evidence)
+    assessment_contracts = _assessment_contracts(args.reference_root.resolve())
+    probe_contract = _probe_contract(args.mode, assessment_contracts)
+    request = _request(
+        args.mode,
+        material,
+        objective_evidence,
+        assessment_contracts,
+    )
     registry = TextGenerationRegistry.from_catalog(
         {"text_generation": default_text_generation_catalog()}
     )
@@ -257,6 +349,12 @@ def main() -> int:
             binding.model_dump(mode="json")
             for binding in request.effective_objective_evidence_bindings()
         ],
+        "assessment_contract": probe_contract["assessment_contract"],
+        "assessment_contract_fixture_sha256": hashlib.sha256(
+            (
+                args.reference_root.resolve() / ASSESSMENT_CONTRACTS_FILENAME
+            ).read_bytes()
+        ).hexdigest(),
     }
     exit_code = 1
     try:
