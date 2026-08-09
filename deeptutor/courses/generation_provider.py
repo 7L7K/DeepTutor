@@ -38,6 +38,8 @@ from .generation_models import (
     GeneratedPracticeQuestion,
     GenerationSourceText,
     PracticeGenerationInput,
+    PracticeGenerationRequestContract,
+    build_practice_generation_request_contract,
 )
 from .practice_models import PracticeCitation, PracticeSourceReceipt
 from .provider_usage import (
@@ -61,8 +63,13 @@ _DEFAULT_PRACTICE_GENERATION = ResolvedTextGeneration(
     reasoning_effort="minimal",
 )
 
-C3_PROMPT_VERSION = "course-practice-c3-v1"
-C3_SCHEMA_VERSION = "course-practice-c3-schema-v1"
+C3_PROMPT_VERSION = "course-practice-c3-v4"
+C3_SCHEMA_VERSION = "course-practice-c3-schema-v5"
+C3_PUBLICATION_MODEL = "gpt-5.6-luna"
+
+_ReceiptKey = tuple[str, int, str]
+_EvidenceByReceipt = dict[_ReceiptKey, list[str]]
+_ObjectiveEvidence = dict[str, _EvidenceByReceipt]
 
 
 def _provider_request_diagnostic(exc: Exception) -> tuple[str, int | None, str | None]:
@@ -199,9 +206,40 @@ class OpenAIPracticeGenerationProvider:
         return policy.enabled and policy.pricing_version == self.pricing.version
 
     @staticmethod
+    def _c3_evidence_quotes(text: str) -> list[str]:
+        """Preserve bounded exact Markdown lines for C3 citation enums.
+
+        The shared flashcard extractor normalizes whitespace before checking
+        exact reachability. That intentionally conservative rule drops every
+        multiline Markdown paragraph. C3 exposes the original physical lines
+        so wrapped sentences can be supported collectively while every quote
+        remains an exact, single-line character span.
+        """
+
+        candidates: list[str] = []
+        for line in text.splitlines():
+            value = line.strip()
+            if (
+                len(value) < 8
+                or '"' in value
+                or re.fullmatch(r"#{1,6}\s+[^\n]+", value)
+            ):
+                continue
+            if len(value) <= 500 and value in text:
+                candidates.append(value)
+            if len(candidates) >= 96:
+                break
+        unique = list(dict.fromkeys(candidates))
+        if not unique:
+            raise PracticeGenerationProviderError(
+                "source evidence is unavailable"
+            )
+        return unique
+
+    @staticmethod
     def _evidence_by_receipt(
         request: PracticeGenerationInput,
-    ) -> dict[tuple[str, int, str], list[str]]:
+    ) -> _EvidenceByReceipt:
         # Reuse the already-reviewed exact-substring extraction primitive. It
         # returns bounded source substrings and excludes identifiers/metadata.
         from .flashcard_generation_provider import (
@@ -212,15 +250,14 @@ class OpenAIPracticeGenerationProvider:
         evidence: dict[tuple[str, int, str], list[str]] = {}
         try:
             for item in request.source_material:
-                quotes = OpenAIFlashcardGenerationProvider._evidence_quotes(item.text)
                 if request.quality_profile == "c3-biology-v1":
-                    # Markdown headings are useful navigation labels but are
-                    # not substantive evidence for a learner-facing answer.
-                    quotes = [
-                        quote
-                        for quote in quotes
-                        if not re.match(r"^#{1,6}\s+", quote.strip())
-                    ]
+                    quotes = OpenAIPracticeGenerationProvider._c3_evidence_quotes(
+                        item.text
+                    )
+                else:
+                    quotes = OpenAIFlashcardGenerationProvider._evidence_quotes(
+                        item.text
+                    )
                 evidence[
                     (
                         item.receipt.source_id,
@@ -235,100 +272,213 @@ class OpenAIPracticeGenerationProvider:
         return evidence
 
     @staticmethod
+    def _objective_bound_evidence(
+        request: PracticeGenerationInput,
+    ) -> _ObjectiveEvidence | None:
+        """Resolve exact objective evidence against the frozen source snapshot.
+
+        ``None`` is a safe local abstention: a requested objective is missing a
+        binding, a receipt is stale, or an approved quote is no longer exactly
+        reachable. No provider or usage-ledger work is allowed before this
+        check succeeds.
+        """
+
+        requested = request.effective_requested_objective_ids()
+        material_by_receipt = {
+            (
+                item.receipt.source_id,
+                item.receipt.source_revision,
+                item.receipt.content_sha256,
+            ): item.text
+            for item in request.source_material
+        }
+        resolved: _ObjectiveEvidence = {objective_id: {} for objective_id in requested}
+        for binding in request.effective_objective_evidence_bindings():
+            receipt = (
+                binding.receipt.source_id,
+                binding.receipt.source_revision,
+                binding.receipt.content_sha256,
+            )
+            text = material_by_receipt.get(receipt)
+            if text is None or any(
+                quote not in text for quote in binding.evidence_quotes
+            ):
+                return None
+            resolved[binding.objective_id][receipt] = list(binding.evidence_quotes)
+        if any(not resolved.get(objective_id) for objective_id in requested):
+            return None
+        return resolved
+
+    @staticmethod
+    def _flatten_objective_evidence(
+        objective_evidence: _ObjectiveEvidence,
+    ) -> _EvidenceByReceipt:
+        flattened: _EvidenceByReceipt = {}
+        for by_receipt in objective_evidence.values():
+            for receipt, quotes in by_receipt.items():
+                current = flattened.setdefault(receipt, [])
+                current.extend(quote for quote in quotes if quote not in current)
+        return flattened
+
+    @staticmethod
     def _schema(
         request: PracticeGenerationInput,
-        evidence: dict[tuple[str, int, str], list[str]],
+        evidence: _EvidenceByReceipt,
     ) -> dict[str, Any]:
         source_ids = [key[0] for key in evidence]
         source_revisions = [key[1] for key in evidence]
         fingerprints = [key[2] for key in evidence]
         quotes = [quote for values in evidence.values() for quote in values]
-        objective_items: dict[str, Any] = {"type": "string"}
-        if request.objective_ids:
-            objective_items["enum"] = list(request.objective_ids)
         c3 = request.quality_profile == "c3-biology-v1"
-        return {
+        objective_values = (
+            request.effective_requested_objective_ids()
+            if c3
+            else request.objective_ids
+        )
+        objective_items: dict[str, Any] = {"type": "string"}
+        if objective_values:
+            objective_items["enum"] = list(objective_values)
+        question_schema = {
             "type": "object",
             "additionalProperties": False,
-            "required": ["questions"],
+            "required": [
+                "question_type",
+                "prompt",
+                "answer",
+                *(["accepted_answers"] if c3 else []),
+                "explanation",
+                "objective_ids",
+                "citations",
+            ],
             "properties": {
-                "questions": {
+                "question_type": {
+                    "type": "string",
+                    "enum": ["short_answer"],
+                },
+                "prompt": {"type": "string", "minLength": 1, "maxLength": 12000},
+                "answer": {"type": "string", "minLength": 1, "maxLength": 4000},
+                "accepted_answers": {
                     "type": "array",
-                    "minItems": request.item_limit,
-                    "maxItems": request.item_limit,
+                    "minItems": 0,
+                    "maxItems": 8,
+                    "items": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 4000,
+                    },
+                },
+                "explanation": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 12000,
+                },
+                "objective_ids": {
+                    "type": "array",
+                    "minItems": 1 if c3 else 0,
+                    "maxItems": len(objective_values),
+                    "items": objective_items,
+                },
+                "citations": {
+                    "type": "array",
+                    "minItems": 1,
+                    "maxItems": 4,
                     "items": {
                         "type": "object",
                         "additionalProperties": False,
                         "required": [
-                            "question_type",
-                            "prompt",
-                            "answer",
-                            *(["accepted_answers"] if c3 else []),
-                            "explanation",
-                            "objective_ids",
-                            "citations",
+                            "source_id",
+                            "source_revision",
+                            "content_sha256",
+                            "evidence_quote",
                         ],
                         "properties": {
-                            "question_type": {
+                            "source_id": {"type": "string", "enum": source_ids},
+                            "source_revision": {
+                                "type": "integer",
+                                "enum": source_revisions,
+                            },
+                            "content_sha256": {
                                 "type": "string",
-                                "enum": ["short_answer"],
+                                "enum": fingerprints,
                             },
-                            "prompt": {"type": "string", "minLength": 1, "maxLength": 12000},
-                            "answer": {"type": "string", "minLength": 1, "maxLength": 4000},
-                            "accepted_answers": {
-                                "type": "array",
-                                "minItems": 0,
-                                "maxItems": 8,
-                                "items": {
-                                    "type": "string",
-                                    "minLength": 1,
-                                    "maxLength": 4000,
-                                },
-                            },
-                            "explanation": {
+                            "evidence_quote": {
                                 "type": "string",
-                                "minLength": 1,
-                                "maxLength": 12000,
-                            },
-                            "objective_ids": {
-                                "type": "array",
-                                "minItems": 1 if request.quality_profile == "c3-biology-v1" else 0,
-                                "maxItems": len(request.objective_ids),
-                                "items": objective_items,
-                            },
-                            "citations": {
-                                "type": "array",
-                                "minItems": 1,
-                                "maxItems": 4,
-                                "items": {
-                                    "type": "object",
-                                    "additionalProperties": False,
-                                    "required": [
-                                        "source_id",
-                                        "source_revision",
-                                        "content_sha256",
-                                        "evidence_quote",
-                                    ],
-                                    "properties": {
-                                        "source_id": {"type": "string", "enum": source_ids},
-                                        "source_revision": {
-                                            "type": "integer",
-                                            "enum": source_revisions,
-                                        },
-                                        "content_sha256": {
-                                            "type": "string",
-                                            "enum": fingerprints,
-                                        },
-                                        "evidence_quote": {
-                                            "type": "string",
-                                            "enum": quotes,
-                                        },
-                                    },
-                                },
+                                "enum": quotes,
                             },
                         },
                     },
-                }
+                },
+            },
+        }
+        if not c3:
+            return {
+                "type": "object",
+                "additionalProperties": False,
+                "required": ["questions"],
+                "properties": {
+                    "questions": {
+                        "type": "array",
+                        "minItems": request.item_limit,
+                        "maxItems": request.item_limit,
+                        "items": question_schema,
+                    }
+                },
+            }
+        contract = build_practice_generation_request_contract(request)
+        return {
+            "type": "object",
+            "additionalProperties": False,
+            "required": [
+                "request_contract",
+                "outcome",
+                "abstain_reason",
+                "questions",
+            ],
+            "properties": {
+                "request_contract": {
+                    "type": "object",
+                    "additionalProperties": False,
+                    "required": [
+                        "request_contract_id",
+                        "requested_objective_ids",
+                        "source_scope_hash",
+                        "generation_purpose",
+                    ],
+                    "properties": {
+                        "request_contract_id": {
+                            "type": "string",
+                            "enum": [contract.request_contract_id],
+                        },
+                        "requested_objective_ids": {
+                            "type": "array",
+                            "minItems": len(contract.requested_objective_ids),
+                            "maxItems": len(contract.requested_objective_ids),
+                            "items": {
+                                "type": "string",
+                                "enum": contract.requested_objective_ids,
+                            },
+                        },
+                        "source_scope_hash": {
+                            "type": "string",
+                            "enum": [contract.source_scope_hash],
+                        },
+                        "generation_purpose": {
+                            "type": "string",
+                            "enum": [contract.generation_purpose],
+                        },
+                    },
+                },
+                "outcome": {"type": "string", "enum": ["generated", "abstain"]},
+                "abstain_reason": {
+                    "type": ["string", "null"],
+                    "enum": ["unsupported_by_allowed_sources", None],
+                },
+                "questions": {
+                    "type": "array",
+                    "minItems": 0,
+                    "maxItems": request.item_limit,
+                    "items": question_schema,
+                },
             },
         }
 
@@ -336,16 +486,55 @@ class OpenAIPracticeGenerationProvider:
     def _normalize(
         payload: object,
         request: PracticeGenerationInput,
-        evidence: dict[tuple[str, int, str], list[str]],
-    ) -> list[GeneratedPracticeQuestion]:
-        if not isinstance(payload, dict) or set(payload) != {"questions"}:
+        evidence: _EvidenceByReceipt,
+        objective_evidence: _ObjectiveEvidence | None = None,
+    ) -> tuple[
+        PracticeGenerationRequestContract | None,
+        str,
+        str | None,
+        list[GeneratedPracticeQuestion],
+    ]:
+        c3 = request.quality_profile == "c3-biology-v1"
+        expected_keys = (
+            {"request_contract", "outcome", "abstain_reason", "questions"}
+            if c3
+            else {"questions"}
+        )
+        if not isinstance(payload, dict) or set(payload) != expected_keys:
             raise PracticeGenerationProviderError("provider output is invalid")
+        request_contract: PracticeGenerationRequestContract | None = None
+        outcome = "generated"
+        abstain_reason: str | None = None
+        if c3:
+            try:
+                request_contract = PracticeGenerationRequestContract.model_validate(
+                    payload["request_contract"]
+                )
+            except ValidationError as exc:
+                raise PracticeGenerationProviderError(
+                    "provider request contract is invalid"
+                ) from exc
+            if request_contract != build_practice_generation_request_contract(request):
+                raise PracticeGenerationProviderError(
+                    "provider request contract is invalid"
+                )
+            outcome = payload["outcome"]
+            abstain_reason = payload["abstain_reason"]
+            if outcome == "abstain":
+                if (
+                    abstain_reason != "unsupported_by_allowed_sources"
+                    or payload["questions"] != []
+                ):
+                    raise PracticeGenerationProviderError("provider output is invalid")
+                return request_contract, outcome, abstain_reason, []
+            if outcome != "generated" or abstain_reason is not None:
+                raise PracticeGenerationProviderError("provider output is invalid")
         questions = payload["questions"]
         if not isinstance(questions, list) or len(questions) != request.item_limit:
             raise PracticeGenerationProviderError("provider output is invalid")
         normalized: list[GeneratedPracticeQuestion] = []
         seen_prompts: set[str] = set()
-        c3 = request.quality_profile == "c3-biology-v1"
+        requested_objectives = set(request.effective_requested_objective_ids())
         for raw in questions:
             required_keys = {
                 "question_type",
@@ -382,6 +571,10 @@ class OpenAIPracticeGenerationProvider:
                     objective_id not in request.objective_ids
                     for objective_id in raw["objective_ids"]
                 )
+                or any(
+                    objective_id not in requested_objectives
+                    for objective_id in raw["objective_ids"]
+                )
                 or (
                     request.quality_profile == "c3-biology-v1"
                     and not raw["objective_ids"]
@@ -396,6 +589,18 @@ class OpenAIPracticeGenerationProvider:
             if not isinstance(raw_citations, list) or not raw_citations:
                 raise PracticeGenerationProviderError("provider citations are invalid")
             citations: list[PracticeCitation] = []
+            objective_bound_citations = (
+                {
+                    (*receipt, quote)
+                    for objective_id in raw["objective_ids"]
+                    for receipt, quotes in (
+                        objective_evidence or {}
+                    ).get(objective_id, {}).items()
+                    for quote in quotes
+                }
+                if c3
+                else set()
+            )
             for raw_citation in raw_citations:
                 if (
                     not isinstance(raw_citation, dict)
@@ -419,6 +624,10 @@ class OpenAIPracticeGenerationProvider:
                     not isinstance(quote, str)
                     or receipt not in evidence
                     or quote not in evidence[receipt]
+                    or (
+                        c3
+                        and (*receipt, quote) not in objective_bound_citations
+                    )
                 ):
                     raise PracticeGenerationProviderError("provider citation evidence is invalid")
                 try:
@@ -454,7 +663,7 @@ class OpenAIPracticeGenerationProvider:
                 raise PracticeGenerationProviderError(
                     "provider output is invalid"
                 ) from exc
-        return normalized
+        return request_contract, outcome, abstain_reason, normalized
 
     def _cost(
         self,
@@ -493,9 +702,54 @@ class OpenAIPracticeGenerationProvider:
         return value
 
     def generate(self, request: PracticeGenerationInput) -> GeneratedPracticeOutput:
+        c3 = request.quality_profile == "c3-biology-v1"
+        if c3 and self.resolved_generation.model.api_model != C3_PUBLICATION_MODEL:
+            raise PracticeGenerationProviderUnavailable(
+                "C3 publication model is unavailable"
+            )
+        request_contract = (
+            build_practice_generation_request_contract(request) if c3 else None
+        )
+        requested_objectives = request.effective_requested_objective_ids()
+        if c3 and (
+            not requested_objectives
+            or not set(requested_objectives).issubset(set(request.objective_ids))
+        ):
+            return GeneratedPracticeOutput(
+                provider_label="policy-local",
+                request_contract=request_contract,
+                outcome="abstain",
+                abstain_reason="unsupported_by_allowed_sources",
+                prompt_version=C3_PROMPT_VERSION,
+                schema_version=C3_SCHEMA_VERSION,
+                reasoning_effort="none",
+                response_status="not_called",
+                latency_ms=0,
+                questions=[],
+            )
+        objective_evidence: _ObjectiveEvidence | None = None
+        if c3:
+            objective_evidence = self._objective_bound_evidence(request)
+            if objective_evidence is None:
+                return GeneratedPracticeOutput(
+                    provider_label="policy-local",
+                    request_contract=request_contract,
+                    outcome="abstain",
+                    abstain_reason="unsupported_by_allowed_sources",
+                    prompt_version=C3_PROMPT_VERSION,
+                    schema_version=C3_SCHEMA_VERSION,
+                    reasoning_effort="none",
+                    response_status="not_called",
+                    latency_ms=0,
+                    questions=[],
+                )
         if not self.available():
             raise PracticeGenerationProviderQuotaExceeded("provider usage admission denied")
-        evidence = self._evidence_by_receipt(request)
+        evidence = (
+            self._flatten_objective_evidence(objective_evidence)
+            if objective_evidence is not None
+            else self._evidence_by_receipt(request)
+        )
         if not evidence or any(not quotes for quotes in evidence.values()):
             raise PracticeGenerationProviderError(
                 "source evidence is unavailable"
@@ -514,10 +768,14 @@ class OpenAIPracticeGenerationProvider:
             "canonical answer is already one unambiguous token. Do not ask for an "
             "open-ended explanation that would be unfair to exact grading. "
             "Every factual question must cite a supplied receipt and one exact "
-            "allowed evidence quote. Prefer a complete sentence or adjacent "
-            "sentences that contain the support; never cite a heading, timestamp, "
-            "or fragment alone. The citation set for each question must collectively "
-            "support its answer and explanation. Use only allowed objective IDs. "
+            "allowed evidence quote. Select every adjacent allowed evidence line "
+            "needed when a source sentence is line-wrapped; never rely on a heading, "
+            "timestamp, or isolated fragment. The citation set for each question must collectively "
+            "support its answer and explanation. Use only requested objective IDs. "
+            "Echo the exact request contract. Never replace an unsupported requested "
+            "objective with a neighboring supported objective. If the requested scope "
+            "cannot be answered from the allowed evidence, return outcome=abstain, "
+            "abstain_reason=unsupported_by_allowed_sources, and no questions. "
             "Never put a source ID or other system identifier in learner-visible wording. "
             "Return only "
             "the required structured object."
@@ -529,19 +787,50 @@ class OpenAIPracticeGenerationProvider:
                 "timing_mode": request.timing_mode,
                 "required_question_count": request.item_limit,
                 "allowed_objective_ids": request.objective_ids,
-                "sources": [
+                "requested_objective_ids": requested_objectives,
+                "request_contract": (
+                    request_contract.model_dump(mode="json")
+                    if request_contract is not None
+                    else None
+                ),
+                "generation_purpose": request.generation_purpose,
+                **(
                     {
-                        **item.receipt.model_dump(mode="json"),
-                        "allowed_evidence_quotes": evidence[
-                            (
-                                item.receipt.source_id,
-                                item.receipt.source_revision,
-                                item.receipt.content_sha256,
-                            )
-                        ],
+                        "objective_evidence": [
+                            {
+                                "objective_id": objective_id,
+                                "sources": [
+                                    {
+                                        "source_id": receipt[0],
+                                        "source_revision": receipt[1],
+                                        "content_sha256": receipt[2],
+                                        "allowed_evidence_quotes": quotes,
+                                    }
+                                    for receipt, quotes in by_receipt.items()
+                                ],
+                            }
+                            for objective_id, by_receipt in (
+                                objective_evidence or {}
+                            ).items()
+                        ]
                     }
-                    for item in request.source_material
-                ],
+                    if c3
+                    else {
+                        "sources": [
+                            {
+                                **item.receipt.model_dump(mode="json"),
+                                "allowed_evidence_quotes": evidence[
+                                    (
+                                        item.receipt.source_id,
+                                        item.receipt.source_revision,
+                                        item.receipt.content_sha256,
+                                    )
+                                ],
+                            }
+                            for item in request.source_material
+                        ]
+                    }
+                ),
             },
             ensure_ascii=False,
             sort_keys=True,
@@ -675,8 +964,22 @@ class OpenAIPracticeGenerationProvider:
             raise PracticeGenerationProviderError(
                 "provider returned an unexpected model"
             ) from exc
+        (
+            normalized_contract,
+            outcome,
+            abstain_reason,
+            normalized_questions,
+        ) = self._normalize(
+            payload,
+            request,
+            evidence,
+            objective_evidence=objective_evidence,
+        )
         return GeneratedPracticeOutput(
             provider_label="openai",
+            request_contract=normalized_contract,
+            outcome=outcome,
+            abstain_reason=abstain_reason,
             requested_model=self.model,
             actual_model=actual_model,
             request_id=str(getattr(response, "id", "") or "") or None,
@@ -699,7 +1002,7 @@ class OpenAIPracticeGenerationProvider:
             reasoning_effort=self.reasoning_effort,
             response_status=status,
             latency_ms=max(0, round((time.perf_counter() - started) * 1000)),
-            questions=self._normalize(payload, request, evidence),
+            questions=normalized_questions,
         )
 
 

@@ -17,6 +17,7 @@ from .generation_models import (
     GeneratedPracticeOutput,
     GeneratedPracticeQuestion,
     PracticeGenerationInput,
+    build_practice_generation_request_contract,
 )
 from .practice_models import PracticeCitation
 
@@ -53,15 +54,21 @@ def _tokens(value: str) -> set[str]:
     return set(_TOKEN.findall(value.casefold()))
 
 
-def _supported_by_quote(answer: str, explanation: str, quote: str) -> bool:
+def _answer_supported_by_quote(answer: str, quote: str) -> bool:
     quote_tokens = _tokens(quote)
-    answer_tokens = {item for item in _tokens(answer) if item not in {"the", "and", "from", "with", "that", "this"}}
-    explanation_tokens = _tokens(explanation)
-    if not explanation_tokens.intersection(quote_tokens):
-        return False
-    # Short polarity answers such as "No" carry little lexical content; their
-    # supporting explanation is the evidence-bearing part of the contract.
+    normalized_answer = _normalized(answer)
+    if normalized_answer in {"yes", "no"}:
+        return True
+    answer_tokens = {
+        item
+        for item in _tokens(answer)
+        if item not in {"the", "and", "from", "with", "that", "this"}
+    }
     return not answer_tokens or bool(answer_tokens.intersection(quote_tokens))
+
+
+def _explanation_supported_by_quote(explanation: str, quote: str) -> bool:
+    return bool(_tokens(explanation).intersection(_tokens(quote)))
 
 
 def _locator_with_offsets(citation: PracticeCitation, text: str) -> PracticeCitation:
@@ -94,6 +101,31 @@ def validate_c3_output(
         return output
 
     findings: list[QualityFinding] = []
+    expected_contract = build_practice_generation_request_contract(request)
+    if output.outcome != "generated":
+        findings.append(
+            QualityFinding(
+                "ABSTAINED",
+                None,
+                "an abstention cannot cross the publication fence",
+            )
+        )
+    if output.request_contract is None:
+        findings.append(
+            QualityFinding(
+                "REQUEST_CONTRACT_MISSING",
+                None,
+                "C3 requires the exact deterministic request contract",
+            )
+        )
+    elif output.request_contract != expected_contract:
+        findings.append(
+            QualityFinding(
+                "REQUEST_CONTRACT_MISMATCH",
+                None,
+                "provider output does not echo the exact requested scope",
+            )
+        )
     if output.provider_label != "openai":
         findings.append(QualityFinding("PROVIDER_NOT_GOLDEN", None, "C3 requires a configured non-deterministic provider"))
     if not output.request_id or not output.actual_model:
@@ -118,6 +150,21 @@ def validate_c3_output(
         for item in material
     }
     allowed = set(request.objective_ids)
+    requested = set(request.effective_requested_objective_ids())
+    objective_evidence = {
+        objective_id: {
+            (
+                binding.receipt.source_id,
+                binding.receipt.source_revision,
+                binding.receipt.content_sha256,
+                quote,
+            )
+            for binding in request.effective_objective_evidence_bindings()
+            if binding.objective_id == objective_id
+            for quote in binding.evidence_quotes
+        }
+        for objective_id in requested
+    }
     prompts: list[str] = []
     enriched: list[GeneratedPracticeQuestion] = []
     for index, question in enumerate(output.questions, start=1):
@@ -129,6 +176,14 @@ def validate_c3_output(
             findings.append(QualityFinding("OBJECTIVE_EMPTY", index, "every question needs at least one objective"))
         if len(set(question.objective_ids)) != len(question.objective_ids) or any(item not in allowed for item in question.objective_ids):
             findings.append(QualityFinding("OBJECTIVE_INVALID", index, "objective mapping is not a unique approved ID"))
+        if any(item not in requested for item in question.objective_ids):
+            findings.append(
+                QualityFinding(
+                    "REQUEST_OBJECTIVE_MISMATCH",
+                    index,
+                    "objective mapping substitutes a topic outside the requested scope",
+                )
+            )
         normalized_prompt = _normalized(question.prompt)
         if not normalized_prompt or normalized_prompt in prompts:
             findings.append(QualityFinding("DUPLICATE_PROMPT", index, "question wording is duplicated"))
@@ -142,6 +197,11 @@ def validate_c3_output(
             findings.append(QualityFinding("EXPLANATION_EMPTY", index, "a supported explanation is required"))
         new_citations: list[PracticeCitation] = []
         cited = False
+        eligible_for_question = {
+            evidence
+            for objective_id in question.objective_ids
+            for evidence in objective_evidence.get(objective_id, set())
+        }
         for citation in question.citations:
             key = (citation.source_id, citation.source_revision, citation.content_sha256)
             source_text = material_by_receipt.get(key)
@@ -152,6 +212,21 @@ def validate_c3_output(
                 enriched_citation = _locator_with_offsets(citation, source_text)
             except ValueError as exc:
                 findings.append(QualityFinding("CITATION_UNREACHABLE", index, str(exc)))
+                continue
+            quote = enriched_citation.locator.get("evidence_quote")
+            if (
+                citation.source_id,
+                citation.source_revision,
+                citation.content_sha256,
+                quote,
+            ) not in eligible_for_question:
+                findings.append(
+                    QualityFinding(
+                        "CITATION_OUTSIDE_OBJECTIVE_EVIDENCE",
+                        index,
+                        "citation is not bound to the question objective",
+                    )
+                )
                 continue
             new_citations.append(enriched_citation)
             cited = True
@@ -168,10 +243,26 @@ def validate_c3_output(
             )
             answer_values = [question.answer_contract.answer, *question.answer_contract.accepted_answers]
             if not all(
-                _supported_by_quote(answer, question.explanation, combined_quote)
+                _answer_supported_by_quote(answer, combined_quote)
                 for answer in answer_values
             ):
-                findings.append(QualityFinding("ANSWER_UNSUPPORTED", index, "answer/explanation is not supported by the cited source set"))
+                findings.append(
+                    QualityFinding(
+                        "ANSWER_UNSUPPORTED",
+                        index,
+                        "answer is not supported by the cited source set",
+                    )
+                )
+            if not _explanation_supported_by_quote(
+                question.explanation, combined_quote
+            ):
+                findings.append(
+                    QualityFinding(
+                        "EXPLANATION_UNSUPPORTED",
+                        index,
+                        "explanation is not supported by the cited source set",
+                    )
+                )
         enriched.append(question.model_copy(update={"citations": new_citations}))
 
     if findings:
@@ -179,4 +270,9 @@ def validate_c3_output(
     return output.model_copy(update={"questions": enriched})
 
 
-__all__ = ["C3_BIOLOGY_PROFILE", "ContentQualityError", "QualityFinding", "validate_c3_output"]
+__all__ = [
+    "C3_BIOLOGY_PROFILE",
+    "ContentQualityError",
+    "QualityFinding",
+    "validate_c3_output",
+]

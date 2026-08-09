@@ -948,6 +948,28 @@ class CoursePracticeGenerationRepository:
             receipt = self._json({
                 "operation_id": operation.id,
                 "provider": output.provider_label,
+                "request_contract_id": (
+                    output.request_contract.request_contract_id
+                    if output.request_contract is not None
+                    else None
+                ),
+                "requested_objective_ids_json": (
+                    self._json(output.request_contract.requested_objective_ids)
+                    if output.request_contract is not None
+                    else None
+                ),
+                "source_scope_hash": (
+                    output.request_contract.source_scope_hash
+                    if output.request_contract is not None
+                    else None
+                ),
+                "generation_purpose": (
+                    output.request_contract.generation_purpose
+                    if output.request_contract is not None
+                    else None
+                ),
+                "outcome": output.outcome,
+                "abstain_reason": output.abstain_reason,
                 "requested_model": output.requested_model,
                 "actual_model": output.actual_model,
                 "request_id": output.request_id,

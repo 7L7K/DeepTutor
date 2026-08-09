@@ -7,9 +7,11 @@ generation operation or receipt.
 
 from __future__ import annotations
 
+import hashlib
+import json
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from .practice_models import ExactAnswerContract, PracticeCitation, PracticeSourceReceipt
 
@@ -19,6 +21,9 @@ PracticeDifficulty = Literal["foundation", "mixed", "challenge"]
 PracticeTimingMode = Literal["untimed", "practice_timer"]
 PracticePlanOriginKind = Literal["practice", "course_chat"]
 PracticeQualityProfile = Literal["baseline-v1", "c3-biology-v1"]
+PracticeGenerationPurpose = Literal["practice", "remediation"]
+PracticeGenerationOutcome = Literal["generated", "abstain"]
+PracticeGenerationAbstainReason = Literal["unsupported_by_allowed_sources"]
 GenerationErrorCode = Literal[
     "provider_unavailable",
     "provider_failed",
@@ -219,11 +224,46 @@ class GeneratedPracticeQuestion(BaseModel):
         return value
 
 
+class PracticeGenerationRequestContract(BaseModel):
+    """Deterministic scope receipt echoed by every C3 provider result."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    request_contract_id: str = Field(min_length=5, max_length=80)
+    requested_objective_ids: list[str] = Field(min_length=1, max_length=64)
+    source_scope_hash: str = Field(min_length=64, max_length=64)
+    generation_purpose: PracticeGenerationPurpose
+
+    @field_validator("request_contract_id")
+    @classmethod
+    def _opaque_contract_id(cls, value: str) -> str:
+        if not value.startswith("pgc_"):
+            raise ValueError("request_contract_id must be opaque")
+        return value
+
+    @field_validator("requested_objective_ids")
+    @classmethod
+    def _unique_requested_objectives(cls, value: list[str]) -> list[str]:
+        if len(set(value)) != len(value) or any(not item.strip() for item in value):
+            raise ValueError("requested objective IDs must be unique and non-empty")
+        return value
+
+    @field_validator("source_scope_hash")
+    @classmethod
+    def _source_scope_digest(cls, value: str) -> str:
+        if any(char not in "0123456789abcdef" for char in value):
+            raise ValueError("source_scope_hash must be a SHA-256 digest")
+        return value
+
+
 class GeneratedPracticeOutput(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    questions: list[GeneratedPracticeQuestion] = Field(min_length=1, max_length=12)
-    provider_label: Literal["deterministic-local", "openai"]
+    questions: list[GeneratedPracticeQuestion] = Field(default_factory=list, max_length=12)
+    provider_label: Literal["deterministic-local", "openai", "policy-local"]
+    request_contract: PracticeGenerationRequestContract | None = None
+    outcome: PracticeGenerationOutcome = "generated"
+    abstain_reason: PracticeGenerationAbstainReason | None = None
     requested_model: str | None = Field(default=None, max_length=120)
     actual_model: str | None = Field(default=None, max_length=120)
     request_id: str | None = Field(default=None, max_length=160)
@@ -240,6 +280,17 @@ class GeneratedPracticeOutput(BaseModel):
     response_status: str | None = Field(default=None, max_length=80)
     latency_ms: int | None = Field(default=None, ge=0)
 
+    @model_validator(mode="after")
+    def _outcome_shape(self) -> "GeneratedPracticeOutput":
+        if self.outcome == "generated":
+            if not self.questions or self.abstain_reason is not None:
+                raise ValueError("generated output requires questions and no abstain reason")
+            if self.provider_label == "policy-local":
+                raise ValueError("policy-local output cannot publish generated questions")
+        elif self.questions or self.abstain_reason is None or self.request_contract is None:
+            raise ValueError("abstention requires an empty question set, reason, and request contract")
+        return self
+
 
 class GenerationSourceText(BaseModel):
     """Ephemeral text resolved from an exact source receipt.
@@ -254,6 +305,45 @@ class GenerationSourceText(BaseModel):
     text: str = Field(min_length=1, max_length=12_000)
 
 
+class PracticeObjectiveEvidenceBinding(BaseModel):
+    """Server-owned exact evidence eligible for one approved objective.
+
+    The provider may choose wording, but it cannot widen this binding. Each
+    quote is one exact physical source line so its receipt and reachability can
+    be checked before any provider admission or cost.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    objective_id: str = Field(min_length=1, max_length=160)
+    receipt: PracticeSourceReceipt
+    evidence_quotes: list[str] = Field(min_length=1, max_length=16)
+
+    @field_validator("objective_id")
+    @classmethod
+    def _objective_id(cls, value: str) -> str:
+        if value != value.strip():
+            raise ValueError("objective_id must not contain surrounding whitespace")
+        return value
+
+    @field_validator("evidence_quotes")
+    @classmethod
+    def _exact_physical_lines(cls, value: list[str]) -> list[str]:
+        if len(set(value)) != len(value):
+            raise ValueError("objective evidence quotes must be unique")
+        if any(
+            quote != quote.strip()
+            or "\n" in quote
+            or "\r" in quote
+            or not 8 <= len(quote) <= 500
+            for quote in value
+        ):
+            raise ValueError(
+                "objective evidence quotes must be bounded exact physical lines"
+            )
+        return value
+
+
 class PracticeGenerationInput(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -264,12 +354,126 @@ class PracticeGenerationInput(BaseModel):
     practice_set_revision_id: str
     source_material: list[GenerationSourceText] = Field(min_length=1, max_length=64)
     objective_ids: list[str] = Field(default_factory=list, max_length=64)
+    requested_objective_ids: list[str] | None = Field(default=None, max_length=64)
+    objective_evidence_bindings: list[PracticeObjectiveEvidenceBinding] = Field(
+        default_factory=list, max_length=128
+    )
+    generation_purpose: PracticeGenerationPurpose = "practice"
     item_limit: int = Field(ge=1, le=12)
     context_char_limit: int = Field(ge=1, le=48_000)
     focus: str = Field(min_length=1, max_length=4_000)
     difficulty: PracticeDifficulty
     timing_mode: PracticeTimingMode
     quality_profile: PracticeQualityProfile = "baseline-v1"
+
+    @field_validator("objective_ids")
+    @classmethod
+    def _unique_approved_objectives(cls, value: list[str]) -> list[str]:
+        if len(set(value)) != len(value) or any(not item.strip() for item in value):
+            raise ValueError("objective IDs must be unique and non-empty")
+        return value
+
+    @field_validator("requested_objective_ids")
+    @classmethod
+    def _unique_requested_objectives(
+        cls, value: list[str] | None
+    ) -> list[str] | None:
+        if value is not None and (
+            len(set(value)) != len(value) or any(not item.strip() for item in value)
+        ):
+            raise ValueError("requested objective IDs must be unique and non-empty")
+        return value
+
+    def effective_requested_objective_ids(self) -> list[str]:
+        return list(
+            self.objective_ids
+            if self.requested_objective_ids is None
+            else self.requested_objective_ids
+        )
+
+    @model_validator(mode="after")
+    def _objective_evidence_is_unique_and_approved(
+        self,
+    ) -> "PracticeGenerationInput":
+        identities = [
+            (
+                binding.objective_id,
+                binding.receipt.source_id,
+                binding.receipt.source_revision,
+                binding.receipt.content_sha256,
+            )
+            for binding in self.objective_evidence_bindings
+        ]
+        if len(set(identities)) != len(identities):
+            raise ValueError(
+                "objective evidence bindings must be unique by objective and receipt"
+            )
+        approved = set(self.objective_ids)
+        if any(
+            binding.objective_id not in approved
+            for binding in self.objective_evidence_bindings
+        ):
+            raise ValueError("objective evidence must bind only approved objectives")
+        return self
+
+    def effective_objective_evidence_bindings(
+        self,
+    ) -> list[PracticeObjectiveEvidenceBinding]:
+        requested = set(self.effective_requested_objective_ids())
+        return [
+            binding
+            for binding in self.objective_evidence_bindings
+            if binding.objective_id in requested
+        ]
+
+
+def build_practice_generation_request_contract(
+    request: PracticeGenerationInput,
+) -> PracticeGenerationRequestContract:
+    """Build a stable, text-free receipt for the exact requested generation scope."""
+
+    if request.quality_profile == "c3-biology-v1":
+        receipts: list[object] = sorted(
+            (
+                binding.objective_id,
+                binding.receipt.source_id,
+                binding.receipt.source_revision,
+                binding.receipt.content_sha256,
+                tuple(sorted(binding.evidence_quotes)),
+            )
+            for binding in request.effective_objective_evidence_bindings()
+        )
+    else:
+        receipts = sorted(
+            (
+                item.receipt.source_id,
+                item.receipt.source_revision,
+                item.receipt.content_sha256,
+            )
+            for item in request.source_material
+        )
+    source_scope_hash = hashlib.sha256(
+        json.dumps(receipts, separators=(",", ":")).encode("utf-8")
+    ).hexdigest()
+    requested = request.effective_requested_objective_ids()
+    identity = {
+        "operation_id": request.operation_id,
+        "course_id": request.course_id,
+        "practice_set_id": request.practice_set_id,
+        "practice_set_revision_id": request.practice_set_revision_id,
+        "requested_objective_ids": requested,
+        "source_scope_hash": source_scope_hash,
+        "generation_purpose": request.generation_purpose,
+    }
+    request_contract_id = "pgc_" + hashlib.sha256(
+        json.dumps(identity, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    ).hexdigest()[:32]
+    return PracticeGenerationRequestContract(
+        request_contract_id=request_contract_id,
+        requested_objective_ids=requested,
+        source_scope_hash=source_scope_hash,
+        generation_purpose=request.generation_purpose,
+    )
 
 
 class PracticeGenerationRequest(BaseModel):

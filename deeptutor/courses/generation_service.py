@@ -14,6 +14,7 @@ from .generation_models import (
     PracticeGenerationPlan,
     PracticeGenerationPlanConfirmation,
     PracticeGenerationRequest,
+    PracticeObjectiveEvidenceBinding,
 )
 from .generation_provider import (
     CourseSourceTextResolver,
@@ -81,6 +82,12 @@ def _default_account_active(user_id: str) -> bool:
     return record is not None and not bool(record[1].get("disabled", False))
 
 
+def _no_objective_evidence(
+    _request: PracticeGenerationInput,
+) -> list[PracticeObjectiveEvidenceBinding]:
+    return []
+
+
 class CoursePracticeGenerationService:
     """Run a provider only between fenced SQLite state transitions.
 
@@ -97,6 +104,9 @@ class CoursePracticeGenerationService:
         *,
         account_active: Callable[[str], bool] = _default_account_active,
         identity_lock: Callable[[], ContextManager[object]] = identity_write_lock,
+        objective_evidence_resolver: Callable[
+            [PracticeGenerationInput], list[PracticeObjectiveEvidenceBinding]
+        ] = _no_objective_evidence,
         provider_timeout_seconds: float = _DEFAULT_PROVIDER_TIMEOUT_SECONDS,
     ) -> None:
         self.repository = repository
@@ -104,6 +114,7 @@ class CoursePracticeGenerationService:
         self.source_text_resolver = source_text_resolver or DeterministicIndexCourseSourceTextResolver()
         self._account_active = account_active
         self._identity_lock = identity_lock
+        self._objective_evidence_resolver = objective_evidence_resolver
         if not 0.01 <= provider_timeout_seconds <= _MAX_PROVIDER_TIMEOUT_SECONDS:
             raise ValueError("provider_timeout_seconds must be between 0.01 and 120 seconds")
         self._provider_timeout_seconds = provider_timeout_seconds
@@ -205,6 +216,8 @@ class CoursePracticeGenerationService:
                 practice_set_revision_id=operation.practice_set_revision_id,
                 source_material=material,
                 objective_ids=operation.objective_ids,
+                requested_objective_ids=operation.objective_ids,
+                generation_purpose="practice",
                 item_limit=operation.item_limit,
                 context_char_limit=operation.context_char_limit,
                 focus=operation.focus,
@@ -212,7 +225,26 @@ class CoursePracticeGenerationService:
                 timing_mode=operation.timing_mode,
                 quality_profile=operation.quality_profile,
             )
+            if generation_request.quality_profile == "c3-biology-v1":
+                generation_request = PracticeGenerationInput.model_validate(
+                    {
+                        **generation_request.model_dump(mode="python"),
+                        "objective_evidence_bindings": [
+                            binding.model_dump(mode="python")
+                            for binding in self._objective_evidence_resolver(
+                                generation_request
+                            )
+                        ],
+                    }
+                )
             output = self._generate_with_deadline(generation_request)
+            if output.outcome == "abstain":
+                # Frozen migration 0004 has no dedicated unsupported-scope
+                # terminal code. Preserve the no-publication invariant using
+                # its existing fail-closed invalid_output state.
+                return self.repository.fail_operation(
+                    course_id, operation_id, "invalid_output"
+                )
             output = validate_c3_output(
                 request=generation_request,
                 output=output,
