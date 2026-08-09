@@ -1,0 +1,18 @@
+{
+  "schema_version": "c3-human-review-record-v1",
+  "review_id": "hr_obj_resp_03_v1_20260809",
+  "reviewer_id": "King",
+  "reviewed_at": "2026-08-09T21:33:40Z",
+  "identity_claim": "INTERNAL_PROJECT_REVIEW_NOT_LEGAL_OR_CRYPTOGRAPHIC_IDENTITY",
+  "objective_id": "OBJ-RESP-03",
+  "assessment_contract_id": "ac_resp_03_bounded_contrast_v1",
+  "question_index": 1,
+  "decision": "FAIL_AMBIGUOUS",
+  "artifact": "provider_runs/2026-08-09-gpt-5.6-luna-c3-objective-qualification-v1/obj-resp-03.json",
+  "artifact_sha256": "8c5442dff6939bb5f500936c81195ee1846b8fa7b6d18ce77787f434fc12d7d3",
+  "raw_provider_output_sha256": "a18fa811c8eb0a329a7a1713b39d471110d3700d451f46adb658b5b20438565c",
+  "amendment": null,
+  "amendment_sha256": null,
+  "review_note": "The fermentation contrast is scientifically correct and source-supported, but its multi-clause natural-language response has many defensible equivalent formulations. The exact-answer contract is not educationally fair; replace it with a bounded single-choice qualification item.",
+  "canonical_review_payload_sha256": "368a98ee2b846bc3a9cf492d0f659950f128eb04788fe969213adff015a419ad"
+}

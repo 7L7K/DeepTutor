@@ -121,7 +121,7 @@ def test_required_claims_are_bound_only_to_the_fragment_that_completes_them() ->
     ]
 
 
-def test_qualification_matrix_does_not_claim_agent_review_as_human_review() -> None:
+def test_qualification_matrix_records_human_decisions_separately_from_agent_precheck() -> None:
     with (
         REFERENCE_ROOT / "objective_qualification_evidence_roles_v2_2026-08-09.csv"
     ).open(encoding="utf-8", newline="") as handle:
@@ -130,17 +130,23 @@ def test_qualification_matrix_does_not_claim_agent_review_as_human_review() -> N
     assert len(rows) == 3
     transition = next(row for row in rows if row["objective_id"] == "OBJ-RESP-01")
     assert transition["automated_publication_status"] == "PASS"
-    assert transition["human_review_status"] == "OPEN"
-    assert transition["human_primary_label"] == ""
-    assert transition["failure_class"] == "CITATION_ELIGIBILITY_DEFECT_REPAIRED"
+    assert transition["human_review_status"] == "SIGNED_PASS_WITH_MINOR_EDIT"
+    assert transition["human_primary_label"] == "PASS_WITH_MINOR_EDIT"
+    assert transition["failure_class"] == "HUMAN_MINOR_EDIT_REQUIRED"
     oxygen = next(row for row in rows if row["objective_id"] == "OBJ-RESP-02")
     assert oxygen["automated_publication_status"] == "PASS"
-    assert oxygen["human_review_status"] == "OPEN"
-    assert oxygen["human_primary_label"] == ""
+    assert oxygen["human_review_status"] == "SIGNED_FAIL"
+    assert oxygen["human_primary_label"] == "FAIL_PEDAGOGY"
     assert oxygen["agent_precheck"] == "RECOMMEND_FAIL_PEDAGOGY"
+    fermentation = next(
+        row for row in rows if row["objective_id"] == "OBJ-RESP-03"
+    )
+    assert fermentation["human_review_status"] == "SIGNED_FAIL"
+    assert fermentation["human_primary_label"] == "FAIL_AMBIGUOUS"
+    assert fermentation["agent_precheck"] == "RECOMMEND_FAIL_AMBIGUOUS"
 
 
-def test_human_review_worksheet_separates_agent_precheck_and_signature() -> None:
+def test_human_review_worksheet_binds_king_decisions_without_promoting_agent_precheck() -> None:
     with (
         REFERENCE_ROOT
         / "human_review_objective_qualification_evidence_roles_v2_2026-08-09.csv"
@@ -153,18 +159,23 @@ def test_human_review_worksheet_separates_agent_precheck_and_signature() -> None
         "FAIL_PEDAGOGY",
         "FAIL_AMBIGUOUS",
     }
+    expected = {
+        "OBJ-RESP-01": "PASS_WITH_MINOR_EDIT",
+        "OBJ-RESP-02": "FAIL_PEDAGOGY",
+        "OBJ-RESP-03": "FAIL_AMBIGUOUS",
+    }
     for row in rows:
         assert row["automated_publication_status"] == "PASS"
         assert row["artifact_sha256"]
         assert row["raw_provider_output_sha256"]
-        assert row["human_primary_label"] == ""
-        assert row["human_citation_reachable"] == ""
-        assert row["human_answer_correct"] == ""
-        assert row["human_objective_aligned"] == ""
-        assert row["human_grade_fair"] == ""
-        assert row["reviewer_id"] == ""
-        assert row["reviewed_at"] == ""
-        assert row["signature"] == ""
+        assert row["human_primary_label"] == expected[row["objective_id"]]
+        assert row["human_citation_reachable"] == "true"
+        assert row["human_answer_correct"] == "true"
+        assert row["human_objective_aligned"] in {"true", "false"}
+        assert row["human_grade_fair"] in {"true", "false"}
+        assert row["reviewer_id"] == "King"
+        assert row["reviewed_at"] == "2026-08-09T21:33:40Z"
+        assert len(row["signature"]) == 64
 
 
 def test_v2_contracts_preserve_failed_outputs_and_remain_evaluation_only() -> None:

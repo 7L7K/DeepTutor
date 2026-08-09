@@ -211,23 +211,29 @@ def _canonical_sha256(value: str) -> str:
     return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
 
 
-def test_obj_resp_01_bounded_candidate_remains_unsigned_and_non_authoritative() -> None:
+def test_obj_resp_01_bounded_amendment_is_human_reviewed_and_successor_only() -> None:
     retained_path = (
         REFERENCE_ROOT
         / "reviewer_amendments/obj-resp-01-answer-variants-v1.json"
     )
     retained = json.loads(retained_path.read_text(encoding="utf-8"))
 
-    assert BOUNDED_AMENDMENT["status"] == "PROPOSED_PENDING_HUMAN_SIGNATURE"
-    assert BOUNDED_AMENDMENT["reviewer"] is None
-    assert BOUNDED_AMENDMENT["reviewed_at"] is None
-    assert BOUNDED_AMENDMENT["signature"] is None
+    assert BOUNDED_AMENDMENT["status"] == "APPROVED_HUMAN_REVIEWED"
+    assert BOUNDED_AMENDMENT["reviewer"] == "King"
+    assert BOUNDED_AMENDMENT["reviewed_at"] == "2026-08-09T21:33:40Z"
+    assert len(BOUNDED_AMENDMENT["signature"]) == 64
+    assert BOUNDED_AMENDMENT["signature_version"] == (
+        "c3-canonical-review-payload-sha256-v1"
+    )
     assert BOUNDED_AMENDMENT["agent_authority"] == "NON_DECISION_RECOMMENDATION"
     assert BOUNDED_AMENDMENT["supersedes_amendment_id"] == retained["amendment_id"]
     assert BOUNDED_AMENDMENT["superseded_amendment_sha256"] == hashlib.sha256(
         retained_path.read_bytes()
     ).hexdigest()
     assert BOUNDED_CONTRACT == BOUNDED_AMENDMENT["candidate_answer_contract"]
+    assert "successor immutable Practice revision" in BOUNDED_AMENDMENT[
+        "application_policy"
+    ]
 
 
 @pytest.mark.parametrize(

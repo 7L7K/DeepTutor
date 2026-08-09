@@ -1,0 +1,26 @@
+C3-H3A human review validation summary
+date=2026-08-09
+branch=feature/teeechr-content-quality-c3-h3
+base=1275b49bf3a61408a79d7475c3e61c8071263031
+verifier_commit=35b2ce95
+reviewer_id=King
+identity_claim=INTERNAL_PROJECT_REVIEW_NOT_LEGAL_OR_CRYPTOGRAPHIC_IDENTITY
+provider_calls=0
+
+decisions=OBJ-RESP-01:PASS_WITH_MINOR_EDIT,OBJ-RESP-02:FAIL_PEDAGOGY,OBJ-RESP-03:FAIL_AMBIGUOUS
+historical_human_dispositions=3/3
+currently_human_qualified_objectives=0/3
+
+standalone_verifier_result=6 passed in 0.06s
+h3a_integration_result=91 passed, 1 warning in 40.93s
+deterministic_c3_h3a_result=152 passed, 1 warning in 44.33s
+first_broad_result=3981 passed, 8 skipped, 34 warnings, 4 environment setup errors in 246.49s
+first_broad_error=ignored data/user/settings/main.yaml absent once per xdist worker
+replacement_broad_result=3995 passed, 8 skipped, 34 warnings in 254.31s, exit 0
+canonical_replay_result=PASS_H3A_REVIEW_RECORDS
+diff_check=exit 0
+ruff_result=not run; optional ruff module absent from external Python runtime
+
+next_gate=H3B-1 immutable OBJ-RESP-01 successor revision and deterministic grading proof
+five_question_campaign=closed
+private_beta=blocked

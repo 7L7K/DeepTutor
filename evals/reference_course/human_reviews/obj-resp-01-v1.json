@@ -1,0 +1,18 @@
+{
+  "schema_version": "c3-human-review-record-v1",
+  "review_id": "hr_obj_resp_01_v1_20260809",
+  "reviewer_id": "King",
+  "reviewed_at": "2026-08-09T21:33:40Z",
+  "identity_claim": "INTERNAL_PROJECT_REVIEW_NOT_LEGAL_OR_CRYPTOGRAPHIC_IDENTITY",
+  "objective_id": "OBJ-RESP-01",
+  "assessment_contract_id": "ac_resp_01_transition_v1",
+  "question_index": 1,
+  "decision": "PASS_WITH_MINOR_EDIT",
+  "artifact": "provider_runs/2026-08-09-gpt-5.6-luna-c3-evidence-roles-v2/obj-resp-01.json",
+  "artifact_sha256": "15dadd68d1ce95064cfcae6fb6e03605ccb299090504872cca7ef8a5b86029fc",
+  "raw_provider_output_sha256": "70283c25e23769df5cd217d7f37b707674e823f69816531a2303beee01f636ca",
+  "amendment": "reviewer_amendments/obj-resp-01-bounded-short-answer-v2.json",
+  "amendment_sha256": "7484dca7ed07003e8f07f6e7078d509231fb88c94accda5f6b56798dcfa58f56",
+  "review_note": "The pyruvate-to-acetyl-CoA item is correct, source-supported, and aligned to the transition objective. Approval is conditional on applying the signed bounded-answer amendment only through a successor immutable Practice revision; the archived provider artifact remains unchanged.",
+  "canonical_review_payload_sha256": "ab668b2a3bb40bb08e2177c7f7de63f324b08940535751c9d26108fefae7700c"
+}

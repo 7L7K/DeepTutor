@@ -11,7 +11,7 @@
   "raw_provider_output_sha256": "70283c25e23769df5cd217d7f37b707674e823f69816531a2303beee01f636ca",
   "amendment_kind": "replace_exact_with_bounded_short_answer",
   "grading_algorithm": "bounded_short_answer_v1",
-  "status": "PROPOSED_PENDING_HUMAN_SIGNATURE",
+  "status": "APPROVED_HUMAN_REVIEWED",
   "candidate_answer_contract": {
     "kind": "bounded_short_answer_v1",
     "canonical_answer": "Pyruvate is converted to acetyl-CoA.",
@@ -45,9 +45,9 @@
     "provider_output",
     "provider_runtime"
   ],
-  "reviewer": null,
-  "reviewed_at": null,
-  "signature_version": "c3-human-review-signature-v1",
-  "signature": null,
+  "reviewer": "King",
+  "reviewed_at": "2026-08-09T21:33:40Z",
+  "signature_version": "c3-canonical-review-payload-sha256-v1",
+  "signature": "cec332a3cd509a8e221cf6ce210a716ccaaef019a2680a4d1813e4896e2bdb56",
   "application_policy": "Do not apply this amendment to learner-visible Practice until reviewer, reviewed_at, and signature are populated by a genuine human reviewer. Apply only by authoring a successor immutable Practice revision."
 }
