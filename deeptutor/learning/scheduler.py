@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 import time
+from collections.abc import Iterable
 
 from deeptutor.learning.models import (
     KnowledgeType,
@@ -33,17 +34,25 @@ class SpacedRepetitionScheduler:
     def _seconds_per_unit(self) -> float:
         return 1.0 if self.DEBUG_MODE else 86400.0
 
-    def get_initial_state(self, knowledge_type: KnowledgeType) -> RepetitionState:
+    def get_initial_state(
+        self, knowledge_type: KnowledgeType, *, scheduled_at: float | None = None
+    ) -> RepetitionState:
         intervals = INTERVAL_SEQUENCES[knowledge_type]
+        base_time = time.time() if scheduled_at is None else scheduled_at
         return RepetitionState(
             interval_index=0,
             consecutive_correct=0,
             consecutive_wrong=0,
-            next_review_at=time.time() + intervals[0] * self._seconds_per_unit(),
+            next_review_at=base_time + intervals[0] * self._seconds_per_unit(),
         )
 
     def schedule_next(
-        self, state: RepetitionState, knowledge_type: KnowledgeType, is_correct: bool
+        self,
+        state: RepetitionState,
+        knowledge_type: KnowledgeType,
+        is_correct: bool,
+        *,
+        scheduled_at: float | None = None,
     ) -> RepetitionState:
         intervals = INTERVAL_SEQUENCES[knowledge_type]
         max_index = len(intervals) - 1
@@ -64,9 +73,31 @@ class SpacedRepetitionScheduler:
                 state.consecutive_wrong = 0
 
         state.interval_index = max(0, min(state.interval_index, max_index))
+        base_time = time.time() if scheduled_at is None else scheduled_at
         state.next_review_at = (
-            time.time() + intervals[state.interval_index] * self._seconds_per_unit()
+            base_time
+            + intervals[state.interval_index] * self._seconds_per_unit()
         )
+        return state
+
+    def rebuild_state(
+        self,
+        knowledge_type: KnowledgeType,
+        events: Iterable[tuple[float, bool]],
+    ) -> RepetitionState | None:
+        """Rebuild one state deterministically from retained answer events."""
+        state: RepetitionState | None = None
+        for timestamp, is_correct in events:
+            if state is None:
+                state = self.get_initial_state(
+                    knowledge_type, scheduled_at=timestamp
+                )
+            self.schedule_next(
+                state,
+                knowledge_type,
+                is_correct,
+                scheduled_at=timestamp,
+            )
         return state
 
     def get_due_tasks(self, progress: LearningProgress, max_tasks: int = 5) -> list[ReviewTask]:

@@ -9,6 +9,7 @@ from deeptutor.learning.grading import classify_error, grade_answer
 from deeptutor.learning.mastery import compute_mastery
 from deeptutor.learning.models import (
     ErrorRecord,
+    ErrorType,
     KnowledgeType,
     LearningModule,
     LearningProgress,
@@ -267,6 +268,7 @@ class LearningService:
         is_correct: bool,
         user_answer: str,
         knowledge_type: KnowledgeType,
+        error_type: ErrorType | None = None,
         scheduler: SpacedRepetitionScheduler | None = None,
         persist: bool = True,
     ) -> bool:
@@ -291,7 +293,11 @@ class LearningService:
                 module_id=module_id,
                 is_correct=is_correct,
                 user_answer=user_answer,
-                error_type=None if is_correct else classify_error(user_answer),
+                error_type=(
+                    None
+                    if is_correct
+                    else error_type or classify_error(user_answer)
+                ),
             ),
         )
         if knowledge_point_id:
@@ -311,6 +317,91 @@ class LearningService:
         if persist:
             self.save(progress)
         return is_correct
+
+    def reconcile_invalidated_course_evidence(
+        self,
+        progress: LearningProgress,
+        *,
+        invalidated_evidence_ids: set[str],
+        invalidated_question_ids: set[str],
+        affected_knowledge_point_ids: set[str],
+        scheduler: SpacedRepetitionScheduler,
+    ) -> bool:
+        """Remove invalid Course effects and rebuild derived learning authority.
+
+        The retained quiz-attempt list is the local event source for mastery and
+        spaced repetition. SQLite supplies the durable invalidation identity;
+        raw Course grades and evidence are never rewritten here.
+        """
+        projection_fields = {
+            "quiz_attempts",
+            "error_records",
+            "grading_evidence_receipts",
+            "mastery_levels",
+            "repetition_states",
+            "review_queue",
+        }
+        before = progress.model_dump(mode="json", include=projection_fields)
+
+        removed_attempts = [
+            item
+            for item in progress.quiz_attempts
+            if item.question_id in invalidated_question_ids
+        ]
+        removed_errors = [
+            item
+            for item in progress.error_records
+            if item.question_id in invalidated_question_ids
+        ]
+        affected = set(affected_knowledge_point_ids)
+        affected.update(item.knowledge_point_id for item in removed_attempts)
+        affected.update(item.knowledge_point_id for item in removed_errors)
+
+        progress.quiz_attempts = [
+            item
+            for item in progress.quiz_attempts
+            if item.question_id not in invalidated_question_ids
+        ]
+        progress.error_records = [
+            item
+            for item in progress.error_records
+            if item.question_id not in invalidated_question_ids
+        ]
+        progress.grading_evidence_receipts = {
+            key: value
+            for key, value in progress.grading_evidence_receipts.items()
+            if key not in invalidated_evidence_ids
+        }
+
+        for knowledge_point_id in affected:
+            retained = [
+                item
+                for item in progress.quiz_attempts
+                if item.knowledge_point_id == knowledge_point_id
+            ]
+            if not retained:
+                progress.mastery_levels.pop(knowledge_point_id, None)
+                progress.repetition_states.pop(knowledge_point_id, None)
+                continue
+
+            progress.mastery_levels[knowledge_point_id] = self.calculate_mastery(
+                progress, knowledge_point_id
+            )
+            knowledge_type = progress.knowledge_types.get(knowledge_point_id)
+            if knowledge_type is None:
+                raise LearningConflictError(
+                    "Cannot rebuild repetition state without a retained knowledge type"
+                )
+            state = scheduler.rebuild_state(
+                knowledge_type,
+                ((item.timestamp, item.is_correct) for item in retained),
+            )
+            assert state is not None
+            progress.repetition_states[knowledge_point_id] = state
+
+        progress.review_queue = scheduler.build_review_queue(progress)
+        after = progress.model_dump(mode="json", include=projection_fields)
+        return before != after
 
     # ── Loop-driven tutoring helpers ─────────────────────────────────────
 

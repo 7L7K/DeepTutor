@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Iterable
 
-from deeptutor.learning.models import KnowledgeType
+from deeptutor.learning.models import ErrorType, KnowledgeType
 from deeptutor.learning.scheduler import SpacedRepetitionScheduler
 from deeptutor.learning.service import LearningService
 from deeptutor.learning.storage import LearningStore
@@ -41,7 +41,12 @@ class CourseMasteryAdapter:
             if not item.objective_id or not item.module_id or not item.knowledge_type:
                 continue
             response = item.response
-            answer = response["answer"] if isinstance(response, dict) and set(response) == {"answer"} else ""
+            if isinstance(response, dict) and set(response) == {"answer"}:
+                answer = response["answer"]
+            elif isinstance(response, dict) and set(response) == {"option_id"}:
+                answer = response["option_id"]
+            else:
+                answer = ""
             self.service.record_course_grading_evidence(
                 progress,
                 evidence_id=item.id,
@@ -52,6 +57,7 @@ class CourseMasteryAdapter:
                 is_correct=item.is_correct,
                 user_answer=answer if isinstance(answer, str) else "",
                 knowledge_type=KnowledgeType(item.knowledge_type),
+                error_type=(ErrorType(item.error_type) if item.error_type else None),
                 scheduler=self.scheduler,
                 persist=False,
             )

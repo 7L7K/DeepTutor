@@ -121,6 +121,21 @@ class CourseContentQualityRepository:
             if report is None:
                 raise self._not_found()
             if str(report["state"]) != "reported":
+                if (
+                    decision == "invalidate"
+                    and str(report["state"]) == "invalidated"
+                    and str(report["reviewer_user_id"] or "") == reviewer_user_id
+                    and str(report["review_note"] or "") == note
+                ):
+                    evidence_rows = conn.execute(
+                        """SELECT evidence_id FROM practice_question_invalidations
+                           WHERE report_id = ? AND evidence_id IS NOT NULL
+                           ORDER BY evidence_id""",
+                        (report_id,),
+                    ).fetchall()
+                    return self._row(report), [
+                        str(item["evidence_id"]) for item in evidence_rows
+                    ]
                 raise CourseConflictError("Quality report has already been reviewed")
             reviewed = "rejected" if decision == "reject" else "reviewed"
             conn.execute(
@@ -297,6 +312,62 @@ class CourseContentQualityRepository:
                 (course_id,),
             ).fetchall()
         return {str(row["question_id"]) for row in rows}
+
+    def invalidated_attempt_ids(
+        self, course_id: str, practice_set_id: str
+    ) -> set[str]:
+        with self.course_repository._connect() as conn:
+            rows = conn.execute(
+                """SELECT DISTINCT items.attempt_id
+                   FROM practice_question_invalidations AS invalidations
+                   JOIN quiz_attempts AS attempts
+                     ON attempts.owner_user_id = invalidations.owner_user_id
+                    AND attempts.course_id = invalidations.course_id
+                    AND attempts.practice_set_id = invalidations.practice_set_id
+                    AND attempts.practice_set_revision_id = invalidations.practice_set_revision_id
+                   JOIN quiz_attempt_items AS items
+                     ON items.attempt_id = attempts.id
+                    AND items.question_id = invalidations.question_id
+                   WHERE invalidations.course_id = ?
+                     AND invalidations.practice_set_id = ?
+                     AND invalidations.owner_user_id = ?""",
+                (course_id, practice_set_id, self.owner_user_id),
+            ).fetchall()
+        return {str(row["attempt_id"]) for row in rows}
+
+    def invalidation_projection(self, course_id: str) -> dict[str, set[str]]:
+        """Read the durable invalidation ledger as a level-triggered outbox.
+
+        No projection-complete flag exists across SQLite and ``LearningStore``.
+        Returning the complete retained invalidation set makes reconciliation
+        safe to replay after any cross-store interruption.
+        """
+        with self.course_repository._connect() as conn:
+            rows = conn.execute(
+                """SELECT invalidations.question_id, invalidations.evidence_id,
+                          evidence.objective_id
+                   FROM practice_question_invalidations AS invalidations
+                   LEFT JOIN quiz_item_grading_evidence AS evidence
+                     ON evidence.id = invalidations.evidence_id
+                   WHERE invalidations.course_id = ?
+                     AND invalidations.owner_user_id = ?
+                   ORDER BY invalidations.question_id, invalidations.evidence_id""",
+                (course_id, self.owner_user_id),
+            ).fetchall()
+        return {
+            "question_ids": {str(row["question_id"]) for row in rows},
+            "evidence_ids": {
+                str(row["evidence_id"])
+                for row in rows
+                if row["evidence_id"] is not None
+            },
+            "knowledge_point_ids": {
+                str(row["objective_id"])
+                for row in rows
+                if row["objective_id"] is not None
+                and str(row["objective_id"]).strip()
+            },
+        }
 
     def invalidated_review_operation_ids(self, course_id: str, question_id: str) -> list[str]:
         with self.course_repository._connect() as conn:

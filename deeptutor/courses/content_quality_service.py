@@ -27,10 +27,13 @@ class CourseContentQualityService:
             note=note,
         )
         if decision == "invalidate":
-            self._reconcile_learning(course_id, evidence_ids)
+            self.reconcile_pending(course_id)
         return report, evidence_ids
 
     def effective_result(self, course_id: str, practice_set_id: str, attempt_view):
+        # Results is a durable replay boundary. If LearningStore repair fails,
+        # do not present a corrected score while stale mastery remains active.
+        self.reconcile_pending(course_id)
         invalidated = self.repository.invalidated_for_attempt(
             course_id, practice_set_id, attempt_view.attempt.id
         )
@@ -50,10 +53,22 @@ class CourseContentQualityService:
             "evidence_status": "adjusted_for_invalidated_question" if invalidated["question_ids"] else "valid",
         }
 
-    def _reconcile_learning(self, course_id: str, evidence_ids: list[str]) -> None:
-        """Remove invalidated effects from the local projection, preserving valid receipts."""
-        if not evidence_ids:
-            return
+    def reconcile_pending(self, course_id: str) -> bool:
+        """Replay all durable invalidations into the private learning projection.
+
+        SQLite and ``LearningStore`` cannot share a transaction. The immutable
+        invalidation ledger therefore remains the outbox, and this operation is
+        idempotent for retry, startup, and Results boundaries.
+        """
+        invalidated = self.repository.invalidation_projection(course_id)
+        if not invalidated["knowledge_point_ids"]:
+            return False
+        return self._reconcile_learning(course_id, invalidated)
+
+    def _reconcile_learning(
+        self, course_id: str, invalidated: dict[str, set[str]]
+    ) -> bool:
+        """Remove invalidated effects while preserving retained valid events."""
         repository = self.repository.course_repository
         adapter = CourseMasteryAdapter(
             # The Course adapter stores only the private learning projection.
@@ -63,34 +78,27 @@ class CourseContentQualityService:
             )
         )
         progress = adapter.service.get_or_create(f"lp_{course_id}")
-        evidence_set = set(evidence_ids)
-        invalidated_questions = set()
-        with repository._connect() as conn:
-            rows = conn.execute(
-                "SELECT question_id FROM quiz_item_grading_evidence WHERE id IN (%s)"
-                % ",".join("?" for _ in evidence_ids),
-                evidence_ids,
-            ).fetchall()
-            invalidated_questions = {str(row["question_id"]) for row in rows}
-        progress.quiz_attempts = [
-            item for item in progress.quiz_attempts if item.question_id not in invalidated_questions
-        ]
-        progress.error_records = [
-            item for item in progress.error_records if item.question_id not in invalidated_questions
-        ]
-        progress.grading_evidence_receipts = {
-            key: value for key, value in progress.grading_evidence_receipts.items()
-            if key not in evidence_set
-        }
-        for knowledge_point_id in list(progress.mastery_levels):
-            progress.mastery_levels[knowledge_point_id] = adapter.service.calculate_mastery(
-                progress, knowledge_point_id
-            )
-        progress.review_queue = adapter.scheduler.build_review_queue(progress)
-        adapter.service.save(progress)
+        changed = adapter.service.reconcile_invalidated_course_evidence(
+            progress,
+            invalidated_evidence_ids=invalidated["evidence_ids"],
+            invalidated_question_ids=invalidated["question_ids"],
+            affected_knowledge_point_ids=invalidated["knowledge_point_ids"],
+            scheduler=adapter.scheduler,
+        )
+        if changed:
+            adapter.service.save(progress)
+        return changed
 
     def invalidated_review_operation_ids(self, course_id: str, question_id: str) -> list[str]:
         return self.repository.invalidated_review_operation_ids(course_id, question_id)
+
+    def invalidated_question_ids(self, course_id: str) -> set[str]:
+        return self.repository.invalidated_question_ids(course_id)
+
+    def invalidated_attempt_ids(
+        self, course_id: str, practice_set_id: str
+    ) -> set[str]:
+        return self.repository.invalidated_attempt_ids(course_id, practice_set_id)
 
 
 __all__ = ["CourseContentQualityService"]

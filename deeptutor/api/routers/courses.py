@@ -9,7 +9,11 @@ from fastapi import APIRouter, BackgroundTasks, File, Form, Header, HTTPExceptio
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, ConfigDict, Field
 
-from deeptutor.courses.practice_models import ExactAnswerContract
+from deeptutor.courses.practice_models import (
+    ExactAnswerContract,
+    PracticeAnswerContract,
+    SingleChoiceOption,
+)
 from deeptutor.courses.repository import CourseConflictError, CourseNotFoundError
 from deeptutor.courses.service import (
     CourseUnavailableError,
@@ -71,10 +75,15 @@ class ExactAnswerResponse(_PracticeRequest):
     answer: str = Field(max_length=4_000)
 
 
+class SingleChoiceResponse(_PracticeRequest):
+    option_id: str = Field(min_length=5, max_length=160)
+
+
 class AddPracticeQuestionRequest(_PracticeRequest):
     question_type: str = Field(min_length=1, max_length=80)
     prompt: str = Field(min_length=1, max_length=12_000)
-    answer_contract: ExactAnswerContract
+    options: list[SingleChoiceOption] = Field(default_factory=list, max_length=8)
+    answer_contract: PracticeAnswerContract
     explanation: str = Field(default="", max_length=12_000)
     objective_ids: list[str] = Field(default_factory=list, max_length=128)
     expected_course_write_epoch: int = Field(ge=1)
@@ -97,7 +106,7 @@ class StartPracticeAttemptRequest(_PracticeRequest):
 
 class AutosavePracticeAnswerRequest(_PracticeRequest):
     attempt_item_id: str = Field(min_length=1, max_length=80)
-    response: ExactAnswerResponse
+    response: ExactAnswerResponse | SingleChoiceResponse
     expected_answer_revision: int = Field(ge=1)
     expected_course_write_epoch: int = Field(ge=1)
     expected_practice_set_write_epoch: int = Field(ge=1)
@@ -745,13 +754,72 @@ def _run_flashcard_generation(owner_user_id: str, course_id: str, operation_id: 
         unregister_live_flashcard_generation(owner_user_id, course_id, operation_id)
 
 
-def _practice_question_payload(question, *, include_answer_contract: bool) -> dict:
+def _practice_question_payload(
+    question, *, include_answer_contract: bool, invalidated: bool = False
+) -> dict:
     payload = question.model_dump(mode="json")
+    payload["content_quality"] = "invalidated" if invalidated else "valid"
+    if isinstance(question.answer_contract, ExactAnswerContract):
+        # Preserve historical exact rows without exposing unsupported legacy
+        # type labels to the learner client.
+        payload["question_type"] = "short_answer"
     if not include_answer_contract:
         payload.pop("answer_contract", None)
         # Explanations are answer-adjacent provider/author content. They are
         # revealed with the frozen answer contract only after durable grading.
         payload.pop("explanation", None)
+        # Citation locators may contain claim-bearing evidence quotes. Reveal
+        # citations with Results, never in the pre-grade learner projection.
+        payload.pop("citations", None)
+    return payload
+
+
+def _practice_result_item_payload(item, *, invalidated: bool) -> dict:
+    """Project one graded item without rewriting its immutable stored receipt."""
+
+    payload = item.model_dump(mode="json")
+    payload["content_quality"] = "invalidated" if invalidated else "valid"
+    if invalidated:
+        # The original grading receipt remains immutable in storage, but it is
+        # no longer correctness authority for the learner-facing Results view.
+        payload["grading"] = None
+        payload["error_type"] = None
+    return payload
+
+
+def _practice_attempt_view_payload(view, *, invalidated_question_ids: set[str]) -> dict:
+    affected_ids = sorted(
+        item.question_id
+        for item in view.items
+        if item.question_id in invalidated_question_ids
+    )
+    payload = view.model_dump(mode="json")
+    payload["items"] = [
+        _practice_result_item_payload(
+            item, invalidated=item.question_id in invalidated_question_ids
+        )
+        for item in view.items
+    ]
+    if affected_ids:
+        # The immutable raw score remains in SQLite. Learner APIs expose only
+        # the corrected Results score and never present the superseded value.
+        payload["attempt"]["score"] = None
+    payload["content_quality"] = {
+        "invalidated_question_ids": affected_ids,
+        "status": (
+            "adjusted_for_invalidated_question" if affected_ids else "valid"
+        ),
+    }
+    return payload
+
+
+def _practice_attempt_summary_payload(item, *, invalidated_attempt_ids: set[str]) -> dict:
+    payload = item.model_dump(mode="json")
+    if item.id in invalidated_attempt_ids:
+        payload["score"] = None
+        payload["content_quality"] = "adjusted_for_invalidated_question"
+    else:
+        payload["content_quality"] = "valid"
     return payload
 
 
@@ -1144,6 +1212,7 @@ async def add_practice_question(
                 revision_id,
                 question_type=body.question_type,
                 prompt=body.prompt,
+                options=body.options,
                 answer_contract=body.answer_contract,
                 explanation=body.explanation,
                 objective_ids=body.objective_ids,
@@ -1162,10 +1231,15 @@ async def list_practice_questions(
     revision = _practice_call(
         lambda: practice.get_revision(course_id, practice_set_id, revision_id)
     )
+    invalidated_question_ids = _practice_call(
+        lambda: _content_quality_service().invalidated_question_ids(course_id)
+    )
     return {
         "questions": [
             _practice_question_payload(
-                item, include_answer_contract=revision.state == "draft"
+                item,
+                include_answer_contract=revision.state == "draft",
+                invalidated=item.id in invalidated_question_ids,
             )
             for item in _practice_call(
                 lambda: practice.list_questions(course_id, practice_set_id, revision_id)
@@ -1288,9 +1362,16 @@ async def list_practice_attempts(
             offset=offset,
         )
     )
+    invalidated_attempt_ids = _practice_call(
+        lambda: _content_quality_service().invalidated_attempt_ids(
+            course_id, practice_set_id
+        )
+    )
     return {
         "attempts": [
-            item.model_dump(mode="json")
+            _practice_attempt_summary_payload(
+                item, invalidated_attempt_ids=invalidated_attempt_ids
+            )
             for item in page
         ],
         "next_offset": offset + len(page) if len(page) == limit else None,
@@ -1302,9 +1383,15 @@ async def get_practice_attempt(
     course_id: str, practice_set_id: str, attempt_id: str
 ):
     _practice, attempts = _practice_services()
-    return _practice_call(
+    view = _practice_call(
         lambda: attempts.get_attempt(course_id, practice_set_id, attempt_id)
-    ).model_dump(mode="json")
+    )
+    invalidated_question_ids = _practice_call(
+        lambda: _content_quality_service().invalidated_question_ids(course_id)
+    )
+    return _practice_attempt_view_payload(
+        view, invalidated_question_ids=invalidated_question_ids
+    )
 
 
 @router.patch("/{course_id}/practice/{practice_set_id}/attempts/{attempt_id}")
@@ -1383,7 +1470,7 @@ async def grade_practice_attempt(
 ):
     async with course_operation_lock(course_id):
         grading = _practice_grading_service()
-        return _practice_call(
+        attempt = _practice_call(
             lambda: grading.grade_attempt(
                 course_id,
                 practice_set_id,
@@ -1391,7 +1478,15 @@ async def grade_practice_attempt(
                 expected_course_write_epoch=body.expected_course_write_epoch,
                 expected_practice_set_write_epoch=body.expected_practice_set_write_epoch,
             )
-        ).model_dump(mode="json")
+        )
+        invalidated_attempt_ids = _practice_call(
+            lambda: _content_quality_service().invalidated_attempt_ids(
+                course_id, practice_set_id
+            )
+        )
+        return _practice_attempt_summary_payload(
+            attempt, invalidated_attempt_ids=invalidated_attempt_ids
+        )
 
 
 @router.get("/{course_id}/practice/{practice_set_id}/attempts/{attempt_id}/results")
@@ -1417,15 +1512,22 @@ async def get_practice_attempt_results(
         )
     )
     invalidated_question_ids = set(quality["invalidated_question_ids"])
+    view_payload = _practice_attempt_view_payload(
+        view, invalidated_question_ids=invalidated_question_ids
+    )
     return {
-        **view.model_dump(mode="json"),
+        **view_payload,
         "effective_score": quality["score"],
-        "content_quality": quality,
+        "content_quality": {
+            **quality,
+            "status": view_payload["content_quality"]["status"],
+        },
         "questions": [
             {
-                **_practice_question_payload(item, include_answer_contract=True),
-                "content_quality": (
-                    "invalidated" if item.id in invalidated_question_ids else "valid"
+                **_practice_question_payload(
+                    item,
+                    include_answer_contract=item.id not in invalidated_question_ids,
+                    invalidated=item.id in invalidated_question_ids,
                 ),
             }
             for item in questions
