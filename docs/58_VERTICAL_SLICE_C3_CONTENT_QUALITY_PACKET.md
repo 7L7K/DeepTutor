@@ -128,23 +128,29 @@ The source and local contract lane is green on the isolated C3 branch:
 
 - Focused C3, migration, generation, grading, flashcard-generation, provider,
   and co-writer checks: `138 passed`.
+- After the provider-evaluation citation repair, the directly impacted C3,
+  OpenAI-adapter, and grading-contract checks pass: `64 passed`.
 - Full backend regression with the required external Python 3.11 runtime and
-  four workers: `3898 passed, 8 skipped, 34 warnings` using
-  `pytest -n 4 --dist loadfile -q tests` in `427.57s`. The added C3 tests cover
-  bounded answer variants, exact citation-offset provenance, and withdrawal of
-  already-derived Review cards after invalidation.
+  four workers: `3899 passed, 8 skipped, 34 warnings` using
+  `pytest -n 4 --dist loadfile -q tests` in `199.97s`. The added C3 tests cover
+  bounded answer variants, exact citation-offset provenance, collective
+  citation support, and withdrawal of already-derived Review cards after
+  invalidation.
 - Web under Node `22.23.2` / npm `10.9.8`: `432` Node tests passed, lint exit 0
   with 244 warnings and 0 errors, standalone TypeScript check passed, and the
   Next.js production build passed with 62 generated routes.
 
-The real provider evaluation is not a pass yet. The external runtime has the
-OpenAI adapter configured by name but no environment `OPENAI_API_KEY`, so the
-required no-content preflight and all Biology generations were not attempted.
-The durable receipt is
-`evals/reference_course/run_openai_2026-08-08.json` with status
-`BLOCKED_PROVIDER_NOT_CONFIGURED`; its usage, request, model, latency, and
-human-review fields are intentionally null or `NOT_RUN`. The deterministic
-provider remains test-only and is not educational-quality evidence.
+The real provider evaluation reached the API on 2026-08-09 using the
+process-only `LLM_API_KEY` from the sibling local checkout, mapped to the C3
+`OPENAI_API_KEY` contract, with `gpt-5-mini`. The no-content preflight passed
+with abstention, but the bounded Biology campaign did not pass the publication
+fence: primary and repeat provider outputs failed adapter validation, the
+remediation output failed citation support, and the unsupported probe returned a
+source-grounded answer instead of abstaining from its requested out-of-scope
+topics. The durable receipt is
+`evals/reference_course/run_openai_2026-08-09.json` with status
+`PROVIDER_REACHED_C3_QUALITY_GATE_FAILED`. The deterministic provider remains
+test-only and is not educational-quality evidence.
 
 Browser/runtime proof is also open. No browser campaign, golden Biology set,
 human approval, or student-value claim should be inferred from the local tests.

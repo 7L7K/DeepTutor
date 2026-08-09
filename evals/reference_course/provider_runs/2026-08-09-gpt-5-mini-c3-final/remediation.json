@@ -1,0 +1,109 @@
+{
+  "case": "remediation",
+  "fixture": "Biology 101 / fall-2026",
+  "output": {
+    "actual_model": "gpt-5-mini-2025-08-07",
+    "cached_input_tokens": 0,
+    "estimated_cost_microusd": 1782,
+    "input_tokens": 936,
+    "latency_ms": 14062,
+    "output_tokens": 774,
+    "pricing_version": "openai-gpt-5-mini-pricing-2026-07-29",
+    "prompt_version": "course-practice-c3-v1",
+    "provider_label": "openai",
+    "questions": [
+      {
+        "answer_contract": {
+          "accepted_answers": [
+            "an organic molecule to regenerate NAD+; oxidative phosphorylation uses oxygen",
+            "an organic molecule (regenerates NAD+); oxidative phosphorylation uses oxygen"
+          ],
+          "answer": "An organic molecule (to regenerate NAD+); oxidative phosphorylation uses an external electron acceptor like oxygen.",
+          "kind": "exact"
+        },
+        "citations": [
+          {
+            "content_sha256": "0ba0d9931b7ea29e4ea2bd65f4609617dc6be91c1fb36891160c6faa8f80076e",
+            "locator": {
+              "evidence_quote": "Glycolysis makes a small ATP return and NADH."
+            },
+            "source_id": "src_b0a8970e0adccf2884a1458c4a76be4a",
+            "source_revision": 1
+          },
+          {
+            "content_sha256": "0f48b6e354accde0a2ed0026612e62854c2d0fd68668147b4b0a100a85d8bf65",
+            "locator": {
+              "evidence_quote": "The resulting proton gradient powers ATP synthase."
+            },
+            "source_id": "src_28c71d0eb20f02a9fa201979ebadc82f",
+            "source_revision": 1
+          }
+        ],
+        "explanation": "The evidence states that fermentation regenerates NAD+ (implying electrons are returned to organic molecules) and contrasts fermentation with pathways that create a proton gradient powering ATP synthase (oxidative phosphorylation uses oxygen as an external terminal acceptor). Together these points show fermentation uses organic molecule electron acceptance to recycle NAD+, whereas oxidative phosphorylation uses oxygen as the terminal electron acceptor.",
+        "objective_ids": [
+          "OBJ-RESP-01"
+        ],
+        "prompt": "What is the terminal electron acceptor in fermentation processes described in the supplied evidence, and how does this differ from oxidative phosphorylation's terminal electron acceptor?",
+        "question_type": "short_answer"
+      },
+      {
+        "answer_contract": {
+          "accepted_answers": [
+            "much less ATP because only glycolysis ATP is produced and no proton gradient/ATP synthase is used",
+            "far less ATP since fermentation relies on glycolysis' small ATP return and lacks a proton-gradient-driven ATP synthase step"
+          ],
+          "answer": "Fermentation yields much less ATP because it only produces the small ATP return from glycolysis and does not use a proton gradient to power ATP synthase.",
+          "kind": "exact"
+        },
+        "citations": [
+          {
+            "content_sha256": "0ba0d9931b7ea29e4ea2bd65f4609617dc6be91c1fb36891160c6faa8f80076e",
+            "locator": {
+              "evidence_quote": "Glycolysis makes a small ATP return and NADH."
+            },
+            "source_id": "src_b0a8970e0adccf2884a1458c4a76be4a",
+            "source_revision": 1
+          },
+          {
+            "content_sha256": "0f48b6e354accde0a2ed0026612e62854c2d0fd68668147b4b0a100a85d8bf65",
+            "locator": {
+              "evidence_quote": "The resulting proton gradient powers ATP synthase."
+            },
+            "source_id": "src_28c71d0eb20f02a9fa201979ebadc82f",
+            "source_revision": 1
+          }
+        ],
+        "explanation": "The evidence states that glycolysis makes a small ATP return and that the proton gradient powering ATP synthase (a feature of oxidative phosphorylation) is not part of fermentation. Therefore fermentation yields far less ATP because it stops at glycolysis with NAD+ regeneration rather than generating a proton gradient for additional ATP synthesis.",
+        "objective_ids": [
+          "OBJ-RESP-02",
+          "OBJ-RESP-03"
+        ],
+        "prompt": "Compared to oxidative phosphorylation, what is the relative ATP yield of fermentation according to the supplied evidence, and why does fermentation yield less ATP?",
+        "question_type": "short_answer"
+      }
+    ],
+    "reasoning_effort": "minimal",
+    "reasoning_output_tokens": 0,
+    "request_id": "resp_00f20715e27a56a3016a780e33c40c8194a79d1d9113173a8f",
+    "requested_model": "gpt-5-mini",
+    "response_status": "completed",
+    "schema_version": "course-practice-c3-schema-v1",
+    "store": false
+  },
+  "pricing_version": "openai-gpt-5-mini-pricing-2026-07-29",
+  "prompt_version": "course-practice-c3-v1",
+  "provider_status": "COMPLETED",
+  "quality_findings": [
+    {
+      "code": "ANSWER_UNSUPPORTED",
+      "detail": "answer/explanation is not supported by the cited source set",
+      "question_index": 1
+    }
+  ],
+  "reasoning_effort": "minimal",
+  "requested_model": "gpt-5-mini",
+  "schema_version": "course-practice-c3-schema-v1",
+  "source_packet_revision": "reference-course-c3-v1",
+  "store": false,
+  "validation_status": "REJECTED"
+}

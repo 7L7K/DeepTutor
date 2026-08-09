@@ -1,0 +1,10 @@
+{
+  "status": "PASS_ABSTAINED",
+  "provider": "openai",
+  "model": "gpt-5-mini-2025-08-07",
+  "request_id": "resp_09458ea6918a2d8d016a780c69c2ec8197871a53afcbd81842",
+  "input_tokens": 110,
+  "output_tokens": 49,
+  "store": false,
+  "credential_persisted": false
+}

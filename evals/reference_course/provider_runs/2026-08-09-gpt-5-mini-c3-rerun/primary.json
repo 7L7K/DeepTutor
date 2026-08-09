@@ -1,0 +1,189 @@
+{
+  "artifact_sha256": null,
+  "case": "primary",
+  "fixture": "Biology 101 / fall-2026",
+  "output": {
+    "actual_model": "gpt-5-mini-2025-08-07",
+    "cached_input_tokens": 0,
+    "estimated_cost_microusd": 2684,
+    "input_tokens": 1077,
+    "latency_ms": 19949,
+    "output_tokens": 1207,
+    "pricing_version": "openai-gpt-5-mini-pricing-2026-07-29",
+    "prompt_version": "course-practice-c3-v1",
+    "provider_label": "openai",
+    "questions": [
+      {
+        "answer_contract": {
+          "answer": "Pyruvate oxidation",
+          "kind": "exact"
+        },
+        "citations": [
+          {
+            "content_sha256": "0f48b6e354accde0a2ed0026612e62854c2d0fd68668147b4b0a100a85d8bf65",
+            "locator": {
+              "evidence_quote": "**[00:06:40] Instructor:** Pyruvate oxidation converts pyruvate to acetyl-CoA."
+            },
+            "source_id": "src_28c71d0eb20f02a9fa201979ebadc82f",
+            "source_revision": 1
+          }
+        ],
+        "explanation": "Pyruvate oxidation is the stage that converts pyruvate into acetyl-CoA.",
+        "objective_ids": [
+          "OBJ-RESP-01"
+        ],
+        "prompt": "Name one major stage of cellular respiration that converts pyruvate to acetyl-CoA.",
+        "question_type": "short_answer"
+      },
+      {
+        "answer_contract": {
+          "accepted_answers": [
+            "O2"
+          ],
+          "answer": "Oxygen",
+          "kind": "exact"
+        },
+        "citations": [
+          {
+            "content_sha256": "0ba0d9931b7ea29e4ea2bd65f4609617dc6be91c1fb36891160c6faa8f80076e",
+            "locator": {
+              "evidence_quote": "## Slide 7 — The final acceptor"
+            },
+            "source_id": "src_b0a8970e0adccf2884a1458c4a76be4a",
+            "source_revision": 1
+          }
+        ],
+        "explanation": "Oxygen is identified as the final electron acceptor in aerobic respiration.",
+        "objective_ids": [
+          "OBJ-RESP-02"
+        ],
+        "prompt": "Which molecule is described as the final electron acceptor in aerobic respiration?",
+        "question_type": "short_answer"
+      },
+      {
+        "answer_contract": {
+          "answer": "Glycolysis",
+          "kind": "exact"
+        },
+        "citations": [
+          {
+            "content_sha256": "0ba0d9931b7ea29e4ea2bd65f4609617dc6be91c1fb36891160c6faa8f80076e",
+            "locator": {
+              "evidence_quote": "Glycolysis makes a small ATP return and NADH."
+            },
+            "source_id": "src_b0a8970e0adccf2884a1458c4a76be4a",
+            "source_revision": 1
+          }
+        ],
+        "explanation": "Glycolysis generates a small amount of ATP and produces NADH and is a common initial pathway for both aerobic respiration and fermentation.",
+        "objective_ids": [
+          "OBJ-RESP-03"
+        ],
+        "prompt": "Which process makes a small ATP return and produces NADH at the start of both aerobic respiration and fermentation?",
+        "question_type": "short_answer"
+      },
+      {
+        "answer_contract": {
+          "accepted_answers": [
+            "Yes, both can begin with glycolysis",
+            "Yes — both pathways can begin with glycolysis"
+          ],
+          "answer": "Yes",
+          "kind": "exact"
+        },
+        "citations": [
+          {
+            "content_sha256": "0ba0d9931b7ea29e4ea2bd65f4609617dc6be91c1fb36891160c6faa8f80076e",
+            "locator": {
+              "evidence_quote": "## Slide 9 — Aerobic respiration and fermentation"
+            },
+            "source_id": "src_b0a8970e0adccf2884a1458c4a76be4a",
+            "source_revision": 1
+          },
+          {
+            "content_sha256": "0ba0d9931b7ea29e4ea2bd65f4609617dc6be91c1fb36891160c6faa8f80076e",
+            "locator": {
+              "evidence_quote": "Both pathways can begin with glycolysis."
+            },
+            "source_id": "src_b0a8970e0adccf2884a1458c4a76be4a",
+            "source_revision": 1
+          }
+        ],
+        "explanation": "The slides state that both aerobic respiration and fermentation can begin with glycolysis.",
+        "objective_ids": [
+          "OBJ-RESP-03"
+        ],
+        "prompt": "According to the provided slides, can fermentation and aerobic respiration both begin with the same initial pathway?",
+        "question_type": "short_answer"
+      },
+      {
+        "answer_contract": {
+          "accepted_answers": [
+            "No, fermentation does not replace glycolysis"
+          ],
+          "answer": "No",
+          "kind": "exact"
+        },
+        "citations": [
+          {
+            "content_sha256": "0f48b6e354accde0a2ed0026612e62854c2d0fd68668147b4b0a100a85d8bf65",
+            "locator": {
+              "evidence_quote": "**[00:16:22] Instructor:** Fermentation does not replace glycolysis."
+            },
+            "source_id": "src_28c71d0eb20f02a9fa201979ebadc82f",
+            "source_revision": 1
+          }
+        ],
+        "explanation": "The lecture explicitly states that fermentation does not replace glycolysis.",
+        "objective_ids": [
+          "OBJ-RESP-02"
+        ],
+        "prompt": "Does fermentation replace glycolysis according to the lecture transcript?",
+        "question_type": "short_answer"
+      }
+    ],
+    "reasoning_effort": "minimal",
+    "reasoning_output_tokens": 0,
+    "request_id": "resp_0019954c84fe5948016a780d424b1c8195b9ca1c532933c286",
+    "requested_model": "gpt-5-mini",
+    "response_status": "completed",
+    "schema_version": "course-practice-c3-schema-v1",
+    "store": false
+  },
+  "pricing_version": "openai-gpt-5-mini-pricing-2026-07-29",
+  "prompt_version": "course-practice-c3-v1",
+  "provider_status": "COMPLETED",
+  "quality_findings": [
+    {
+      "code": "ANSWER_UNSUPPORTED",
+      "detail": "answer/explanation is not supported by the cited quote",
+      "question_index": 2
+    },
+    {
+      "code": "ANSWER_UNSUPPORTED",
+      "detail": "answer/explanation is not supported by the cited source set",
+      "question_index": 2
+    },
+    {
+      "code": "ANSWER_UNSUPPORTED",
+      "detail": "answer/explanation is not supported by the cited quote",
+      "question_index": 4
+    },
+    {
+      "code": "ANSWER_UNSUPPORTED",
+      "detail": "answer/explanation is not supported by the cited quote",
+      "question_index": 4
+    },
+    {
+      "code": "ANSWER_UNSUPPORTED",
+      "detail": "answer/explanation is not supported by the cited source set",
+      "question_index": 4
+    }
+  ],
+  "reasoning_effort": "minimal",
+  "requested_model": "gpt-5-mini",
+  "schema_version": "course-practice-c3-schema-v1",
+  "source_packet_revision": "reference-course-c3-v1",
+  "store": false,
+  "validation_status": "REJECTED"
+}

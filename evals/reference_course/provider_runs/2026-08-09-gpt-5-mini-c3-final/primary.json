@@ -1,0 +1,13 @@
+{
+  "case": "primary",
+  "error_class": "PracticeGenerationProviderError",
+  "fixture": "Biology 101 / fall-2026",
+  "pricing_version": "openai-gpt-5-mini-pricing-2026-07-29",
+  "prompt_version": "course-practice-c3-v1",
+  "provider_status": "FAILED",
+  "reasoning_effort": "minimal",
+  "requested_model": "gpt-5-mini",
+  "schema_version": "course-practice-c3-schema-v1",
+  "source_packet_revision": "reference-course-c3-v1",
+  "store": false
+}

@@ -1,27 +1,27 @@
 # Vertical Slice C3 Implementation Receipt
 
-Status: SOURCE / TEST / BUILD PROVEN; BLOCKED_PROVIDER_NOT_CONFIGURED; EDUCATIONAL QUALITY UNPROVEN; PRIVATE BETA BLOCKED_QUALITY_GATE
+Status: SOURCE / TEST / BUILD PROVEN; PROVIDER_REACHED_C3_QUALITY_GATE_FAILED; EDUCATIONAL QUALITY UNPROVEN; PRIVATE BETA BLOCKED_QUALITY_GATE
 
 Branch: `feature/teeechr-content-quality-c3`
 
 Base: `74d43de7ac437c13868b02ec14df6696c590693a`
 
-Implementation HEAD: `c5bbb54c` (local concern-separated checkpoints; not pushed)
+Implementation HEAD: `61345de8` (local concern-separated checkpoints; not pushed)
 
 ## Proof ledger
 
 | Layer | Status | Receipt |
 | --- | --- | --- |
 | Source contract | PROVEN | C3 quality profile, source/objective/citation gates, append-only report/invalidation ledger, and forward migration `0014_content_quality_invalidation.sql` |
-| Focused backend tests | PROVEN | `138 passed` across C3, migration, generation, grading, flashcard-generation, OpenAI-adapter, and co-writer checks; the C3 packet includes bounded-answer, citation-offset, and derived-Review invalidation coverage |
-| Full backend regression | PROVEN | External Python 3.11 runtime with `pytest -n 4 --dist loadfile -q tests`: `3898 passed, 8 skipped, 34 warnings` in `427.57s`; the superseded serial attempt was interrupted after it exceeded the prior runtime boundary with no reported failure |
+| Focused impacted backend tests | PROVEN | `64 passed` across the C3 validator, OpenAI practice adapter, and grading-contract checks after the citation-support repair; the earlier C3 packet contains the broader `138 passed` focused checkpoint result |
+| Full backend regression | PROVEN | External Python 3.11 runtime with `pytest -n 4 --dist loadfile -q tests`: `3899 passed, 8 skipped, 34 warnings` in `199.97s`; the superseded serial attempt was interrupted after it exceeded the prior runtime boundary with no reported failure |
 | Web tests | PROVEN | Node `22.23.2`, npm `10.9.8`: `432 passed, 0 failed` |
 | Web lint | PROVEN WITH WARNINGS | exit 0; `0 errors`, `244 warnings` (existing literal-UI-text/image warnings) |
 | Web typecheck | PROVEN | standalone `npx tsc --noEmit` exit 0 after the production build generated `.next/types` |
 | Web production build | PROVEN | `npm run build` exit 0 under Node `22.23.2`; Next.js `16.2.3`; 62 generated routes |
-| Configured provider | BLOCKED_PROVIDER_NOT_CONFIGURED | `OPENAI_API_KEY` is absent; configured provider is OpenAI model `gpt-5.6-luna`, medium reasoning, pricing `openai-gpt-5.6-luna-2026-08-01`; no provider call attempted |
+| Configured provider | REACHED, QUALITY GATE FAILED | The sibling local `.env` supplied a process-only `LLM_API_KEY` mapped to `OPENAI_API_KEY`; the bounded run used OpenAI `gpt-5-mini` and reached the API. No golden revision was published: primary/repeat hit provider-output rejection, remediation failed citation support, and the unsupported probe returned an answer instead of abstaining. |
 | Human review | OPEN | `evals/reference_course/human_review_2026-08-08.csv` is a review template, not a golden approval |
-| Browser/runtime | OPEN | no browser campaign was claimed because the real provider/content receipt is not configured |
+| Browser/runtime | OPEN | no browser campaign was claimed because no provider output passed the C3 quality gate |
 
 ## What is implemented
 
@@ -41,6 +41,9 @@ Implementation HEAD: `c5bbb54c` (local concern-separated checkpoints; not pushed
   baseline remediation remains at eight.
 - The learner Practice UI can report a question and displays the adjusted
   effective score/status after invalidation.
+- C3 citation validation now evaluates the reachable citation set collectively,
+  supports short polarity answers through their evidence-bearing explanation,
+  and removes heading-only evidence from the C3 provider vocabulary.
 
 ## Provider and runtime boundary
 
@@ -50,26 +53,34 @@ The isolated external runtime used for the evaluation was:
 - Node `22.23.2`: `/opt/homebrew/opt/node@22/bin`
 - npm `10.9.8`
 - provider base URL: `https://api.openai.com/v1`
-- provider enabled: `false`
-- API key configured: `false`
-- configured model: `gpt-5.6-luna`
-- reasoning effort: `medium`
-- pricing version: `openai-gpt-5.6-luna-2026-08-01`
+- provider enabled for the bounded evaluation ledger: `true`
+- API key configured in process: `true`; the value was read from the sibling
+  checkout and was not copied, printed, or committed
+- configured model: `gpt-5-mini`
+- actual provider model: `gpt-5-mini-2025-08-07`
+- reasoning effort: `minimal`
+- pricing version: `openai-gpt-5-mini-pricing-2026-07-29`
 - C3 prompt version: `course-practice-c3-v1`
 - C3 schema version: `course-practice-c3-schema-v1`
 
-No secret was created, no paid request was made, and no deterministic output was
-relabeled as educational-quality evidence. The C3 fixture, rubric, failure
-ledger, and blocked provider receipt are durable under `evals/reference_course/`.
+The no-content preflight passed with a structured abstention (`store=false`).
+The subsequent bounded provider campaign made one primary, one repeat, one
+unsupported-content, and one remediation request; the generation ledger settled
+`10,602` micro-USD across those attempts, with no retries after each named case.
+No secret was created or persisted, and no deterministic output was relabeled as
+educational-quality evidence. The C3 fixture, rubric, failure ledger, provider
+outputs, and failed-provider receipt are durable under `evals/reference_course/`.
 
 ## Honest boundary
 
 C2 proves the persistence, refresh/resume, deterministic grading, and bounded
-remediation mechanics. C3 now proves the source/test/build contracts and the
-local invalidation implementation. It does not yet prove that Biology content
-is educationally correct: `OPENAI_API_KEY` is absent, so the required
-no-content preflight, real generations, human review, and browser campaign were
-not attempted. The next smallest closeout action is to provide an approved
-non-production credential outside Git, run the five-question Biology
-evaluation, archive its request/model/usage/latency receipt, complete human
-review, and then run the bounded browser campaign.
+remediation mechanics. C3 now proves the source/test/build contracts, the local
+invalidation implementation, provider reachability, and no-content abstention.
+It does not yet prove that Biology content is educationally correct. The real
+provider returned at least one semantically out-of-scope answer for the
+unsupported probe, and the primary/repeat/remediation outputs did not pass the
+publication fence. Human review and browser proof therefore remain blocked.
+The next smallest closeout action is to inspect the durable provider failures,
+correct the provider-generation contract or model selection as warranted, run a
+fresh five-question Biology evaluation, complete independent human review, and
+only then run the bounded browser campaign.

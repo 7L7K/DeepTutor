@@ -1,0 +1,101 @@
+{
+  "evaluation": "C3 Biology 101 reference Course",
+  "date": "2026-08-09",
+  "status": "PROVIDER_REACHED_C3_QUALITY_GATE_FAILED",
+  "provider": "openai",
+  "provider_call_attempted": true,
+  "golden_run": false,
+  "reason": "The approved local credential reached OpenAI, but no Biology revision passed the C3 publication fence. No deterministic or partial output was published.",
+  "runtime": {
+    "python": "3.11.15",
+    "python_executable": "/Users/home/.codex/runtimes/teeechr-b1-python311/bin/python",
+    "provider_base_url": "https://api.openai.com/v1",
+    "credential_source": "sibling local .env, process-only",
+    "api_key_persisted": false,
+    "configured_model": "gpt-5-mini",
+    "actual_model": "gpt-5-mini-2025-08-07",
+    "reasoning_effort": "minimal",
+    "pricing_version": "openai-gpt-5-mini-pricing-2026-07-29",
+    "prompt_version": "course-practice-c3-v1",
+    "schema_version": "course-practice-c3-schema-v1",
+    "store": false
+  },
+  "fixture": {
+    "course": "Biology 101",
+    "term": "fall-2026",
+    "source_packet_revision": "reference-course-c3-v1",
+    "source_files": [
+      "lecture_06_transcript.md",
+      "lecture_06_slides.md"
+    ],
+    "objectives": [
+      "OBJ-RESP-01",
+      "OBJ-RESP-02",
+      "OBJ-RESP-03"
+    ]
+  },
+  "no_content_preflight": {
+    "status": "PASS_ABSTAINED",
+    "request_id": "resp_09458ea6918a2d8d016a780c69c2ec8197871a53afcbd81842",
+    "actual_model": "gpt-5-mini-2025-08-07",
+    "input_tokens": 110,
+    "output_tokens": 49,
+    "estimated_cost_microusd": 126,
+    "store": false
+  },
+  "cases": {
+    "primary": {
+      "provider_status": "FAILED",
+      "validation_status": "NOT_RUN",
+      "error_class": "PracticeGenerationProviderError",
+      "settled_input_tokens": 943,
+      "settled_output_tokens": 1274,
+      "settled_cost_microusd": 2784,
+      "artifact": "provider_runs/2026-08-09-gpt-5-mini-c3-final/primary.json",
+      "earlier_completed_output_rejected": {
+        "request_id": "resp_0019954c84fe5948016a780d424b1c8195b9ca1c532933c286",
+        "input_tokens": 1077,
+        "output_tokens": 1207,
+        "latency_ms": 19949,
+        "settled_cost_microusd": 2684,
+        "finding": "ANSWER_UNSUPPORTED",
+        "artifact": "provider_runs/2026-08-09-gpt-5-mini-c3-rerun/primary.json"
+      }
+    },
+    "repeat": {
+      "provider_status": "FAILED",
+      "validation_status": "NOT_RUN",
+      "error_class": "PracticeGenerationProviderError",
+      "settled_input_tokens": 943,
+      "settled_output_tokens": 1131,
+      "settled_cost_microusd": 2498,
+      "artifact": "provider_runs/2026-08-09-gpt-5-mini-c3-final/repeat.json"
+    },
+    "unsupported": {
+      "provider_status": "COMPLETED",
+      "deterministic_validation": "PASS",
+      "semantic_review": "FAIL_WRONG_SCOPE",
+      "request_id": "resp_0c25cf20ef7e0195016a780e119e2881949aa222aaea68e8ea",
+      "input_tokens": 934,
+      "output_tokens": 310,
+      "latency_ms": 14841,
+      "settled_cost_microusd": 854,
+      "artifact": "provider_runs/2026-08-09-gpt-5-mini-c3-final/unsupported.json"
+    },
+    "remediation": {
+      "provider_status": "COMPLETED",
+      "validation_status": "REJECTED",
+      "finding": "ANSWER_UNSUPPORTED",
+      "request_id": "resp_00f20715e27a56a3016a780e33c40c8194a79d1d9113173a8f",
+      "input_tokens": 936,
+      "output_tokens": 774,
+      "latency_ms": 14062,
+      "settled_cost_microusd": 1782,
+      "artifact": "provider_runs/2026-08-09-gpt-5-mini-c3-final/remediation.json"
+    }
+  },
+  "generation_settled_cost_microusd": 7918,
+  "human_review": "NOT_RUN",
+  "browser_runtime": "NOT_RUN",
+  "next_gate": "Fix or explicitly classify the provider-output contract, then run a fresh approved campaign before human review and browser proof."
+}
