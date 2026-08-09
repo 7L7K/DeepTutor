@@ -130,9 +130,9 @@ def test_qualification_matrix_records_human_decisions_separately_from_agent_prec
     assert len(rows) == 3
     transition = next(row for row in rows if row["objective_id"] == "OBJ-RESP-01")
     assert transition["automated_publication_status"] == "PASS"
-    assert transition["human_review_status"] == "SIGNED_PASS_WITH_MINOR_EDIT"
+    assert transition["human_review_status"] == "HUMAN_QUALIFIED"
     assert transition["human_primary_label"] == "PASS_WITH_MINOR_EDIT"
-    assert transition["failure_class"] == "HUMAN_MINOR_EDIT_REQUIRED"
+    assert transition["failure_class"] == "NONE"
     oxygen = next(row for row in rows if row["objective_id"] == "OBJ-RESP-02")
     assert oxygen["automated_publication_status"] == "PASS"
     assert oxygen["human_review_status"] == "SIGNED_FAIL"

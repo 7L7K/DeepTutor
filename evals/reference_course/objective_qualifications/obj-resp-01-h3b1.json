@@ -1,0 +1,54 @@
+{
+  "schema_version": "c3-objective-human-qualification-v1",
+  "objective_id": "OBJ-RESP-01",
+  "assessment_contract_id": "ac_resp_01_transition_v1",
+  "status": "HUMAN_QUALIFIED",
+  "qualified_on": "2026-08-09",
+  "provider_calls": 0,
+  "successor_revision_materialization": "HERMITIC_REPOSITORY_RUNTIME_PROOF",
+  "artifact_bindings": [
+    {
+      "role": "accepted_provider_artifact",
+      "path": "provider_runs/2026-08-09-gpt-5.6-luna-c3-evidence-roles-v2/obj-resp-01.json",
+      "sha256": "15dadd68d1ce95064cfcae6fb6e03605ccb299090504872cca7ef8a5b86029fc"
+    },
+    {
+      "role": "human_review_record",
+      "path": "human_reviews/obj-resp-01-v1.json",
+      "sha256": "1d2941ac5981615176e9d9c28991bfde3b9a025fa34a0ed7fb05eab4d7b256a2"
+    },
+    {
+      "role": "signed_bounded_answer_amendment",
+      "path": "reviewer_amendments/obj-resp-01-bounded-short-answer-v2.json",
+      "sha256": "7484dca7ed07003e8f07f6e7078d509231fb88c94accda5f6b56798dcfa58f56"
+    }
+  ],
+  "successor_contract": {
+    "question_type": "short_answer",
+    "answer_contract_kind": "bounded_short_answer_v1",
+    "preserve_fields": [
+      "prompt",
+      "explanation",
+      "objective_ids",
+      "citations",
+      "ordinal"
+    ],
+    "historical_revision_mutation": false
+  },
+  "proof": {
+    "test_node": "tests/courses/practice/test_c3_h3b_obj_resp_01_successor.py::test_obj_resp_01_successor_preserves_history_and_grades_canonical_answer",
+    "grading_matrix_node": "tests/courses/practice/test_c3_h3b_obj_resp_01_successor.py::test_obj_resp_01_successor_bounded_grading_matrix",
+    "required_correct_classes": [
+      "canonical",
+      "approved_variant",
+      "case_and_punctuation",
+      "unicode_hyphen"
+    ],
+    "required_wrong_classes": [
+      "reversal",
+      "wrong_molecule",
+      "incomplete"
+    ]
+  },
+  "authority_boundary": "This qualification is repository, deterministic runtime, and internal human-review proof. It is not hosted, production-data, browser, student, or private-beta proof."
+}
