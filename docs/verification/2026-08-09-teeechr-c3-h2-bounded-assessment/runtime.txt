@@ -1,0 +1,9 @@
+backend_port=8037
+frontend_port=3817
+node=v22.23.2
+npm=10.9.8
+python=Python 3.11.15
+branch=feature/teeechr-content-quality-c3
+head=9954350b4d1273cde4fc86ddea54f6e71d86ecda
+provider_calls=0
+human_approval=false

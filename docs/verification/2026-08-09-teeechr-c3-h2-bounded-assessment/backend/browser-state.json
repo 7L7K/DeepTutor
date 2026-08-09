@@ -1,0 +1,29 @@
+{
+  "primaryAttemptId": "att_c2ee5b7a12644240aa132ce5eaff2335",
+  "primaryAttemptUrl": "/classes/crs_2b8c6a5272d34ea7be65ad5f3de05ddb/practice/prc_65793bf843b04ea993bf87dd80d8f05e/attempts/att_c2ee5b7a12644240aa132ce5eaff2335",
+  "cleanupAttemptId": "att_2cf0c501fa944618bb7c3e8a936e5851",
+  "reportIds": {
+    "short": "cqr_3eed41e9ed4d429e9a4a25af583d9ab4",
+    "choice": "cqr_1d2235164dfe461ead161f37cb146800"
+  },
+  "optionOrder": [
+    "opt_986291269d6a94a83867f118b284a133",
+    "opt_04896958b48affb6b28d005ce0f06b2b",
+    "opt_00eab93bf2ebcee4e326a47f6af93285",
+    "opt_0e78b0cb8cfeb8a7afa80fc73072be49"
+  ],
+  "selectedOptionId": "opt_04896958b48affb6b28d005ce0f06b2b",
+  "duplicateSubmitStatus": 200,
+  "rawScore": {
+    "correct": 1,
+    "fraction": 0.5,
+    "total": 2
+  },
+  "mainPhase": "complete",
+  "foreignCourseStatus": 404,
+  "correctedProjectionStatus": 200,
+  "partialAttemptId": "att_cb27b5836bd64b2d8b9da673d5cdf43a",
+  "partialAdmissionItemCount": 1,
+  "fullAdmissionStatus": 409,
+  "fullAdmissionReason": "no_valid_questions"
+}

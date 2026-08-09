@@ -1,0 +1,59 @@
+{
+  "before_digest": "e748e121fb8bc63ad0a2da4aabf9b610dc5d60231b82c3b0472a28af714f86e8",
+  "foreign_key_issues": [],
+  "migration": "0015_bounded_assessment_runtime.sql",
+  "migration_sha256": "98433d23961d30fea56add33deaad799b4cbf8174a80ae6ec8a0324c21833d65",
+  "migration_versions": [
+    0,
+    1,
+    2,
+    3,
+    4,
+    5,
+    6,
+    7,
+    8,
+    9,
+    10,
+    11,
+    12,
+    13,
+    14,
+    15
+  ],
+  "raw_grade": {
+    "archived_at": null,
+    "course_id": "crs_bca338a12a60448a8d3e9ccbc1587d3b",
+    "course_write_epoch": 1,
+    "graded_at": 1786307158.3101308,
+    "id": "att_67e4e891b6014298bf520c560c516e37",
+    "owner_user_id": "h2_migration_owner",
+    "practice_set_id": "prc_9327728574444e88b838cadd58a7f61a",
+    "practice_set_revision_id": "prv_9bc0e9553a5f44bbb0f822dd329edfcd",
+    "practice_set_write_epoch": 2,
+    "revision": 4,
+    "score": {
+      "correct": 1,
+      "fraction": 1.0,
+      "total": 1
+    },
+    "started_at": 1786307158.302714,
+    "state": "graded",
+    "submitted_at": 1786307158.307612,
+    "timing_mode": "untimed",
+    "updated_at": 1786307158.3101308
+  },
+  "retained_counts": {
+    "practice_question_invalidations": 2,
+    "practice_question_quality_reports": 1,
+    "practice_questions": 1,
+    "quiz_attempt_answers": 1,
+    "quiz_attempt_items": 1,
+    "quiz_attempts": 1,
+    "quiz_item_grading_evidence": 1
+  },
+  "retained_evidence_ids": [
+    "grd_dc308018e5ac49ce9a7c27e1d50033e7"
+  ],
+  "status": "PASS_POPULATED_HISTORY_0015"
+}

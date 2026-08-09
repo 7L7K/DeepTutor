@@ -1,0 +1,187 @@
+{
+  "audit_retained": {
+    "duplicate_attempt_count": 1,
+    "quality_reports": [
+      {
+        "course_id": "crs_2b8c6a5272d34ea7be65ad5f3de05ddb",
+        "created_at": 1786307171.9711711,
+        "id": "cqr_1d2235164dfe461ead161f37cb146800",
+        "owner_user_id": "u_97a180581b6b42a1a193f973d8bc241b",
+        "practice_set_id": "prc_65793bf843b04ea993bf87dd80d8f05e",
+        "practice_set_revision_id": "prv_b6e5b2bd08684a17ae13001faee8a5ce",
+        "question_id": "qst_a0c1c324cb9f4e72b1aedd32d158937d",
+        "reason": "Learner reported a possible answer, citation, or wording problem.",
+        "reporter_user_id": "u_97a180581b6b42a1a193f973d8bc241b",
+        "review_note": "Hermetic C3-H2 correction fixture; not human approval",
+        "reviewed_at": 1786307179.2569,
+        "reviewer_user_id": "h2_fixture_reviewer_not_human_approval",
+        "state": "invalidated"
+      },
+      {
+        "course_id": "crs_2b8c6a5272d34ea7be65ad5f3de05ddb",
+        "created_at": 1786307171.9296262,
+        "id": "cqr_3eed41e9ed4d429e9a4a25af583d9ab4",
+        "owner_user_id": "u_97a180581b6b42a1a193f973d8bc241b",
+        "practice_set_id": "prc_65793bf843b04ea993bf87dd80d8f05e",
+        "practice_set_revision_id": "prv_b6e5b2bd08684a17ae13001faee8a5ce",
+        "question_id": "qst_b38fe68799764064a12c2ed44d143810",
+        "reason": "Learner reported a possible answer, citation, or wording problem.",
+        "reporter_user_id": "u_97a180581b6b42a1a193f973d8bc241b",
+        "review_note": "Hermetic C3-H2 correction fixture; not human approval",
+        "reviewed_at": 1786307179.271105,
+        "reviewer_user_id": "h2_fixture_reviewer_not_human_approval",
+        "state": "invalidated"
+      }
+    ],
+    "question_invalidations": [
+      {
+        "course_id": "crs_2b8c6a5272d34ea7be65ad5f3de05ddb",
+        "evidence_id": null,
+        "id": "cqi_298d2744f4eb456cbee32e57c8372c9c",
+        "invalidated_at": 1786307179.2569,
+        "invalidated_by": "h2_fixture_reviewer_not_human_approval",
+        "owner_user_id": "u_97a180581b6b42a1a193f973d8bc241b",
+        "practice_set_id": "prc_65793bf843b04ea993bf87dd80d8f05e",
+        "practice_set_revision_id": "prv_b6e5b2bd08684a17ae13001faee8a5ce",
+        "question_id": "qst_a0c1c324cb9f4e72b1aedd32d158937d",
+        "reason": "Hermetic C3-H2 correction fixture; not human approval",
+        "report_id": "cqr_1d2235164dfe461ead161f37cb146800"
+      },
+      {
+        "course_id": "crs_2b8c6a5272d34ea7be65ad5f3de05ddb",
+        "evidence_id": "grd_64394cb64a4a4fbfb7ac05fa2ba5aabc",
+        "id": "cqi_861d5310e15e4a9db6899b2ccc9a0c91",
+        "invalidated_at": 1786307179.271105,
+        "invalidated_by": "h2_fixture_reviewer_not_human_approval",
+        "owner_user_id": "u_97a180581b6b42a1a193f973d8bc241b",
+        "practice_set_id": "prc_65793bf843b04ea993bf87dd80d8f05e",
+        "practice_set_revision_id": "prv_b6e5b2bd08684a17ae13001faee8a5ce",
+        "question_id": "qst_b38fe68799764064a12c2ed44d143810",
+        "reason": "Hermetic C3-H2 correction fixture; not human approval",
+        "report_id": "cqr_3eed41e9ed4d429e9a4a25af583d9ab4"
+      },
+      {
+        "course_id": "crs_2b8c6a5272d34ea7be65ad5f3de05ddb",
+        "evidence_id": null,
+        "id": "cqi_ae1f581bccbe4b99a01fa6c7fd4073c4",
+        "invalidated_at": 1786307179.271105,
+        "invalidated_by": "h2_fixture_reviewer_not_human_approval",
+        "owner_user_id": "u_97a180581b6b42a1a193f973d8bc241b",
+        "practice_set_id": "prc_65793bf843b04ea993bf87dd80d8f05e",
+        "practice_set_revision_id": "prv_b6e5b2bd08684a17ae13001faee8a5ce",
+        "question_id": "qst_b38fe68799764064a12c2ed44d143810",
+        "reason": "Hermetic C3-H2 correction fixture; not human approval",
+        "report_id": "cqr_3eed41e9ed4d429e9a4a25af583d9ab4"
+      },
+      {
+        "course_id": "crs_2b8c6a5272d34ea7be65ad5f3de05ddb",
+        "evidence_id": "grd_22bbf71c2cbc495593a30e7eb6223bb5",
+        "id": "cqi_ffd4f8c38cd642049cf0fe206667b76c",
+        "invalidated_at": 1786307179.2569,
+        "invalidated_by": "h2_fixture_reviewer_not_human_approval",
+        "owner_user_id": "u_97a180581b6b42a1a193f973d8bc241b",
+        "practice_set_id": "prc_65793bf843b04ea993bf87dd80d8f05e",
+        "practice_set_revision_id": "prv_b6e5b2bd08684a17ae13001faee8a5ce",
+        "question_id": "qst_a0c1c324cb9f4e72b1aedd32d158937d",
+        "reason": "Hermetic C3-H2 correction fixture; not human approval",
+        "report_id": "cqr_1d2235164dfe461ead161f37cb146800"
+      }
+    ],
+    "review_invalidations": [
+      {
+        "course_id": "crs_2b8c6a5272d34ea7be65ad5f3de05ddb",
+        "deck_id": "dck_0e23d090a992413f9c01c42d3ff0e3e3",
+        "flashcard_generation_operation_id": "ofg_9177ac57c08747eb8628e1dafff4ec96",
+        "id": "qri_8869b3c27c044f21bac83ba1ca2f9ff8",
+        "invalidated_at": 1786307179.2569,
+        "invalidated_by": "h2_fixture_reviewer_not_human_approval",
+        "owner_user_id": "u_97a180581b6b42a1a193f973d8bc241b",
+        "practice_set_id": "prc_65793bf843b04ea993bf87dd80d8f05e",
+        "question_id": "qst_a0c1c324cb9f4e72b1aedd32d158937d",
+        "reason": "Hermetic C3-H2 correction fixture; not human approval",
+        "report_id": "cqr_1d2235164dfe461ead161f37cb146800"
+      }
+    ]
+  },
+  "boundary": {
+    "human_approval": false,
+    "manual_fixture_only": true,
+    "provider_generation": false,
+    "unsigned_amendment_authority": "NON_DECISION_RECOMMENDATION",
+    "unsigned_amendment_status": "PROPOSED_PENDING_HUMAN_SIGNATURE"
+  },
+  "derived_review": {
+    "active_card_count": 0,
+    "cards": [
+      {
+        "id": "crd_deacf2fb04a04010815bc35d27790db2",
+        "state": "archived"
+      }
+    ],
+    "deck": {
+      "id": "dck_0e23d090a992413f9c01c42d3ff0e3e3",
+      "state": "archived"
+    },
+    "operation": {
+      "id": "ofg_9177ac57c08747eb8628e1dafff4ec96",
+      "state": "completed"
+    },
+    "provider": "deterministic-local",
+    "remediation": {
+      "reason": "This quiz attempt has no missed answers to review",
+      "safe": false
+    }
+  },
+  "durable_reconciliation_evidence_ids": [
+    "grd_22bbf71c2cbc495593a30e7eb6223bb5",
+    "grd_64394cb64a4a4fbfb7ac05fa2ba5aabc"
+  ],
+  "effective_after": {
+    "evidence_status": "adjusted_for_invalidated_question",
+    "invalidated_evidence_ids": [
+      "grd_22bbf71c2cbc495593a30e7eb6223bb5",
+      "grd_64394cb64a4a4fbfb7ac05fa2ba5aabc"
+    ],
+    "invalidated_question_ids": [
+      "qst_a0c1c324cb9f4e72b1aedd32d158937d",
+      "qst_b38fe68799764064a12c2ed44d143810"
+    ],
+    "score": {
+      "correct": 0,
+      "fraction": 0.0,
+      "total": 0
+    }
+  },
+  "effective_before": {
+    "evidence_status": "valid",
+    "invalidated_evidence_ids": [],
+    "invalidated_question_ids": [],
+    "score": {
+      "correct": 1,
+      "fraction": 0.5,
+      "total": 2
+    }
+  },
+  "invalidated_evidence_ids": [
+    "grd_22bbf71c2cbc495593a30e7eb6223bb5",
+    "grd_64394cb64a4a4fbfb7ac05fa2ba5aabc"
+  ],
+  "raw_grade_immutable": {
+    "after_sha256": "0ed988eb48106a8049be3a176580301198848d63c8bc306b9e3d28fb40f015fe",
+    "before_sha256": "0ed988eb48106a8049be3a176580301198848d63c8bc306b9e3d28fb40f015fe",
+    "evidence_after_sha256": "d70510a6fbac4ad613f2126a841c4ca75e88a0d10647c5545233d0147373eb08",
+    "evidence_before_sha256": "d70510a6fbac4ad613f2126a841c4ca75e88a0d10647c5545233d0147373eb08",
+    "evidence_count": 2,
+    "score": {
+      "correct": 1,
+      "fraction": 0.5,
+      "total": 2
+    }
+  },
+  "reconciliation_replay": {
+    "learning_projection_sha256": "d10d5e71c1b5715d80a485c6524e7f157dbda50702207a14c81667d764226768",
+    "restart_replay_count": 2,
+    "stable_after_repeat": true
+  },
+  "status": "PASS_BACKEND_CORRECTION_RECEIPT"
+}

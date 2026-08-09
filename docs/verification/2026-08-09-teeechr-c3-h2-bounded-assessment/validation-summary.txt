@@ -1,0 +1,33 @@
+C3-H2.1 final validation summary
+date=2026-08-09
+branch=feature/teeechr-content-quality-c3
+tested_source_head=2152ac03
+provider_calls=0
+human_approval=false
+
+focused_backend_command=/Users/home/.codex/runtimes/teeechr-b1-python311/bin/python -m pytest -q tests/courses/migrations/test_0015_bounded_assessment_history.py tests/courses/practice/test_attempt_contract.py tests/courses/practice/test_authoring_contract.py tests/courses/practice/test_bounded_assessment_runtime.py tests/courses/practice/test_content_quality_c3.py tests/courses/practice/test_grading_contract.py tests/courses/practice/test_bounded_assessment_results.py
+focused_backend_result=150 passed, 1 warning in 94.11s
+exact_invalidated_grade_replay_result=1 passed, 1 warning in 1.47s
+
+broad_backend_command=/Users/home/.codex/runtimes/teeechr-b1-python311/bin/python -m pytest -n 4 --dist loadfile -q tests
+broad_backend_result=3987 passed, 8 skipped, 34 warnings in 255.61s
+
+web_node_command=PATH=/opt/homebrew/opt/node@22/bin:$PATH npm run test:node
+web_node_result=446 passed, 0 failed
+web_lint_result=exit 0, 250 warnings, 0 errors
+web_typecheck_command=PATH=/opt/homebrew/opt/node@22/bin:$PATH npx tsc --noEmit
+web_typecheck_result=exit 0
+web_build_command=PATH=/opt/homebrew/opt/node@22/bin:$PATH npm run build
+web_build_result=exit 0, Next.js 16.2.3, 62 routes generated
+
+browser_command=PATH=/opt/homebrew/opt/node@22/bin:$PATH ./scripts/test-content-quality-c3-h2
+browser_campaign_result=2 passed, 2 skipped in 13.8s
+browser_corrected_result=1 passed, 3 skipped in 2.9s
+browser_admission_result=1 passed, 3 skipped in 5.0s
+browser_script_result=exit 0
+independent_sol_authority_review=PASS, no P0-P2 blocker in 9954350b..2152ac03
+
+partial_invalidation_result=one valid question admitted; withdrawn question absent
+full_invalidation_result=409 no_valid_questions; Start and Try again absent
+owner_isolation_result=foreign Course and attempt access returned 404
+score_authority_result=learner detail, history, and Results redact superseded raw score and withdrawn grading
