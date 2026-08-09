@@ -1,0 +1,22 @@
+{
+  "course": "Biology 101",
+  "term": "fall-2026",
+  "source_packet_revision": "reference-course-c3-v1",
+  "objectives": [
+    {
+      "id": "OBJ-RESP-01",
+      "label": "Explain major stages of cellular respiration",
+      "approved": true
+    },
+    {
+      "id": "OBJ-RESP-02",
+      "label": "Explain oxygen’s role as terminal electron acceptor",
+      "approved": true
+    },
+    {
+      "id": "OBJ-RESP-03",
+      "label": "Compare aerobic respiration and fermentation",
+      "approved": true
+    }
+  ]
+}

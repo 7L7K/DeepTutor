@@ -1,0 +1,43 @@
+{
+  "evaluation": "C3 Biology 101 reference Course",
+  "date": "2026-08-08",
+  "status": "BLOCKED_PROVIDER_NOT_CONFIGURED",
+  "provider": "openai",
+  "provider_call_attempted": false,
+  "golden_run": false,
+  "reason": "The isolated external runtime has no enabled non-production OpenAI credential; no provider request was attempted.",
+  "runtime": {
+    "python": "3.11.15",
+    "python_executable": "/Users/home/.codex/runtimes/teeechr-b1-python311/bin/python",
+    "node": "22.23.2",
+    "provider_base_url": "https://api.openai.com/v1",
+    "provider_enabled": false,
+    "api_key_configured": false
+  },
+  "fixture": {
+    "course": "Biology 101",
+    "term": "fall-2026",
+    "source_packet_revision": "reference-course-c3-v1",
+    "objectives": [
+      "OBJ-RESP-01",
+      "OBJ-RESP-02",
+      "OBJ-RESP-03"
+    ],
+    "requested_question_count": 5
+  },
+  "usage": {
+    "input_tokens": null,
+    "output_tokens": null,
+    "estimated_cost_microusd": null,
+    "latency_ms": null,
+    "request_id": null,
+    "actual_model": null
+  },
+  "checks": {
+    "source_citation_reachability": "NOT_RUN",
+    "objective_mapping": "NOT_RUN",
+    "duplicate_detection": "NOT_RUN",
+    "human_review": "NOT_RUN",
+    "invalidation_path": "PROVEN_BY_LOCAL_TEST"
+  }
+}
