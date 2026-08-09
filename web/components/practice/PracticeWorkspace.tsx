@@ -40,6 +40,7 @@ import {
   listPracticeSets,
   preparePracticeRemediationFlashcards,
   practiceLibrarySets,
+  reportPracticeQuestion,
   readyPracticeRevision,
   restorePracticeSet,
   startPracticeAttempt,
@@ -897,6 +898,26 @@ export default function PracticeWorkspace({
     }
   }, [activeCourse, attemptView, current, identity, router, selectedSet]);
 
+  const reportQuestion = useCallback(async (questionId: string) => {
+    if (!activeCourse || !selectedSet || !revision || !resultView) return;
+    setBusy(true);
+    setError(null);
+    try {
+      await reportPracticeQuestion(
+        activeCourse.id,
+        selectedSet.id,
+        revision.id,
+        questionId,
+        "Learner reported a possible answer, citation, or wording problem.",
+      );
+      setStatus("Thanks. This question is queued for review; it will not be treated as invalid until reviewed.");
+    } catch (cause) {
+      setError(errorText(cause));
+    } finally {
+      setBusy(false);
+    }
+  }, [activeCourse, resultView, revision, selectedSet]);
+
   const archiveOrRestore = useCallback(async () => {
     if (!activeCourse || !selectedSet) return;
     const scope = scopeRef.current;
@@ -1028,7 +1049,7 @@ export default function PracticeWorkspace({
               </div> : null}
               {!attemptView && revision?.state === "ready" && !readOnly ? <div className="mb-5 flex flex-wrap gap-2">{revision.id === selectedSet.current_revision_id ? <button disabled={busy} onClick={() => void startOrResume()} className="inline-flex items-center gap-1 rounded-lg bg-[var(--primary)] px-3 py-2 text-sm text-[var(--primary-foreground)]"><Play size={15} />Start or resume quiz</button> : <span className="self-center text-sm text-[var(--muted-foreground)]">Historical revision — attempts are read-only.</span>}<button disabled={busy} onClick={() => void createSuccessor()} className="rounded-lg border border-[var(--border)] px-3 py-2 text-sm">Create successor revision</button></div> : null}
               {!attemptView && questions.length ? <ol className="mb-6 space-y-3">{questions.map((question) => <li key={question.id} className="rounded-lg border border-[var(--border)] p-3"><span className="mr-2 text-xs text-[var(--muted-foreground)]">{question.ordinal}.</span>{question.prompt}{revision?.state === "ready" ? null : <p className="mt-2 text-xs text-[var(--muted-foreground)]">Answer: {question.answer_contract?.answer ?? "Stored server-side"}</p>}</li>)}</ol> : null}
-              {attemptView ? <AttemptRunner key={attemptView.attempt.id} view={attemptView} questions={questions} sourceNames={sourceNames} readOnly={readOnly || busy} answerFor={answerFor} onSave={saveAnswer} onTransition={(action) => void transitionAttempt(action)} onReviewMisses={() => void reviewMissesAsFlashcards()} onStartAgain={() => void startOrResume()} onClose={() => { setAttemptView(null); setResultView(null); router.replace(`/classes/${encodeURIComponent(activeCourse.id)}/practice`); }} resultView={resultView} /> : null}
+              {attemptView ? <AttemptRunner key={attemptView.attempt.id} view={attemptView} questions={questions} sourceNames={sourceNames} readOnly={readOnly || busy} answerFor={answerFor} onSave={saveAnswer} onTransition={(action) => void transitionAttempt(action)} onReviewMisses={() => void reviewMissesAsFlashcards()} onStartAgain={() => void startOrResume()} onClose={() => { setAttemptView(null); setResultView(null); router.replace(`/classes/${encodeURIComponent(activeCourse.id)}/practice`); }} onReportQuestion={reportQuestion} resultView={resultView} /> : null}
               {!attemptView ? <AttemptHistory attempts={attempts} onOpen={(item) => void openAttempt(item)} busy={busy} hasMore={attemptsHaveMore} onLoadMore={() => void loadMoreAttempts()} /> : null}
             </> : <p className="text-sm text-[var(--muted-foreground)]">Choose a Practice set or create one.</p>}
           </section>
@@ -1047,8 +1068,8 @@ export default function PracticeWorkspace({
   );
 }
 
-function AttemptRunner({ view, questions, sourceNames, readOnly, answerFor, onSave, onTransition, onReviewMisses, onStartAgain, onClose, resultView }: {
-  view: QuizAttemptView; questions: PracticeQuestion[]; sourceNames: Map<string, string>; readOnly: boolean; answerFor: (itemId: string) => QuizAttemptAnswer | null; onSave: (itemId: string, value: string) => Promise<void>; onTransition: (action: "submit" | "abandon" | "grade") => void; onReviewMisses: () => void; onStartAgain: () => void; onClose: () => void; resultView: QuizResult | null;
+function AttemptRunner({ view, questions, sourceNames, readOnly, answerFor, onSave, onTransition, onReviewMisses, onStartAgain, onClose, onReportQuestion, resultView }: {
+  view: QuizAttemptView; questions: PracticeQuestion[]; sourceNames: Map<string, string>; readOnly: boolean; answerFor: (itemId: string) => QuizAttemptAnswer | null; onSave: (itemId: string, value: string) => Promise<void>; onTransition: (action: "submit" | "abandon" | "grade") => void; onReviewMisses: () => void; onStartAgain: () => void; onClose: () => void; onReportQuestion: (questionId: string) => Promise<void>; resultView: QuizResult | null;
 }) {
   const byId = useMemo(() => new Map((resultView?.questions ?? questions).map((question) => [question.id, question])), [questions, resultView?.questions]);
   const [values, setValues] = useState<Record<string, string>>(() =>
@@ -1056,11 +1077,12 @@ function AttemptRunner({ view, questions, sourceNames, readOnly, answerFor, onSa
   );
   const [currentIndex, setCurrentIndex] = useState(0);
   const [confirmAbandon, setConfirmAbandon] = useState(false);
+  const [reportedQuestionIds, setReportedQuestionIds] = useState<Set<string>>(new Set());
   const answerInputRef = useRef<HTMLInputElement | null>(null);
   const active = view.attempt.state === "in_progress";
   const hasUnsaved = hasUnsavedPracticeAnswers(values, view.answers);
   const hasMissing = view.items.some((item) => !(values[item.id] ?? "").trim());
-  const score = resultView?.attempt.score;
+  const score = resultView?.effective_score ?? resultView?.attempt.score;
   const hasMisses =
     typeof score?.correct === "number" &&
     typeof score?.total === "number" &&
@@ -1094,7 +1116,7 @@ function AttemptRunner({ view, questions, sourceNames, readOnly, answerFor, onSa
       <div className="mt-5 flex flex-wrap items-center gap-3"><button disabled={readOnly || hasUnsaved || hasMissing} onClick={() => onTransition("submit")} className="inline-flex items-center gap-1 rounded-lg bg-[var(--primary)] px-4 py-2 text-sm text-[var(--primary-foreground)] disabled:opacity-50"><Send size={15} />Submit quiz</button>{!confirmAbandon ? <button disabled={readOnly} onClick={() => setConfirmAbandon(true)} className="rounded-lg border border-[var(--border)] px-4 py-2 text-sm">Leave this attempt</button> : <><span className="text-sm">Leave and mark this attempt abandoned?</span><button onClick={() => onTransition("abandon")} className="rounded-lg border border-red-500 px-3 py-2 text-sm text-red-600">Yes, abandon</button><button onClick={() => setConfirmAbandon(false)} className="rounded-lg border border-[var(--border)] px-3 py-2 text-sm">Keep studying</button></>}{hasUnsaved ? <span className="text-xs text-[var(--muted-foreground)]">Save your changed answer before submitting.</span> : hasMissing ? <span className="text-xs text-[var(--muted-foreground)]">Answer every question before submitting.</span> : null}</div>
     </> : null}
     {view.attempt.state === "submitted" ? <div className="rounded-xl border border-[var(--border)] p-5"><p className="font-medium">Your answers are submitted and locked.</p><p className="mt-1 text-sm text-[var(--muted-foreground)]">Grade the quiz to see your results and explanations.</p><button disabled={readOnly} onClick={() => onTransition("grade")} className="mt-4 inline-flex items-center gap-1 rounded-lg bg-[var(--primary)] px-4 py-2 text-sm text-[var(--primary-foreground)]"><ClipboardCheck size={15} />Grade quiz</button></div> : null}
-    {resultView?.attempt.state === "graded" ? <div className="space-y-5"><div className="rounded-xl bg-[var(--muted)] p-5"><p className="text-xl font-semibold">{score?.correct ?? 0} correct out of {score?.total ?? view.items.length}</p><p className="mt-1 text-sm text-[var(--muted-foreground)]">{hasMisses ? "Review the missed answers and explanations below." : "You got every question correct."}</p></div><div className="space-y-3">{resultView.items.map((item) => { const question = byId.get(item.question_id); const correct = String(item.grading?.is_correct) === "true"; return <article key={item.id} className="rounded-xl border border-[var(--border)] p-4"><p className="font-medium">{item.display_ordinal}. {question?.prompt ?? "Question unavailable"}</p><p className={`mt-2 text-sm font-medium ${correct ? "text-emerald-600" : "text-amber-600"}`}>{correct ? "Correct" : "Needs review"}</p>{!correct && question?.answer_contract ? <p className="mt-2 text-sm"><span className="text-[var(--muted-foreground)]">Expected answer:</span> {question.answer_contract.answer}</p> : null}{question?.explanation ? <p className="mt-2 text-sm">{question.explanation}</p> : null}{question?.citations.length ? <ul aria-label={`Sources for question ${item.display_ordinal}`} className="mt-3 flex flex-wrap gap-2 text-xs text-[var(--muted-foreground)]">{question.citations.map((citation, index) => { const sourceId = typeof citation.source_id === "string" ? citation.source_id : ""; return <li key={`${sourceId}-${index}`} className="rounded-full bg-[var(--muted)] px-2 py-1">{sourceNames.get(sourceId) ?? `Course source ${index + 1}`}</li>; })}</ul> : null}</article>; })}</div><div className="flex flex-wrap gap-2"><button type="button" disabled={readOnly} onClick={onStartAgain} className="rounded-lg bg-[var(--primary)] px-4 py-2 text-sm text-[var(--primary-foreground)] disabled:opacity-50">Try quiz again</button>{hasMisses ? <button type="button" disabled={readOnly} onClick={onReviewMisses} className="rounded-lg border border-[var(--border)] px-4 py-2 text-sm disabled:opacity-50">Make Flashcards from misses</button> : null}<button type="button" onClick={onClose} className="rounded-lg border border-[var(--border)] px-4 py-2 text-sm">Back to Practice library</button></div></div> : null}
+    {resultView?.attempt.state === "graded" ? <div className="space-y-5"><div className="rounded-xl bg-[var(--muted)] p-5"><p className="text-xl font-semibold">{score?.correct ?? 0} correct out of {score?.total ?? view.items.length}</p><p className="mt-1 text-sm text-[var(--muted-foreground)]">{hasMisses ? "Review the missed answers and explanations below." : "You got every question correct."}</p></div><div className="space-y-3">{resultView.items.map((item) => { const question = byId.get(item.question_id); const correct = String(item.grading?.is_correct) === "true"; const reported = question ? reportedQuestionIds.has(question.id) : false; const invalidated = question?.content_quality === "invalidated"; return <article key={item.id} className="rounded-xl border border-[var(--border)] p-4"><p className="font-medium">{item.display_ordinal}. {question?.prompt ?? "Question unavailable"}</p>{invalidated ? <p className="mt-2 text-sm font-medium text-amber-600">Question invalidated after review. This item is excluded from learning evidence.</p> : <p className={`mt-2 text-sm font-medium ${correct ? "text-emerald-600" : "text-amber-600"}`}>{correct ? "Correct" : "Needs review"}</p>}{!invalidated && !correct && question?.answer_contract ? <p className="mt-2 text-sm"><span className="text-[var(--muted-foreground)]">Expected answer:</span> {question.answer_contract.answer}</p> : null}{question?.explanation ? <p className="mt-2 text-sm">{question.explanation}</p> : null}{question?.citations.length ? <ul aria-label={`Sources for question ${item.display_ordinal}`} className="mt-3 flex flex-wrap gap-2 text-xs text-[var(--muted-foreground)]">{question.citations.map((citation, index) => { const sourceId = typeof citation.source_id === "string" ? citation.source_id : ""; return <li key={`${sourceId}-${index}`} className="rounded-full bg-[var(--muted)] px-2 py-1">{sourceNames.get(sourceId) ?? `Course source ${index + 1}`}</li>; })}</ul> : null}<button type="button" disabled={readOnly || reported || !question} onClick={() => { if (question) { void onReportQuestion(question.id).then(() => setReportedQuestionIds((previous) => new Set(previous).add(question.id))); } }} className="mt-3 rounded-lg border border-[var(--border)] px-3 py-2 text-xs disabled:opacity-50">{reported ? "Reported for review" : "Report a problem with this question"}</button></article>; })}</div><div className="flex flex-wrap gap-2"><button type="button" disabled={readOnly} onClick={onStartAgain} className="rounded-lg bg-[var(--primary)] px-4 py-2 text-sm text-[var(--primary-foreground)] disabled:opacity-50">Try quiz again</button>{hasMisses ? <button type="button" disabled={readOnly} onClick={onReviewMisses} className="rounded-lg border border-[var(--border)] px-4 py-2 text-sm disabled:opacity-50">Make Flashcards from misses</button> : null}<button type="button" onClick={onClose} className="rounded-lg border border-[var(--border)] px-4 py-2 text-sm">Back to Practice library</button></div></div> : null}
   </div>;
 }
 

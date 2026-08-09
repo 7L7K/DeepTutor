@@ -10,6 +10,7 @@ import {
   listPracticeAttempts,
   practiceLibrarySets,
   preparePracticeRemediationFlashcards,
+  reportPracticeQuestion,
   updatePracticeGenerationPlan,
   type PracticeGenerationPlan,
   type PracticeGenerationOperation,
@@ -54,6 +55,28 @@ test("Practice remediation asks the server for an owned flashcard brief", async 
   );
   assert.equal(requestedInit?.method, "POST");
   assert.deepEqual(JSON.parse(String(requestedInit?.body)), {});
+});
+
+test("Practice question reports use the Course-scoped quality endpoint", async (t) => {
+  const originalFetch = globalThis.fetch;
+  let requested = "";
+  let requestedInit: RequestInit | undefined;
+  t.after(() => {
+    globalThis.fetch = originalFetch;
+  });
+  globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+    requested = String(input);
+    requestedInit = init;
+    return new Response(JSON.stringify({ id: "qrep_1", state: "reported" }), { status: 201 });
+  }) as typeof fetch;
+
+  await reportPracticeQuestion("crs/bio", "pst/one", "prv/one", "qst/one", "Citation is wrong");
+  assert.equal(
+    requested,
+    "/api/v1/courses/crs%2Fbio/practice/pst%2Fone/revisions/prv%2Fone/questions/qst%2Fone/quality-report",
+  );
+  assert.equal(requestedInit?.method, "POST");
+  assert.deepEqual(JSON.parse(String(requestedInit?.body)), { reason: "Citation is wrong" });
 });
 
 test("Practice responses require the same immutable identity, Course, and request epoch", () => {

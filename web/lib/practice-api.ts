@@ -175,6 +175,7 @@ export interface PracticeQuestion {
   explanation?: string;
   objective_ids: string[];
   citations: Array<Record<string, unknown>>;
+  content_quality?: "valid" | "invalidated";
   ordinal: number;
   created_at: number;
 }
@@ -226,6 +227,11 @@ export interface QuizAttemptView {
 export interface QuizResult extends QuizAttemptView {
   /** Answer contracts are revealed only by the server after durable grading. */
   questions: PracticeQuestion[];
+  effective_score?: QuizAttempt["score"];
+  content_quality?: {
+    invalidated_question_ids?: string[];
+    invalidated_evidence_ids?: string[];
+  };
 }
 
 /** Render the server-authoritative score as an accessible percentage and ratio. */
@@ -612,6 +618,24 @@ export function getPracticeResults(courseId: string, practiceSetId: string, atte
     courseId,
     `/${encodeURIComponent(practiceSetId)}/attempts/${encodeURIComponent(attemptId)}/results`,
   )), { cache: "no-store" }));
+}
+
+export function reportPracticeQuestion(
+  courseId: string,
+  practiceSetId: string,
+  revisionId: string,
+  questionId: string,
+  reason: string,
+) {
+  return json<{ id: string; state: "reported" }>(
+    apiFetch(
+      apiUrl(path(
+        courseId,
+        `/${encodeURIComponent(practiceSetId)}/revisions/${encodeURIComponent(revisionId)}/questions/${encodeURIComponent(questionId)}/quality-report`,
+      )),
+      mutation({ reason }),
+    ),
+  );
 }
 
 export function preparePracticeRemediationFlashcards(
