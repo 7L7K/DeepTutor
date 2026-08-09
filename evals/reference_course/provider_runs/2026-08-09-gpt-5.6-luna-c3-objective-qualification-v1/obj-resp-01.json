@@ -1,0 +1,138 @@
+{
+  "assessment_contract": {
+    "cognitive_target": "Explain the role of pyruvate oxidation as the transition between glycolysis and the citric acid cycle.",
+    "contract_id": "ac_resp_01_transition_v1",
+    "expected_answer_concepts": [
+      "pyruvate oxidation",
+      "pyruvate",
+      "acetyl-CoA"
+    ],
+    "objective_id": "OBJ-RESP-01",
+    "objective_label": "Explain major stages of cellular respiration",
+    "prohibited_prompt_patterns": [
+      "merely list the four stages",
+      "ask for an unrestricted paragraph",
+      "test an objective other than OBJ-RESP-01"
+    ],
+    "qualification_focus": "Write one concise exact-gradeable question asking what conversion during pyruvate oxidation links glycolysis-derived pyruvate to the citric acid cycle. The supported answer must state that pyruvate is converted to acetyl-CoA.",
+    "question_type": "short_answer"
+  },
+  "assessment_contract_fixture_sha256": "411b2b000ef72402d4b18b602ff264d9c7b9c6434d090342f128b083acbf1d08",
+  "automatic_retries": 0,
+  "case": "qualify-resp-01",
+  "first_attempt": true,
+  "fixture": "Biology 101 / fall-2026",
+  "objective_evidence_contract": [
+    {
+      "evidence_quotes": [
+        "**[00:00:00] Instructor:** Today we will follow one glucose molecule through",
+        "cellular respiration. The pathway has four teaching stages: glycolysis,",
+        "pyruvate oxidation, the citric acid cycle, and the electron transport chain",
+        "with oxidative phosphorylation.",
+        "**[00:06:40] Instructor:** Pyruvate oxidation converts pyruvate to acetyl-CoA.",
+        "The citric acid cycle then oxidizes the acetyl group and captures energy in",
+        "NADH and FADH2 while releasing carbon dioxide."
+      ],
+      "objective_id": "OBJ-RESP-01",
+      "receipt": {
+        "content_sha256": "0f48b6e354accde0a2ed0026612e62854c2d0fd68668147b4b0a100a85d8bf65",
+        "source_id": "src_28c71d0eb20f02a9fa201979ebadc82f",
+        "source_revision": 1
+      }
+    }
+  ],
+  "output": {
+    "abstain_reason": null,
+    "actual_model": "gpt-5.6-luna",
+    "cached_input_tokens": 0,
+    "estimated_cost_microusd": 696,
+    "input_tokens": 1199,
+    "latency_ms": 3489,
+    "outcome": "generated",
+    "output_tokens": 380,
+    "pricing_version": "openai-gpt-5.6-luna-2026-08-01",
+    "prompt_version": "course-practice-c3-v4",
+    "provider_label": "openai",
+    "questions": [
+      {
+        "answer_contract": {
+          "accepted_answers": [
+            "Pyruvate converts to acetyl-CoA.",
+            "Pyruvate is converted into acetyl-CoA.",
+            "Pyruvate becomes acetyl-CoA."
+          ],
+          "answer": "Pyruvate is converted to acetyl-CoA.",
+          "kind": "exact"
+        },
+        "citations": [
+          {
+            "content_sha256": "0f48b6e354accde0a2ed0026612e62854c2d0fd68668147b4b0a100a85d8bf65",
+            "locator": {
+              "evidence_quote": "**[00:00:00] Instructor:** Today we will follow one glucose molecule through"
+            },
+            "source_id": "src_28c71d0eb20f02a9fa201979ebadc82f",
+            "source_revision": 1
+          }
+        ],
+        "explanation": "The evidence states that pyruvate oxidation converts pyruvate to acetyl-CoA, which then enters the citric acid cycle as the acetyl group is oxidized.",
+        "objective_ids": [
+          "OBJ-RESP-01"
+        ],
+        "prompt": "What conversion during pyruvate oxidation links glycolysis-derived pyruvate to the citric acid cycle?",
+        "question_type": "short_answer"
+      }
+    ],
+    "reasoning_effort": "medium",
+    "reasoning_output_tokens": 40,
+    "request_contract": {
+      "generation_purpose": "practice",
+      "request_contract_id": "pgc_5a94b15fbeef555cd450a59ccabe82f8",
+      "requested_objective_ids": [
+        "OBJ-RESP-01"
+      ],
+      "source_scope_hash": "8e1967d3189926cc7dfcde2863d71a22087ca282cacd895dc23986addebb7312"
+    },
+    "request_id": "resp_08a99e636cfcf854016a7898284e6c81918b3f4f4da35cc8bf",
+    "requested_model": "gpt-5.6-luna",
+    "response_status": "completed",
+    "schema_version": "course-practice-c3-schema-v5",
+    "store": false
+  },
+  "prompt_version": "course-practice-c3-v4",
+  "provider_runtime": {
+    "provider_request_attempted": true,
+    "raw_provider_output_sha256": "f5568afe5c86fb1cd1e63bfdafc4ab39a6146c1c996663d6aa31e5c17d465b9f",
+    "raw_provider_output_text": "{\"request_contract\":{\"request_contract_id\":\"pgc_5a94b15fbeef555cd450a59ccabe82f8\",\"requested_objective_ids\":[\"OBJ-RESP-01\"],\"source_scope_hash\":\"8e1967d3189926cc7dfcde2863d71a22087ca282cacd895dc23986addebb7312\",\"generation_purpose\":\"practice\"},\"outcome\":\"generated\",\"abstain_reason\":null,\"questions\":[{\"question_type\":\"short_answer\",\"prompt\":\"What conversion during pyruvate oxidation links glycolysis-derived pyruvate to the citric acid cycle?\",\"answer\":\"Pyruvate is converted to acetyl-CoA.\",\"accepted_answers\":[\"Pyruvate converts to acetyl-CoA.\",\"Pyruvate is converted into acetyl-CoA.\",\"Pyruvate becomes acetyl-CoA.\"],\"explanation\":\"The evidence states that pyruvate oxidation converts pyruvate to acetyl-CoA, which then enters the citric acid cycle as the acetyl group is oxidized.\",\"objective_ids\":[\"OBJ-RESP-01\"],\"citations\":[{\"source_id\":\"src_28c71d0eb20f02a9fa201979ebadc82f\",\"source_revision\":1,\"content_sha256\":\"0f48b6e354accde0a2ed0026612e62854c2d0fd68668147b4b0a100a85d8bf65\",\"evidence_quote\":\"**[00:00:00] Instructor:** Today we will follow one glucose molecule through\"}]}]}",
+    "response_id": "resp_08a99e636cfcf854016a7898284e6c81918b3f4f4da35cc8bf",
+    "response_model": "gpt-5.6-luna",
+    "response_status": "completed"
+  },
+  "provider_schema_version": "course-practice-c3-schema-v5",
+  "publication_status": "REJECT",
+  "quality_findings": [
+    {
+      "code": "ANSWER_UNSUPPORTED",
+      "detail": "answer is not supported by the cited source set",
+      "question_index": 1
+    },
+    {
+      "code": "EXPLANATION_UNSUPPORTED",
+      "detail": "explanation is not supported by the cited source set",
+      "question_index": 1
+    }
+  ],
+  "reasoning_effort": "medium",
+  "request_contract": {
+    "generation_purpose": "practice",
+    "request_contract_id": "pgc_5a94b15fbeef555cd450a59ccabe82f8",
+    "requested_objective_ids": [
+      "OBJ-RESP-01"
+    ],
+    "source_scope_hash": "8e1967d3189926cc7dfcde2863d71a22087ca282cacd895dc23986addebb7312"
+  },
+  "requested_model": "gpt-5.6-luna",
+  "schema_version": "c3-luna-probe-receipt-v2",
+  "source_packet_revision": "reference-course-c3-v1",
+  "store": false,
+  "validation_status": "REJECT"
+}

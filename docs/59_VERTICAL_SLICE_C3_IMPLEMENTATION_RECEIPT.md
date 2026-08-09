@@ -1,14 +1,17 @@
 # Vertical Slice C3 Implementation Receipt
 
-Status: PARTIAL — ONE OBJECTIVE QUALIFIED; FULL EDUCATIONAL CAMPAIGN OPEN; SOURCE / TEST / BUILD PROVEN; OBJECTIVE-BOUND EVIDENCE PROVEN; PRIVATE BETA BLOCKED_QUALITY_GATE
+Status: PARTIAL — TWO AUTOMATED OBJECTIVE PASSES; ZERO HUMAN-QUALIFIED OBJECTIVES; OBJ-RESP-01 AUTOMATED REJECT; PRIMARY CAMPAIGN BLOCKED; PRIVATE BETA BLOCKED_QUALITY_GATE
 
-Closeout verdict: `PASS_BOUNDED_SINGLE_QUESTION_GATE_CONTINUE_C3`
+Closeout verdict: `BLOCKED_MUST_FIX` (`PHASE1_OBJECTIVE_QUALIFICATION`)
 
 Branch: `feature/teeechr-content-quality-c3`
 
 Base: `74d43de7ac437c13868b02ec14df6696c590693a`
 
-Current repository HEAD: `1c7af76d` (the Luna replay/fidelity work is an uncommitted, unpushed working-tree checkpoint)
+Preserved one-question checkpoint: `d74e910f` on
+`fork/feature/teeechr-content-quality-c3`. The assessment-contract implementation
+is `ee0f5800`; the objective-qualification receipt and artifacts are preserved by
+this docs/artifact commit.
 
 ## Proof ledger
 
@@ -149,3 +152,43 @@ yet prove a complete Biology set is educationally correct. The five-question
 primary, repeat, remediation, independent human review, and browser gates remain
 open and were deliberately not started in this bounded closeout. Private beta
 remains blocked until those later C3 gates pass.
+
+## Objective qualification campaign
+
+After the one-question checkpoint was committed and pushed to `fork`, three
+evaluation-only assessment contracts were frozen in
+`evals/reference_course/assessment_contracts.json`. They distinguish objective
+membership from cognitive alignment and exact-grading fairness. The separate
+matrix and human worksheet are
+`evals/reference_course/objective_qualification_2026-08-09.csv` and
+`evals/reference_course/human_review_objective_qualification_2026-08-09.csv`.
+Agent prechecks are recorded separately and are not represented as human
+approval.
+
+The final contract/replay recheck passed `51` tests in `3.44s`; complete Course
+Practice passed `249 tests, 1 warning` in `118.48s`. The warning was the known
+macOS pytest temporary-directory cleanup warning. No provider credential was
+loaded for either test command.
+
+Exactly two new first-attempt, no-retry Luna qualification requests were made:
+
+- `OBJ-RESP-01`: automated `REJECT`. Luna produced the requested
+  pyruvate-to-acetyl-CoA question and a defensible answer, but selected only an
+  opening stage-overview citation. The fence returned `ANSWER_UNSUPPORTED` and
+  `EXPLANATION_UNSUPPORTED`. This is classified `EVIDENCE_BINDING_DEFECT`
+  because the objective binding remained broader than the assessment-specific
+  transition evidence. Cost: 696 micro-USD. The artifact is frozen and no
+  retry was made.
+- `OBJ-RESP-03`: automated `PASS`. Luna produced one supported fermentation
+  versus aerobic-respiration contrast with four reachable citations. Cost:
+  1,239 micro-USD. Preliminary agent review flags potential exact-grading
+  ambiguity because many defensible three-clause phrasings exist beyond the two
+  accepted variants; genuine human review remains open.
+
+The prior `OBJ-RESP-02` automated pass also remains human-review open. Its key
+and citations are sound, but its prompt asks only for terminal-acceptor identity
+rather than the assessment contract's causal-role explanation. Therefore zero
+objectives are currently human-qualified, and the five-question primary,
+repeat, remediation, invalidation runtime, and browser campaigns remain
+`NOT_RUN_GATE_BLOCKED`. The durable machine summary is
+`evals/reference_course/run_openai_2026-08-09_objective_qualification.json`.

@@ -1,0 +1,239 @@
+{
+  "assessment_contract": {
+    "cognitive_target": "Contrast aerobic respiration and fermentation using oxygen\u2019s terminal-acceptor role, NAD+ regeneration, and ATP yield.",
+    "contract_id": "ac_resp_03_bounded_contrast_v1",
+    "expected_answer_concepts": [
+      "fermentation regenerates NAD+",
+      "glycolysis continues",
+      "no oxygen terminal acceptor",
+      "much less ATP than aerobic respiration"
+    ],
+    "objective_id": "OBJ-RESP-03",
+    "objective_label": "Compare aerobic respiration and fermentation",
+    "prohibited_prompt_patterns": [
+      "ask only which pathway uses oxygen",
+      "accept any unspecified difference",
+      "test an objective other than OBJ-RESP-03"
+    ],
+    "qualification_focus": "Write one concise exact-gradeable contrast question. The supported answer must state that fermentation regenerates NAD+ so glycolysis can continue without oxygen as terminal acceptor and yields much less ATP per glucose than aerobic respiration.",
+    "question_type": "short_answer"
+  },
+  "assessment_contract_fixture_sha256": "411b2b000ef72402d4b18b602ff264d9c7b9c6434d090342f128b083acbf1d08",
+  "automatic_retries": 0,
+  "case": "qualify-resp-03",
+  "first_attempt": true,
+  "fixture": "Biology 101 / fall-2026",
+  "objective_evidence_contract": [
+    {
+      "evidence_quotes": [
+        "**[00:16:22] Instructor:** Fermentation does not replace glycolysis. It lets a",
+        "cell keep glycolysis running by regenerating NAD+. Fermentation therefore uses",
+        "no oxygen as a terminal electron acceptor and produces much less ATP per",
+        "glucose than aerobic respiration."
+      ],
+      "objective_id": "OBJ-RESP-03",
+      "receipt": {
+        "content_sha256": "0f48b6e354accde0a2ed0026612e62854c2d0fd68668147b4b0a100a85d8bf65",
+        "source_id": "src_28c71d0eb20f02a9fa201979ebadc82f",
+        "source_revision": 1
+      }
+    }
+  ],
+  "output": {
+    "abstain_reason": null,
+    "actual_model": "gpt-5.6-luna",
+    "cached_input_tokens": 0,
+    "estimated_cost_microusd": 1239,
+    "input_tokens": 1101,
+    "latency_ms": 5505,
+    "outcome": "generated",
+    "output_tokens": 849,
+    "pricing_version": "openai-gpt-5.6-luna-2026-08-01",
+    "prompt_version": "course-practice-c3-v4",
+    "provider_label": "openai",
+    "questions": [
+      {
+        "answer_contract": {
+          "accepted_answers": [
+            "Fermentation regenerates NAD+ to keep glycolysis running, does not use oxygen as a terminal electron acceptor, and yields much less ATP per glucose than aerobic respiration.",
+            "Fermentation allows glycolysis to continue by regenerating NAD+, uses no oxygen as the terminal electron acceptor, and produces much less ATP per glucose than aerobic respiration."
+          ],
+          "answer": "Fermentation regenerates NAD+ so glycolysis can continue, uses no oxygen as a terminal electron acceptor, and produces much less ATP per glucose than aerobic respiration.",
+          "kind": "exact"
+        },
+        "citations": [
+          {
+            "content_sha256": "0f48b6e354accde0a2ed0026612e62854c2d0fd68668147b4b0a100a85d8bf65",
+            "locator": {
+              "evidence_quote": "**[00:16:22] Instructor:** Fermentation does not replace glycolysis. It lets a"
+            },
+            "source_id": "src_28c71d0eb20f02a9fa201979ebadc82f",
+            "source_revision": 1
+          },
+          {
+            "content_sha256": "0f48b6e354accde0a2ed0026612e62854c2d0fd68668147b4b0a100a85d8bf65",
+            "locator": {
+              "evidence_quote": "cell keep glycolysis running by regenerating NAD+. Fermentation therefore uses"
+            },
+            "source_id": "src_28c71d0eb20f02a9fa201979ebadc82f",
+            "source_revision": 1
+          },
+          {
+            "content_sha256": "0f48b6e354accde0a2ed0026612e62854c2d0fd68668147b4b0a100a85d8bf65",
+            "locator": {
+              "evidence_quote": "no oxygen as a terminal electron acceptor and produces much less ATP per"
+            },
+            "source_id": "src_28c71d0eb20f02a9fa201979ebadc82f",
+            "source_revision": 1
+          },
+          {
+            "content_sha256": "0f48b6e354accde0a2ed0026612e62854c2d0fd68668147b4b0a100a85d8bf65",
+            "locator": {
+              "evidence_quote": "glucose than aerobic respiration."
+            },
+            "source_id": "src_28c71d0eb20f02a9fa201979ebadc82f",
+            "source_revision": 1
+          }
+        ],
+        "explanation": "Fermentation supports continued glycolysis by regenerating NAD+. Unlike aerobic respiration, it uses no oxygen as a terminal electron acceptor and produces much less ATP per glucose.",
+        "objective_ids": [
+          "OBJ-RESP-03"
+        ],
+        "prompt": "How does fermentation differ from aerobic respiration in its effect on glycolysis, use of oxygen, and ATP yield per glucose?",
+        "question_type": "short_answer"
+      }
+    ],
+    "reasoning_effort": "medium",
+    "reasoning_output_tokens": 174,
+    "request_contract": {
+      "generation_purpose": "practice",
+      "request_contract_id": "pgc_03d37c68e5cfa14429727308916cbee3",
+      "requested_objective_ids": [
+        "OBJ-RESP-03"
+      ],
+      "source_scope_hash": "f98295f2ccbeb7ee30929a85214e87416b84c313fb39a14abf51b0a1b19b1215"
+    },
+    "request_id": "resp_097b601b476ed835016a78984bcbc881a2baf90fc44bb874d6",
+    "requested_model": "gpt-5.6-luna",
+    "response_status": "completed",
+    "schema_version": "course-practice-c3-schema-v5",
+    "store": false
+  },
+  "prompt_version": "course-practice-c3-v4",
+  "provider_runtime": {
+    "provider_request_attempted": true,
+    "raw_provider_output_sha256": "a18fa811c8eb0a329a7a1713b39d471110d3700d451f46adb658b5b20438565c",
+    "raw_provider_output_text": "{\"request_contract\":{\"request_contract_id\":\"pgc_03d37c68e5cfa14429727308916cbee3\",\"requested_objective_ids\":[\"OBJ-RESP-03\"],\"source_scope_hash\":\"f98295f2ccbeb7ee30929a85214e87416b84c313fb39a14abf51b0a1b19b1215\",\"generation_purpose\":\"practice\"},\"outcome\":\"generated\",\"abstain_reason\":null,\"questions\":[{\"question_type\":\"short_answer\",\"prompt\":\"How does fermentation differ from aerobic respiration in its effect on glycolysis, use of oxygen, and ATP yield per glucose?\",\"answer\":\"Fermentation regenerates NAD+ so glycolysis can continue, uses no oxygen as a terminal electron acceptor, and produces much less ATP per glucose than aerobic respiration.\",\"accepted_answers\":[\"Fermentation regenerates NAD+ to keep glycolysis running, does not use oxygen as a terminal electron acceptor, and yields much less ATP per glucose than aerobic respiration.\",\"Fermentation allows glycolysis to continue by regenerating NAD+, uses no oxygen as the terminal electron acceptor, and produces much less ATP per glucose than aerobic respiration.\"],\"explanation\":\"Fermentation supports continued glycolysis by regenerating NAD+. Unlike aerobic respiration, it uses no oxygen as a terminal electron acceptor and produces much less ATP per glucose.\",\"objective_ids\":[\"OBJ-RESP-03\"],\"citations\":[{\"source_id\":\"src_28c71d0eb20f02a9fa201979ebadc82f\",\"source_revision\":1,\"content_sha256\":\"0f48b6e354accde0a2ed0026612e62854c2d0fd68668147b4b0a100a85d8bf65\",\"evidence_quote\":\"**[00:16:22] Instructor:** Fermentation does not replace glycolysis. It lets a\"},{\"source_id\":\"src_28c71d0eb20f02a9fa201979ebadc82f\",\"source_revision\":1,\"content_sha256\":\"0f48b6e354accde0a2ed0026612e62854c2d0fd68668147b4b0a100a85d8bf65\",\"evidence_quote\":\"cell keep glycolysis running by regenerating NAD+. Fermentation therefore uses\"},{\"source_id\":\"src_28c71d0eb20f02a9fa201979ebadc82f\",\"source_revision\":1,\"content_sha256\":\"0f48b6e354accde0a2ed0026612e62854c2d0fd68668147b4b0a100a85d8bf65\",\"evidence_quote\":\"no oxygen as a terminal electron acceptor and produces much less ATP per\"},{\"source_id\":\"src_28c71d0eb20f02a9fa201979ebadc82f\",\"source_revision\":1,\"content_sha256\":\"0f48b6e354accde0a2ed0026612e62854c2d0fd68668147b4b0a100a85d8bf65\",\"evidence_quote\":\"glucose than aerobic respiration.\"}]}]}",
+    "response_id": "resp_097b601b476ed835016a78984bcbc881a2baf90fc44bb874d6",
+    "response_model": "gpt-5.6-luna",
+    "response_status": "completed"
+  },
+  "provider_schema_version": "course-practice-c3-schema-v5",
+  "publication_status": "PASS",
+  "reasoning_effort": "medium",
+  "request_contract": {
+    "generation_purpose": "practice",
+    "request_contract_id": "pgc_03d37c68e5cfa14429727308916cbee3",
+    "requested_objective_ids": [
+      "OBJ-RESP-03"
+    ],
+    "source_scope_hash": "f98295f2ccbeb7ee30929a85214e87416b84c313fb39a14abf51b0a1b19b1215"
+  },
+  "requested_model": "gpt-5.6-luna",
+  "schema_version": "c3-luna-probe-receipt-v2",
+  "source_packet_revision": "reference-course-c3-v1",
+  "store": false,
+  "validated_output": {
+    "abstain_reason": null,
+    "actual_model": "gpt-5.6-luna",
+    "cached_input_tokens": 0,
+    "estimated_cost_microusd": 1239,
+    "input_tokens": 1101,
+    "latency_ms": 5505,
+    "outcome": "generated",
+    "output_tokens": 849,
+    "pricing_version": "openai-gpt-5.6-luna-2026-08-01",
+    "prompt_version": "course-practice-c3-v4",
+    "provider_label": "openai",
+    "questions": [
+      {
+        "answer_contract": {
+          "accepted_answers": [
+            "Fermentation regenerates NAD+ to keep glycolysis running, does not use oxygen as a terminal electron acceptor, and yields much less ATP per glucose than aerobic respiration.",
+            "Fermentation allows glycolysis to continue by regenerating NAD+, uses no oxygen as the terminal electron acceptor, and produces much less ATP per glucose than aerobic respiration."
+          ],
+          "answer": "Fermentation regenerates NAD+ so glycolysis can continue, uses no oxygen as a terminal electron acceptor, and produces much less ATP per glucose than aerobic respiration.",
+          "kind": "exact"
+        },
+        "citations": [
+          {
+            "content_sha256": "0f48b6e354accde0a2ed0026612e62854c2d0fd68668147b4b0a100a85d8bf65",
+            "locator": {
+              "end_char": 1229,
+              "evidence_quote": "**[00:16:22] Instructor:** Fermentation does not replace glycolysis. It lets a",
+              "offsets_version": "exact-char-v1",
+              "start_char": 1151
+            },
+            "source_id": "src_28c71d0eb20f02a9fa201979ebadc82f",
+            "source_revision": 1
+          },
+          {
+            "content_sha256": "0f48b6e354accde0a2ed0026612e62854c2d0fd68668147b4b0a100a85d8bf65",
+            "locator": {
+              "end_char": 1308,
+              "evidence_quote": "cell keep glycolysis running by regenerating NAD+. Fermentation therefore uses",
+              "offsets_version": "exact-char-v1",
+              "start_char": 1230
+            },
+            "source_id": "src_28c71d0eb20f02a9fa201979ebadc82f",
+            "source_revision": 1
+          },
+          {
+            "content_sha256": "0f48b6e354accde0a2ed0026612e62854c2d0fd68668147b4b0a100a85d8bf65",
+            "locator": {
+              "end_char": 1381,
+              "evidence_quote": "no oxygen as a terminal electron acceptor and produces much less ATP per",
+              "offsets_version": "exact-char-v1",
+              "start_char": 1309
+            },
+            "source_id": "src_28c71d0eb20f02a9fa201979ebadc82f",
+            "source_revision": 1
+          },
+          {
+            "content_sha256": "0f48b6e354accde0a2ed0026612e62854c2d0fd68668147b4b0a100a85d8bf65",
+            "locator": {
+              "end_char": 1415,
+              "evidence_quote": "glucose than aerobic respiration.",
+              "offsets_version": "exact-char-v1",
+              "start_char": 1382
+            },
+            "source_id": "src_28c71d0eb20f02a9fa201979ebadc82f",
+            "source_revision": 1
+          }
+        ],
+        "explanation": "Fermentation supports continued glycolysis by regenerating NAD+. Unlike aerobic respiration, it uses no oxygen as a terminal electron acceptor and produces much less ATP per glucose.",
+        "objective_ids": [
+          "OBJ-RESP-03"
+        ],
+        "prompt": "How does fermentation differ from aerobic respiration in its effect on glycolysis, use of oxygen, and ATP yield per glucose?",
+        "question_type": "short_answer"
+      }
+    ],
+    "reasoning_effort": "medium",
+    "reasoning_output_tokens": 174,
+    "request_contract": {
+      "generation_purpose": "practice",
+      "request_contract_id": "pgc_03d37c68e5cfa14429727308916cbee3",
+      "requested_objective_ids": [
+        "OBJ-RESP-03"
+      ],
+      "source_scope_hash": "f98295f2ccbeb7ee30929a85214e87416b84c313fb39a14abf51b0a1b19b1215"
+    },
+    "request_id": "resp_097b601b476ed835016a78984bcbc881a2baf90fc44bb874d6",
+    "requested_model": "gpt-5.6-luna",
+    "response_status": "completed",
+    "schema_version": "course-practice-c3-schema-v5",
+    "store": false
+  },
+  "validation_status": "PASS"
+}
