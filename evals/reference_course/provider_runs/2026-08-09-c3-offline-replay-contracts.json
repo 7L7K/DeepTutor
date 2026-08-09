@@ -1,0 +1,106 @@
+{
+  "schema_version": "c3-artifact-replay-contract-v1",
+  "source_packet_revision": "reference-course-c3-v1",
+  "source_files": [
+    "lecture_06_transcript.md",
+    "lecture_06_slides.md"
+  ],
+  "approved_objective_ids": [
+    "OBJ-RESP-01",
+    "OBJ-RESP-02",
+    "OBJ-RESP-03"
+  ],
+  "artifacts": [
+    {
+      "case_id": "earlier_primary",
+      "path": "provider_runs/2026-08-09-gpt-5-mini-c3-rerun/primary.json",
+      "item_limit": 5,
+      "requested_objective_ids": [
+        "OBJ-RESP-01",
+        "OBJ-RESP-02",
+        "OBJ-RESP-03"
+      ],
+      "generation_purpose": "practice",
+      "focus": "cellular respiration",
+      "previous_validator_result": {
+        "validator_head": "1c7af76de9ffbeb4da296e635a2fd3d057e534cd",
+        "status": "REJECT",
+        "findings": [
+          "ANSWER_UNSUPPORTED[2]",
+          "ANSWER_UNSUPPORTED[4]"
+        ]
+      }
+    },
+    {
+      "case_id": "final_primary",
+      "path": "provider_runs/2026-08-09-gpt-5-mini-c3-final/primary.json",
+      "item_limit": 5,
+      "requested_objective_ids": [
+        "OBJ-RESP-01",
+        "OBJ-RESP-02",
+        "OBJ-RESP-03"
+      ],
+      "generation_purpose": "practice",
+      "focus": "cellular respiration",
+      "previous_validator_result": {
+        "validator_head": "1c7af76de9ffbeb4da296e635a2fd3d057e534cd",
+        "status": "UNAVAILABLE",
+        "first_failing_stage": "RAW_RESPONSE_NOT_PRESERVED",
+        "prior_error_class": "PracticeGenerationProviderError"
+      }
+    },
+    {
+      "case_id": "repeat",
+      "path": "provider_runs/2026-08-09-gpt-5-mini-c3-final/repeat.json",
+      "item_limit": 5,
+      "requested_objective_ids": [
+        "OBJ-RESP-01",
+        "OBJ-RESP-02",
+        "OBJ-RESP-03"
+      ],
+      "generation_purpose": "practice",
+      "focus": "cellular respiration",
+      "previous_validator_result": {
+        "validator_head": "1c7af76de9ffbeb4da296e635a2fd3d057e534cd",
+        "status": "UNAVAILABLE",
+        "first_failing_stage": "RAW_RESPONSE_NOT_PRESERVED",
+        "prior_error_class": "PracticeGenerationProviderError"
+      }
+    },
+    {
+      "case_id": "unsupported",
+      "path": "provider_runs/2026-08-09-gpt-5-mini-c3-final/unsupported.json",
+      "item_limit": 1,
+      "requested_objective_ids": [
+        "OBJ-PHOTO-01",
+        "OBJ-MITO-INHERIT-01"
+      ],
+      "generation_purpose": "practice",
+      "focus": "photosynthesis and mitochondrial inheritance",
+      "previous_validator_result": {
+        "validator_head": "1c7af76de9ffbeb4da296e635a2fd3d057e534cd",
+        "status": "PASS",
+        "findings": []
+      }
+    },
+    {
+      "case_id": "remediation",
+      "path": "provider_runs/2026-08-09-gpt-5-mini-c3-final/remediation.json",
+      "item_limit": 2,
+      "requested_objective_ids": [
+        "OBJ-RESP-01",
+        "OBJ-RESP-02",
+        "OBJ-RESP-03"
+      ],
+      "generation_purpose": "remediation",
+      "focus": "remediate two missed cellular respiration objectives",
+      "previous_validator_result": {
+        "validator_head": "1c7af76de9ffbeb4da296e635a2fd3d057e534cd",
+        "status": "REJECT",
+        "findings": [
+          "ANSWER_UNSUPPORTED[1]"
+        ]
+      }
+    }
+  ]
+}

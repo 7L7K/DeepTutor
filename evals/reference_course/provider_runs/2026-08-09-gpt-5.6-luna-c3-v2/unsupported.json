@@ -1,0 +1,57 @@
+{
+  "automatic_retries": 0,
+  "case": "unsupported",
+  "first_attempt": true,
+  "fixture": "Biology 101 / fall-2026",
+  "output": {
+    "abstain_reason": "unsupported_by_allowed_sources",
+    "actual_model": null,
+    "cached_input_tokens": null,
+    "estimated_cost_microusd": null,
+    "input_tokens": null,
+    "latency_ms": 0,
+    "outcome": "abstain",
+    "output_tokens": null,
+    "pricing_version": "provider-free",
+    "prompt_version": "course-practice-c3-v2",
+    "provider_label": "policy-local",
+    "questions": [],
+    "reasoning_effort": "none",
+    "reasoning_output_tokens": null,
+    "request_contract": {
+      "generation_purpose": "practice",
+      "request_contract_id": "pgc_9adbe1a1850cae5684319a31dfe32b81",
+      "requested_objective_ids": [
+        "OBJ-PHOTO-01",
+        "OBJ-MITO-INHERIT-01"
+      ],
+      "source_scope_hash": "ad3edb99cb0bcf890771dd523528a4a41a10774d4a737efe8081e24f97d5d5a6"
+    },
+    "request_id": null,
+    "requested_model": null,
+    "response_status": "not_called",
+    "schema_version": "course-practice-c3-schema-v2",
+    "store": false
+  },
+  "prompt_version": "course-practice-c3-v2",
+  "provider_runtime": {
+    "provider_request_attempted": false
+  },
+  "provider_schema_version": "course-practice-c3-schema-v2",
+  "publication_status": "ABSTAIN",
+  "reasoning_effort": "medium",
+  "request_contract": {
+    "generation_purpose": "practice",
+    "request_contract_id": "pgc_9adbe1a1850cae5684319a31dfe32b81",
+    "requested_objective_ids": [
+      "OBJ-PHOTO-01",
+      "OBJ-MITO-INHERIT-01"
+    ],
+    "source_scope_hash": "ad3edb99cb0bcf890771dd523528a4a41a10774d4a737efe8081e24f97d5d5a6"
+  },
+  "requested_model": "gpt-5.6-luna",
+  "schema_version": "c3-luna-probe-receipt-v1",
+  "source_packet_revision": "reference-course-c3-v1",
+  "store": false,
+  "validation_status": "NOT_APPLICABLE"
+}

@@ -1,0 +1,60 @@
+{
+  "automatic_retries": 0,
+  "case": "supported-one",
+  "first_attempt": true,
+  "fixture": "Biology 101 / fall-2026",
+  "output": {
+    "abstain_reason": "unsupported_by_allowed_sources",
+    "actual_model": "gpt-5.6-luna",
+    "cached_input_tokens": 0,
+    "estimated_cost_microusd": 423,
+    "input_tokens": 1224,
+    "latency_ms": 2700,
+    "outcome": "abstain",
+    "output_tokens": 148,
+    "pricing_version": "openai-gpt-5.6-luna-2026-08-01",
+    "prompt_version": "course-practice-c3-v2",
+    "provider_label": "openai",
+    "questions": [],
+    "reasoning_effort": "medium",
+    "reasoning_output_tokens": 26,
+    "request_contract": {
+      "generation_purpose": "practice",
+      "request_contract_id": "pgc_26c4ab5f70117c76342de711629ca308",
+      "requested_objective_ids": [
+        "OBJ-RESP-02"
+      ],
+      "source_scope_hash": "ad3edb99cb0bcf890771dd523528a4a41a10774d4a737efe8081e24f97d5d5a6"
+    },
+    "request_id": "resp_046bf7b422e1aafe016a788aea7000819db8c5cced926e2278",
+    "requested_model": "gpt-5.6-luna",
+    "response_status": "completed",
+    "schema_version": "course-practice-c3-schema-v2",
+    "store": false
+  },
+  "prompt_version": "course-practice-c3-v2",
+  "provider_runtime": {
+    "provider_request_attempted": true,
+    "raw_provider_output_sha256": "b4474334d1da59dc275a5334331cce15bc3240e2b400911ccf7f373359152a31",
+    "raw_provider_output_text": "{\"request_contract\":{\"request_contract_id\":\"pgc_26c4ab5f70117c76342de711629ca308\",\"requested_objective_ids\":[\"OBJ-RESP-02\"],\"source_scope_hash\":\"ad3edb99cb0bcf890771dd523528a4a41a10774d4a737efe8081e24f97d5d5a6\",\"generation_purpose\":\"practice\"},\"outcome\":\"abstain\",\"abstain_reason\":\"unsupported_by_allowed_sources\",\"questions\":[]}",
+    "response_id": "resp_046bf7b422e1aafe016a788aea7000819db8c5cced926e2278",
+    "response_model": "gpt-5.6-luna",
+    "response_status": "completed"
+  },
+  "provider_schema_version": "course-practice-c3-schema-v2",
+  "publication_status": "ABSTAIN",
+  "reasoning_effort": "medium",
+  "request_contract": {
+    "generation_purpose": "practice",
+    "request_contract_id": "pgc_26c4ab5f70117c76342de711629ca308",
+    "requested_objective_ids": [
+      "OBJ-RESP-02"
+    ],
+    "source_scope_hash": "ad3edb99cb0bcf890771dd523528a4a41a10774d4a737efe8081e24f97d5d5a6"
+  },
+  "requested_model": "gpt-5.6-luna",
+  "schema_version": "c3-luna-probe-receipt-v1",
+  "source_packet_revision": "reference-course-c3-v1",
+  "store": false,
+  "validation_status": "NOT_APPLICABLE"
+}

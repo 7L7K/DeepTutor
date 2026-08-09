@@ -30,6 +30,8 @@ from deeptutor.courses.generation_models import (
     GeneratedPracticeQuestion,
     GenerationSourceText,
     PracticeGenerationInput,
+    PracticeObjectiveEvidenceBinding,
+    build_practice_generation_request_contract,
 )
 from deeptutor.courses.generation_provider import PracticeGenerationProvider
 from deeptutor.courses.generation_repository import CoursePracticeGenerationRepository
@@ -58,6 +60,7 @@ def _request() -> tuple[PracticeGenerationInput, GenerationSourceText]:
         content_sha256=SOURCE_HASH,
     )
     material = GenerationSourceText(receipt=receipt, text=SOURCE_TEXT)
+    evidence_quote = "Oxygen accepts electrons and protons to form water."
     return (
         PracticeGenerationInput(
             operation_id="opg_" + "b" * 32,
@@ -67,6 +70,13 @@ def _request() -> tuple[PracticeGenerationInput, GenerationSourceText]:
             practice_set_revision_id="prv_" + "e" * 32,
             source_material=[material],
             objective_ids=["OBJ-RESP-02"],
+            objective_evidence_bindings=[
+                PracticeObjectiveEvidenceBinding(
+                    objective_id="OBJ-RESP-02",
+                    receipt=receipt,
+                    evidence_quotes=[evidence_quote],
+                )
+            ],
             item_limit=1,
             context_char_limit=12_000,
             focus="oxygen in aerobic respiration",
@@ -82,13 +92,14 @@ def _output(*, prompt: str = "What is oxygen's role at the end of aerobic respir
     request, material = _request()
     return request, material, GeneratedPracticeOutput(
         provider_label="openai",
-        requested_model="gpt-5-mini",
-        actual_model="gpt-5-mini-2026-07-01",
+        request_contract=build_practice_generation_request_contract(request),
+        requested_model="gpt-5.6-luna",
+        actual_model="gpt-5.6-luna-2026-07-30",
         request_id="resp_c3_quality",
         input_tokens=120,
         output_tokens=80,
         latency_ms=420,
-        pricing_version="openai-gpt-5-mini-2026-08-01",
+        pricing_version="openai-gpt-5.6-luna-2026-08-01",
         questions=[
             GeneratedPracticeQuestion(
                 question_type="short_answer",
@@ -131,7 +142,14 @@ def test_c3_validator_preserves_bounded_answer_variants_and_receipt_versions() -
     )
     checked = validate_c3_output(
         request=request,
-        output=output.model_copy(update={"questions": [question]}),
+        output=output.model_copy(
+            update={
+                "request_contract": build_practice_generation_request_contract(
+                    request
+                ),
+                "questions": [question],
+            }
+        ),
         material=[material],
     )
     assert checked.questions[0].answer_contract.accepted_answers == ["the water molecule"]
@@ -155,6 +173,20 @@ def test_c3_validator_accepts_collective_citations_and_short_polarity_answer() -
         text=source_text,
     )
     request = request.model_copy(update={"source_material": [material]})
+    request = request.model_copy(
+        update={
+            "objective_evidence_bindings": [
+                PracticeObjectiveEvidenceBinding(
+                    objective_id="OBJ-RESP-02",
+                    receipt=material.receipt,
+                    evidence_quotes=[
+                        "Fermentation does not replace glycolysis.",
+                        "It lets a cell keep glycolysis running by regenerating NAD+.",
+                    ],
+                )
+            ]
+        }
+    )
     question = GeneratedPracticeQuestion.model_validate(
         output.questions[0].model_dump(mode="json")
         | {
@@ -174,7 +206,14 @@ def test_c3_validator_accepts_collective_citations_and_short_polarity_answer() -
     )
     checked = validate_c3_output(
         request=request,
-        output=output.model_copy(update={"questions": [question]}),
+        output=output.model_copy(
+            update={
+                "request_contract": build_practice_generation_request_contract(
+                    request
+                ),
+                "questions": [question],
+            }
+        ),
         material=[material],
     )
     assert checked.questions[0].citations[0].locator["offsets_version"] == "exact-char-v1"
@@ -193,6 +232,55 @@ def test_c3_validator_rejects_unsafe_or_unmapped_output(prompt, objectives, code
     with pytest.raises(ContentQualityError) as raised:
         validate_c3_output(request=request, output=output, material=[material])
     assert code in {item.code for item in raised.value.findings}
+
+
+def test_c3_validator_rejects_neighboring_approved_objective_substitution() -> None:
+    request, material, output = _output()
+    request = request.model_copy(
+        update={
+            "objective_ids": ["OBJ-RESP-01", "OBJ-RESP-02"],
+            "requested_objective_ids": ["OBJ-RESP-02"],
+        }
+    )
+    question = output.questions[0].model_copy(
+        update={"objective_ids": ["OBJ-RESP-01"]}
+    )
+    output = output.model_copy(
+        update={
+            "request_contract": build_practice_generation_request_contract(request),
+            "questions": [question],
+        }
+    )
+
+    with pytest.raises(ContentQualityError) as raised:
+        validate_c3_output(request=request, output=output, material=[material])
+
+    assert "REQUEST_OBJECTIVE_MISMATCH" in {
+        item.code for item in raised.value.findings
+    }
+
+
+def test_c3_validator_rejects_reachable_citation_outside_objective_binding() -> None:
+    request, material, output = _output()
+    other_quote = "Oxygen is the terminal electron acceptor"
+    question = output.questions[0].model_copy(
+        update={
+            "citations": [
+                PracticeCitation(
+                    **material.receipt.model_dump(),
+                    locator={"evidence_quote": other_quote},
+                )
+            ]
+        }
+    )
+    output = output.model_copy(update={"questions": [question]})
+
+    with pytest.raises(ContentQualityError) as raised:
+        validate_c3_output(request=request, output=output, material=[material])
+
+    assert "CITATION_OUTSIDE_OBJECTIVE_EVIDENCE" in {
+        item.code for item in raised.value.findings
+    }
 
 
 class _Provider:
@@ -214,12 +302,46 @@ class _Provider:
                 ]
             }
         )
-        return output.model_copy(update={"questions": [question]})
+        return output.model_copy(
+            update={
+                "request_contract": build_practice_generation_request_contract(
+                    request
+                ),
+                "questions": [question],
+            }
+        )
 
 
 class _Resolver:
     def resolve(self, *, receipts, **_kwargs):
         return [GenerationSourceText(receipt=receipts[0], text=SOURCE_TEXT)]
+
+
+def _objective_evidence(
+    request: PracticeGenerationInput,
+) -> list[PracticeObjectiveEvidenceBinding]:
+    return [
+        PracticeObjectiveEvidenceBinding(
+            objective_id="OBJ-RESP-02",
+            receipt=request.source_material[0].receipt,
+            evidence_quotes=[
+                "Oxygen accepts electrons and protons to form water."
+            ],
+        )
+    ]
+
+
+class _AbstainingProvider:
+    def generate(self, request):
+        return GeneratedPracticeOutput(
+            provider_label="policy-local",
+            request_contract=build_practice_generation_request_contract(request),
+            outcome="abstain",
+            abstain_reason="unsupported_by_allowed_sources",
+            response_status="not_called",
+            latency_ms=0,
+            questions=[],
+        )
 
 
 def _ready_source(repo: CourseRepository, course_id: str):
@@ -252,6 +374,7 @@ def test_c3_quality_profile_validates_before_ready_publication(tmp_path: Path) -
         source_text_resolver=_Resolver(),
         account_active=lambda _owner: True,
         identity_lock=lambda: nullcontext(),
+        objective_evidence_resolver=_objective_evidence,
     )
     request = service.create_generated_practice(
         course.id,
@@ -272,6 +395,52 @@ def test_c3_quality_profile_validates_before_ready_publication(tmp_path: Path) -
     assert revision.generation_receipt["content_quality"] == "passed"
     question = practice.list_questions(course.id, completed.practice_set_id, revision.id)[0]
     assert question.citations[0].locator["start_char"] >= 0
+
+
+def test_c3_abstention_leaves_draft_empty_and_never_publishes(
+    tmp_path: Path,
+) -> None:
+    repo = CourseRepository(tmp_path / "courses.db", "u_alice")
+    course = repo.create_course("Biology 101")
+    source = _ready_source(repo, course.id)
+    service = CoursePracticeGenerationService(
+        CoursePracticeGenerationRepository(repo),
+        provider=_AbstainingProvider(),
+        source_text_resolver=_Resolver(),
+        account_active=lambda _owner: True,
+        identity_lock=lambda: nullcontext(),
+        objective_evidence_resolver=_objective_evidence,
+    )
+    requested = service.create_generated_practice(
+        course.id,
+        title="Unsupported scope",
+        source_ids=[source.id],
+        objective_ids=["OBJ-RESP-02"],
+        idempotency_key="c3-abstention-operation",
+        expected_course_write_epoch=repo.get_course(course.id).write_epoch,
+        item_limit=1,
+        quality_profile=C3_BIOLOGY_PROFILE,
+    )
+
+    terminal = service.run_operation(course.id, requested.operation.id)
+
+    assert (terminal.state, terminal.error_code) == ("failed", "invalid_output")
+    practice = CoursePracticeService(CoursePracticeRepository(repo))
+    revision = practice.get_revision(
+        course.id,
+        terminal.practice_set_id,
+        terminal.practice_set_revision_id,
+    )
+    assert revision.state == "draft"
+    assert revision.generation_receipt is None
+    assert (
+        practice.list_questions(
+            course.id,
+            terminal.practice_set_id,
+            terminal.practice_set_revision_id,
+        )
+        == []
+    )
 
 
 def test_quality_report_review_and_invalidation_are_append_only(tmp_path: Path) -> None:

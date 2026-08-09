@@ -10,10 +10,13 @@ import pytest
 from deeptutor.courses.generation_models import (
     GenerationSourceText,
     PracticeGenerationInput,
+    PracticeObjectiveEvidenceBinding,
+    build_practice_generation_request_contract,
 )
 from deeptutor.courses.generation_provider import (
     OpenAIPracticeGenerationProvider,
     PracticeGenerationProviderError,
+    PracticeGenerationProviderUnavailable,
     _provider_request_diagnostic,
 )
 from deeptutor.courses.practice_models import PracticeSourceReceipt
@@ -49,6 +52,35 @@ def _request(
         focus="Understand cellular energy",
         difficulty="mixed",
         timing_mode="practice_timer",
+    )
+
+
+def _as_c3(
+    request: PracticeGenerationInput,
+    *,
+    requested_objective_ids: list[str] | None = None,
+    bindings: list[PracticeObjectiveEvidenceBinding] | None = None,
+) -> PracticeGenerationInput:
+    objective_id = request.objective_ids[0]
+    resolved_bindings = bindings
+    if resolved_bindings is None:
+        resolved_bindings = [
+            PracticeObjectiveEvidenceBinding(
+                objective_id=objective_id,
+                receipt=request.source_material[0].receipt,
+                evidence_quotes=[request.source_material[0].text],
+            )
+        ]
+    return request.model_copy(
+        update={
+            "quality_profile": "c3-biology-v1",
+            "requested_objective_ids": (
+                [objective_id]
+                if requested_objective_ids is None
+                else requested_objective_ids
+            ),
+            "objective_evidence_bindings": resolved_bindings,
+        }
     )
 
 
@@ -135,6 +167,55 @@ def _provider(
         ledger=ledger,
         client_factory=client_factory,
     )
+
+
+def _luna_provider(
+    tmp_path: Path,
+    payload: dict,
+    captured: dict,
+) -> OpenAIPracticeGenerationProvider:
+    catalog = {"text_generation": default_text_generation_catalog()}
+    section = catalog["text_generation"]
+    section["features"]["practice_generation"] = {
+        "model": "gpt-5.6-luna",
+        "mode": "qualified",
+        "reasoning_effort": "medium",
+    }
+    resolved = TextGenerationRegistry.from_catalog(catalog).resolve(
+        "practice_generation",
+        required_capabilities={"responses", "structured_outputs"},
+    )
+    captured["_actual_model"] = "gpt-5.6-luna-2026-07-30"
+    ledger = ProviderUsageLedger(tmp_path / "luna-usage" / "provider_usage.db")
+    ledger.configure(
+        ProviderUsagePolicy(
+            enabled=True,
+            pricing_version=resolved.model.pricing.version,
+        )
+    )
+
+    def client_factory(**kwargs):
+        captured["client"] = kwargs
+        return SimpleNamespace(responses=_Responses(payload, captured))
+
+    return OpenAIPracticeGenerationProvider(
+        api_key="sk-test-only",
+        model="gpt-5.6-luna",
+        ledger=ledger,
+        resolved_generation=resolved,
+        client_factory=client_factory,
+    )
+
+
+def _c3_payload(request: PracticeGenerationInput, payload: dict) -> dict:
+    return {
+        "request_contract": build_practice_generation_request_contract(
+            request
+        ).model_dump(mode="json"),
+        "outcome": "generated",
+        "abstain_reason": None,
+        "questions": payload["questions"],
+    }
 
 
 def test_practice_provider_is_strict_grounded_tool_free_and_accounted(
@@ -234,20 +315,300 @@ def test_practice_provider_rejects_unexpected_actual_model(tmp_path: Path) -> No
 def test_c3_provider_requires_and_normalizes_bounded_answer_variants(
     tmp_path: Path,
 ) -> None:
-    payload = _payload()
-    payload["questions"][0]["accepted_answers"] = ["energy"]
+    request = _as_c3(_request())
+    question_payload = _payload()
+    question_payload["questions"][0]["accepted_answers"] = ["energy"]
     captured: dict = {}
-    provider = _provider(tmp_path, payload, captured)
-    request = _request().model_copy(update={"quality_profile": "c3-biology-v1"})
+    provider = _luna_provider(
+        tmp_path, _c3_payload(request, question_payload), captured
+    )
 
     output = provider.generate(request)
 
-    assert output.prompt_version == "course-practice-c3-v1"
-    assert output.schema_version == "course-practice-c3-schema-v1"
+    assert output.prompt_version == "course-practice-c3-v4"
+    assert output.schema_version == "course-practice-c3-schema-v5"
     assert output.store is False
+    assert output.outcome == "generated"
+    assert output.request_contract == build_practice_generation_request_contract(
+        request
+    )
     assert output.questions[0].answer_contract.accepted_answers == ["energy"]
     question_schema = captured["text"]["format"]["schema"]["properties"]["questions"]["items"]
     assert "accepted_answers" in question_schema["required"]
+
+
+def test_c3_evidence_preserves_exact_lines_and_excludes_headings() -> None:
+    text = (
+        "# Lecture 6\n\n"
+        "**[00:13:05] Instructor:** Oxygen is the terminal electron acceptor\n"
+        "at the end of the aerobic electron transport chain. Oxygen accepts\n"
+        "electrons and protons to form water.\n\n"
+        "## Review heading\n"
+    )
+
+    quotes = OpenAIPracticeGenerationProvider._c3_evidence_quotes(text)
+
+    assert quotes == [
+        "**[00:13:05] Instructor:** Oxygen is the terminal electron acceptor",
+        "at the end of the aerobic electron transport chain. Oxygen accepts",
+        "electrons and protons to form water.",
+    ]
+    assert all(quote in text and "\n" not in quote for quote in quotes)
+
+
+def test_c3_reference_fixture_binds_obj_resp_02_to_only_oxygen_evidence() -> None:
+    reference_root = Path(__file__).resolve().parents[3] / "evals/reference_course"
+    fixture = json.loads(
+        (reference_root / "objective_evidence.json").read_text(encoding="utf-8")
+    )
+    bindings = [
+        PracticeObjectiveEvidenceBinding.model_validate(binding)
+        for binding in fixture["bindings"]
+    ]
+    oxygen = [
+        binding for binding in bindings if binding.objective_id == "OBJ-RESP-02"
+    ]
+    transcript = (
+        reference_root / "sources/lecture_06_transcript.md"
+    ).read_text(encoding="utf-8")
+
+    assert len(oxygen) == 1
+    assert all(quote in transcript for quote in oxygen[0].evidence_quotes)
+    assert any("terminal electron acceptor" in quote for quote in oxygen[0].evidence_quotes)
+    assert all("four teaching stages" not in quote for quote in oxygen[0].evidence_quotes)
+    assert all("[00:00:00]" not in quote for quote in oxygen[0].evidence_quotes)
+
+
+def test_c3_provider_abstains_before_cost_or_network_for_unapproved_request(
+    tmp_path: Path,
+) -> None:
+    captured: dict = {}
+    request = _as_c3(
+        _request(), requested_objective_ids=["OBJ-PHOTO-01"]
+    )
+    provider = _luna_provider(tmp_path, {}, captured)
+
+    output = provider.generate(request)
+
+    assert output.outcome == "abstain"
+    assert output.abstain_reason == "unsupported_by_allowed_sources"
+    assert output.questions == []
+    assert output.provider_label == "policy-local"
+    assert output.response_status == "not_called"
+    assert "client" not in captured
+    with provider.ledger._connect() as connection:
+        assert (
+            connection.execute(
+                "SELECT COUNT(*) FROM provider_usage_reservations"
+            ).fetchone()[0]
+            == 0
+        )
+
+
+def test_c3_provider_rejects_mini_policy_before_cost_or_network(
+    tmp_path: Path,
+) -> None:
+    captured: dict = {}
+    provider = _provider(tmp_path, _payload(), captured)
+    request = _as_c3(_request())
+
+    with pytest.raises(
+        PracticeGenerationProviderUnavailable,
+        match="C3 publication model is unavailable",
+    ):
+        provider.generate(request)
+
+    assert "client" not in captured
+    with provider.ledger._connect() as connection:
+        assert (
+            connection.execute(
+                "SELECT COUNT(*) FROM provider_usage_reservations"
+            ).fetchone()[0]
+            == 0
+        )
+
+
+def test_c3_provider_rejects_neighboring_objective_substitution(
+    tmp_path: Path,
+) -> None:
+    base = _request().model_copy(
+        update={"objective_ids": ["obj_energy", "obj_neighbor"]}
+    )
+    request = _as_c3(base)
+    question_payload = _payload(objective_ids=["obj_neighbor"])
+    question_payload["questions"][0]["accepted_answers"] = []
+    provider = _luna_provider(
+        tmp_path,
+        _c3_payload(request, question_payload),
+        {},
+    )
+
+    with pytest.raises(
+        PracticeGenerationProviderError, match="provider output is invalid"
+    ):
+        provider.generate(request)
+
+
+def test_c3_provider_exposes_only_objective_bound_evidence(
+    tmp_path: Path,
+) -> None:
+    oxygen_line = "Oxygen is the terminal electron acceptor and forms water."
+    opening_line = "The pathway has four teaching stages."
+    base = _request(f"{opening_line}\n{oxygen_line}")
+    request = _as_c3(
+        base,
+        bindings=[
+            PracticeObjectiveEvidenceBinding(
+                objective_id="obj_energy",
+                receipt=base.source_material[0].receipt,
+                evidence_quotes=[oxygen_line],
+            )
+        ],
+    )
+    payload = _payload(quote=oxygen_line)
+    payload["questions"][0]["accepted_answers"] = []
+    payload["questions"][0]["answer"] = "Oxygen"
+    captured: dict = {}
+    provider = _luna_provider(tmp_path, _c3_payload(request, payload), captured)
+
+    provider.generate(request)
+
+    provider_input = json.loads(captured["input"])
+    exposed = provider_input["objective_evidence"]
+    assert exposed == [
+        {
+            "objective_id": "obj_energy",
+            "sources": [
+                {
+                    "source_id": base.source_material[0].receipt.source_id,
+                    "source_revision": 2,
+                    "content_sha256": "b" * 64,
+                    "allowed_evidence_quotes": [oxygen_line],
+                }
+            ],
+        }
+    ]
+    assert opening_line not in captured["input"]
+    citation_enum = captured["text"]["format"]["schema"]["properties"][
+        "questions"
+    ]["items"]["properties"]["citations"]["items"]["properties"][
+        "evidence_quote"
+    ]["enum"]
+    assert citation_enum == [oxygen_line]
+
+
+def test_c3_provider_abstains_before_cost_or_network_when_objective_evidence_missing(
+    tmp_path: Path,
+) -> None:
+    request = _as_c3(_request(), bindings=[])
+    captured: dict = {}
+    provider = _luna_provider(tmp_path, {}, captured)
+
+    output = provider.generate(request)
+
+    assert output.outcome == "abstain"
+    assert output.questions == []
+    assert output.response_status == "not_called"
+    assert "client" not in captured
+    with provider.ledger._connect() as connection:
+        assert connection.execute(
+            "SELECT COUNT(*) FROM provider_usage_reservations"
+        ).fetchone()[0] == 0
+
+
+def test_c3_provider_abstains_before_cost_or_network_for_stale_bound_receipt(
+    tmp_path: Path,
+) -> None:
+    base = _request()
+    stale_binding = PracticeObjectiveEvidenceBinding(
+        objective_id="obj_energy",
+        receipt=PracticeSourceReceipt(
+            source_id=base.source_material[0].receipt.source_id,
+            source_revision=base.source_material[0].receipt.source_revision,
+            content_sha256="c" * 64,
+        ),
+        evidence_quotes=[base.source_material[0].text],
+    )
+    request = _as_c3(base, bindings=[stale_binding])
+    captured: dict = {}
+    provider = _luna_provider(tmp_path, {}, captured)
+
+    output = provider.generate(request)
+
+    assert output.outcome == "abstain"
+    assert output.response_status == "not_called"
+    assert "client" not in captured
+    with provider.ledger._connect() as connection:
+        assert connection.execute(
+            "SELECT COUNT(*) FROM provider_usage_reservations"
+        ).fetchone()[0] == 0
+
+
+def test_c3_request_contract_hash_changes_with_bound_evidence() -> None:
+    base = _request("ATP stores cellular energy. Mitochondria produce ATP.")
+    first = _as_c3(
+        base,
+        bindings=[
+            PracticeObjectiveEvidenceBinding(
+                objective_id="obj_energy",
+                receipt=base.source_material[0].receipt,
+                evidence_quotes=["ATP stores cellular energy."],
+            )
+        ],
+    )
+    second = _as_c3(
+        base,
+        bindings=[
+            PracticeObjectiveEvidenceBinding(
+                objective_id="obj_energy",
+                receipt=base.source_material[0].receipt,
+                evidence_quotes=["Mitochondria produce ATP."],
+            )
+        ],
+    )
+
+    assert (
+        build_practice_generation_request_contract(first).source_scope_hash
+        != build_practice_generation_request_contract(second).source_scope_hash
+    )
+
+
+def test_c3_provider_rejects_citation_bound_only_to_another_objective(
+    tmp_path: Path,
+) -> None:
+    energy_line = "ATP stores cellular energy for the cell."
+    neighbor_line = "Mitochondria produce ATP for the cell."
+    base = _request(f"{energy_line}\n{neighbor_line}").model_copy(
+        update={"objective_ids": ["obj_energy", "obj_neighbor"]}
+    )
+    request = _as_c3(
+        base,
+        bindings=[
+            PracticeObjectiveEvidenceBinding(
+                objective_id="obj_energy",
+                receipt=base.source_material[0].receipt,
+                evidence_quotes=[energy_line],
+            ),
+            PracticeObjectiveEvidenceBinding(
+                objective_id="obj_neighbor",
+                receipt=base.source_material[0].receipt,
+                evidence_quotes=[neighbor_line],
+            ),
+        ],
+    )
+    payload = _payload(quote=neighbor_line)
+    payload["questions"][0]["accepted_answers"] = []
+    provider = _luna_provider(
+        tmp_path,
+        _c3_payload(request, payload),
+        {},
+    )
+
+    with pytest.raises(
+        PracticeGenerationProviderError,
+        match="provider citation evidence is invalid",
+    ):
+        provider.generate(request)
 
 
 @pytest.mark.parametrize(

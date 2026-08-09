@@ -1,0 +1,39 @@
+{
+  "automatic_retries": 0,
+  "case": "supported-one",
+  "error_class": "PracticeGenerationProviderError",
+  "first_attempt": true,
+  "fixture": "Biology 101 / fall-2026",
+  "prompt_version": "course-practice-c3-v2",
+  "provider_runtime": {
+    "provider_error": {
+      "category": "invalid_request",
+      "request_id": "req_f683cf2f93504e51b53791c61c673dca",
+      "status_code": 400
+    },
+    "provider_request_attempted": true,
+    "usage_reservation": {
+      "estimated_cost_microusd": null,
+      "reserved_cost_microusd": 4062,
+      "settled_input_tokens": null,
+      "settled_output_tokens": null,
+      "state": "uncertain"
+    }
+  },
+  "provider_schema_version": "course-practice-c3-schema-v3",
+  "publication_status": "ERROR",
+  "reasoning_effort": "medium",
+  "request_contract": {
+    "generation_purpose": "practice",
+    "request_contract_id": "pgc_26c4ab5f70117c76342de711629ca308",
+    "requested_objective_ids": [
+      "OBJ-RESP-02"
+    ],
+    "source_scope_hash": "ad3edb99cb0bcf890771dd523528a4a41a10774d4a737efe8081e24f97d5d5a6"
+  },
+  "requested_model": "gpt-5.6-luna",
+  "schema_version": "c3-luna-probe-receipt-v1",
+  "source_packet_revision": "reference-course-c3-v1",
+  "store": false,
+  "validation_status": "NOT_RUN"
+}
