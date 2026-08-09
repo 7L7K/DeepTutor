@@ -154,3 +154,85 @@ test-only and is not educational-quality evidence.
 
 Browser/runtime proof is also open. No browser campaign, golden Biology set,
 human approval, or student-value claim should be inferred from the local tests.
+
+## Luna-only replay and request-fidelity amendment
+
+The active C3 publication policy is now `gpt-5.6-luna` at medium reasoning.
+Mini is not eligible for C3 Practice or remediation publication. It remains
+defined only as the central registry's inactive emergency rollback model, and
+the C3 adapter rejects it before admission, cost, or network work.
+
+Before the Luna campaign, all five archived Mini artifacts were replayed
+offline. The machine-readable ledger at
+`evals/reference_course/provider_runs/2026-08-09-c3-offline-replay-ledger.json`
+made zero provider requests and found:
+
+- the old primary polarity-answer false negative is repaired;
+- earlier primary item 2 still genuinely lacks answer support;
+- final primary and repeat cannot be normalized offline because their raw
+  provider responses were never preserved;
+- the old unsupported probe passes the historical validator but fails the new
+  `request_objective_fidelity` stage;
+- remediation item 1 remains genuinely unsupported.
+
+The C3 provider and publication validator now require one deterministic request
+contract: request-contract ID, explicitly requested objective IDs, exact source
+scope hash, and generation purpose. Requested objectives must be a subset of
+the approved objective allowlist. A mismatch produces a local structured
+abstention with no provider call, question, Practice revision, or Review item.
+Provider-generated objectives must remain inside both sets.
+
+The bounded Luna campaign then proved the deterministic unsupported abstention,
+but did not clear one supported question. An initial supported request abstained
+because the borrowed flashcard evidence extractor had silently omitted every
+multiline oxygen passage. The repaired multiline-enum request received HTTP 400
+before generation. The final exact-line request completed under prompt v3 and
+schema v4, but cited only the opening pathway-stage lines for the answer
+`Oxygen`. The publication fence rejected it as `ANSWER_UNSUPPORTED`.
+
+That v4 result was retained as negative evidence and was not overwritten. No
+validator threshold was weakened and no tune-and-retry campaign followed it.
+
+## Objective-bound evidence closeout
+
+The v4 failure established that an approved objective allowlist alone was not
+an evidence-selection contract: Luna could still choose any exact line from the
+whole Course packet. C3 now carries a typed, server-owned objective-evidence
+binding containing the objective ID, exact source ID, source revision, content
+hash, and exact reachable physical source lines. The Biology fixture authority
+is `evals/reference_course/objective_evidence.json`; the generic provider does
+not hard-code Biology mappings.
+
+Before admission, the C3 provider verifies that requested objectives are an
+approved subset, every requested objective has eligible bound evidence, every
+binding matches the frozen material receipt, and every quote is exactly
+reachable. Missing or stale evidence produces a structured local abstention
+before ledger reservation, cost, client creation, or network work. The request
+contract's source-scope hash is derived from only the requested objectives'
+bound evidence. Provider input and citation enums contain only that narrowed
+evidence, and both adapter normalization and the publication validator reject
+a citation bound only to another objective.
+
+Final proof on the objective-binding worktree:
+
+- Direct C3/provider/replay gate: `46 passed` in `3.57s`.
+- Complete Course Practice suite: `244 passed, 4 warnings` in `37.54s`.
+- Full backend under the external Python 3.11 runtime with four workers:
+  `3913 passed, 8 skipped, 34 warnings` in `211.09s`.
+- One new first-attempt-only Luna supported probe used prompt v4, schema v5,
+  medium reasoning, `store=false`, and zero automatic retries. It generated
+  exactly one `OBJ-RESP-02` question, cited only the four approved oxygen lines,
+  and passed the publication fence on its first provider attempt.
+- Provider receipt: request
+  `resp_0fba88bf4c09bca6016a7890cf1838819daa1807b90180ba14`, 1070 input
+  tokens, 606 output tokens, 40 reasoning tokens, `7442ms`, and 942 micro-USD.
+- Durable artifact:
+  `evals/reference_course/provider_runs/2026-08-09-gpt-5.6-luna-c3-objective-evidence-v1/supported-one.json`,
+  SHA-256
+  `d7eff246b9fbcbf89c47573a6e8c629fd949c23ed532de8f0d011b1c279cbf91`.
+
+The bounded one-question eligibility gate is now green. Per the campaign
+boundary, the five-question primary, repeat, remediation, human-review, and
+browser gates remain `NOT_RUN`; this pass is not yet an educational-quality or
+private-beta claim. The durable campaign summary is
+`evals/reference_course/run_openai_2026-08-09_luna.json`.

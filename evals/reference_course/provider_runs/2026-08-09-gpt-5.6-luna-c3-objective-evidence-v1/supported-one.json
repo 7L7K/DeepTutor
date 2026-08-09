@@ -1,0 +1,211 @@
+{
+  "automatic_retries": 0,
+  "case": "supported-one",
+  "first_attempt": true,
+  "fixture": "Biology 101 / fall-2026",
+  "objective_evidence_contract": [
+    {
+      "evidence_quotes": [
+        "**[00:13:05] Instructor:** Oxygen is the terminal electron acceptor at the end",
+        "of the aerobic electron transport chain. Oxygen accepts electrons and protons",
+        "to form water. Without that final acceptor, electron flow through the chain",
+        "cannot continue normally."
+      ],
+      "objective_id": "OBJ-RESP-02",
+      "receipt": {
+        "content_sha256": "0f48b6e354accde0a2ed0026612e62854c2d0fd68668147b4b0a100a85d8bf65",
+        "source_id": "src_28c71d0eb20f02a9fa201979ebadc82f",
+        "source_revision": 1
+      }
+    }
+  ],
+  "output": {
+    "abstain_reason": null,
+    "actual_model": "gpt-5.6-luna",
+    "cached_input_tokens": 0,
+    "estimated_cost_microusd": 942,
+    "input_tokens": 1070,
+    "latency_ms": 7442,
+    "outcome": "generated",
+    "output_tokens": 606,
+    "pricing_version": "openai-gpt-5.6-luna-2026-08-01",
+    "prompt_version": "course-practice-c3-v4",
+    "provider_label": "openai",
+    "questions": [
+      {
+        "answer_contract": {
+          "answer": "Oxygen",
+          "kind": "exact"
+        },
+        "citations": [
+          {
+            "content_sha256": "0f48b6e354accde0a2ed0026612e62854c2d0fd68668147b4b0a100a85d8bf65",
+            "locator": {
+              "evidence_quote": "**[00:13:05] Instructor:** Oxygen is the terminal electron acceptor at the end"
+            },
+            "source_id": "src_28c71d0eb20f02a9fa201979ebadc82f",
+            "source_revision": 1
+          },
+          {
+            "content_sha256": "0f48b6e354accde0a2ed0026612e62854c2d0fd68668147b4b0a100a85d8bf65",
+            "locator": {
+              "evidence_quote": "of the aerobic electron transport chain. Oxygen accepts electrons and protons"
+            },
+            "source_id": "src_28c71d0eb20f02a9fa201979ebadc82f",
+            "source_revision": 1
+          },
+          {
+            "content_sha256": "0f48b6e354accde0a2ed0026612e62854c2d0fd68668147b4b0a100a85d8bf65",
+            "locator": {
+              "evidence_quote": "to form water. Without that final acceptor, electron flow through the chain"
+            },
+            "source_id": "src_28c71d0eb20f02a9fa201979ebadc82f",
+            "source_revision": 1
+          },
+          {
+            "content_sha256": "0f48b6e354accde0a2ed0026612e62854c2d0fd68668147b4b0a100a85d8bf65",
+            "locator": {
+              "evidence_quote": "cannot continue normally."
+            },
+            "source_id": "src_28c71d0eb20f02a9fa201979ebadc82f",
+            "source_revision": 1
+          }
+        ],
+        "explanation": "Oxygen accepts electrons and protons to form water. Without oxygen as the final acceptor, electron flow through the chain cannot continue normally.",
+        "objective_ids": [
+          "OBJ-RESP-02"
+        ],
+        "prompt": "What is the terminal electron acceptor at the end of the aerobic electron transport chain?",
+        "question_type": "short_answer"
+      }
+    ],
+    "reasoning_effort": "medium",
+    "reasoning_output_tokens": 40,
+    "request_contract": {
+      "generation_purpose": "practice",
+      "request_contract_id": "pgc_87a546c818fd71803cdd8e0b68a1ff67",
+      "requested_objective_ids": [
+        "OBJ-RESP-02"
+      ],
+      "source_scope_hash": "20fc89e40da1e4c99116fe434afb338b5a593d96ffc09b7df9ad68dbf0e29e5d"
+    },
+    "request_id": "resp_0fba88bf4c09bca6016a7890cf1838819daa1807b90180ba14",
+    "requested_model": "gpt-5.6-luna",
+    "response_status": "completed",
+    "schema_version": "course-practice-c3-schema-v5",
+    "store": false
+  },
+  "prompt_version": "course-practice-c3-v4",
+  "provider_runtime": {
+    "provider_request_attempted": true,
+    "raw_provider_output_sha256": "e97de6a3a356b3393f93da7b3683edef5c1cd96e45f00fcd201641e85ace4dd0",
+    "raw_provider_output_text": "{\"request_contract\":{\"request_contract_id\":\"pgc_87a546c818fd71803cdd8e0b68a1ff67\",\"requested_objective_ids\":[\"OBJ-RESP-02\"],\"source_scope_hash\":\"20fc89e40da1e4c99116fe434afb338b5a593d96ffc09b7df9ad68dbf0e29e5d\",\"generation_purpose\":\"practice\"},\"outcome\":\"generated\",\"abstain_reason\":null,\"questions\":[{\"question_type\":\"short_answer\",\"prompt\":\"What is the terminal electron acceptor at the end of the aerobic electron transport chain?\",\"answer\":\"Oxygen\",\"accepted_answers\":[],\"explanation\":\"Oxygen accepts electrons and protons to form water. Without oxygen as the final acceptor, electron flow through the chain cannot continue normally.\",\"objective_ids\":[\"OBJ-RESP-02\"],\"citations\":[{\"source_id\":\"src_28c71d0eb20f02a9fa201979ebadc82f\",\"source_revision\":1,\"content_sha256\":\"0f48b6e354accde0a2ed0026612e62854c2d0fd68668147b4b0a100a85d8bf65\",\"evidence_quote\":\"**[00:13:05] Instructor:** Oxygen is the terminal electron acceptor at the end\"},{\"source_id\":\"src_28c71d0eb20f02a9fa201979ebadc82f\",\"source_revision\":1,\"content_sha256\":\"0f48b6e354accde0a2ed0026612e62854c2d0fd68668147b4b0a100a85d8bf65\",\"evidence_quote\":\"of the aerobic electron transport chain. Oxygen accepts electrons and protons\"},{\"source_id\":\"src_28c71d0eb20f02a9fa201979ebadc82f\",\"source_revision\":1,\"content_sha256\":\"0f48b6e354accde0a2ed0026612e62854c2d0fd68668147b4b0a100a85d8bf65\",\"evidence_quote\":\"to form water. Without that final acceptor, electron flow through the chain\"},{\"source_id\":\"src_28c71d0eb20f02a9fa201979ebadc82f\",\"source_revision\":1,\"content_sha256\":\"0f48b6e354accde0a2ed0026612e62854c2d0fd68668147b4b0a100a85d8bf65\",\"evidence_quote\":\"cannot continue normally.\"}]}]}",
+    "response_id": "resp_0fba88bf4c09bca6016a7890cf1838819daa1807b90180ba14",
+    "response_model": "gpt-5.6-luna",
+    "response_status": "completed"
+  },
+  "provider_schema_version": "course-practice-c3-schema-v5",
+  "publication_status": "PASS",
+  "reasoning_effort": "medium",
+  "request_contract": {
+    "generation_purpose": "practice",
+    "request_contract_id": "pgc_87a546c818fd71803cdd8e0b68a1ff67",
+    "requested_objective_ids": [
+      "OBJ-RESP-02"
+    ],
+    "source_scope_hash": "20fc89e40da1e4c99116fe434afb338b5a593d96ffc09b7df9ad68dbf0e29e5d"
+  },
+  "requested_model": "gpt-5.6-luna",
+  "schema_version": "c3-luna-probe-receipt-v2",
+  "source_packet_revision": "reference-course-c3-v1",
+  "store": false,
+  "validated_output": {
+    "abstain_reason": null,
+    "actual_model": "gpt-5.6-luna",
+    "cached_input_tokens": 0,
+    "estimated_cost_microusd": 942,
+    "input_tokens": 1070,
+    "latency_ms": 7442,
+    "outcome": "generated",
+    "output_tokens": 606,
+    "pricing_version": "openai-gpt-5.6-luna-2026-08-01",
+    "prompt_version": "course-practice-c3-v4",
+    "provider_label": "openai",
+    "questions": [
+      {
+        "answer_contract": {
+          "answer": "Oxygen",
+          "kind": "exact"
+        },
+        "citations": [
+          {
+            "content_sha256": "0f48b6e354accde0a2ed0026612e62854c2d0fd68668147b4b0a100a85d8bf65",
+            "locator": {
+              "end_char": 969,
+              "evidence_quote": "**[00:13:05] Instructor:** Oxygen is the terminal electron acceptor at the end",
+              "offsets_version": "exact-char-v1",
+              "start_char": 891
+            },
+            "source_id": "src_28c71d0eb20f02a9fa201979ebadc82f",
+            "source_revision": 1
+          },
+          {
+            "content_sha256": "0f48b6e354accde0a2ed0026612e62854c2d0fd68668147b4b0a100a85d8bf65",
+            "locator": {
+              "end_char": 1047,
+              "evidence_quote": "of the aerobic electron transport chain. Oxygen accepts electrons and protons",
+              "offsets_version": "exact-char-v1",
+              "start_char": 970
+            },
+            "source_id": "src_28c71d0eb20f02a9fa201979ebadc82f",
+            "source_revision": 1
+          },
+          {
+            "content_sha256": "0f48b6e354accde0a2ed0026612e62854c2d0fd68668147b4b0a100a85d8bf65",
+            "locator": {
+              "end_char": 1123,
+              "evidence_quote": "to form water. Without that final acceptor, electron flow through the chain",
+              "offsets_version": "exact-char-v1",
+              "start_char": 1048
+            },
+            "source_id": "src_28c71d0eb20f02a9fa201979ebadc82f",
+            "source_revision": 1
+          },
+          {
+            "content_sha256": "0f48b6e354accde0a2ed0026612e62854c2d0fd68668147b4b0a100a85d8bf65",
+            "locator": {
+              "end_char": 1149,
+              "evidence_quote": "cannot continue normally.",
+              "offsets_version": "exact-char-v1",
+              "start_char": 1124
+            },
+            "source_id": "src_28c71d0eb20f02a9fa201979ebadc82f",
+            "source_revision": 1
+          }
+        ],
+        "explanation": "Oxygen accepts electrons and protons to form water. Without oxygen as the final acceptor, electron flow through the chain cannot continue normally.",
+        "objective_ids": [
+          "OBJ-RESP-02"
+        ],
+        "prompt": "What is the terminal electron acceptor at the end of the aerobic electron transport chain?",
+        "question_type": "short_answer"
+      }
+    ],
+    "reasoning_effort": "medium",
+    "reasoning_output_tokens": 40,
+    "request_contract": {
+      "generation_purpose": "practice",
+      "request_contract_id": "pgc_87a546c818fd71803cdd8e0b68a1ff67",
+      "requested_objective_ids": [
+        "OBJ-RESP-02"
+      ],
+      "source_scope_hash": "20fc89e40da1e4c99116fe434afb338b5a593d96ffc09b7df9ad68dbf0e29e5d"
+    },
+    "request_id": "resp_0fba88bf4c09bca6016a7890cf1838819daa1807b90180ba14",
+    "requested_model": "gpt-5.6-luna",
+    "response_status": "completed",
+    "schema_version": "course-practice-c3-schema-v5",
+    "store": false
+  },
+  "validation_status": "PASS"
+}

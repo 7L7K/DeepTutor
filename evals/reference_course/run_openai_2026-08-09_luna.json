@@ -1,0 +1,86 @@
+{
+  "evaluation": "C3 Biology 101 Luna publication-fence repair",
+  "date": "2026-08-09",
+  "status": "LUNA_OBJECTIVE_BOUND_SINGLE_QUESTION_PUBLICATION_GATE_PASSED",
+  "provider": "openai",
+  "configured_model": "gpt-5.6-luna",
+  "actual_model": "gpt-5.6-luna",
+  "reasoning_effort": "medium",
+  "pricing_version": "openai-gpt-5.6-luna-2026-08-01",
+  "store": false,
+  "automatic_retries": 0,
+  "provider_requests_attempted": 4,
+  "source_packet_revision": "reference-course-c3-v1",
+  "fixture": "Biology 101 / fall-2026",
+  "cases": {
+    "unsupported": {
+      "status": "PASS_DETERMINISTIC_ABSTENTION",
+      "provider_request_attempted": false,
+      "question_count": 0,
+      "artifact": "provider_runs/2026-08-09-gpt-5.6-luna-c3-v2/unsupported.json"
+    },
+    "supported_one_initial": {
+      "status": "ABSTAINED_MISSING_ELIGIBLE_EVIDENCE",
+      "provider_request_attempted": true,
+      "request_id": "resp_046bf7b422e1aafe016a788aea7000819db8c5cced926e2278",
+      "prompt_version": "course-practice-c3-v2",
+      "schema_version": "course-practice-c3-schema-v2",
+      "input_tokens": 1224,
+      "output_tokens": 148,
+      "estimated_cost_microusd": 423,
+      "artifact": "provider_runs/2026-08-09-gpt-5.6-luna-c3-v2/supported-one.json"
+    },
+    "supported_one_multiline_evidence": {
+      "status": "HTTP_400_INVALID_REQUEST",
+      "provider_request_attempted": true,
+      "request_id": "req_f683cf2f93504e51b53791c61c673dca",
+      "prompt_version": "course-practice-c3-v2",
+      "schema_version": "course-practice-c3-schema-v3",
+      "usage_state": "uncertain",
+      "reserved_cost_microusd": 4062,
+      "artifact": "provider_runs/2026-08-09-gpt-5.6-luna-c3-v2/supported-one-after-evidence-fix.json"
+    },
+    "supported_one_exact_lines": {
+      "status": "REJECT_ANSWER_UNSUPPORTED",
+      "provider_request_attempted": true,
+      "request_id": "resp_037e70b1983d7907016a788bf3921c81a3b88a8ab488145b99",
+      "prompt_version": "course-practice-c3-v3",
+      "schema_version": "course-practice-c3-schema-v4",
+      "input_tokens": 2025,
+      "output_tokens": 673,
+      "estimated_cost_microusd": 1213,
+      "finding": "ANSWER_UNSUPPORTED",
+      "artifact": "provider_runs/2026-08-09-gpt-5.6-luna-c3-v2/supported-one-exact-lines.json"
+    },
+    "supported_one_objective_bound": {
+      "status": "PASS_FIRST_ATTEMPT_PUBLICATION",
+      "provider_request_attempted": true,
+      "request_id": "resp_0fba88bf4c09bca6016a7890cf1838819daa1807b90180ba14",
+      "prompt_version": "course-practice-c3-v4",
+      "schema_version": "course-practice-c3-schema-v5",
+      "request_contract_id": "pgc_87a546c818fd71803cdd8e0b68a1ff67",
+      "source_scope_hash": "20fc89e40da1e4c99116fe434afb338b5a593d96ffc09b7df9ad68dbf0e29e5d",
+      "input_tokens": 1070,
+      "output_tokens": 606,
+      "reasoning_output_tokens": 40,
+      "latency_ms": 7442,
+      "estimated_cost_microusd": 942,
+      "question_count": 1,
+      "objective_ids": [
+        "OBJ-RESP-02"
+      ],
+      "publication_status": "PASS",
+      "artifact_sha256": "d7eff246b9fbcbf89c47573a6e8c629fd949c23ed532de8f0d011b1c279cbf91",
+      "artifact": "provider_runs/2026-08-09-gpt-5.6-luna-c3-objective-evidence-v1/supported-one.json"
+    }
+  },
+  "settled_cost_microusd": 2578,
+  "uncertain_reserved_cost_microusd": 4062,
+  "primary_five_question_campaign": "NOT_RUN",
+  "repeat_five_question_campaign": "NOT_RUN",
+  "remediation_campaign": "NOT_RUN",
+  "human_review": "NOT_RUN",
+  "browser_runtime": "NOT_RUN",
+  "educational_quality": "SINGLE_QUESTION_PUBLICATION_GATE_PASSED_FULL_CAMPAIGN_UNPROVEN",
+  "private_beta": "BLOCKED_QUALITY_GATE"
+}
