@@ -24,6 +24,7 @@ PracticeQualityProfile = Literal["baseline-v1", "c3-biology-v1"]
 PracticeGenerationPurpose = Literal["practice", "remediation"]
 PracticeGenerationOutcome = Literal["generated", "abstain"]
 PracticeGenerationAbstainReason = Literal["unsupported_by_allowed_sources"]
+PracticeEvidenceSupportRole = Literal["answer", "explanation"]
 GenerationErrorCode = Literal[
     "provider_unavailable",
     "provider_failed",
@@ -305,19 +306,83 @@ class GenerationSourceText(BaseModel):
     text: str = Field(min_length=1, max_length=12_000)
 
 
-class PracticeObjectiveEvidenceBinding(BaseModel):
-    """Server-owned exact evidence eligible for one approved objective.
+class _PracticeObjectiveEvidenceSpan(BaseModel):
+    """One server-authored, immutable source span exposed to generation."""
 
-    The provider may choose wording, but it cannot widen this binding. Each
-    quote is one exact physical source line so its receipt and reachability can
-    be checked before any provider admission or cost.
-    """
+    model_config = ConfigDict(extra="forbid")
+
+    evidence_id: str = Field(min_length=5, max_length=160)
+    quote: str = Field(min_length=8, max_length=500)
+    start_char: int = Field(ge=0)
+    end_char: int = Field(gt=0)
+
+    @field_validator("evidence_id")
+    @classmethod
+    def _opaque_evidence_id(cls, value: str) -> str:
+        if not value.startswith("ev_") or value != value.strip():
+            raise ValueError("evidence_id must be opaque and whitespace-free")
+        return value
+
+    @field_validator("quote")
+    @classmethod
+    def _exact_physical_line(cls, value: str) -> str:
+        if value != value.strip() or "\n" in value or "\r" in value:
+            raise ValueError("objective evidence must be one exact physical line")
+        return value
+
+    @model_validator(mode="after")
+    def _offsets_match_quote(self) -> "_PracticeObjectiveEvidenceSpan":
+        if self.end_char - self.start_char != len(self.quote):
+            raise ValueError("objective evidence offsets must match the exact quote")
+        return self
+
+
+class PracticeObjectiveContextEvidence(_PracticeObjectiveEvidenceSpan):
+    """Background visible to generation but never eligible for citation."""
+
+    citation_eligible: Literal[False] = False
+
+
+class PracticeObjectiveSupportEvidence(_PracticeObjectiveEvidenceSpan):
+    """Claim-bearing evidence the provider may cite by stable server ID."""
+
+    citation_eligible: Literal[True] = True
+    supports: list[PracticeEvidenceSupportRole] = Field(min_length=1, max_length=2)
+    claim_ids: list[str] = Field(min_length=1, max_length=16)
+
+    @field_validator("supports")
+    @classmethod
+    def _unique_support_roles(
+        cls, value: list[PracticeEvidenceSupportRole]
+    ) -> list[PracticeEvidenceSupportRole]:
+        if len(set(value)) != len(value):
+            raise ValueError("objective evidence support roles must be unique")
+        return value
+
+    @field_validator("claim_ids")
+    @classmethod
+    def _bounded_claim_ids(cls, value: list[str]) -> list[str]:
+        if (
+            len(set(value)) != len(value)
+            or any(not item.strip() or item != item.strip() or len(item) > 160 for item in value)
+        ):
+            raise ValueError("objective evidence claim IDs must be unique and bounded")
+        return value
+
+
+class PracticeObjectiveEvidenceBinding(BaseModel):
+    """Server-owned context and citation-eligible proof for one objective."""
 
     model_config = ConfigDict(extra="forbid")
 
     objective_id: str = Field(min_length=1, max_length=160)
     receipt: PracticeSourceReceipt
-    evidence_quotes: list[str] = Field(min_length=1, max_length=16)
+    context_evidence: list[PracticeObjectiveContextEvidence] = Field(
+        default_factory=list, max_length=32
+    )
+    support_evidence: list[PracticeObjectiveSupportEvidence] = Field(
+        min_length=1, max_length=32
+    )
 
     @field_validator("objective_id")
     @classmethod
@@ -326,22 +391,31 @@ class PracticeObjectiveEvidenceBinding(BaseModel):
             raise ValueError("objective_id must not contain surrounding whitespace")
         return value
 
-    @field_validator("evidence_quotes")
-    @classmethod
-    def _exact_physical_lines(cls, value: list[str]) -> list[str]:
-        if len(set(value)) != len(value):
-            raise ValueError("objective evidence quotes must be unique")
-        if any(
-            quote != quote.strip()
-            or "\n" in quote
-            or "\r" in quote
-            or not 8 <= len(quote) <= 500
-            for quote in value
-        ):
-            raise ValueError(
-                "objective evidence quotes must be bounded exact physical lines"
-            )
-        return value
+    @model_validator(mode="after")
+    def _evidence_ids_are_unique(self) -> "PracticeObjectiveEvidenceBinding":
+        evidence_ids = [
+            item.evidence_id
+            for item in [*self.context_evidence, *self.support_evidence]
+        ]
+        if len(set(evidence_ids)) != len(evidence_ids):
+            raise ValueError("objective evidence IDs must be unique within a binding")
+        return self
+
+
+class PracticeObjectiveEvidencePolicy(BaseModel):
+    """Atomic server policy applied before any C3 provider call."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    bindings: list[PracticeObjectiveEvidenceBinding] = Field(
+        default_factory=list, max_length=128
+    )
+    required_claim_ids_by_objective: dict[str, list[str]] = Field(
+        default_factory=dict
+    )
+    required_accepted_answers_by_objective: dict[str, list[str]] = Field(
+        default_factory=dict
+    )
 
 
 class PracticeGenerationInput(BaseModel):
@@ -357,6 +431,12 @@ class PracticeGenerationInput(BaseModel):
     requested_objective_ids: list[str] | None = Field(default=None, max_length=64)
     objective_evidence_bindings: list[PracticeObjectiveEvidenceBinding] = Field(
         default_factory=list, max_length=128
+    )
+    required_claim_ids_by_objective: dict[str, list[str]] = Field(
+        default_factory=dict
+    )
+    required_accepted_answers_by_objective: dict[str, list[str]] = Field(
+        default_factory=dict
     )
     generation_purpose: PracticeGenerationPurpose = "practice"
     item_limit: int = Field(ge=1, le=12)
@@ -408,12 +488,64 @@ class PracticeGenerationInput(BaseModel):
             raise ValueError(
                 "objective evidence bindings must be unique by objective and receipt"
             )
+        evidence_ids = [
+            evidence.evidence_id
+            for binding in self.objective_evidence_bindings
+            for evidence in [*binding.context_evidence, *binding.support_evidence]
+        ]
+        if len(set(evidence_ids)) != len(evidence_ids):
+            raise ValueError("objective evidence IDs must be globally unique")
         approved = set(self.objective_ids)
         if any(
             binding.objective_id not in approved
             for binding in self.objective_evidence_bindings
         ):
             raise ValueError("objective evidence must bind only approved objectives")
+        if any(
+            objective_id not in approved
+            for objective_id in self.required_claim_ids_by_objective
+        ):
+            raise ValueError("required claims must bind only approved objectives")
+        if any(
+            objective_id not in approved
+            for objective_id in self.required_accepted_answers_by_objective
+        ):
+            raise ValueError(
+                "required accepted answers must bind only approved objectives"
+            )
+        for objective_id, claim_ids in self.required_claim_ids_by_objective.items():
+            if (
+                not claim_ids
+                or len(set(claim_ids)) != len(claim_ids)
+                or any(
+                    not claim_id.strip()
+                    or claim_id != claim_id.strip()
+                    or len(claim_id) > 160
+                    for claim_id in claim_ids
+                )
+            ):
+                raise ValueError("required claim IDs must be unique and bounded")
+            available = {
+                claim_id
+                for binding in self.objective_evidence_bindings
+                if binding.objective_id == objective_id
+                for evidence in binding.support_evidence
+                for claim_id in evidence.claim_ids
+            }
+            if not set(claim_ids).issubset(available):
+                raise ValueError(
+                    "required claims must be covered by objective support evidence"
+                )
+        for accepted_answers in self.required_accepted_answers_by_objective.values():
+            normalized = [" ".join(item.casefold().split()) for item in accepted_answers]
+            if (
+                len(accepted_answers) > 8
+                or len(set(normalized)) != len(normalized)
+                or any(not item.strip() or len(item) > 4_000 for item in accepted_answers)
+            ):
+                raise ValueError(
+                    "required accepted answers must be unique and bounded"
+                )
         return self
 
     def effective_objective_evidence_bindings(
@@ -425,6 +557,26 @@ class PracticeGenerationInput(BaseModel):
             for binding in self.objective_evidence_bindings
             if binding.objective_id in requested
         ]
+
+    def effective_required_claim_ids_by_objective(self) -> dict[str, list[str]]:
+        requested = set(self.effective_requested_objective_ids())
+        return {
+            objective_id: list(claim_ids)
+            for objective_id, claim_ids in self.required_claim_ids_by_objective.items()
+            if objective_id in requested
+        }
+
+    def effective_required_accepted_answers_by_objective(
+        self,
+    ) -> dict[str, list[str]]:
+        requested = set(self.effective_requested_objective_ids())
+        return {
+            objective_id: list(accepted_answers)
+            for objective_id, accepted_answers in (
+                self.required_accepted_answers_by_objective.items()
+            )
+            if objective_id in requested
+        }
 
 
 def build_practice_generation_request_contract(
@@ -439,7 +591,46 @@ def build_practice_generation_request_contract(
                 binding.receipt.source_id,
                 binding.receipt.source_revision,
                 binding.receipt.content_sha256,
-                tuple(sorted(binding.evidence_quotes)),
+                tuple(
+                    sorted(
+                        (
+                            "context",
+                            item.evidence_id,
+                            item.quote,
+                            item.start_char,
+                            item.end_char,
+                        )
+                        for item in binding.context_evidence
+                    )
+                ),
+                tuple(
+                    sorted(
+                        (
+                            "support",
+                            item.evidence_id,
+                            item.quote,
+                            item.start_char,
+                            item.end_char,
+                            tuple(sorted(item.supports)),
+                            tuple(sorted(item.claim_ids)),
+                        )
+                        for item in binding.support_evidence
+                    )
+                ),
+                tuple(
+                    sorted(
+                        request.required_claim_ids_by_objective.get(
+                            binding.objective_id, []
+                        )
+                    )
+                ),
+                tuple(
+                    sorted(
+                        request.required_accepted_answers_by_objective.get(
+                            binding.objective_id, []
+                        )
+                    )
+                ),
             )
             for binding in request.effective_objective_evidence_bindings()
         )

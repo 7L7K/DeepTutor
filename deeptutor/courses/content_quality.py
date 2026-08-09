@@ -12,11 +12,13 @@ from dataclasses import dataclass
 from difflib import SequenceMatcher
 import re
 import string
+import unicodedata
 
 from .generation_models import (
     GeneratedPracticeOutput,
     GeneratedPracticeQuestion,
     PracticeGenerationInput,
+    PracticeObjectiveSupportEvidence,
     build_practice_generation_request_contract,
 )
 from .practice_models import PracticeCitation
@@ -71,20 +73,25 @@ def _explanation_supported_by_quote(explanation: str, quote: str) -> bool:
     return bool(_tokens(explanation).intersection(_tokens(quote)))
 
 
-def _locator_with_offsets(citation: PracticeCitation, text: str) -> PracticeCitation:
+def _resolved_locator(
+    citation: PracticeCitation,
+    text: str,
+    evidence: PracticeObjectiveSupportEvidence,
+) -> PracticeCitation:
+    evidence_id = citation.locator.get("evidence_id")
     quote = citation.locator.get("evidence_quote")
-    if not isinstance(quote, str) or not quote.strip():
-        raise ValueError("C3 citations require an evidence_quote locator")
-    start = text.find(quote)
-    if start < 0:
-        raise ValueError("C3 citation evidence_quote is not reachable")
+    if evidence_id != evidence.evidence_id or quote != evidence.quote:
+        raise ValueError("C3 citation does not resolve to its server evidence ID")
+    if text[evidence.start_char : evidence.end_char] != evidence.quote:
+        raise ValueError("C3 citation evidence span is not reachable")
     return citation.model_copy(
         update={
             "locator": {
-                **citation.locator,
+                "evidence_id": evidence.evidence_id,
+                "evidence_quote": evidence.quote,
                 "offsets_version": _C3_LOCATOR_VERSION,
-                "start_char": start,
-                "end_char": start + len(quote),
+                "start_char": evidence.start_char,
+                "end_char": evidence.end_char,
             }
         }
     )
@@ -151,20 +158,36 @@ def validate_c3_output(
     }
     allowed = set(request.objective_ids)
     requested = set(request.effective_requested_objective_ids())
-    objective_evidence = {
-        objective_id: {
-            (
-                binding.receipt.source_id,
-                binding.receipt.source_revision,
-                binding.receipt.content_sha256,
-                quote,
+    required_claim_ids = request.effective_required_claim_ids_by_objective()
+    if any(not required_claim_ids.get(objective_id) for objective_id in requested):
+        findings.append(
+            QualityFinding(
+                "REQUIRED_CLAIM_CONTRACT_MISSING",
+                None,
+                "every requested C3 objective requires a nonempty claim contract",
             )
+        )
+    objective_support_evidence = {
+        objective_id: {
+            evidence.evidence_id: (binding.receipt, evidence)
             for binding in request.effective_objective_evidence_bindings()
             if binding.objective_id == objective_id
-            for quote in binding.evidence_quotes
+            for evidence in binding.support_evidence
         }
         for objective_id in requested
     }
+    objective_context_evidence_ids = {
+        objective_id: {
+            evidence.evidence_id
+            for binding in request.effective_objective_evidence_bindings()
+            if binding.objective_id == objective_id
+            for evidence in binding.context_evidence
+        }
+        for objective_id in requested
+    }
+    required_accepted_answers = (
+        request.effective_required_accepted_answers_by_objective()
+    )
     prompts: list[str] = []
     enriched: list[GeneratedPracticeQuestion] = []
     for index, question in enumerate(output.questions, start=1):
@@ -196,11 +219,21 @@ def validate_c3_output(
         if not question.explanation.strip():
             findings.append(QualityFinding("EXPLANATION_EMPTY", index, "a supported explanation is required"))
         new_citations: list[PracticeCitation] = []
+        cited_support: list[tuple[str, PracticeObjectiveSupportEvidence]] = []
         cited = False
         eligible_for_question = {
-            evidence
+            evidence_id: (objective_id, evidence)
             for objective_id in question.objective_ids
-            for evidence in objective_evidence.get(objective_id, set())
+            for evidence_id, evidence in objective_support_evidence.get(
+                objective_id, {}
+            ).items()
+        }
+        context_only_for_question = {
+            evidence_id
+            for objective_id in question.objective_ids
+            for evidence_id in objective_context_evidence_ids.get(
+                objective_id, set()
+            )
         }
         for citation in question.citations:
             key = (citation.source_id, citation.source_revision, citation.content_sha256)
@@ -208,31 +241,86 @@ def validate_c3_output(
             if source_text is None:
                 findings.append(QualityFinding("CITATION_OUTSIDE_SNAPSHOT", index, "citation is not in the resolved Course material"))
                 continue
-            try:
-                enriched_citation = _locator_with_offsets(citation, source_text)
-            except ValueError as exc:
-                findings.append(QualityFinding("CITATION_UNREACHABLE", index, str(exc)))
+            evidence_id = citation.locator.get("evidence_id")
+            if evidence_id in context_only_for_question:
+                findings.append(
+                    QualityFinding(
+                        "CITATION_CONTEXT_ONLY",
+                        index,
+                        "background context is not citation eligible",
+                    )
+                )
                 continue
-            quote = enriched_citation.locator.get("evidence_quote")
-            if (
-                citation.source_id,
-                citation.source_revision,
-                citation.content_sha256,
-                quote,
-            ) not in eligible_for_question:
+            eligible = eligible_for_question.get(evidence_id)
+            if eligible is None:
                 findings.append(
                     QualityFinding(
                         "CITATION_OUTSIDE_OBJECTIVE_EVIDENCE",
                         index,
-                        "citation is not bound to the question objective",
+                        "evidence ID is not support bound to the question objective",
                     )
                 )
                 continue
+            evidence_objective_id, (expected_receipt, support_evidence) = eligible
+            if (
+                citation.source_id != expected_receipt.source_id
+                or citation.source_revision != expected_receipt.source_revision
+                or citation.content_sha256 != expected_receipt.content_sha256
+            ):
+                findings.append(
+                    QualityFinding(
+                        "CITATION_OUTSIDE_OBJECTIVE_EVIDENCE",
+                        index,
+                        "evidence ID does not resolve to the cited source receipt",
+                    )
+                )
+                continue
+            try:
+                enriched_citation = _resolved_locator(
+                    citation, source_text, support_evidence
+                )
+            except ValueError as exc:
+                findings.append(QualityFinding("CITATION_UNREACHABLE", index, str(exc)))
+                continue
             new_citations.append(enriched_citation)
+            cited_support.append((evidence_objective_id, support_evidence))
             cited = True
         if not cited:
             findings.append(QualityFinding("CITATION_MISSING", index, "at least one reachable citation is required"))
         else:
+            covered_claim_ids = {
+                (objective_id, claim_id)
+                for objective_id, item in cited_support
+                for claim_id in item.claim_ids
+            }
+            required_for_question = {
+                (objective_id, claim_id)
+                for objective_id in question.objective_ids
+                for claim_id in required_claim_ids.get(objective_id, [])
+            }
+            if not required_for_question.issubset(covered_claim_ids):
+                findings.append(
+                    QualityFinding(
+                        "REQUIRED_CLAIM_UNCOVERED",
+                        index,
+                        "cited support evidence does not cover every required claim",
+                    )
+                )
+            for objective_id in question.objective_ids:
+                covered_roles = {
+                    role
+                    for evidence_objective_id, item in cited_support
+                    if evidence_objective_id == objective_id
+                    for role in item.supports
+                }
+                if not {"answer", "explanation"}.issubset(covered_roles):
+                    findings.append(
+                        QualityFinding(
+                            "EVIDENCE_ROLE_UNCOVERED",
+                            index,
+                            "each objective's cited support must cover answer and explanation",
+                        )
+                    )
             # A question may cite multiple adjacent source fragments.  The
             # answer and explanation must be supported by the reachable set as
             # a whole, not redundantly by every individual fragment.
@@ -263,7 +351,41 @@ def validate_c3_output(
                         "explanation is not supported by the cited source set",
                     )
                 )
+            required_answer_values = {
+                unicodedata.normalize("NFC", answer).strip().casefold()
+                for objective_id in question.objective_ids
+                for answer in required_accepted_answers.get(objective_id, [])
+            }
+            provided_answer_values = {
+                unicodedata.normalize("NFC", answer).strip().casefold()
+                for answer in [
+                    question.answer_contract.answer,
+                    *question.answer_contract.accepted_answers,
+                ]
+            }
+            if not required_answer_values.issubset(provided_answer_values):
+                findings.append(
+                    QualityFinding(
+                        "ACCEPTED_ANSWER_VARIANTS_INCOMPLETE",
+                        index,
+                        "the exact-grade contract omits required bounded variants",
+                    )
+                )
         enriched.append(question.model_copy(update={"citations": new_citations}))
+
+    emitted_objectives = {
+        objective_id
+        for question in output.questions
+        for objective_id in question.objective_ids
+    }
+    if emitted_objectives != requested:
+        findings.append(
+            QualityFinding(
+                "REQUEST_OBJECTIVE_COVERAGE_INCOMPLETE",
+                None,
+                "generated questions must collectively cover every requested objective",
+            )
+        )
 
     if findings:
         raise ContentQualityError(findings)

@@ -232,7 +232,9 @@ def replay_manifest(manifest_path: Path) -> dict[str, Any]:
         filenames=manifest["source_files"],
     )
     evidence_fixture = json.loads(
-        (reference_root / "objective_evidence.json").read_text(encoding="utf-8")
+        (reference_root / "objective_evidence_roles_v2.json").read_text(
+            encoding="utf-8"
+        )
     )
     objective_evidence = [
         PracticeObjectiveEvidenceBinding.model_validate(binding)

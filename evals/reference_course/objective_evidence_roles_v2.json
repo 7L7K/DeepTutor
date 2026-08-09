@@ -1,0 +1,158 @@
+{
+  "schema_version": "c3-objective-evidence-v2",
+  "source_packet_revision": "reference-course-c3-v1",
+  "bindings": [
+    {
+      "objective_id": "OBJ-RESP-01",
+      "receipt": {
+        "source_id": "src_28c71d0eb20f02a9fa201979ebadc82f",
+        "source_revision": 1,
+        "content_sha256": "0f48b6e354accde0a2ed0026612e62854c2d0fd68668147b4b0a100a85d8bf65"
+      },
+      "context_evidence": [
+        {
+          "evidence_id": "ev_resp01_overview_01",
+          "quote": "**[00:00:00] Instructor:** Today we will follow one glucose molecule through",
+          "start_char": 47,
+          "end_char": 123,
+          "citation_eligible": false
+        },
+        {
+          "evidence_id": "ev_resp01_overview_02",
+          "quote": "cellular respiration. The pathway has four teaching stages: glycolysis,",
+          "start_char": 124,
+          "end_char": 195,
+          "citation_eligible": false
+        },
+        {
+          "evidence_id": "ev_resp01_overview_03",
+          "quote": "pyruvate oxidation, the citric acid cycle, and the electron transport chain",
+          "start_char": 196,
+          "end_char": 271,
+          "citation_eligible": false
+        },
+        {
+          "evidence_id": "ev_resp01_overview_04",
+          "quote": "with oxidative phosphorylation.",
+          "start_char": 272,
+          "end_char": 303,
+          "citation_eligible": false
+        }
+      ],
+      "support_evidence": [
+        {
+          "evidence_id": "ev_resp01_conversion",
+          "quote": "**[00:06:40] Instructor:** Pyruvate oxidation converts pyruvate to acetyl-CoA.",
+          "start_char": 479,
+          "end_char": 557,
+          "citation_eligible": true,
+          "supports": ["answer", "explanation"],
+          "claim_ids": ["pyruvate_to_acetyl_coa"]
+        },
+        {
+          "evidence_id": "ev_resp01_cycle_entry",
+          "quote": "The citric acid cycle then oxidizes the acetyl group and captures energy in",
+          "start_char": 558,
+          "end_char": 633,
+          "citation_eligible": true,
+          "supports": ["explanation"],
+          "claim_ids": ["acetyl_group_enters_cycle"]
+        }
+      ]
+    },
+    {
+      "objective_id": "OBJ-RESP-02",
+      "receipt": {
+        "source_id": "src_28c71d0eb20f02a9fa201979ebadc82f",
+        "source_revision": 1,
+        "content_sha256": "0f48b6e354accde0a2ed0026612e62854c2d0fd68668147b4b0a100a85d8bf65"
+      },
+      "context_evidence": [],
+      "support_evidence": [
+        {
+          "evidence_id": "ev_resp02_terminal_acceptor",
+          "quote": "**[00:13:05] Instructor:** Oxygen is the terminal electron acceptor at the end",
+          "start_char": 891,
+          "end_char": 969,
+          "citation_eligible": true,
+          "supports": ["answer", "explanation"],
+          "claim_ids": ["oxygen_is_terminal_acceptor"]
+        },
+        {
+          "evidence_id": "ev_resp02_accepts_electrons",
+          "quote": "of the aerobic electron transport chain. Oxygen accepts electrons and protons",
+          "start_char": 970,
+          "end_char": 1047,
+          "citation_eligible": true,
+          "supports": ["answer", "explanation"],
+          "claim_ids": ["oxygen_accepts_electrons_and_protons"]
+        },
+        {
+          "evidence_id": "ev_resp02_forms_water",
+          "quote": "to form water. Without that final acceptor, electron flow through the chain",
+          "start_char": 1048,
+          "end_char": 1123,
+          "citation_eligible": true,
+          "supports": ["answer", "explanation"],
+          "claim_ids": ["oxygen_forms_water"]
+        },
+        {
+          "evidence_id": "ev_resp02_flow_continues",
+          "quote": "cannot continue normally.",
+          "start_char": 1124,
+          "end_char": 1149,
+          "citation_eligible": true,
+          "supports": ["answer", "explanation"],
+          "claim_ids": ["terminal_acceptor_enables_flow"]
+        }
+      ]
+    },
+    {
+      "objective_id": "OBJ-RESP-03",
+      "receipt": {
+        "source_id": "src_28c71d0eb20f02a9fa201979ebadc82f",
+        "source_revision": 1,
+        "content_sha256": "0f48b6e354accde0a2ed0026612e62854c2d0fd68668147b4b0a100a85d8bf65"
+      },
+      "context_evidence": [],
+      "support_evidence": [
+        {
+          "evidence_id": "ev_resp03_fermentation_context",
+          "quote": "**[00:16:22] Instructor:** Fermentation does not replace glycolysis. It lets a",
+          "start_char": 1151,
+          "end_char": 1229,
+          "citation_eligible": true,
+          "supports": ["answer", "explanation"],
+          "claim_ids": ["fermentation_preserves_glycolysis"]
+        },
+        {
+          "evidence_id": "ev_resp03_regenerates_nad",
+          "quote": "cell keep glycolysis running by regenerating NAD+. Fermentation therefore uses",
+          "start_char": 1230,
+          "end_char": 1308,
+          "citation_eligible": true,
+          "supports": ["answer", "explanation"],
+          "claim_ids": ["fermentation_regenerates_nad"]
+        },
+        {
+          "evidence_id": "ev_resp03_no_oxygen_low_atp",
+          "quote": "no oxygen as a terminal electron acceptor and produces much less ATP per",
+          "start_char": 1309,
+          "end_char": 1381,
+          "citation_eligible": true,
+          "supports": ["answer", "explanation"],
+          "claim_ids": ["fermentation_no_oxygen_acceptor"]
+        },
+        {
+          "evidence_id": "ev_resp03_aerobic_comparison",
+          "quote": "glucose than aerobic respiration.",
+          "start_char": 1382,
+          "end_char": 1415,
+          "citation_eligible": true,
+          "supports": ["answer", "explanation"],
+          "claim_ids": ["fermentation_lower_atp"]
+        }
+      ]
+    }
+  ]
+}

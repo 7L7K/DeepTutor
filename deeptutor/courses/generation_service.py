@@ -14,7 +14,7 @@ from .generation_models import (
     PracticeGenerationPlan,
     PracticeGenerationPlanConfirmation,
     PracticeGenerationRequest,
-    PracticeObjectiveEvidenceBinding,
+    PracticeObjectiveEvidencePolicy,
 )
 from .generation_provider import (
     CourseSourceTextResolver,
@@ -84,8 +84,8 @@ def _default_account_active(user_id: str) -> bool:
 
 def _no_objective_evidence(
     _request: PracticeGenerationInput,
-) -> list[PracticeObjectiveEvidenceBinding]:
-    return []
+) -> PracticeObjectiveEvidencePolicy:
+    return PracticeObjectiveEvidencePolicy()
 
 
 class CoursePracticeGenerationService:
@@ -105,7 +105,7 @@ class CoursePracticeGenerationService:
         account_active: Callable[[str], bool] = _default_account_active,
         identity_lock: Callable[[], ContextManager[object]] = identity_write_lock,
         objective_evidence_resolver: Callable[
-            [PracticeGenerationInput], list[PracticeObjectiveEvidenceBinding]
+            [PracticeGenerationInput], PracticeObjectiveEvidencePolicy
         ] = _no_objective_evidence,
         provider_timeout_seconds: float = _DEFAULT_PROVIDER_TIMEOUT_SECONDS,
     ) -> None:
@@ -226,15 +226,22 @@ class CoursePracticeGenerationService:
                 quality_profile=operation.quality_profile,
             )
             if generation_request.quality_profile == "c3-biology-v1":
+                evidence_policy = self._objective_evidence_resolver(
+                    generation_request
+                )
                 generation_request = PracticeGenerationInput.model_validate(
                     {
                         **generation_request.model_dump(mode="python"),
                         "objective_evidence_bindings": [
                             binding.model_dump(mode="python")
-                            for binding in self._objective_evidence_resolver(
-                                generation_request
-                            )
+                            for binding in evidence_policy.bindings
                         ],
+                        "required_claim_ids_by_objective": (
+                            evidence_policy.required_claim_ids_by_objective
+                        ),
+                        "required_accepted_answers_by_objective": (
+                            evidence_policy.required_accepted_answers_by_objective
+                        ),
                     }
                 )
             output = self._generate_with_deadline(generation_request)

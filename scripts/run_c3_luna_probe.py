@@ -37,8 +37,8 @@ from deeptutor.services.config.text_generation_registry import (
 SOURCE_PACKET_REVISION = "reference-course-c3-v1"
 APPROVED_OBJECTIVE_IDS = ["OBJ-RESP-01", "OBJ-RESP-02", "OBJ-RESP-03"]
 SOURCE_FILENAMES = ["lecture_06_transcript.md", "lecture_06_slides.md"]
-OBJECTIVE_EVIDENCE_FILENAME = "objective_evidence.json"
-ASSESSMENT_CONTRACTS_FILENAME = "assessment_contracts.json"
+OBJECTIVE_EVIDENCE_FILENAME = "objective_evidence_roles_v2.json"
+ASSESSMENT_CONTRACTS_FILENAME = "assessment_contracts_evidence_roles_v2.json"
 
 
 class _RecordingResponses:
@@ -107,7 +107,7 @@ def _objective_evidence(
     )
     if (
         not isinstance(payload, dict)
-        or payload.get("schema_version") != "c3-objective-evidence-v1"
+        or payload.get("schema_version") != "c3-objective-evidence-v2"
         or payload.get("source_packet_revision") != SOURCE_PACKET_REVISION
         or not isinstance(payload.get("bindings"), list)
     ):
@@ -132,6 +132,8 @@ def _assessment_contracts(reference_root: Path) -> dict[str, dict[str, Any]]:
         "question_type",
         "qualification_focus",
         "expected_answer_concepts",
+        "required_claim_ids",
+        "required_accepted_answers",
         "prohibited_prompt_patterns",
     }
     if (
@@ -149,6 +151,9 @@ def _assessment_contracts(reference_root: Path) -> dict[str, dict[str, Any]]:
             or contract.get("question_type") != "short_answer"
             or not isinstance(contract.get("expected_answer_concepts"), list)
             or not contract["expected_answer_concepts"]
+            or not isinstance(contract.get("required_claim_ids"), list)
+            or not contract["required_claim_ids"]
+            or not isinstance(contract.get("required_accepted_answers"), list)
             or not isinstance(contract.get("prohibited_prompt_patterns"), list)
             or not contract["prohibited_prompt_patterns"]
         ):
@@ -240,7 +245,7 @@ def _request(
         else "none"
     )
     digest = hashlib.sha256(
-        f"c3-luna-assessment-v1:{mode}:{assessment_contract_id}".encode(
+        f"c3-luna-assessment-v2:{mode}:{assessment_contract_id}".encode(
             "utf-8"
         )
     ).hexdigest()
@@ -254,6 +259,19 @@ def _request(
         objective_ids=APPROVED_OBJECTIVE_IDS,
         requested_objective_ids=contract["requested_objective_ids"],
         objective_evidence_bindings=objective_evidence,
+        required_claim_ids_by_objective={
+            objective_id: list(assessment_contracts[objective_id]["required_claim_ids"])
+            for objective_id in contract["requested_objective_ids"]
+            if objective_id in assessment_contracts
+        },
+        required_accepted_answers_by_objective={
+            objective_id: list(
+                assessment_contracts[objective_id]["required_accepted_answers"]
+            )
+            for objective_id in contract["requested_objective_ids"]
+            if objective_id in assessment_contracts
+            and assessment_contracts[objective_id]["required_accepted_answers"]
+        },
         generation_purpose=contract["generation_purpose"],
         item_limit=contract["item_limit"],
         context_char_limit=24_000,
@@ -331,7 +349,7 @@ def main() -> int:
         client_factory=client_factory,
     )
     artifact: dict[str, Any] = {
-        "schema_version": "c3-luna-probe-receipt-v2",
+        "schema_version": "c3-luna-probe-receipt-v3",
         "case": args.mode,
         "fixture": "Biology 101 / fall-2026",
         "source_packet_revision": SOURCE_PACKET_REVISION,
@@ -353,6 +371,11 @@ def main() -> int:
         "assessment_contract_fixture_sha256": hashlib.sha256(
             (
                 args.reference_root.resolve() / ASSESSMENT_CONTRACTS_FILENAME
+            ).read_bytes()
+        ).hexdigest(),
+        "objective_evidence_fixture_sha256": hashlib.sha256(
+            (
+                args.reference_root.resolve() / OBJECTIVE_EVIDENCE_FILENAME
             ).read_bytes()
         ).hexdigest(),
     }

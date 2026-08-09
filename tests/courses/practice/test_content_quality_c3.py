@@ -30,13 +30,20 @@ from deeptutor.courses.generation_models import (
     GeneratedPracticeQuestion,
     GenerationSourceText,
     PracticeGenerationInput,
+    PracticeObjectiveContextEvidence,
     PracticeObjectiveEvidenceBinding,
+    PracticeObjectiveEvidencePolicy,
+    PracticeObjectiveSupportEvidence,
     build_practice_generation_request_contract,
 )
 from deeptutor.courses.generation_provider import PracticeGenerationProvider
 from deeptutor.courses.generation_repository import CoursePracticeGenerationRepository
 from deeptutor.courses.generation_service import CoursePracticeGenerationService
-from deeptutor.courses.practice_models import PracticeCitation, PracticeSourceReceipt
+from deeptutor.courses.practice_models import (
+    ExactAnswerContract,
+    PracticeCitation,
+    PracticeSourceReceipt,
+)
 from deeptutor.courses.practice_repository import CoursePracticeRepository
 from deeptutor.courses.practice_service import CoursePracticeService
 from deeptutor.courses.repository import CourseRepository
@@ -53,6 +60,51 @@ SOURCE_TEXT = (
 SOURCE_HASH = hashlib.sha256(SOURCE_TEXT.encode()).hexdigest()
 
 
+def _binding(
+    objective_id: str,
+    receipt: PracticeSourceReceipt,
+    source_text: str,
+    *,
+    support_quotes: list[str],
+    context_quotes: list[str] | None = None,
+    claim_ids_by_quote: dict[str, list[str]] | None = None,
+) -> PracticeObjectiveEvidenceBinding:
+    contexts = []
+    for ordinal, quote in enumerate(context_quotes or [], start=1):
+        start = source_text.find(quote)
+        assert start >= 0
+        contexts.append(
+            PracticeObjectiveContextEvidence(
+                evidence_id=f"ev_{objective_id.lower()}_context_{ordinal}",
+                quote=quote,
+                start_char=start,
+                end_char=start + len(quote),
+            )
+        )
+    support = []
+    for ordinal, quote in enumerate(support_quotes, start=1):
+        start = source_text.find(quote)
+        assert start >= 0
+        support.append(
+            PracticeObjectiveSupportEvidence(
+                evidence_id=f"ev_{objective_id.lower()}_support_{ordinal}",
+                quote=quote,
+                start_char=start,
+                end_char=start + len(quote),
+                supports=["answer", "explanation"],
+                claim_ids=(claim_ids_by_quote or {}).get(
+                    quote, [f"claim_{objective_id.lower()}_{ordinal}"]
+                ),
+            )
+        )
+    return PracticeObjectiveEvidenceBinding(
+        objective_id=objective_id,
+        receipt=receipt,
+        context_evidence=contexts,
+        support_evidence=support,
+    )
+
+
 def _request() -> tuple[PracticeGenerationInput, GenerationSourceText]:
     receipt = PracticeSourceReceipt(
         source_id="src_" + "a" * 32,
@@ -61,6 +113,15 @@ def _request() -> tuple[PracticeGenerationInput, GenerationSourceText]:
     )
     material = GenerationSourceText(receipt=receipt, text=SOURCE_TEXT)
     evidence_quote = "Oxygen accepts electrons and protons to form water."
+    binding = _binding(
+        "OBJ-RESP-02",
+        receipt,
+        SOURCE_TEXT,
+        support_quotes=[evidence_quote],
+        claim_ids_by_quote={
+            evidence_quote: ["oxygen_accepts_and_forms_water"]
+        },
+    )
     return (
         PracticeGenerationInput(
             operation_id="opg_" + "b" * 32,
@@ -70,13 +131,10 @@ def _request() -> tuple[PracticeGenerationInput, GenerationSourceText]:
             practice_set_revision_id="prv_" + "e" * 32,
             source_material=[material],
             objective_ids=["OBJ-RESP-02"],
-            objective_evidence_bindings=[
-                PracticeObjectiveEvidenceBinding(
-                    objective_id="OBJ-RESP-02",
-                    receipt=receipt,
-                    evidence_quotes=[evidence_quote],
-                )
-            ],
+            objective_evidence_bindings=[binding],
+            required_claim_ids_by_objective={
+                "OBJ-RESP-02": ["oxygen_accepts_and_forms_water"]
+            },
             item_limit=1,
             context_char_limit=12_000,
             focus="oxygen in aerobic respiration",
@@ -110,7 +168,18 @@ def _output(*, prompt: str = "What is oxygen's role at the end of aerobic respir
                 citations=[
                     PracticeCitation(
                         **material.receipt.model_dump(),
-                        locator={"evidence_quote": "Oxygen accepts electrons and protons to form water."},
+                        locator={
+                            "evidence_id": "ev_obj-resp-02_support_1",
+                            "evidence_quote": "Oxygen accepts electrons and protons to form water.",
+                            "offsets_version": "exact-char-v1",
+                            "start_char": SOURCE_TEXT.find(
+                                "Oxygen accepts electrons and protons to form water."
+                            ),
+                            "end_char": SOURCE_TEXT.find(
+                                "Oxygen accepts electrons and protons to form water."
+                            )
+                            + len("Oxygen accepts electrons and protons to form water."),
+                        },
                     )
                 ],
             )
@@ -172,19 +241,26 @@ def test_c3_validator_accepts_collective_citations_and_short_polarity_answer() -
         ),
         text=source_text,
     )
+    binding = _binding(
+        "OBJ-RESP-02",
+        material.receipt,
+        source_text,
+        support_quotes=[
+            "Fermentation does not replace glycolysis.",
+            "It lets a cell keep glycolysis running by regenerating NAD+.",
+        ],
+    )
     request = request.model_copy(update={"source_material": [material]})
     request = request.model_copy(
         update={
-            "objective_evidence_bindings": [
-                PracticeObjectiveEvidenceBinding(
-                    objective_id="OBJ-RESP-02",
-                    receipt=material.receipt,
-                    evidence_quotes=[
-                        "Fermentation does not replace glycolysis.",
-                        "It lets a cell keep glycolysis running by regenerating NAD+.",
-                    ],
-                )
-            ]
+            "objective_evidence_bindings": [binding],
+            "required_claim_ids_by_objective": {
+                "OBJ-RESP-02": [
+                    claim_id
+                    for evidence in binding.support_evidence
+                    for claim_id in evidence.claim_ids
+                ]
+            },
         }
     )
     question = GeneratedPracticeQuestion.model_validate(
@@ -195,11 +271,25 @@ def test_c3_validator_accepts_collective_citations_and_short_polarity_answer() -
             "citations": [
                 {
                     **material.receipt.model_dump(mode="json"),
-                    "locator": {"evidence_quote": "Fermentation does not replace glycolysis."},
+                    "locator": {
+                        "evidence_id": "ev_obj-resp-02_support_1",
+                        "evidence_quote": "Fermentation does not replace glycolysis.",
+                        "offsets_version": "exact-char-v1",
+                        "start_char": 0,
+                        "end_char": len("Fermentation does not replace glycolysis."),
+                    },
                 },
                 {
                     **material.receipt.model_dump(mode="json"),
-                    "locator": {"evidence_quote": "It lets a cell keep glycolysis running by regenerating NAD+."},
+                    "locator": {
+                        "evidence_id": "ev_obj-resp-02_support_2",
+                        "evidence_quote": "It lets a cell keep glycolysis running by regenerating NAD+.",
+                        "offsets_version": "exact-char-v1",
+                        "start_char": source_text.find(
+                            "It lets a cell keep glycolysis running by regenerating NAD+."
+                        ),
+                        "end_char": len(source_text),
+                    },
                 },
             ],
         }
@@ -283,6 +373,376 @@ def test_c3_validator_rejects_reachable_citation_outside_objective_binding() -> 
     }
 
 
+def test_c3_validator_accepts_support_evidence_while_context_remains_visible() -> None:
+    context = "The pathway has four teaching stages."
+    support = "Pyruvate is converted to acetyl-CoA."
+    source_text = f"{context}\n{support}"
+    receipt = PracticeSourceReceipt(
+        source_id="src_" + "7" * 32,
+        source_revision=1,
+        content_sha256=hashlib.sha256(source_text.encode()).hexdigest(),
+    )
+    material = GenerationSourceText(receipt=receipt, text=source_text)
+    binding = _binding(
+        "OBJ-RESP-01",
+        receipt,
+        source_text,
+        context_quotes=[context],
+        support_quotes=[support],
+        claim_ids_by_quote={support: ["pyruvate_to_acetyl_coa"]},
+    )
+    request, _old_material, template = _output()
+    request = request.model_copy(
+        update={
+            "source_material": [material],
+            "objective_ids": ["OBJ-RESP-01"],
+            "requested_objective_ids": ["OBJ-RESP-01"],
+            "objective_evidence_bindings": [binding],
+            "required_claim_ids_by_objective": {
+                "OBJ-RESP-01": ["pyruvate_to_acetyl_coa"]
+            },
+        }
+    )
+    evidence = binding.support_evidence[0]
+    question = template.questions[0].model_copy(
+        update={
+            "prompt": "What does pyruvate become during pyruvate oxidation?",
+            "answer_contract": ExactAnswerContract.model_validate({
+                "kind": "exact",
+                "answer": "acetyl-CoA",
+                "accepted_answers": ["acetyl CoA", "acetyl coenzyme A"],
+            }),
+            "explanation": "Pyruvate is converted to acetyl-CoA.",
+            "objective_ids": ["OBJ-RESP-01"],
+            "citations": [
+                PracticeCitation(
+                    **receipt.model_dump(),
+                    locator={
+                        "evidence_id": evidence.evidence_id,
+                        "evidence_quote": evidence.quote,
+                        "offsets_version": "exact-char-v1",
+                        "start_char": evidence.start_char,
+                        "end_char": evidence.end_char,
+                    },
+                )
+            ],
+        }
+    )
+    output = template.model_copy(
+        update={
+            "request_contract": build_practice_generation_request_contract(request),
+            "questions": [question],
+        }
+    )
+
+    checked = validate_c3_output(
+        request=request, output=output, material=[material]
+    )
+
+    assert checked.questions[0].citations[0].locator["evidence_id"] == (
+        evidence.evidence_id
+    )
+
+
+def test_c3_validator_rejects_context_evidence_as_citation() -> None:
+    context = "The pathway has four teaching stages."
+    support = "Pyruvate is converted to acetyl-CoA."
+    source_text = f"{context}\n{support}"
+    receipt = PracticeSourceReceipt(
+        source_id="src_" + "8" * 32,
+        source_revision=1,
+        content_sha256=hashlib.sha256(source_text.encode()).hexdigest(),
+    )
+    material = GenerationSourceText(receipt=receipt, text=source_text)
+    binding = _binding(
+        "OBJ-RESP-01",
+        receipt,
+        source_text,
+        context_quotes=[context],
+        support_quotes=[support],
+    )
+    request, _old_material, output = _output()
+    request = request.model_copy(
+        update={
+            "source_material": [material],
+            "objective_ids": ["OBJ-RESP-01"],
+            "requested_objective_ids": ["OBJ-RESP-01"],
+            "objective_evidence_bindings": [binding],
+        }
+    )
+    evidence = binding.context_evidence[0]
+    question = output.questions[0].model_copy(
+        update={
+            "objective_ids": ["OBJ-RESP-01"],
+            "citations": [
+                PracticeCitation(
+                    **receipt.model_dump(),
+                    locator={
+                        "evidence_id": evidence.evidence_id,
+                        "evidence_quote": evidence.quote,
+                        "offsets_version": "exact-char-v1",
+                        "start_char": evidence.start_char,
+                        "end_char": evidence.end_char,
+                    },
+                )
+            ],
+        }
+    )
+    output = output.model_copy(
+        update={
+            "request_contract": build_practice_generation_request_contract(request),
+            "questions": [question],
+        }
+    )
+
+    with pytest.raises(ContentQualityError) as raised:
+        validate_c3_output(request=request, output=output, material=[material])
+
+    assert "CITATION_CONTEXT_ONLY" in {
+        item.code for item in raised.value.findings
+    }
+
+
+def test_c3_validator_rejects_support_without_required_claim_coverage() -> None:
+    identity = (
+        "Oxygen is the terminal electron acceptor at the end of the aerobic "
+        "electron transport chain."
+    )
+    causal = "Oxygen accepts electrons and protons to form water."
+    request, material, output = _output()
+    binding = _binding(
+        "OBJ-RESP-02",
+        material.receipt,
+        material.text,
+        support_quotes=[identity, causal],
+        claim_ids_by_quote={
+            identity: ["oxygen_is_terminal_acceptor"],
+            causal: ["oxygen_accepts_and_forms_water"],
+        },
+    )
+    request = request.model_copy(
+        update={
+            "objective_evidence_bindings": [binding],
+            "required_claim_ids_by_objective": {
+                "OBJ-RESP-02": ["oxygen_accepts_and_forms_water"]
+            },
+        }
+    )
+    evidence = binding.support_evidence[0]
+    question = output.questions[0].model_copy(
+        update={
+            "citations": [
+                PracticeCitation(
+                    **material.receipt.model_dump(),
+                    locator={
+                        "evidence_id": evidence.evidence_id,
+                        "evidence_quote": evidence.quote,
+                        "offsets_version": "exact-char-v1",
+                        "start_char": evidence.start_char,
+                        "end_char": evidence.end_char,
+                    },
+                )
+            ]
+        }
+    )
+    output = output.model_copy(
+        update={
+            "request_contract": build_practice_generation_request_contract(request),
+            "questions": [question],
+        }
+    )
+
+    with pytest.raises(ContentQualityError) as raised:
+        validate_c3_output(request=request, output=output, material=[material])
+
+    assert "REQUIRED_CLAIM_UNCOVERED" in {
+        item.code for item in raised.value.findings
+    }
+
+
+def test_c3_validator_requires_a_claim_contract_for_every_requested_objective() -> None:
+    request, material, output = _output()
+    request = request.model_copy(update={"required_claim_ids_by_objective": {}})
+    output = output.model_copy(
+        update={
+            "request_contract": build_practice_generation_request_contract(request)
+        }
+    )
+
+    with pytest.raises(ContentQualityError) as raised:
+        validate_c3_output(request=request, output=output, material=[material])
+
+    assert "REQUIRED_CLAIM_CONTRACT_MISSING" in {
+        item.code for item in raised.value.findings
+    }
+
+
+@pytest.mark.parametrize(
+    ("question_objectives", "expected_code"),
+    [
+        (["OBJ-A", "OBJ-B"], "REQUIRED_CLAIM_UNCOVERED"),
+        (["OBJ-A"], "REQUEST_OBJECTIVE_COVERAGE_INCOMPLETE"),
+    ],
+)
+def test_c3_validator_enforces_objective_qualified_claims_and_aggregate_coverage(
+    question_objectives: list[str],
+    expected_code: str,
+) -> None:
+    line_a = "Objective A has its own supporting fact."
+    line_b = "Objective B has a different supporting fact."
+    source_text = f"{line_a}\n{line_b}"
+    receipt = PracticeSourceReceipt(
+        source_id="src_" + "9" * 32,
+        source_revision=1,
+        content_sha256=hashlib.sha256(source_text.encode()).hexdigest(),
+    )
+    material = GenerationSourceText(receipt=receipt, text=source_text)
+    binding_a = _binding(
+        "OBJ-A",
+        receipt,
+        source_text,
+        support_quotes=[line_a],
+        claim_ids_by_quote={line_a: ["shared_claim_name"]},
+    )
+    binding_b = _binding(
+        "OBJ-B",
+        receipt,
+        source_text,
+        support_quotes=[line_b],
+        claim_ids_by_quote={line_b: ["shared_claim_name"]},
+    )
+    request, _old_material, template = _output()
+    request = PracticeGenerationInput.model_validate(
+        {
+            **request.model_dump(mode="python"),
+            "source_material": [material.model_dump(mode="python")],
+            "objective_ids": ["OBJ-A", "OBJ-B"],
+            "requested_objective_ids": ["OBJ-A", "OBJ-B"],
+            "objective_evidence_bindings": [
+                binding_a.model_dump(mode="python"),
+                binding_b.model_dump(mode="python"),
+            ],
+            "required_claim_ids_by_objective": {
+                "OBJ-A": ["shared_claim_name"],
+                "OBJ-B": ["shared_claim_name"],
+            },
+        }
+    )
+    evidence = binding_a.support_evidence[0]
+    question = template.questions[0].model_copy(
+        update={
+            "prompt": "What supporting fact belongs to Objective A?",
+            "answer_contract": ExactAnswerContract(
+                kind="exact", answer="Objective A has its own supporting fact."
+            ),
+            "explanation": "Objective A has its own supporting fact.",
+            "objective_ids": question_objectives,
+            "citations": [
+                PracticeCitation(
+                    **receipt.model_dump(),
+                    locator={
+                        "evidence_id": evidence.evidence_id,
+                        "evidence_quote": evidence.quote,
+                        "offsets_version": "exact-char-v1",
+                        "start_char": evidence.start_char,
+                        "end_char": evidence.end_char,
+                    },
+                )
+            ],
+        }
+    )
+    output = template.model_copy(
+        update={
+            "request_contract": build_practice_generation_request_contract(request),
+            "questions": [question],
+        }
+    )
+
+    with pytest.raises(ContentQualityError) as raised:
+        validate_c3_output(request=request, output=output, material=[material])
+
+    assert expected_code in {
+        item.code for item in raised.value.findings
+    }
+
+
+def test_c3_validator_enforces_required_exact_answer_variants_at_publication() -> None:
+    context = "The pathway has four teaching stages."
+    support = "Pyruvate is converted to acetyl-CoA."
+    source_text = f"{context}\n{support}"
+    receipt = PracticeSourceReceipt(
+        source_id="src_" + "6" * 32,
+        source_revision=1,
+        content_sha256=hashlib.sha256(source_text.encode()).hexdigest(),
+    )
+    material = GenerationSourceText(receipt=receipt, text=source_text)
+    binding = _binding(
+        "OBJ-RESP-01",
+        receipt,
+        source_text,
+        context_quotes=[context],
+        support_quotes=[support],
+        claim_ids_by_quote={support: ["pyruvate_to_acetyl_coa"]},
+    )
+    request, _old_material, template = _output()
+    request = PracticeGenerationInput.model_validate(
+        {
+            **request.model_dump(mode="python"),
+            "source_material": [material.model_dump(mode="python")],
+            "objective_ids": ["OBJ-RESP-01"],
+            "requested_objective_ids": ["OBJ-RESP-01"],
+            "objective_evidence_bindings": [binding.model_dump(mode="python")],
+            "required_claim_ids_by_objective": {
+                "OBJ-RESP-01": ["pyruvate_to_acetyl_coa"]
+            },
+            "required_accepted_answers_by_objective": {
+                "OBJ-RESP-01": [
+                    "Pyruvate is converted to acetyl CoA.",
+                    "Pyruvate is converted to acetyl coenzyme A.",
+                ]
+            },
+        }
+    )
+    evidence = binding.support_evidence[0]
+    question = template.questions[0].model_copy(
+        update={
+            "prompt": "What conversion links pyruvate to the citric acid cycle?",
+            "answer_contract": ExactAnswerContract(
+                kind="exact",
+                answer="Pyruvate is converted to acetyl-CoA.",
+                accepted_answers=["Pyruvate is converted to acetyl CoA."],
+            ),
+            "explanation": support,
+            "objective_ids": ["OBJ-RESP-01"],
+            "citations": [
+                PracticeCitation(
+                    **receipt.model_dump(),
+                    locator={
+                        "evidence_id": evidence.evidence_id,
+                        "evidence_quote": evidence.quote,
+                        "offsets_version": "exact-char-v1",
+                        "start_char": evidence.start_char,
+                        "end_char": evidence.end_char,
+                    },
+                )
+            ],
+        }
+    )
+    output = template.model_copy(
+        update={
+            "request_contract": build_practice_generation_request_contract(request),
+            "questions": [question],
+        }
+    )
+
+    with pytest.raises(ContentQualityError) as raised:
+        validate_c3_output(request=request, output=output, material=[material])
+
+    assert "ACCEPTED_ANSWER_VARIANTS_INCOMPLETE" in {
+        item.code for item in raised.value.findings
+    }
+
+
 class _Provider:
     def generate(self, request):
         _request_data, material, output = _output()
@@ -292,12 +752,19 @@ class _Provider:
         # that contract so the integration test exercises the publication
         # fence rather than failing on a test-only source mismatch.
         resolved_material = request.source_material[0]
+        support = request.objective_evidence_bindings[0].support_evidence[0]
         question = output.questions[0].model_copy(
             update={
                 "citations": [
                     PracticeCitation(
                         **resolved_material.receipt.model_dump(),
-                        locator={"evidence_quote": "Oxygen accepts electrons and protons to form water."},
+                        locator={
+                            "evidence_id": support.evidence_id,
+                            "evidence_quote": support.quote,
+                            "offsets_version": "exact-char-v1",
+                            "start_char": support.start_char,
+                            "end_char": support.end_char,
+                        },
                     )
                 ]
             }
@@ -319,16 +786,48 @@ class _Resolver:
 
 def _objective_evidence(
     request: PracticeGenerationInput,
-) -> list[PracticeObjectiveEvidenceBinding]:
-    return [
-        PracticeObjectiveEvidenceBinding(
-            objective_id="OBJ-RESP-02",
-            receipt=request.source_material[0].receipt,
-            evidence_quotes=[
+) -> PracticeObjectiveEvidencePolicy:
+    binding = _binding(
+            "OBJ-RESP-02",
+            request.source_material[0].receipt,
+            request.source_material[0].text,
+            support_quotes=[
                 "Oxygen accepts electrons and protons to form water."
             ],
-        )
-    ]
+            claim_ids_by_quote={
+                "Oxygen accepts electrons and protons to form water.": [
+                    "oxygen_accepts_and_forms_water"
+                ]
+            },
+    )
+    return PracticeObjectiveEvidencePolicy(
+        bindings=[binding],
+        required_claim_ids_by_objective={
+            "OBJ-RESP-02": ["oxygen_accepts_and_forms_water"]
+        },
+    )
+
+
+def _objective_evidence_without_required_claims(
+    request: PracticeGenerationInput,
+) -> PracticeObjectiveEvidencePolicy:
+    return _objective_evidence(request).model_copy(
+        update={"required_claim_ids_by_objective": {}}
+    )
+
+
+def _objective_evidence_with_missing_required_variant(
+    request: PracticeGenerationInput,
+) -> PracticeObjectiveEvidencePolicy:
+    return _objective_evidence(request).model_copy(
+        update={
+            "required_accepted_answers_by_objective": {
+                "OBJ-RESP-02": [
+                    "Oxygen accepts electrons and protons to form water."
+                ]
+            }
+        }
+    )
 
 
 class _AbstainingProvider:
@@ -395,6 +894,64 @@ def test_c3_quality_profile_validates_before_ready_publication(tmp_path: Path) -
     assert revision.generation_receipt["content_quality"] == "passed"
     question = practice.list_questions(course.id, completed.practice_set_id, revision.id)[0]
     assert question.citations[0].locator["start_char"] >= 0
+
+
+@pytest.mark.parametrize(
+    ("policy_resolver", "idempotency_key"),
+    [
+        (
+            _objective_evidence_without_required_claims,
+            "c3-missing-required-claim-policy",
+        ),
+        (
+            _objective_evidence_with_missing_required_variant,
+            "c3-missing-required-answer-variant",
+        ),
+    ],
+)
+def test_c3_service_fails_closed_when_policy_or_answer_variants_are_incomplete(
+    tmp_path: Path,
+    policy_resolver,
+    idempotency_key: str,
+) -> None:
+    repo = CourseRepository(tmp_path / "courses.db", "u_alice")
+    course = repo.create_course("Biology 101")
+    source = _ready_source(repo, course.id)
+    service = CoursePracticeGenerationService(
+        CoursePracticeGenerationRepository(repo),
+        provider=_Provider(),
+        source_text_resolver=_Resolver(),
+        account_active=lambda _owner: True,
+        identity_lock=lambda: nullcontext(),
+        objective_evidence_resolver=policy_resolver,
+    )
+    requested = service.create_generated_practice(
+        course.id,
+        title="Fail-closed C3 policy probe",
+        source_ids=[source.id],
+        objective_ids=["OBJ-RESP-02"],
+        idempotency_key=idempotency_key,
+        expected_course_write_epoch=repo.get_course(course.id).write_epoch,
+        item_limit=1,
+        quality_profile=C3_BIOLOGY_PROFILE,
+    )
+
+    terminal = service.run_operation(course.id, requested.operation.id)
+
+    assert (terminal.state, terminal.error_code) == ("failed", "invalid_output")
+    practice = CoursePracticeService(CoursePracticeRepository(repo))
+    revision = practice.get_revision(
+        course.id,
+        terminal.practice_set_id,
+        terminal.practice_set_revision_id,
+    )
+    assert revision.state == "draft"
+    assert revision.generation_receipt is None
+    assert practice.list_questions(
+        course.id,
+        terminal.practice_set_id,
+        terminal.practice_set_revision_id,
+    ) == []
 
 
 def test_c3_abstention_leaves_draft_empty_and_never_publishes(
