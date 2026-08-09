@@ -164,17 +164,35 @@ export function consumePracticePlanHandoff(
   }
 }
 
+export interface SingleChoiceOption {
+  option_id: string;
+  text: string;
+}
+
+export type PracticeAnswerContract =
+  | { kind: "exact"; answer: string }
+  | {
+      kind: "bounded_short_answer_v1";
+      canonical_answer: string;
+      accepted_normalized_answers: string[];
+      normalization_version: "bounded-text-normalization-v1";
+    }
+  | { kind: "single_choice_v1"; correct_option_id: string };
+
 export interface PracticeQuestion {
   id: string;
   practice_set_revision_id: string;
-  question_type: string;
+  question_type: "short_answer" | "single_choice";
   prompt: string;
+  /** Learner-safe choices; correctness remains server-owned until grading. */
+  options: SingleChoiceOption[];
   /** Present only in the draft-authoring response; never trusted by quiz UI. */
-  answer_contract?: { kind: "exact"; answer: string };
+  answer_contract?: PracticeAnswerContract;
   /** Revealed only for draft authoring or after the owned attempt is graded. */
   explanation?: string;
   objective_ids: string[];
-  citations: Array<Record<string, unknown>>;
+  /** Revealed only after grading because locators can contain answer-adjacent evidence. */
+  citations?: Array<Record<string, unknown>>;
   content_quality?: "valid" | "invalidated";
   ordinal: number;
   created_at: number;
@@ -197,6 +215,8 @@ export interface QuizAttempt {
   graded_at: number | null;
   archived_at: number | null;
   updated_at: number;
+  /** Learner history never presents a superseded invalidated raw score. */
+  content_quality?: "valid" | "adjusted_for_invalidated_question";
 }
 
 export interface QuizAttemptItem {
@@ -209,19 +229,145 @@ export interface QuizAttemptItem {
   grading: Record<string, unknown> | null;
   error_type: string | null;
   graded_at: number | null;
+  /** Present in Results; invalidated items are withdrawn from score authority. */
+  content_quality?: "valid" | "invalidated";
 }
+
+export type QuizAttemptResponse = { answer: string } | { option_id: string };
 
 export interface QuizAttemptAnswer {
   attempt_item_id: string;
-  response: { answer: string } | null;
+  response: QuizAttemptResponse | null;
   revision: number;
   answered_at: number | null;
+}
+
+export type PracticeAnswerSaveState =
+  | { state: "saving" }
+  | { state: "saved" }
+  | { state: "error"; message: string };
+
+export interface PracticeAnswerSaveQueue {
+  enqueue: (itemId: string, response: QuizAttemptResponse) => void;
+  flush: (
+    itemId: string,
+    save: (
+      answer: QuizAttemptAnswer,
+      response: QuizAttemptResponse,
+      idempotencyKey: string,
+    ) => Promise<QuizAttemptAnswer>,
+    onState?: (itemId: string, state: PracticeAnswerSaveState) => void,
+  ) => Promise<boolean>;
+  hasPending: (itemId: string) => boolean;
+  getAnswer: (itemId: string) => QuizAttemptAnswer | null;
+  syncAnswer: (answer: QuizAttemptAnswer) => void;
+}
+
+/**
+ * Serialize answer writes per attempt item. A failed head write stays queued
+ * with the same idempotency key; the key rotates only after that write is
+ * durably acknowledged, so a later response can never race answer_revision.
+ */
+export function createPracticeAnswerSaveQueue({
+  initialAnswers,
+  createIdempotencyKey,
+}: {
+  initialAnswers: QuizAttemptAnswer[];
+  createIdempotencyKey: () => string;
+}): PracticeAnswerSaveQueue {
+  const answers = new Map(
+    initialAnswers.map((answer) => [answer.attempt_item_id, answer]),
+  );
+  const queued = new Map<string, QuizAttemptResponse[]>();
+  const keys = new Map<string, string>();
+  const running = new Map<string, Promise<boolean>>();
+
+  const sameResponse = (left: QuizAttemptResponse, right: QuizAttemptResponse) =>
+    "answer" in left && "answer" in right
+      ? left.answer === right.answer
+      : "option_id" in left && "option_id" in right
+        ? left.option_id === right.option_id
+        : false;
+
+  const enqueue = (itemId: string, response: QuizAttemptResponse) => {
+    const itemQueue = queued.get(itemId) ?? [];
+    if (!itemQueue.length || !sameResponse(itemQueue[itemQueue.length - 1]!, response)) {
+      itemQueue.push(response);
+      queued.set(itemId, itemQueue);
+    }
+  };
+
+  const flush: PracticeAnswerSaveQueue["flush"] = async (itemId, save, onState) => {
+    const active = running.get(itemId);
+    if (active) {
+      const succeeded = await active;
+      if (!succeeded) return false;
+      return (queued.get(itemId)?.length ?? 0) ? flush(itemId, save, onState) : true;
+    }
+
+    const operation = (async () => {
+      const itemQueue = queued.get(itemId);
+      while (itemQueue?.length) {
+        const answer = answers.get(itemId) ?? null;
+        if (!answer) {
+          onState?.(itemId, {
+            state: "error",
+            message: "The saved answer revision is unavailable.",
+          });
+          return false;
+        }
+        const response = itemQueue[0]!;
+        const idempotencyKey = keys.get(itemId) ?? createIdempotencyKey();
+        keys.set(itemId, idempotencyKey);
+        onState?.(itemId, { state: "saving" });
+        try {
+          const saved = await save(answer, response, idempotencyKey);
+          answers.set(saved.attempt_item_id, saved);
+          itemQueue.shift();
+          keys.set(itemId, createIdempotencyKey());
+          onState?.(itemId, { state: "saved" });
+        } catch (cause) {
+          onState?.(itemId, {
+            state: "error",
+            message: cause instanceof Error ? cause.message : "Answer save failed.",
+          });
+          return false;
+        }
+      }
+      queued.delete(itemId);
+      return true;
+    })();
+
+    running.set(itemId, operation);
+    try {
+      return await operation;
+    } finally {
+      if (running.get(itemId) === operation) running.delete(itemId);
+    }
+  };
+
+  return {
+    enqueue,
+    flush,
+    hasPending: (itemId: string) => Boolean(queued.get(itemId)?.length || running.has(itemId)),
+    getAnswer: (itemId: string) => answers.get(itemId) ?? null,
+    syncAnswer: (answer: QuizAttemptAnswer) => {
+      const known = answers.get(answer.attempt_item_id);
+      if (!known || answer.revision >= known.revision) {
+        answers.set(answer.attempt_item_id, answer);
+      }
+    },
+  };
 }
 
 export interface QuizAttemptView {
   attempt: QuizAttempt;
   items: QuizAttemptItem[];
   answers: QuizAttemptAnswer[];
+  content_quality?: {
+    invalidated_question_ids?: string[];
+    status?: "valid" | "adjusted_for_invalidated_question";
+  };
 }
 
 export interface QuizResult extends QuizAttemptView {
@@ -231,6 +377,108 @@ export interface QuizResult extends QuizAttemptView {
   content_quality?: {
     invalidated_question_ids?: string[];
     invalidated_evidence_ids?: string[];
+    status?: "valid" | "adjusted_for_invalidated_question";
+  };
+}
+
+export interface PracticeResultsPresentation {
+  headline: string;
+  guidance: string;
+  hasMisses: boolean;
+}
+
+export interface PracticeRevisionAvailability {
+  totalQuestionCount: number;
+  validQuestionCount: number;
+  canStart: boolean;
+  status: "Ready for quiz attempts" | "No trustworthy questions remain";
+}
+
+/** Derive attempt admission from server-owned content quality, not revision state. */
+export function practiceRevisionAvailability(
+  questions: PracticeQuestion[],
+): PracticeRevisionAvailability {
+  const validQuestionCount = questions.filter(
+    (question) => question.content_quality !== "invalidated",
+  ).length;
+  return {
+    totalQuestionCount: questions.length,
+    validQuestionCount,
+    canStart: validQuestionCount > 0,
+    status: validQuestionCount > 0
+      ? "Ready for quiz attempts"
+      : "No trustworthy questions remain",
+  };
+}
+
+/** Keep zero-effective-total Results distinct from a perfect scored attempt. */
+export function practiceResultsPresentation(
+  score: QuizAttempt["score"] | undefined,
+  fallbackTotal = 0,
+): PracticeResultsPresentation {
+  const correct = typeof score?.correct === "number" ? score.correct : 0;
+  const total = typeof score?.total === "number" ? score.total : fallbackTotal;
+  if (total === 0) {
+    return {
+      headline: "No scored questions remain after review",
+      guidance: "Withdrawn questions are excluded from your score and learning evidence.",
+      hasMisses: false,
+    };
+  }
+  const hasMisses = correct < total;
+  return {
+    headline: `${correct} correct out of ${total}`,
+    guidance: hasMisses
+      ? "Review the missed answers and explanations below."
+      : "You got every question correct.",
+    hasMisses,
+  };
+}
+
+/**
+ * Defense in depth for learner Results: an invalidated row cannot retain an
+ * answer key, rationale, citations, or a correctness decision even if a stale
+ * server accidentally includes those historical fields.
+ */
+export function withdrawInvalidatedPracticeResults(result: QuizResult): QuizResult {
+  const invalidatedQuestionIds = new Set(
+    result.content_quality?.invalidated_question_ids ?? [],
+  );
+  for (const question of result.questions) {
+    if (question.content_quality === "invalidated") {
+      invalidatedQuestionIds.add(question.id);
+    }
+  }
+  for (const item of result.items) {
+    if (item.content_quality === "invalidated") {
+      invalidatedQuestionIds.add(item.question_id);
+    }
+  }
+
+  return {
+    ...result,
+    attempt: invalidatedQuestionIds.size
+      ? {
+          ...result.attempt,
+          score: null,
+          content_quality: "adjusted_for_invalidated_question",
+        }
+      : result.attempt,
+    items: result.items.map((item) =>
+      invalidatedQuestionIds.has(item.question_id)
+        ? { ...item, grading: null, error_type: null, content_quality: "invalidated" }
+        : item,
+    ),
+    questions: result.questions.map((question) => {
+      if (!invalidatedQuestionIds.has(question.id)) return question;
+      const {
+        answer_contract: _answerContract,
+        explanation: _explanation,
+        citations: _citations,
+        ...withdrawn
+      } = question;
+      return { ...withdrawn, content_quality: "invalidated" };
+    }),
   };
 }
 
@@ -254,6 +502,13 @@ export function formatPracticeScore(
     return null;
   }
   return `${Math.round((correct / total) * 100)}% (${correct}/${total})`;
+}
+
+export function practiceAttemptHistoryLabel(attempt: QuizAttempt): string | null {
+  if (attempt.content_quality === "adjusted_for_invalidated_question") {
+    return "Adjusted after review";
+  }
+  return formatPracticeScore(attempt.score);
 }
 
 export interface PracticeRequestScope {
@@ -288,15 +543,45 @@ export function hasUnsavedPracticeAnswers(
   answers: QuizAttemptAnswer[],
 ): boolean {
   return answers.some(
-    (answer) => (values[answer.attempt_item_id] ?? "") !== (answer.response?.answer ?? ""),
+    (answer) =>
+      (values[answer.attempt_item_id] ?? "") !== practiceResponseValue(answer.response),
   );
 }
 
-/** Do not keep draft answer contracts in the browser once a revision is ready. */
+/** Return the one learner-visible value from the strict autosave response union. */
+export function practiceResponseValue(response: QuizAttemptResponse | null): string {
+  if (!response) return "";
+  return "answer" in response ? response.answer : response.option_id;
+}
+
+/** Resolve choices only through the server-frozen attempt presentation. */
+export function orderedPracticeOptions(
+  question: PracticeQuestion,
+  item: QuizAttemptItem,
+): SingleChoiceOption[] {
+  if (question.question_type !== "single_choice" || !item.option_order) return [];
+  const byId = new Map(question.options.map((option) => [option.option_id, option]));
+  if (
+    byId.size !== question.options.length ||
+    item.option_order.length !== byId.size ||
+    new Set(item.option_order).size !== item.option_order.length ||
+    item.option_order.some((optionId) => !byId.has(optionId))
+  ) {
+    return [];
+  }
+  return item.option_order.map((optionId) => byId.get(optionId)!);
+}
+
+/** Do not keep answer-adjacent draft fields once a revision is ready. */
 export function learnerSafePracticeQuestions(
   questions: PracticeQuestion[],
 ): PracticeQuestion[] {
-  return questions.map(({ answer_contract: _answerContract, ...question }) => question);
+  return questions.map(({
+    answer_contract: _answerContract,
+    explanation: _explanation,
+    citations: _citations,
+    ...question
+  }) => question);
 }
 
 async function json<T>(response: Response | Promise<Response>): Promise<T> {
@@ -514,9 +799,10 @@ export function addPracticeQuestion(
   practiceSetId: string,
   revisionId: string,
   body: {
-    question_type: string;
+    question_type: PracticeQuestion["question_type"];
     prompt: string;
-    answer_contract: { kind: "exact"; answer: string };
+    options?: SingleChoiceOption[];
+    answer_contract: PracticeAnswerContract;
     explanation: string;
     objective_ids: string[];
     expected_course_write_epoch: number;
@@ -561,7 +847,7 @@ export async function listPracticeAttempts(
 }
 
 export function getPracticeAttempt(courseId: string, practiceSetId: string, attemptId: string) {
-  return json<QuizResult>(apiFetch(apiUrl(path(
+  return json<QuizAttemptView>(apiFetch(apiUrl(path(
     courseId,
     `/${encodeURIComponent(practiceSetId)}/attempts/${encodeURIComponent(attemptId)}`,
   )), { cache: "no-store" }));
@@ -572,7 +858,7 @@ export function autosavePracticeAnswer(
   practiceSet: PracticeSet,
   attempt: QuizAttempt,
   answer: QuizAttemptAnswer,
-  response: { answer: string },
+  response: QuizAttemptResponse,
   idempotencyKey: string,
 ) {
   return json<QuizAttemptAnswer>(apiFetch(apiUrl(path(
@@ -613,11 +899,12 @@ export const abandonPracticeAttempt = (courseId: string, practiceSet: PracticeSe
 export const gradePracticeAttempt = (courseId: string, practiceSet: PracticeSet, attempt: QuizAttempt) =>
   mutateAttempt(courseId, practiceSet, attempt, "grade");
 
-export function getPracticeResults(courseId: string, practiceSetId: string, attemptId: string) {
-  return json<QuizResult>(apiFetch(apiUrl(path(
+export async function getPracticeResults(courseId: string, practiceSetId: string, attemptId: string) {
+  const result = await json<QuizResult>(apiFetch(apiUrl(path(
     courseId,
     `/${encodeURIComponent(practiceSetId)}/attempts/${encodeURIComponent(attemptId)}/results`,
   )), { cache: "no-store" }));
+  return withdrawInvalidatedPracticeResults(result);
 }
 
 export function reportPracticeQuestion(

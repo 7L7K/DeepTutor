@@ -23,7 +23,7 @@ import {
   cancelPracticeGenerationOperation,
   confirmPracticeGenerationPlan,
   consumePracticePlanHandoff,
-  formatPracticeScore,
+  createPracticeAnswerSaveQueue,
   getPracticeAttempt,
   getPracticeSet,
   getPracticeResults,
@@ -38,7 +38,12 @@ import {
   listPracticeAttempts,
   listPracticeQuestions,
   listPracticeSets,
+  orderedPracticeOptions,
+  practiceResponseValue,
+  practiceRevisionAvailability,
+  practiceAttemptHistoryLabel,
   preparePracticeRemediationFlashcards,
+  practiceResultsPresentation,
   practiceLibrarySets,
   reportPracticeQuestion,
   readyPracticeRevision,
@@ -51,8 +56,10 @@ import {
   type PracticeRequestScope,
   type PracticeRevision,
   type PracticeSet,
+  type PracticeAnswerSaveState,
   type QuizAttempt,
   type QuizAttemptAnswer,
+  type QuizAttemptResponse,
   type QuizAttemptView,
   type QuizResult,
   updatePracticeGenerationPlan,
@@ -102,6 +109,16 @@ const emptyQuestion: QuestionDraft = {
   explanation: "",
   objectiveIds: "",
 };
+
+const ALL_QUESTIONS_WITHDRAWN_MESSAGE =
+  "All questions in this revision were withdrawn after review.";
+const QUESTION_WITHDRAWN_LABEL = "Withdrawn after review";
+const REPORTED_AND_WITHDRAWN_LABEL = "Reported and withdrawn";
+const WITHDRAWN_ATTEMPT_MESSAGE =
+  "This attempt contains a question withdrawn after review. Answers and submission are locked; leave this attempt to start a trustworthy replacement.";
+const WITHDRAWN_SUBMITTED_MESSAGE =
+  "A question was withdrawn after review, so this attempt cannot be graded.";
+const SUBMITTED_MESSAGE = "Grade the quiz to see your results and explanations.";
 
 /** Private Course Practice workspace with durable manual and grounded quiz flows. */
 export default function PracticeWorkspace({
@@ -179,6 +196,10 @@ export default function PracticeWorkspace({
   );
   const courseWritable = activeCourse?.state === "active" && courseReady;
   const readOnly = !courseWritable || selectedSet?.state === "archived";
+  const revisionAvailability = useMemo(
+    () => practiceRevisionAvailability(questions),
+    [questions],
+  );
 
   const invalidate = useCallback((nextIdentity: string | null, nextCourseId: string | null) => {
     const scope = { identity: nextIdentity, courseId: nextCourseId, epoch: ++epochRef.current, viewEpoch: 0 };
@@ -222,17 +243,17 @@ export default function PracticeWorkspace({
   }, []);
 
   const loadSetDetail = useCallback(async (scope: PracticeRequestScope, practiceSet: PracticeSet, revisionId: string | null, requestedAttemptId: string | null = null) => {
-    const [history, initialRevision] = await Promise.all([
+    const [history, initialRevision, requestedView] = await Promise.all([
       listPracticeAttempts(practiceSet.course_id, practiceSet.id),
       revisionId ? getPracticeRevision(practiceSet.course_id, practiceSet.id, revisionId) : Promise.resolve(null),
+      requestedAttemptId
+        ? getPracticeAttempt(practiceSet.course_id, practiceSet.id, requestedAttemptId)
+        : Promise.resolve(null),
     ]);
     if (!current(scope)) return;
     setAttempts(history);
     setAttemptsHaveMore(history.length === 50);
-    const requestedAttempt = requestedAttemptId
-      ? history.find((attempt) => attempt.id === requestedAttemptId) ?? null
-      : null;
-    const targetRevisionId = requestedAttempt?.practice_set_revision_id ?? revisionId;
+    const targetRevisionId = requestedView?.attempt.practice_set_revision_id ?? revisionId;
     const loadedRevision = targetRevisionId === initialRevision?.id
       ? initialRevision
       : targetRevisionId
@@ -247,7 +268,7 @@ export default function PracticeWorkspace({
     const loadedQuestions = await listPracticeQuestions(practiceSet.course_id, practiceSet.id, loadedRevision.id);
     if (!current(scope)) return;
     setQuestions(loadedQuestions);
-    const selectedAttempt = requestedAttempt ?? history.find(
+    const selectedAttempt = requestedView?.attempt ?? history.find(
       (attempt) =>
         attempt.state === "in_progress" &&
         attempt.practice_set_revision_id === loadedRevision.id,
@@ -257,10 +278,8 @@ export default function PracticeWorkspace({
       setResultView(null);
       return;
     }
-    const resumed = await getPracticeAttempt(
-      practiceSet.course_id,
-      practiceSet.id,
-      selectedAttempt.id,
+    const resumed = requestedView ?? await getPracticeAttempt(
+      practiceSet.course_id, practiceSet.id, selectedAttempt.id,
     );
     if (!current(scope)) return;
     setAttemptView(resumed);
@@ -319,15 +338,18 @@ export default function PracticeWorkspace({
     const requested = initialPracticeSetId
       ? listed.find((item) => item.id === initialPracticeSetId) ?? null
       : null;
-    const usable =
-      requested ??
-      (generated?.state !== "archived" ? generated : null) ??
-      listed.find((set) => set.state === "draft" && set.current_revision_id) ??
-      listed.find(
-        (set) => set.state === "draft" && !failedSetIds.has(set.id),
-      ) ??
-      null;
+    const usable = initialPracticeSetId
+      ? requested
+      : (generated?.state !== "archived" ? generated : null) ??
+        listed.find((set) => set.state === "draft" && set.current_revision_id) ??
+        listed.find(
+          (set) => set.state === "draft" && !failedSetIds.has(set.id),
+        ) ??
+        null;
     setSelectedSetId(usable?.id ?? null);
+    if (initialAttemptId && !usable) {
+      setError("Practice attempt could not be loaded.");
+    }
     if (usable) {
       const detailScope = advanceView();
       try {
@@ -724,7 +746,7 @@ export default function PracticeWorkspace({
     setBusy(true); setError(null);
     try {
       const question = await addPracticeQuestion(activeCourse.id, selectedSet.id, revision.id, {
-        question_type: "exact",
+        question_type: "short_answer",
         prompt: draft.prompt.trim(),
         answer_contract: { kind: "exact", answer: draft.answer.trim() },
         explanation: draft.explanation.trim(),
@@ -816,27 +838,31 @@ export default function PracticeWorkspace({
     finally { if (current(scope)) setBusy(false); }
   }, [activeCourse, advanceView, current, router, selectedSet]);
 
-  const answerFor = useCallback((itemId: string): QuizAttemptAnswer | null =>
-    attemptView?.answers.find((answer) => answer.attempt_item_id === itemId) ?? null,
-  [attemptView]);
-
-  const saveAnswer = useCallback(async (itemId: string, value: string) => {
-    if (!activeCourse || !selectedSet || !attemptView || attemptView.attempt.state !== "in_progress" || readOnly) return;
-    const answer = answerFor(itemId);
-    if (!answer) return;
+  const saveAnswer = useCallback(async (
+    answer: QuizAttemptAnswer,
+    response: QuizAttemptResponse,
+    idempotencyKey: string,
+  ): Promise<QuizAttemptAnswer> => {
+    if (!activeCourse || !selectedSet || !attemptView || attemptView.attempt.state !== "in_progress" || readOnly) {
+      throw new Error("This quiz attempt is no longer writable.");
+    }
     const scope = scopeRef.current;
-    setBusy(true); setError(null);
-    try {
-      const saved = await autosavePracticeAnswer(activeCourse.id, selectedSet, attemptView.attempt, answer, { answer: value }, newIdempotencyKey());
-      if (!current(scope)) return;
+    const saved = await autosavePracticeAnswer(
+      activeCourse.id,
+      selectedSet,
+      attemptView.attempt,
+      answer,
+      response,
+      idempotencyKey,
+    );
+    if (current(scope)) {
       setAttemptView((previous) => previous ? {
         ...previous,
         answers: previous.answers.map((item) => item.attempt_item_id === saved.attempt_item_id ? saved : item),
       } : previous);
-      setStatus("Answer saved.");
-    } catch (cause) { if (current(scope)) setError(errorText(cause)); }
-    finally { if (current(scope)) setBusy(false); }
-  }, [activeCourse, answerFor, attemptView, current, readOnly, selectedSet]);
+    }
+    return saved;
+  }, [activeCourse, attemptView, current, readOnly, selectedSet]);
 
   const transitionAttempt = useCallback(async (action: "submit" | "abandon" | "grade") => {
     if (!activeCourse || !selectedSet || !attemptView || readOnly) return;
@@ -1022,7 +1048,7 @@ export default function PracticeWorkspace({
           <section className="min-w-0 rounded-xl border border-[var(--border)] bg-[var(--card)] p-4 sm:p-5">
             {selectedSet ? <>
               <div className="mb-5 flex flex-wrap items-center justify-between gap-3 border-b border-[var(--border)] pb-4">
-                <div><h2 className="text-lg font-semibold">{selectedSet.title}</h2><p className="text-sm text-[var(--muted-foreground)]">{selectedSet.state === "archived" ? "Archived — read-only history" : revision?.state === "ready" ? "Ready for quiz attempts" : "Draft revision"}</p></div>
+                <div><h2 className="text-lg font-semibold">{selectedSet.title}</h2><p className="text-sm text-[var(--muted-foreground)]">{selectedSet.state === "archived" ? "Archived — read-only history" : revision?.state === "ready" ? revisionAvailability.status : "Draft revision"}</p></div>
                 {!attemptView ? <button disabled={busy || !activeCourse} onClick={() => void archiveOrRestore()} className="inline-flex items-center gap-1 rounded-lg border border-[var(--border)] px-3 py-2 text-sm disabled:opacity-50">{selectedSet.state === "archived" ? <RotateCcw size={15} /> : <Archive size={15} />}{selectedSet.state === "archived" ? "Restore" : "Archive"}</button> : null}
               </div>
               {!attemptView && revision?.state === "draft" && !readOnly ? <div className="mb-6 rounded-lg border border-[var(--border)] p-4">
@@ -1047,9 +1073,9 @@ export default function PracticeWorkspace({
                 </div>
                 <div className="mt-3 flex flex-wrap gap-2"><button disabled={busy || !draft.prompt.trim() || !draft.answer.trim()} onClick={() => void addQuestion()} className="inline-flex items-center gap-1 rounded-lg bg-[var(--primary)] px-3 py-2 text-sm text-[var(--primary-foreground)] disabled:opacity-50"><Save size={15} />Add question</button><button disabled={busy || !questions.length} onClick={() => void markReady()} className="inline-flex items-center gap-1 rounded-lg border border-[var(--border)] px-3 py-2 text-sm disabled:opacity-50"><CheckCircle2 size={15} />Mark ready</button></div>
               </div> : null}
-              {!attemptView && revision?.state === "ready" && !readOnly ? <div className="mb-5 flex flex-wrap gap-2">{revision.id === selectedSet.current_revision_id ? <button disabled={busy} onClick={() => void startOrResume()} className="inline-flex items-center gap-1 rounded-lg bg-[var(--primary)] px-3 py-2 text-sm text-[var(--primary-foreground)]"><Play size={15} />Start or resume quiz</button> : <span className="self-center text-sm text-[var(--muted-foreground)]">Historical revision — attempts are read-only.</span>}<button disabled={busy} onClick={() => void createSuccessor()} className="rounded-lg border border-[var(--border)] px-3 py-2 text-sm">Create successor revision</button></div> : null}
-              {!attemptView && questions.length ? <ol className="mb-6 space-y-3">{questions.map((question) => <li key={question.id} className="rounded-lg border border-[var(--border)] p-3"><span className="mr-2 text-xs text-[var(--muted-foreground)]">{question.ordinal}.</span>{question.prompt}{revision?.state === "ready" ? null : <p className="mt-2 text-xs text-[var(--muted-foreground)]">Answer: {question.answer_contract?.answer ?? "Stored server-side"}</p>}</li>)}</ol> : null}
-              {attemptView ? <AttemptRunner key={attemptView.attempt.id} view={attemptView} questions={questions} sourceNames={sourceNames} readOnly={readOnly || busy} answerFor={answerFor} onSave={saveAnswer} onTransition={(action) => void transitionAttempt(action)} onReviewMisses={() => void reviewMissesAsFlashcards()} onStartAgain={() => void startOrResume()} onClose={() => { setAttemptView(null); setResultView(null); router.replace(`/classes/${encodeURIComponent(activeCourse.id)}/practice`); }} onReportQuestion={reportQuestion} resultView={resultView} /> : null}
+              {!attemptView && revision?.state === "ready" && !readOnly ? <div className="mb-5 flex flex-wrap items-center gap-2">{revision.id === selectedSet.current_revision_id ? revisionAvailability.canStart ? <button disabled={busy} onClick={() => void startOrResume()} className="inline-flex items-center gap-1 rounded-lg bg-[var(--primary)] px-3 py-2 text-sm text-[var(--primary-foreground)]"><Play size={15} />Start or resume quiz</button> : <span className="text-sm text-[var(--muted-foreground)]">{ALL_QUESTIONS_WITHDRAWN_MESSAGE}</span> : <span className="self-center text-sm text-[var(--muted-foreground)]">Historical revision — attempts are read-only.</span>}<button disabled={busy} onClick={() => void createSuccessor()} className="rounded-lg border border-[var(--border)] px-3 py-2 text-sm">Create successor revision</button></div> : null}
+              {!attemptView && questions.length ? <ol className="mb-6 space-y-3">{questions.map((question) => <li key={question.id} className="rounded-lg border border-[var(--border)] p-3"><span className="mr-2 text-xs text-[var(--muted-foreground)]">{question.ordinal}.</span>{question.prompt}{question.content_quality === "invalidated" ? <p className="mt-2 text-xs font-medium text-amber-600">{QUESTION_WITHDRAWN_LABEL}</p> : revision?.state === "ready" ? null : <p className="mt-2 text-xs text-[var(--muted-foreground)]">Answer: {practiceCorrectAnswer(question)}</p>}</li>)}</ol> : null}
+              {attemptView ? <AttemptRunner key={attemptView.attempt.id} view={attemptView} questions={questions} sourceNames={sourceNames} readOnly={readOnly || busy} withdrawn={Boolean(attemptView.content_quality?.invalidated_question_ids?.length)} onSave={saveAnswer} onTransition={(action) => void transitionAttempt(action)} onReviewMisses={() => void reviewMissesAsFlashcards()} onStartAgain={() => void startOrResume()} onClose={() => { setAttemptView(null); setResultView(null); router.replace(`/classes/${encodeURIComponent(activeCourse.id)}/practice`); }} onReportQuestion={reportQuestion} resultView={resultView} /> : null}
               {!attemptView ? <AttemptHistory attempts={attempts} onOpen={(item) => void openAttempt(item)} busy={busy} hasMore={attemptsHaveMore} onLoadMore={() => void loadMoreAttempts()} /> : null}
             </> : <p className="text-sm text-[var(--muted-foreground)]">Choose a Practice set or create one.</p>}
           </section>
@@ -1068,56 +1094,223 @@ export default function PracticeWorkspace({
   );
 }
 
-function AttemptRunner({ view, questions, sourceNames, readOnly, answerFor, onSave, onTransition, onReviewMisses, onStartAgain, onClose, onReportQuestion, resultView }: {
-  view: QuizAttemptView; questions: PracticeQuestion[]; sourceNames: Map<string, string>; readOnly: boolean; answerFor: (itemId: string) => QuizAttemptAnswer | null; onSave: (itemId: string, value: string) => Promise<void>; onTransition: (action: "submit" | "abandon" | "grade") => void; onReviewMisses: () => void; onStartAgain: () => void; onClose: () => void; onReportQuestion: (questionId: string) => Promise<void>; resultView: QuizResult | null;
+function AttemptRunner({ view, questions, sourceNames, readOnly, withdrawn, onSave, onTransition, onReviewMisses, onStartAgain, onClose, onReportQuestion, resultView }: {
+  view: QuizAttemptView; questions: PracticeQuestion[]; sourceNames: Map<string, string>; readOnly: boolean; withdrawn: boolean; onSave: (answer: QuizAttemptAnswer, response: QuizAttemptResponse, idempotencyKey: string) => Promise<QuizAttemptAnswer>; onTransition: (action: "submit" | "abandon" | "grade") => void; onReviewMisses: () => void; onStartAgain: () => void; onClose: () => void; onReportQuestion: (questionId: string) => Promise<void>; resultView: QuizResult | null;
 }) {
   const byId = useMemo(() => new Map((resultView?.questions ?? questions).map((question) => [question.id, question])), [questions, resultView?.questions]);
+  const answerById = useMemo(
+    () => new Map(view.answers.map((answer) => [answer.attempt_item_id, answer])),
+    [view.answers],
+  );
   const [values, setValues] = useState<Record<string, string>>(() =>
-    Object.fromEntries(view.answers.map((answer) => [answer.attempt_item_id, answer.response?.answer ?? ""])),
+    Object.fromEntries(view.answers.map((answer) => [answer.attempt_item_id, practiceResponseValue(answer.response)])),
+  );
+  const valuesRef = useRef(values);
+  const mountedRef = useRef(true);
+  const debounceTimersRef = useRef(new Map<string, ReturnType<typeof setTimeout>>());
+  const [saveStates, setSaveStates] = useState<Record<string, PracticeAnswerSaveState>>({});
+  const [saveQueue] = useState(() =>
+    createPracticeAnswerSaveQueue({
+      initialAnswers: view.answers,
+      createIdempotencyKey: newIdempotencyKey,
+    }),
   );
   const [currentIndex, setCurrentIndex] = useState(0);
   const [confirmAbandon, setConfirmAbandon] = useState(false);
   const [reportedQuestionIds, setReportedQuestionIds] = useState<Set<string>>(new Set());
   const answerInputRef = useRef<HTMLInputElement | null>(null);
   const active = view.attempt.state === "in_progress";
+  const interactionReadOnly = readOnly || withdrawn;
   const hasUnsaved = hasUnsavedPracticeAnswers(values, view.answers);
   const hasMissing = view.items.some((item) => !(values[item.id] ?? "").trim());
   const score = resultView?.effective_score ?? resultView?.attempt.score;
-  const hasMisses =
-    typeof score?.correct === "number" &&
-    typeof score?.total === "number" &&
-    score.correct < score.total;
-  useEffect(() => {
-    if (active && !readOnly) answerInputRef.current?.focus();
-  }, [active, currentIndex, readOnly]);
+  const resultsPresentation = practiceResultsPresentation(score, view.items.length);
+  const canStartAgain = (resultView?.questions ?? questions).some(
+    (question) => question.content_quality !== "invalidated",
+  );
   const currentItem = view.items[Math.min(currentIndex, Math.max(0, view.items.length - 1))];
   const currentQuestion = currentItem ? byId.get(currentItem.question_id) : null;
-  const currentAnswer = currentItem ? answerFor(currentItem.id) : null;
-  const currentDirty = currentItem
-    ? (values[currentItem.id] ?? "") !== (currentAnswer?.response?.answer ?? "")
-    : false;
-  const saveCurrent = async (advance: boolean) => {
-    if (!currentItem || !currentDirty || !(values[currentItem.id] ?? "").trim()) return;
-    await onSave(currentItem.id, values[currentItem.id] ?? "");
-    if (advance) setCurrentIndex((value) => Math.min(value + 1, view.items.length - 1));
+  const currentOptions = currentItem && currentQuestion
+    ? orderedPracticeOptions(currentQuestion, currentItem)
+    : [];
+  const currentIsChoice = currentQuestion?.question_type === "single_choice";
+  const currentSaveState = currentItem ? saveStates[currentItem.id] : undefined;
+
+  useEffect(() => {
+    for (const answer of view.answers) saveQueue.syncAnswer(answer);
+  }, [saveQueue, view.answers]);
+  useEffect(() => {
+    const debounceTimers = debounceTimersRef.current;
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+      for (const timer of debounceTimers.values()) clearTimeout(timer);
+      debounceTimers.clear();
+    };
+  }, []);
+  useEffect(() => {
+    if (active && !interactionReadOnly) answerInputRef.current?.focus();
+  }, [active, currentIndex, interactionReadOnly]);
+
+  const setItemValue = (itemId: string, value: string) => {
+    valuesRef.current = { ...valuesRef.current, [itemId]: value };
+    setValues(valuesRef.current);
+  };
+  const setItemSaveState = (itemId: string, state: PracticeAnswerSaveState) => {
+    setSaveStates((previous) => ({ ...previous, [itemId]: state }));
+  };
+  const updateQueueState = (itemId: string, state: PracticeAnswerSaveState) => {
+    if (mountedRef.current) setItemSaveState(itemId, state);
+  };
+  const flushQueuedItem = (itemId: string) =>
+    saveQueue.flush(itemId, onSave, updateQueueState);
+  const changeShortAnswer = (itemId: string, value: string) => {
+    setItemValue(itemId, value);
+    const existingTimer = debounceTimersRef.current.get(itemId);
+    if (existingTimer) clearTimeout(existingTimer);
+    debounceTimersRef.current.delete(itemId);
+    const durable = practiceResponseValue(saveQueue.getAnswer(itemId)?.response ?? null);
+    const pending = saveQueue.hasPending(itemId);
+    if (value === durable && !pending) {
+      setItemSaveState(itemId, { state: "saved" });
+      return;
+    }
+    if (!value.trim() && !durable.trim() && !pending) {
+      setSaveStates((previous) => {
+        const next = { ...previous };
+        delete next[itemId];
+        return next;
+      });
+      return;
+    }
+    setItemSaveState(itemId, { state: "saving" });
+    const timer = setTimeout(() => {
+      debounceTimersRef.current.delete(itemId);
+      saveQueue.enqueue(itemId, { answer: valuesRef.current[itemId] ?? "" });
+      void flushQueuedItem(itemId);
+    }, 500);
+    debounceTimersRef.current.set(itemId, timer);
+  };
+  const selectOption = (optionId: string) => {
+    if (!currentItem || interactionReadOnly) return;
+    setItemValue(currentItem.id, optionId);
+    setItemSaveState(currentItem.id, { state: "saving" });
+    saveQueue.enqueue(currentItem.id, { option_id: optionId });
+    void flushQueuedItem(currentItem.id);
+  };
+  const flushItem = async (itemId: string): Promise<boolean> => {
+    if (withdrawn) return true;
+    const item = view.items.find((candidate) => candidate.id === itemId);
+    const question = item ? byId.get(item.question_id) : null;
+    if (!question) return false;
+    while (true) {
+      const timer = debounceTimersRef.current.get(itemId);
+      if (timer) clearTimeout(timer);
+      debounceTimersRef.current.delete(itemId);
+      const value = valuesRef.current[itemId] ?? "";
+      const durable = practiceResponseValue(saveQueue.getAnswer(itemId)?.response ?? null);
+      if (value !== durable) {
+        if (question.question_type === "single_choice") {
+          if (value) saveQueue.enqueue(itemId, { option_id: value });
+        } else if (value.trim() || durable.trim()) {
+          saveQueue.enqueue(itemId, { answer: value });
+        } else {
+          return true;
+        }
+      }
+      if (!(await flushQueuedItem(itemId))) return false;
+      const latestValue = valuesRef.current[itemId] ?? "";
+      const latestDurable = practiceResponseValue(
+        saveQueue.getAnswer(itemId)?.response ?? null,
+      );
+      if (
+        latestValue === latestDurable &&
+        !saveQueue.hasPending(itemId) &&
+        !debounceTimersRef.current.has(itemId)
+      ) {
+        return true;
+      }
+    }
+  };
+  const navigateTo = async (index: number) => {
+    if (!currentItem || index === currentIndex) return;
+    if (await flushItem(currentItem.id)) setCurrentIndex(index);
+  };
+  const submitAttempt = async () => {
+    const outcomes = await Promise.all(view.items.map((item) => flushItem(item.id)));
+    if (outcomes.some((succeeded) => !succeeded)) return;
+    const missing = view.items.some((item) => !(valuesRef.current[item.id] ?? "").trim());
+    const unsaved = view.items.some((item) =>
+      (valuesRef.current[item.id] ?? "") !==
+        practiceResponseValue(saveQueue.getAnswer(item.id)?.response ?? null),
+    );
+    if (!missing && !unsaved) onTransition("submit");
   };
 
   return <div className="mx-auto mb-6 min-w-0 w-full max-w-3xl">
     <div className="mb-5 flex flex-wrap items-center justify-between gap-3"><div><h3 className="text-xl font-semibold">{resultView ? "Quiz results" : "Quiz in progress"}</h3>{view.attempt.timing_mode === "practice_timer" && active ? <AdvisoryPracticeTimer startedAt={view.attempt.started_at} /> : null}</div>{active ? <span className="text-sm font-medium">Question {currentIndex + 1} of {view.items.length}</span> : null}</div>
+    {active && withdrawn ? <p role="alert" className="mb-4 rounded-xl border border-amber-500/50 bg-amber-500/10 p-4 text-sm">{WITHDRAWN_ATTEMPT_MESSAGE}</p> : null}
     {active && currentItem ? <>
-      <div aria-label="Question navigation" className="mb-4 flex flex-wrap gap-2">{view.items.map((item, index) => { const saved = Boolean(answerFor(item.id)?.response?.answer?.trim()); return <button key={item.id} type="button" aria-label={`Go to question ${index + 1}${saved ? ", answered" : ", unanswered"}`} aria-current={index === currentIndex ? "step" : undefined} onClick={() => setCurrentIndex(index)} className={`h-9 w-9 rounded-full border text-sm ${index === currentIndex ? "border-[var(--primary)] bg-[var(--primary)] text-[var(--primary-foreground)]" : "border-[var(--border)]"}`}>{index + 1}</button>; })}</div>
-      <form key={currentItem.id} onSubmit={(event) => { event.preventDefault(); void saveCurrent(currentIndex < view.items.length - 1); }} className="min-w-0 rounded-2xl border border-[var(--border)] bg-[var(--card)] p-4 sm:p-7">
+      <div aria-label="Question navigation" className="mb-4 flex flex-wrap gap-2">{view.items.map((item, index) => { const saved = Boolean(practiceResponseValue(answerById.get(item.id)?.response ?? null).trim()); return <button key={item.id} type="button" aria-label={`Go to question ${index + 1}${saved ? ", answered" : ", unanswered"}`} aria-current={index === currentIndex ? "step" : undefined} onClick={() => void navigateTo(index)} className={`h-9 w-9 rounded-full border text-sm ${index === currentIndex ? "border-[var(--primary)] bg-[var(--primary)] text-[var(--primary-foreground)]" : "border-[var(--border)]"}`}>{index + 1}</button>; })}</div>
+      <form key={currentItem.id} onSubmit={(event) => { event.preventDefault(); void flushItem(currentItem.id); }} className="min-w-0 rounded-2xl border border-[var(--border)] bg-[var(--card)] p-4 sm:p-7">
         <p className="text-xs font-medium uppercase tracking-wide text-[var(--muted-foreground)]">Question {currentIndex + 1}</p>
         <p className="mt-3 text-lg font-medium">{currentQuestion?.prompt ?? "Question unavailable"}</p>
-        <label className="mt-6 grid min-w-0 gap-2 text-sm"><span>Your answer</span><input ref={answerInputRef} aria-label={`Answer for question ${currentItem.display_ordinal}`} value={values[currentItem.id] ?? ""} disabled={readOnly} onChange={(event) => setValues((previous) => ({ ...previous, [currentItem.id]: event.target.value }))} className="min-w-0 w-full rounded-xl border border-[var(--border)] bg-[var(--background)] px-3 py-3 disabled:opacity-60" placeholder="Type your answer" /></label>
-        <p className="mt-2 text-xs text-[var(--muted-foreground)]">Answers are checked deterministically after submission. Capitalization and surrounding spaces do not matter.</p>
-        <div className="mt-6 flex flex-wrap items-center justify-between gap-3"><button type="button" disabled={currentIndex === 0} onClick={() => setCurrentIndex((value) => Math.max(0, value - 1))} className="rounded-lg border border-[var(--border)] px-4 py-2 text-sm disabled:opacity-40">Previous</button><div className="flex gap-2">{currentIndex < view.items.length - 1 ? <button type="button" disabled={readOnly || currentDirty && !(values[currentItem.id] ?? "").trim()} onClick={() => currentDirty ? void saveCurrent(true) : setCurrentIndex((value) => Math.min(value + 1, view.items.length - 1))} className="rounded-lg bg-[var(--primary)] px-4 py-2 text-sm text-[var(--primary-foreground)] disabled:opacity-50">{currentDirty ? "Save and next" : "Next"}</button> : <button type="submit" disabled={readOnly || !currentDirty || !(values[currentItem.id] ?? "").trim()} className="rounded-lg border border-[var(--border)] px-4 py-2 text-sm disabled:opacity-50">Save answer</button>}</div></div>
+        {currentIsChoice ? <fieldset className="mt-6 grid gap-3" disabled={interactionReadOnly}>
+          <legend className="text-sm font-medium">Your answer</legend>
+          {currentOptions.length ? currentOptions.map((option, index) => <label key={option.option_id} className="flex cursor-pointer items-start gap-3 rounded-xl border border-[var(--border)] bg-[var(--background)] px-3 py-3 text-sm has-[:checked]:border-[var(--primary)] has-[:checked]:bg-[var(--muted)]">
+            <input ref={index === 0 ? answerInputRef : undefined} type="radio" name={`answer-${currentItem.id}`} value={option.option_id} checked={(values[currentItem.id] ?? "") === option.option_id} onChange={() => selectOption(option.option_id)} className="mt-0.5" />
+            <span>{option.text}</span>
+          </label>) : <p role="alert" className="text-sm text-amber-600">Choices are unavailable for this question. Return to the Practice library and try again.</p>}
+          <p className="text-xs text-[var(--muted-foreground)]">Your selection is saved immediately.</p>
+        </fieldset> : <>
+          <label className="mt-6 grid min-w-0 gap-2 text-sm"><span>Your answer</span><input ref={answerInputRef} aria-label={`Answer for question ${currentItem.display_ordinal}`} value={values[currentItem.id] ?? ""} disabled={interactionReadOnly} onChange={(event) => changeShortAnswer(currentItem.id, event.target.value)} className="min-w-0 w-full rounded-xl border border-[var(--border)] bg-[var(--background)] px-3 py-3 disabled:opacity-60" placeholder="Type your answer" /></label>
+          <p className="mt-2 text-xs text-[var(--muted-foreground)]">Answers are checked deterministically after submission. Capitalization and surrounding spaces do not matter.</p>
+        </>}
+        {currentSaveState ? <p role={currentSaveState.state === "error" ? "alert" : "status"} aria-live="polite" className={`mt-3 text-xs ${currentSaveState.state === "error" ? "text-red-600" : "text-[var(--muted-foreground)]"}`}>{currentSaveState.state === "saving" ? "Saving…" : currentSaveState.state === "saved" ? "Saved" : `Save failed: ${currentSaveState.message}`}</p> : null}
+        <div className="mt-6 flex flex-wrap items-center justify-between gap-3"><button type="button" disabled={currentIndex === 0 || interactionReadOnly} onClick={() => void navigateTo(Math.max(0, currentIndex - 1))} className="rounded-lg border border-[var(--border)] px-4 py-2 text-sm disabled:opacity-40">Previous</button><div className="flex gap-2">{currentIndex < view.items.length - 1 ? <button type="button" disabled={interactionReadOnly} onClick={() => void navigateTo(Math.min(currentIndex + 1, view.items.length - 1))} className="rounded-lg bg-[var(--primary)] px-4 py-2 text-sm text-[var(--primary-foreground)] disabled:opacity-50">Next</button> : null}</div></div>
       </form>
-      <div className="mt-5 flex flex-wrap items-center gap-3"><button disabled={readOnly || hasUnsaved || hasMissing} onClick={() => onTransition("submit")} className="inline-flex items-center gap-1 rounded-lg bg-[var(--primary)] px-4 py-2 text-sm text-[var(--primary-foreground)] disabled:opacity-50"><Send size={15} />Submit quiz</button>{!confirmAbandon ? <button disabled={readOnly} onClick={() => setConfirmAbandon(true)} className="rounded-lg border border-[var(--border)] px-4 py-2 text-sm">Leave this attempt</button> : <><span className="text-sm">Leave and mark this attempt abandoned?</span><button onClick={() => onTransition("abandon")} className="rounded-lg border border-red-500 px-3 py-2 text-sm text-red-600">Yes, abandon</button><button onClick={() => setConfirmAbandon(false)} className="rounded-lg border border-[var(--border)] px-3 py-2 text-sm">Keep studying</button></>}{hasUnsaved ? <span className="text-xs text-[var(--muted-foreground)]">Save your changed answer before submitting.</span> : hasMissing ? <span className="text-xs text-[var(--muted-foreground)]">Answer every question before submitting.</span> : null}</div>
+      <div className="mt-5 flex flex-wrap items-center gap-3"><button disabled={interactionReadOnly || hasMissing} onClick={() => void submitAttempt()} className="inline-flex items-center gap-1 rounded-lg bg-[var(--primary)] px-4 py-2 text-sm text-[var(--primary-foreground)] disabled:opacity-50"><Send size={15} />Submit quiz</button>{!confirmAbandon ? <button disabled={readOnly} onClick={() => setConfirmAbandon(true)} className="rounded-lg border border-[var(--border)] px-4 py-2 text-sm">Leave this attempt</button> : <><span className="text-sm">Leave and mark this attempt abandoned?</span><button onClick={() => onTransition("abandon")} className="rounded-lg border border-red-500 px-3 py-2 text-sm text-red-600">Yes, abandon</button><button onClick={() => setConfirmAbandon(false)} className="rounded-lg border border-[var(--border)] px-3 py-2 text-sm">Keep studying</button></>}{hasUnsaved ? <span className="text-xs text-[var(--muted-foreground)]">Your latest answer will be saved before submitting.</span> : hasMissing ? <span className="text-xs text-[var(--muted-foreground)]">Answer every question before submitting.</span> : null}</div>
     </> : null}
-    {view.attempt.state === "submitted" ? <div className="rounded-xl border border-[var(--border)] p-5"><p className="font-medium">Your answers are submitted and locked.</p><p className="mt-1 text-sm text-[var(--muted-foreground)]">Grade the quiz to see your results and explanations.</p><button disabled={readOnly} onClick={() => onTransition("grade")} className="mt-4 inline-flex items-center gap-1 rounded-lg bg-[var(--primary)] px-4 py-2 text-sm text-[var(--primary-foreground)]"><ClipboardCheck size={15} />Grade quiz</button></div> : null}
-    {resultView?.attempt.state === "graded" ? <div className="space-y-5"><div className="rounded-xl bg-[var(--muted)] p-5"><p className="text-xl font-semibold">{score?.correct ?? 0} correct out of {score?.total ?? view.items.length}</p><p className="mt-1 text-sm text-[var(--muted-foreground)]">{hasMisses ? "Review the missed answers and explanations below." : "You got every question correct."}</p></div><div className="space-y-3">{resultView.items.map((item) => { const question = byId.get(item.question_id); const correct = String(item.grading?.is_correct) === "true"; const reported = question ? reportedQuestionIds.has(question.id) : false; const invalidated = question?.content_quality === "invalidated"; return <article key={item.id} className="rounded-xl border border-[var(--border)] p-4"><p className="font-medium">{item.display_ordinal}. {question?.prompt ?? "Question unavailable"}</p>{invalidated ? <p className="mt-2 text-sm font-medium text-amber-600">Question invalidated after review. This item is excluded from learning evidence.</p> : <p className={`mt-2 text-sm font-medium ${correct ? "text-emerald-600" : "text-amber-600"}`}>{correct ? "Correct" : "Needs review"}</p>}{!invalidated && !correct && question?.answer_contract ? <p className="mt-2 text-sm"><span className="text-[var(--muted-foreground)]">Expected answer:</span> {question.answer_contract.answer}</p> : null}{question?.explanation ? <p className="mt-2 text-sm">{question.explanation}</p> : null}{question?.citations.length ? <ul aria-label={`Sources for question ${item.display_ordinal}`} className="mt-3 flex flex-wrap gap-2 text-xs text-[var(--muted-foreground)]">{question.citations.map((citation, index) => { const sourceId = typeof citation.source_id === "string" ? citation.source_id : ""; return <li key={`${sourceId}-${index}`} className="rounded-full bg-[var(--muted)] px-2 py-1">{sourceNames.get(sourceId) ?? `Course source ${index + 1}`}</li>; })}</ul> : null}<button type="button" disabled={readOnly || reported || !question} onClick={() => { if (question) { void onReportQuestion(question.id).then(() => setReportedQuestionIds((previous) => new Set(previous).add(question.id))); } }} className="mt-3 rounded-lg border border-[var(--border)] px-3 py-2 text-xs disabled:opacity-50">{reported ? "Reported for review" : "Report a problem with this question"}</button></article>; })}</div><div className="flex flex-wrap gap-2"><button type="button" disabled={readOnly} onClick={onStartAgain} className="rounded-lg bg-[var(--primary)] px-4 py-2 text-sm text-[var(--primary-foreground)] disabled:opacity-50">Try quiz again</button>{hasMisses ? <button type="button" disabled={readOnly} onClick={onReviewMisses} className="rounded-lg border border-[var(--border)] px-4 py-2 text-sm disabled:opacity-50">Make Flashcards from misses</button> : null}<button type="button" onClick={onClose} className="rounded-lg border border-[var(--border)] px-4 py-2 text-sm">Back to Practice library</button></div></div> : null}
+    {view.attempt.state === "submitted" ? <div className="rounded-xl border border-[var(--border)] p-5"><p className="font-medium">Your answers are submitted and locked.</p><p className="mt-1 text-sm text-[var(--muted-foreground)]">{withdrawn ? WITHDRAWN_SUBMITTED_MESSAGE : SUBMITTED_MESSAGE}</p><button disabled={interactionReadOnly} onClick={() => onTransition("grade")} className="mt-4 inline-flex items-center gap-1 rounded-lg bg-[var(--primary)] px-4 py-2 text-sm text-[var(--primary-foreground)]"><ClipboardCheck size={15} />Grade quiz</button></div> : null}
+    {resultView?.attempt.state === "graded" ? <div className="space-y-5"><div className="rounded-xl bg-[var(--muted)] p-5"><p className="text-xl font-semibold">{resultsPresentation.headline}</p><p className="mt-1 text-sm text-[var(--muted-foreground)]">{resultsPresentation.guidance}</p></div><div className="space-y-3">{resultView.items.map((item) => {
+      const question = byId.get(item.question_id);
+      const response = resultView.answers.find((answer) => answer.attempt_item_id === item.id)?.response ?? null;
+      const correct = item.grading?.is_correct === true;
+      const reported = question ? reportedQuestionIds.has(question.id) : false;
+      const invalidated = question?.content_quality === "invalidated";
+      const citations = question?.citations ?? [];
+      return <article key={item.id} className="rounded-xl border border-[var(--border)] p-4">
+        <p className="font-medium">{item.display_ordinal}. {question?.prompt ?? "Question unavailable"}</p>
+        {invalidated ? <p className="mt-2 text-sm font-medium text-amber-600">Question withdrawn after review. This item is excluded from your score and learning evidence.</p> : <p className={`mt-2 text-sm font-medium ${correct ? "text-emerald-600" : "text-amber-600"}`}>{correct ? "Correct" : "Needs review"}</p>}
+        <p className="mt-3 text-sm"><span className="font-medium">Your answer:</span> {practiceResultAnswer(question, response)}</p>
+        {invalidated ? <p className="mt-2 text-sm text-[var(--muted-foreground)]">The answer key, explanation, and citations were withdrawn.</p> : <>
+          <p className="mt-2 text-sm"><span className="font-medium">Correct answer:</span> {practiceCorrectAnswer(question)}</p>
+          <p className="mt-2 text-sm"><span className="font-medium">Why:</span> {question?.explanation || "No explanation was provided."}</p>
+          <div className="mt-3 text-sm"><p className="font-medium">Citations:</p>{citations.length ? <ul aria-label={`Citations for question ${item.display_ordinal}`} className="mt-2 flex flex-wrap gap-2 text-xs text-[var(--muted-foreground)]">{citations.map((citation, index) => { const sourceId = typeof citation.source_id === "string" ? citation.source_id : ""; return <li key={`${sourceId}-${index}`} className="rounded-full bg-[var(--muted)] px-2 py-1">{sourceNames.get(sourceId) ?? `Course source ${index + 1}`}</li>; })}</ul> : <p className="mt-1 text-xs text-[var(--muted-foreground)]">No citations were provided.</p>}</div>
+        </>}
+        <button type="button" disabled={readOnly || reported || invalidated || !question} onClick={() => { if (question) { void onReportQuestion(question.id).then(() => setReportedQuestionIds((previous) => new Set(previous).add(question.id))); } }} className="mt-3 rounded-lg border border-[var(--border)] px-3 py-2 text-xs disabled:opacity-50">{invalidated ? REPORTED_AND_WITHDRAWN_LABEL : reported ? "Reported for review" : "Report a problem with this question"}</button>
+      </article>;
+    })}</div><div className="flex flex-wrap gap-2">{canStartAgain ? <button type="button" disabled={readOnly} onClick={onStartAgain} className="rounded-lg bg-[var(--primary)] px-4 py-2 text-sm text-[var(--primary-foreground)] disabled:opacity-50">Try quiz again</button> : null}{resultsPresentation.hasMisses ? <button type="button" disabled={readOnly} onClick={onReviewMisses} className="rounded-lg border border-[var(--border)] px-4 py-2 text-sm disabled:opacity-50">Make Flashcards from misses</button> : null}<button type="button" onClick={onClose} className="rounded-lg border border-[var(--border)] px-4 py-2 text-sm">Back to Practice library</button></div></div> : null}
   </div>;
+}
+
+function practiceResultAnswer(
+  question: PracticeQuestion | undefined,
+  response: QuizAttemptResponse | null,
+): string {
+  if (!response) return "No answer submitted.";
+  if ("answer" in response) return response.answer || "No answer submitted.";
+  return question?.options.find((option) => option.option_id === response.option_id)?.text
+    ?? "Selected option unavailable.";
+}
+
+function practiceCorrectAnswer(question: PracticeQuestion | undefined): string {
+  const contract = question?.answer_contract;
+  if (!contract) return "Correct answer unavailable.";
+  if (contract.kind === "exact") return contract.answer;
+  if (contract.kind === "bounded_short_answer_v1") return contract.canonical_answer;
+  return question.options.find((option) => option.option_id === contract.correct_option_id)?.text
+    ?? "Correct option unavailable.";
 }
 
 function AdvisoryPracticeTimer({ startedAt }: { startedAt: number }) {
@@ -1135,5 +1328,5 @@ function AdvisoryPracticeTimer({ startedAt }: { startedAt: number }) {
 }
 
 function AttemptHistory({ attempts, onOpen, busy, hasMore, onLoadMore }: { attempts: QuizAttempt[]; onOpen: (attempt: QuizAttempt) => void; busy: boolean; hasMore: boolean; onLoadMore: () => void }) {
-  return <section><h3 className="mb-2 font-medium">Attempt history</h3>{attempts.length ? <div className="space-y-1">{attempts.map((attempt) => <button key={attempt.id} disabled={busy} onClick={() => onOpen(attempt)} className="flex w-full items-center justify-between rounded-lg border border-[var(--border)] px-3 py-2 text-left text-sm hover:bg-[var(--muted)] disabled:opacity-50"><span>{attempt.state}</span><span className="text-[var(--muted-foreground)]">{formatPracticeScore(attempt.score) ?? new Date(attempt.updated_at * 1000).toLocaleString()}</span></button>)}{hasMore ? <button type="button" disabled={busy} onClick={onLoadMore} className="w-full rounded-lg border border-[var(--border)] px-3 py-2 text-sm disabled:opacity-50">Load more attempts</button> : null}</div> : <p className="text-sm text-[var(--muted-foreground)]">No attempts yet.</p>}</section>;
+  return <section><h3 className="mb-2 font-medium">Attempt history</h3>{attempts.length ? <div className="space-y-1">{attempts.map((attempt) => <button key={attempt.id} disabled={busy} onClick={() => onOpen(attempt)} className="flex w-full items-center justify-between rounded-lg border border-[var(--border)] px-3 py-2 text-left text-sm hover:bg-[var(--muted)] disabled:opacity-50"><span>{attempt.state}</span><span className="text-[var(--muted-foreground)]">{practiceAttemptHistoryLabel(attempt) ?? new Date(attempt.updated_at * 1000).toLocaleString()}</span></button>)}{hasMore ? <button type="button" disabled={busy} onClick={onLoadMore} className="w-full rounded-lg border border-[var(--border)] px-3 py-2 text-sm disabled:opacity-50">Load more attempts</button> : null}</div> : <p className="text-sm text-[var(--muted-foreground)]">No attempts yet.</p>}</section>;
 }
