@@ -18,6 +18,7 @@ from .generation_models import (
     PracticeGenerationPlanConfirmation,
     PracticeGenerationPlanOrigin,
     PracticeGenerationRequest,
+    PracticeQualityProfile,
     PracticeTimingMode,
 )
 from .practice_models import (
@@ -122,6 +123,7 @@ class CoursePracticeGenerationRepository:
         focus: str = "Course review",
         difficulty: PracticeDifficulty = "mixed",
         timing_mode: PracticeTimingMode = "untimed",
+        quality_profile: PracticeQualityProfile = "baseline-v1",
     ) -> str:
         return hashlib.sha256(cls._json({
             "title": title,
@@ -132,7 +134,14 @@ class CoursePracticeGenerationRepository:
             "focus": focus,
             "difficulty": difficulty,
             "timing_mode": timing_mode,
+            "quality_profile": quality_profile,
         }).encode("utf-8")).hexdigest()
+
+    @staticmethod
+    def _quality_profile(value: str) -> PracticeQualityProfile:
+        if value not in {"baseline-v1", "c3-biology-v1"}:
+            raise ValueError("quality_profile must be baseline-v1 or c3-biology-v1")
+        return value  # type: ignore[return-value]
 
     @staticmethod
     def _set_from_row(row: sqlite3.Row) -> PracticeSet:
@@ -177,6 +186,7 @@ class CoursePracticeGenerationRepository:
         difficulty: PracticeDifficulty,
         timing_mode: PracticeTimingMode,
         origin: PracticeGenerationPlanOrigin,
+        quality_profile: PracticeQualityProfile = "baseline-v1",
     ) -> str:
         return hashlib.sha256(
             cls._json(
@@ -188,6 +198,7 @@ class CoursePracticeGenerationRepository:
                     "item_limit": item_limit,
                     "difficulty": difficulty,
                     "timing_mode": timing_mode,
+                    "quality_profile": quality_profile,
                     "origin": origin.model_dump(mode="json"),
                 }
             ).encode("utf-8")
@@ -292,6 +303,7 @@ class CoursePracticeGenerationRepository:
         difficulty: PracticeDifficulty,
         timing_mode: PracticeTimingMode,
         provider_available: bool,
+        quality_profile: PracticeQualityProfile = "baseline-v1",
         expected_snapshot: list[PracticeSourceReceipt] | None = None,
     ) -> PracticeGenerationRequest:
         fingerprint = self._fingerprint(
@@ -303,6 +315,7 @@ class CoursePracticeGenerationRepository:
             focus=focus,
             difficulty=difficulty,
             timing_mode=timing_mode,
+            quality_profile=quality_profile,
         )
         prior = conn.execute(
             """SELECT * FROM practice_generation_operations
@@ -356,8 +369,9 @@ class CoursePracticeGenerationRepository:
                 idempotency_key, request_fingerprint, source_snapshot_json, objective_ids_json,
                 course_write_epoch, practice_set_write_epoch, item_limit, context_char_limit,
                 focus, difficulty, timing_mode,
+                quality_profile,
                 state, error_code, created_at, started_at, completed_at, updated_at)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?, ?, ?,
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?, ?, ?, ?,
                        'queued', NULL, ?, NULL, NULL, ?)""",
             (
                 operation_id,
@@ -375,6 +389,7 @@ class CoursePracticeGenerationRepository:
                 focus,
                 difficulty,
                 timing_mode,
+                quality_profile,
                 now,
                 now,
             ),
@@ -402,6 +417,7 @@ class CoursePracticeGenerationRepository:
         item_limit: int = 5,
         difficulty: str = "mixed",
         timing_mode: str = "untimed",
+        quality_profile: str = "baseline-v1",
         origin: PracticeGenerationPlanOrigin | dict[str, Any] | None = None,
         idempotency_key: str | None = None,
     ) -> PracticeGenerationPlan:
@@ -412,6 +428,7 @@ class CoursePracticeGenerationRepository:
         item_limit, difficulty, timing_mode = self._plan_options(
             item_limit=item_limit, difficulty=difficulty, timing_mode=timing_mode
         )
+        quality_profile = self._quality_profile(quality_profile)
         origin_record = PracticeGenerationPlanOrigin.model_validate(
             origin or {"kind": "practice"}
         )
@@ -439,6 +456,7 @@ class CoursePracticeGenerationRepository:
             item_limit=item_limit,
             difficulty=difficulty,
             timing_mode=timing_mode,
+            quality_profile=quality_profile,
             origin=origin_record,
         )
         now, plan_id = time.time(), _plan_id()
@@ -462,11 +480,11 @@ class CoursePracticeGenerationRepository:
             conn.execute(
                 """INSERT INTO practice_generation_plans
                    (id, owner_user_id, course_id, title, focus, source_snapshot_json,
-                    objective_ids_json, item_limit, difficulty, timing_mode, origin_json,
+                    objective_ids_json, item_limit, difficulty, timing_mode, quality_profile, origin_json,
                     course_write_epoch, revision, state, confirmed_operation_id,
                     creation_idempotency_key, creation_request_fingerprint,
                     confirmation_idempotency_key, created_at, updated_at, confirmed_at)
-                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, 'draft',
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, 'draft',
                            NULL, ?, ?, NULL, ?, ?, NULL)""",
                 (
                     plan_id,
@@ -479,6 +497,7 @@ class CoursePracticeGenerationRepository:
                     item_limit,
                     difficulty,
                     timing_mode,
+                    quality_profile,
                     self._json(origin_record.model_dump(mode="json")),
                     expected_course_write_epoch,
                     idempotency_key,
@@ -630,6 +649,7 @@ class CoursePracticeGenerationRepository:
                 focus=plan.focus,
                 difficulty=plan.difficulty,
                 timing_mode=plan.timing_mode,
+                quality_profile=plan.quality_profile,
                 provider_available=provider_available,
                 expected_snapshot=plan.source_snapshot,
             )
@@ -667,6 +687,7 @@ class CoursePracticeGenerationRepository:
         focus: str = "Course review",
         difficulty: str = "mixed",
         timing_mode: str = "untimed",
+        quality_profile: str = "baseline-v1",
         provider_available: bool = True,
     ) -> PracticeGenerationRequest:
         title = self._clean(title, "Practice title", _MAX_TITLE)
@@ -677,6 +698,7 @@ class CoursePracticeGenerationRepository:
         item_limit, difficulty, timing_mode = self._plan_options(
             item_limit=item_limit, difficulty=difficulty, timing_mode=timing_mode
         )
+        quality_profile = self._quality_profile(quality_profile)
         if not isinstance(context_char_limit, int) or not 1 <= context_char_limit <= 48_000:
             raise ValueError("context_char_limit must be between 1 and 48000")
         with self.course_repository._write_lock, self.course_repository._connect() as conn:
@@ -695,6 +717,7 @@ class CoursePracticeGenerationRepository:
                 focus=focus,
                 difficulty=difficulty,
                 timing_mode=timing_mode,
+                quality_profile=quality_profile,
                 provider_available=provider_available,
             )
 
@@ -710,6 +733,7 @@ class CoursePracticeGenerationRepository:
         expected_practice_set_write_epoch: int,
         item_limit: int = 8,
         context_char_limit: int = 24_000,
+        quality_profile: str = "baseline-v1",
         provider_available: bool = True,
     ) -> PracticeGenerationRequest:
         """Create a fenced generated successor revision for an owned generated set.
@@ -725,6 +749,7 @@ class CoursePracticeGenerationRepository:
             raise ValueError("item_limit must be between 1 and 12")
         if not isinstance(context_char_limit, int) or not 1 <= context_char_limit <= 48_000:
             raise ValueError("context_char_limit must be between 1 and 48000")
+        quality_profile = self._quality_profile(quality_profile)
         now, revision_id, operation_id = time.time(), _revision_id(), _operation_id()
         with self.course_repository._write_lock, self.course_repository._connect() as conn:
             conn.execute("BEGIN IMMEDIATE")
@@ -739,6 +764,7 @@ class CoursePracticeGenerationRepository:
             fingerprint = self._fingerprint(
                 title=set_record.title, source_ids=sources, objectives=objectives,
                 item_limit=item_limit, context_char_limit=context_char_limit,
+                quality_profile=quality_profile,
             )
             prior = conn.execute(
                 """SELECT * FROM practice_generation_operations
@@ -774,12 +800,12 @@ class CoursePracticeGenerationRepository:
                    (id, owner_user_id, course_id, practice_set_id, practice_set_revision_id,
                     idempotency_key, request_fingerprint, source_snapshot_json, objective_ids_json,
                     course_write_epoch, practice_set_write_epoch, item_limit, context_char_limit,
-                    state, error_code, created_at, started_at, completed_at, updated_at)
-                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'queued', NULL, ?, NULL, NULL, ?)""",
+                    quality_profile, state, error_code, created_at, started_at, completed_at, updated_at)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'queued', NULL, ?, NULL, NULL, ?)""",
                 (operation_id, self.owner_user_id, course_id, practice_set_id, revision_id,
                  idempotency_key, fingerprint, snapshot_json, objectives_json,
                  expected_course_write_epoch, expected_practice_set_write_epoch,
-                 item_limit, context_char_limit, now, now),
+                 item_limit, context_char_limit, quality_profile, now, now),
             )
             operation_row = conn.execute("SELECT * FROM practice_generation_operations WHERE id = ?", (operation_id,)).fetchone()
         assert operation_row is not None
@@ -937,6 +963,8 @@ class CoursePracticeGenerationRepository:
                 "store": output.store,
                 "response_status": output.response_status,
                 "latency_ms": output.latency_ms,
+                "quality_profile": operation.quality_profile,
+                "content_quality": "passed" if operation.quality_profile == "c3-biology-v1" else "not-run",
                 "source_count": len(operation.source_snapshot),
                 "item_count": len(output.questions),
                 "timing_mode": operation.timing_mode,

@@ -268,6 +268,7 @@ class OpenAIPracticeGenerationProvider:
                             },
                             "objective_ids": {
                                 "type": "array",
+                                "minItems": 1 if request.quality_profile == "c3-biology-v1" else 0,
                                 "maxItems": len(request.objective_ids),
                                 "items": objective_items,
                             },
@@ -344,6 +345,10 @@ class OpenAIPracticeGenerationProvider:
                 or any(
                     objective_id not in request.objective_ids
                     for objective_id in raw["objective_ids"]
+                )
+                or (
+                    request.quality_profile == "c3-biology-v1"
+                    and not raw["objective_ids"]
                 )
             ):
                 raise PracticeGenerationProviderError("provider output is invalid")
@@ -461,7 +466,9 @@ class OpenAIPracticeGenerationProvider:
             "Do not invert or splice source clauses into awkward question wording. "
             "Each question must have one exact, concise answer and a useful explanation. "
             "Every factual question must cite a supplied receipt and one exact "
-            "allowed evidence quote. Use only allowed objective IDs. Return only "
+            "allowed evidence quote. Use only allowed objective IDs. Never put a "
+            "source ID or other system identifier in learner-visible wording. "
+            "Return only "
             "the required structured object."
         )
         input_payload = json.dumps(

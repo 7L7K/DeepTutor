@@ -187,6 +187,7 @@ def _operation_schema() -> set[str]:
         "request_fingerprint",
         "source_snapshot",
         "objective_ids",
+        "quality_profile",
         "course_write_epoch",
         "practice_set_write_epoch",
         "item_limit",

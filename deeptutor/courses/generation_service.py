@@ -27,6 +27,7 @@ from .generation_provider import (
     practice_generation_provider_available,
 )
 from .generation_repository import CoursePracticeGenerationRepository
+from .content_quality import validate_c3_output
 from .provider_runtime import run_provider_with_deadline
 from .repository import CourseConflictError, CourseNotFoundError
 
@@ -196,7 +197,7 @@ class CoursePracticeGenerationService:
                 receipts=operation.source_snapshot,
                 context_char_limit=operation.context_char_limit,
             )
-            output = self._generate_with_deadline(PracticeGenerationInput(
+            generation_request = PracticeGenerationInput(
                 operation_id=operation.id,
                 owner_user_id=operation.owner_user_id,
                 course_id=operation.course_id,
@@ -209,7 +210,14 @@ class CoursePracticeGenerationService:
                 focus=operation.focus,
                 difficulty=operation.difficulty,
                 timing_mode=operation.timing_mode,
-            ))
+                quality_profile=operation.quality_profile,
+            )
+            output = self._generate_with_deadline(generation_request)
+            output = validate_c3_output(
+                request=generation_request,
+                output=output,
+                material=material,
+            )
             with self._identity_lock():
                 return self.repository.complete_operation(
                     course_id, operation_id, output,

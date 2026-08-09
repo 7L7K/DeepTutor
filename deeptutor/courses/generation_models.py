@@ -18,6 +18,7 @@ PracticePlanState = Literal["draft", "confirmed", "expired"]
 PracticeDifficulty = Literal["foundation", "mixed", "challenge"]
 PracticeTimingMode = Literal["untimed", "practice_timer"]
 PracticePlanOriginKind = Literal["practice", "course_chat"]
+PracticeQualityProfile = Literal["baseline-v1", "c3-biology-v1"]
 GenerationErrorCode = Literal[
     "provider_unavailable",
     "provider_failed",
@@ -50,6 +51,7 @@ class PracticeGenerationOperation(BaseModel):
     focus: str = Field(min_length=1, max_length=4_000)
     difficulty: PracticeDifficulty
     timing_mode: PracticeTimingMode
+    quality_profile: PracticeQualityProfile = "baseline-v1"
     state: GenerationState
     error_code: GenerationErrorCode | None = None
     created_at: float
@@ -171,6 +173,7 @@ class PracticeGenerationPlan(BaseModel):
     item_limit: int = Field(ge=1, le=12)
     difficulty: PracticeDifficulty
     timing_mode: PracticeTimingMode
+    quality_profile: PracticeQualityProfile = "baseline-v1"
     origin: PracticeGenerationPlanOrigin
     course_write_epoch: int = Field(ge=1)
     revision: int = Field(ge=1)
@@ -266,6 +269,7 @@ class PracticeGenerationInput(BaseModel):
     focus: str = Field(min_length=1, max_length=4_000)
     difficulty: PracticeDifficulty
     timing_mode: PracticeTimingMode
+    quality_profile: PracticeQualityProfile = "baseline-v1"
 
 
 class PracticeGenerationRequest(BaseModel):
