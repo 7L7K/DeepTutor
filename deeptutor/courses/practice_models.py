@@ -3,13 +3,22 @@
 from __future__ import annotations
 
 import math
-from typing import Literal
+import re
+from typing import Annotated, Literal
+import unicodedata
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 PracticeMode = Literal["manual", "generated"]
 PracticeSetState = Literal["draft", "archived"]
 PracticeRevisionState = Literal["draft", "ready", "superseded"]
+OPAQUE_OPTION_ID_PATTERN = re.compile(r"opt_[0-9a-f]{32}\Z")
+
+
+def is_opaque_option_id(value: object) -> bool:
+    """Return whether *value* is a canonical server-owned option identifier."""
+
+    return isinstance(value, str) and OPAQUE_OPTION_ID_PATTERN.fullmatch(value) is not None
 
 
 class PracticeSourceReceipt(BaseModel):
@@ -98,6 +107,124 @@ class ExactAnswerContract(BaseModel):
         return self
 
 
+_BOUNDED_DASHES = str.maketrans(
+    {
+        "\u058a": "-",
+        "\u05be": "-",
+        "\u1400": "-",
+        "\u1806": "-",
+        "\u2010": "-",
+        "\u2011": "-",
+        "\u2012": "-",
+        "\u2013": "-",
+        "\u2014": "-",
+        "\u2015": "-",
+        "\u2e17": "-",
+        "\u2e1a": "-",
+        "\u2e3a": "-",
+        "\u2e3b": "-",
+        "\u2e40": "-",
+        "\u301c": "-",
+        "\u3030": "-",
+        "\u30a0": "-",
+        "\ufe31": "-",
+        "\ufe32": "-",
+        "\ufe58": "-",
+        "\ufe63": "-",
+        "\uff0d": "-",
+        "\u2212": "-",
+    }
+)
+
+
+def normalize_bounded_short_answer(value: str) -> str:
+    """Normalize only safe text-surface differences for bounded grading."""
+
+    normalized = unicodedata.normalize("NFKC", value).translate(_BOUNDED_DASHES)
+    normalized = re.sub(r"\s+", " ", normalized.casefold().strip())
+    normalized = re.sub(r"[.!?\u3002\uff01\uff1f\u2026]+$", "", normalized).rstrip()
+    return normalized
+
+
+class BoundedShortAnswerContract(BaseModel):
+    """Explicit normalized answers; never fuzzy or provider-graded."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    kind: Literal["bounded_short_answer_v1"]
+    canonical_answer: str
+    accepted_normalized_answers: list[str] = Field(min_length=1, max_length=16)
+    normalization_version: Literal["bounded-text-normalization-v1"]
+
+    @field_validator("canonical_answer")
+    @classmethod
+    def _canonical_answer_is_bounded(cls, value: str) -> str:
+        if not value.strip() or len(value) > 4_000:
+            raise ValueError("canonical answer must be non-empty and bounded")
+        return value
+
+    @field_validator("accepted_normalized_answers")
+    @classmethod
+    def _accepted_answers_are_pre_normalized(cls, value: list[str]) -> list[str]:
+        if any(
+            not item
+            or len(item) > 4_000
+            or normalize_bounded_short_answer(item) != item
+            for item in value
+        ):
+            raise ValueError("accepted bounded answers must use normalized v1 form")
+        if len(set(value)) != len(value):
+            raise ValueError("accepted bounded answers must be unique")
+        return value
+
+    @model_validator(mode="after")
+    def _canonical_answer_is_explicitly_accepted(self) -> "BoundedShortAnswerContract":
+        if normalize_bounded_short_answer(self.canonical_answer) not in self.accepted_normalized_answers:
+            raise ValueError("accepted bounded answers must include the canonical answer")
+        return self
+
+
+class SingleChoiceOption(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    option_id: str
+    text: str = Field(min_length=1, max_length=4_000)
+
+    @field_validator("option_id")
+    @classmethod
+    def _option_id_is_opaque(cls, value: str) -> str:
+        if not is_opaque_option_id(value):
+            raise ValueError("option_id must use canonical opaque option format")
+        return value
+
+    @field_validator("text")
+    @classmethod
+    def _option_text_is_bounded(cls, value: str) -> str:
+        if not value.strip() or value != value.strip():
+            raise ValueError("option text must be non-empty without surrounding whitespace")
+        return value
+
+
+class SingleChoiceAnswerContract(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    kind: Literal["single_choice_v1"]
+    correct_option_id: str
+
+    @field_validator("correct_option_id")
+    @classmethod
+    def _correct_option_id_is_opaque(cls, value: str) -> str:
+        if not is_opaque_option_id(value):
+            raise ValueError("correct_option_id must use canonical opaque option format")
+        return value
+
+
+PracticeAnswerContract = Annotated[
+    ExactAnswerContract | BoundedShortAnswerContract | SingleChoiceAnswerContract,
+    Field(discriminator="kind"),
+]
+
+
 class PracticeSet(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -136,9 +263,40 @@ class PracticeQuestion(BaseModel):
     practice_set_revision_id: str
     question_type: str
     prompt: str
-    answer_contract: ExactAnswerContract
+    options: list[SingleChoiceOption] = Field(default_factory=list, max_length=8)
+    answer_contract: PracticeAnswerContract
     explanation: str
     objective_ids: list[str] = Field(default_factory=list)
     citations: list[PracticeCitation] = Field(default_factory=list)
     ordinal: int = Field(ge=1)
     created_at: float
+
+    @field_validator("question_type")
+    @classmethod
+    def _question_type_is_bounded(cls, value: str) -> str:
+        if not value or value != value.strip() or len(value) > 80:
+            raise ValueError("question_type must be non-empty and bounded")
+        return value
+
+    @model_validator(mode="after")
+    def _question_shape_matches_answer_contract(self) -> "PracticeQuestion":
+        if isinstance(self.answer_contract, SingleChoiceAnswerContract):
+            if self.question_type != "single_choice" or len(self.options) < 2:
+                raise ValueError("single-choice questions require at least two options")
+            option_ids = [item.option_id for item in self.options]
+            if len(set(option_ids)) != len(option_ids):
+                raise ValueError("single-choice option IDs must be unique")
+            option_text = [" ".join(item.text.casefold().split()) for item in self.options]
+            if len(set(option_text)) != len(option_text):
+                raise ValueError("single-choice option text must be unique")
+            if self.answer_contract.correct_option_id not in option_ids:
+                raise ValueError("correct option must belong to the immutable question")
+        elif isinstance(self.answer_contract, BoundedShortAnswerContract):
+            if self.options or self.question_type != "short_answer":
+                raise ValueError("bounded short answers require question_type='short_answer'")
+        elif self.options or self.question_type == "single_choice":
+            # Historical exact rows accepted any bounded type string. Keep
+            # them readable after 0015; all new authoring is canonicalized by
+            # the repository boundary to `short_answer`.
+            raise ValueError("short-answer contracts require question_type='short_answer'")
+        return self

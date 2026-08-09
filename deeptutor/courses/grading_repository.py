@@ -7,17 +7,24 @@ import json
 import sqlite3
 import time
 from typing import Any
-import unicodedata
 from uuid import uuid4
 
+from pydantic import TypeAdapter
+
+from .assessment_grading import grade_assessment_response
 from .attempt_models import QuizAttempt
 from .attempt_repository import CourseAssessmentRepository
 from .grading_models import GradingEvidence
-from .practice_models import ExactAnswerContract
+from .practice_models import (
+    PracticeAnswerContract,
+    SingleChoiceAnswerContract,
+    SingleChoiceOption,
+)
 from .repository import CourseConflictError, CourseNotFoundError, CourseRepository
 
 _MAX_EVIDENCE_RECORDS_PER_ATTEMPT = 4_096
 _MAX_EVIDENCE_BYTES_PER_ATTEMPT = 2 * 1024 * 1024
+_ANSWER_CONTRACT_ADAPTER = TypeAdapter(PracticeAnswerContract)
 
 
 def _evidence_id() -> str:
@@ -44,28 +51,8 @@ class CourseGradingRepository:
         return json.dumps(value, allow_nan=False, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
 
     @classmethod
-    def _digest(cls, value: dict[str, Any]) -> str:
+    def _digest(cls, value: Any) -> str:
         return hashlib.sha256(cls._json(value).encode("utf-8")).hexdigest()
-
-    @staticmethod
-    def _response(value: Any) -> str:
-        if not (isinstance(value, dict) and set(value) == {"answer"} and isinstance(value["answer"], str)):
-            raise ValueError("Exact-answer response must be exactly {'answer': string}")
-        if len(value["answer"]) > 4_000:
-            raise ValueError("Exact-answer response is too large")
-        return value["answer"]
-
-    @staticmethod
-    def _exact(answer: str, expected: str | ExactAnswerContract) -> bool:
-        def normalize(value: str) -> str:
-            return unicodedata.normalize("NFC", value).strip().casefold()
-
-        expected_values = (
-            [expected]
-            if isinstance(expected, str)
-            else [expected.answer, *expected.accepted_answers]
-        )
-        return any(normalize(answer) == normalize(value) for value in expected_values)
 
     @staticmethod
     def _evidence_from_row(row: sqlite3.Row) -> GradingEvidence:
@@ -98,6 +85,11 @@ class CourseGradingRepository:
         )
         if attempt.state not in {"submitted", "graded"}:
             raise CourseConflictError("Only submitted quiz attempts can be graded")
+        if (
+            attempt.state == "submitted"
+            and self._attempts._invalidated_question_ids_for_attempt(conn, attempt_id)
+        ):
+            raise CourseConflictError("Attempt contains withdrawn questions")
         return attempt
 
     def collect_objective_ids(
@@ -134,12 +126,21 @@ class CourseGradingRepository:
             )
             if attempt.state == "graded":
                 return attempt, self._records(conn, attempt_id)
+            question_columns = {
+                str(item["name"])
+                for item in conn.execute("PRAGMA table_info(practice_questions)").fetchall()
+            }
+            options_projection = (
+                "questions.options_json" if "options_json" in question_columns else "'[]'"
+            )
             rows = conn.execute(
-                """SELECT items.id AS attempt_item_id, items.question_id, items.display_ordinal,
-                          answers.response_json, questions.answer_contract_json,
+                f"""SELECT items.id AS attempt_item_id, items.question_id, items.display_ordinal,
+                          items.option_order_json, answers.response_json,
+                          questions.answer_contract_json,
+                          {options_projection} AS options_json,
                           questions.objective_ids_json
                    FROM quiz_attempt_items AS items
-                   JOIN quiz_attempt_answers AS answers ON answers.attempt_item_id = items.id
+                   LEFT JOIN quiz_attempt_answers AS answers ON answers.attempt_item_id = items.id
                    JOIN practice_questions AS questions ON questions.id = items.question_id
                    WHERE items.attempt_id = ? ORDER BY items.display_ordinal, items.id""",
                 (attempt_id,),
@@ -163,14 +164,25 @@ class CourseGradingRepository:
             planned_evidence: list[
                 tuple[str, dict[str, Any], str, bool, str | None, str | None, str, str]
             ] = []
-            item_results: list[tuple[str, bool, str | None, list[str]]] = []
+            item_results: list[tuple[str, str, bool, str | None, list[str]]] = []
             planned_bytes = 0
             for row in rows:
-                contract = ExactAnswerContract.model_validate(json.loads(row["answer_contract_json"]))
+                contract = _ANSWER_CONTRACT_ADAPTER.validate_python(
+                    json.loads(row["answer_contract_json"])
+                )
+                options = [
+                    SingleChoiceOption.model_validate(item)
+                    for item in json.loads(row["options_json"] or "[]")
+                ]
                 raw_response = json.loads(row["response_json"])
-                response = self._response(raw_response)
-                is_correct = self._exact(response, contract)
-                error_type = None if is_correct else ("metacognitive" if not response.strip() else "application")
+                decision = grade_assessment_response(
+                    raw_response,
+                    contract,
+                    options,
+                )
+                algorithm = "exact-v1" if contract.kind == "exact" else contract.kind
+                is_correct = decision.is_correct
+                error_type = decision.error_type
                 contract_sha = self._digest(contract.model_dump())
                 response_sha = self._digest(raw_response)
                 objectives = sorted(json.loads(row["objective_ids_json"] or "[]") or [""])
@@ -184,13 +196,45 @@ class CourseGradingRepository:
                     else:
                         state = "pending" if mapping else "unmapped"
                     payload = {
-                        "algorithm": "exact-v1", "attempt_id": attempt_id,
+                        "algorithm": algorithm, "attempt_id": attempt_id,
                         "attempt_item_id": row["attempt_item_id"], "question_id": row["question_id"],
                         "objective_id": objective_id, "module_id": module_id,
                         "knowledge_type": knowledge_type, "contract_sha256": contract_sha,
                         "response_sha256": response_sha, "is_correct": is_correct,
                         "error_type": error_type,
                     }
+                    if algorithm == "bounded_short_answer_v1":
+                        payload.update(
+                            {
+                                "answer_contract_kind": contract.kind,
+                                "normalization_version": contract.normalization_version,
+                                "raw_response": decision.raw_response,
+                                "normalized_response": decision.normalized_response,
+                            }
+                        )
+                    elif algorithm == "single_choice_v1":
+                        if not isinstance(contract, SingleChoiceAnswerContract):
+                            raise ValueError("Single-choice grading contract is invalid")
+                        option_order = json.loads(row["option_order_json"] or "null")
+                        if (
+                            not isinstance(option_order, list)
+                            or len(option_order) != len(set(option_order))
+                            or set(option_order) != {
+                                item.option_id for item in options
+                            }
+                        ):
+                            raise ValueError("Single-choice option order is invalid")
+                        payload.update(
+                            {
+                                "answer_contract_kind": contract.kind,
+                                "selected_option_id": decision.raw_response,
+                                "correct_option_id": contract.correct_option_id,
+                                "options_sha256": self._digest(
+                                    [item.model_dump(mode="json") for item in options]
+                                ),
+                                "option_order_sha256": self._digest(option_order),
+                            }
+                        )
                     evidence_id = _evidence_id()
                     grading_json = self._json(payload)
                     planned_evidence.append((
@@ -199,7 +243,7 @@ class CourseGradingRepository:
                     ))
                     planned_bytes += len(grading_json.encode("utf-8"))
                     evidence_ids.append(evidence_id)
-                item_results.append((row["attempt_item_id"], is_correct, error_type, evidence_ids))
+                item_results.append((row["attempt_item_id"], algorithm, is_correct, error_type, evidence_ids))
             retained_count, retained_bytes = conn.execute(
                 """SELECT COUNT(*), COALESCE(SUM(length(CAST(grading_json AS BLOB))), 0)
                    FROM quiz_item_grading_evidence WHERE attempt_id = ?""",
@@ -226,21 +270,21 @@ class CourseGradingRepository:
                         attempt_item_id, question_id, objective_id, module_id, knowledge_type,
                         algorithm, payload_sha256, is_correct, grading_json, error_type,
                         state, created_at, applied_at)
-                       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'exact-v1', ?, ?, ?, ?, ?, ?, ?)""",
+                       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                     (
                         evidence_id, self.owner_user_id, course_id, practice_set_id, attempt_id,
                         payload["attempt_item_id"], payload["question_id"], objective_id, module_id,
-                        knowledge_type, self._digest(payload), int(is_correct), grading_json,
+                        knowledge_type, payload["algorithm"], self._digest(payload), int(is_correct), grading_json,
                         error_type, state, now, now if state == "unmapped" else None,
                     ),
                 )
-            for item_id, is_correct, error_type, evidence_ids in item_results:
+            for item_id, algorithm, is_correct, error_type, evidence_ids in item_results:
                 conn.execute(
                     """UPDATE quiz_attempt_items SET grading_json = ?, error_type = ?, graded_at = ?
                        WHERE id = ? AND graded_at IS NULL""",
-                    (self._json({"algorithm": "exact-v1", "is_correct": is_correct, "evidence_ids": evidence_ids}), error_type, now, item_id),
+                    (self._json({"algorithm": algorithm, "is_correct": is_correct, "evidence_ids": evidence_ids}), error_type, now, item_id),
                 )
-            correct = sum(1 for _item_id, is_correct, _error, _ids in item_results if is_correct)
+            correct = sum(1 for _item_id, _algorithm, is_correct, _error, _ids in item_results if is_correct)
             score = {"correct": correct, "total": len(item_results), "fraction": correct / len(item_results)}
             conn.execute(
                 """UPDATE quiz_attempts
@@ -289,7 +333,34 @@ class CourseGradingRepository:
             ).fetchone()
             if row is None:
                 raise self._not_found()
-            return [item for item in self._records(conn, attempt_id) if item.state == "pending"]
+            records = [
+                item for item in self._records(conn, attempt_id)
+                if item.state == "pending"
+            ]
+            if not records or not self._content_quality_ledger_available(conn):
+                return records
+            invalidations = conn.execute(
+                """SELECT question_id, evidence_id
+                   FROM practice_question_invalidations
+                   WHERE course_id = ? AND practice_set_id = ?""",
+                (course_id, practice_set_id),
+            ).fetchall()
+            invalidated_questions = {
+                str(item["question_id"])
+                for item in invalidations
+                if item["evidence_id"] is None
+            }
+            invalidated_evidence = {
+                str(item["evidence_id"])
+                for item in invalidations
+                if item["evidence_id"] is not None
+            }
+            return [
+                item
+                for item in records
+                if item.question_id not in invalidated_questions
+                and item.id not in invalidated_evidence
+            ]
 
     def remediation_scope(
         self, course_id: str, attempt_id: str

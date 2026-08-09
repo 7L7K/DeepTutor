@@ -16,6 +16,15 @@
 
 ### Added
 
+- Added the C3-H2 bounded assessment runtime for private Course Practice.
+  Successor revisions can now carry explicitly normalized short-answer
+  contracts or immutable single-choice option IDs, grade both paths through
+  matching Python and SQLite authority, persist acknowledged autosaves and
+  frozen option presentation across reloads, withhold answer-adjacent evidence
+  until Results, and fail closed on malformed, foreign, incomplete, or
+  invalidated evidence. The learner UI uses native radio controls and serialized
+  per-item autosave; no provider output or unsigned human-review recommendation
+  is promoted by this runtime change.
 - Centralized TEEECHR text-generation model, capability, reasoning, pricing,
   long-context, and per-feature policy in the deployment-owned model catalog.
   GPT-5.6 Luna is now the sole active model: General Chat and Course Chat use

@@ -5,6 +5,7 @@ from __future__ import annotations
 from collections.abc import Iterable
 import hashlib
 import json
+import secrets
 import sqlite3
 import time
 from typing import Any
@@ -12,6 +13,7 @@ from uuid import uuid4
 
 from pydantic import ValidationError
 
+from .assessment_grading import grade_assessment_response
 from .attempt_models import (
     AttemptItemPresentation,
     QuizAttempt,
@@ -20,7 +22,7 @@ from .attempt_models import (
     QuizAttemptView,
 )
 from .models import Course
-from .practice_models import PracticeQuestion, PracticeSet
+from .practice_models import PracticeQuestion, PracticeSet, SingleChoiceAnswerContract
 from .repository import CourseConflictError, CourseNotFoundError, CourseRepository
 
 _MAX_JSON_BYTES = 16_384
@@ -65,19 +67,6 @@ class CourseAssessmentRepository:
         if len(encoded.encode("utf-8")) > maximum:
             raise ValueError(f"{field} is too large")
         return encoded
-
-    @staticmethod
-    def _exact_answer_response(value: Any) -> dict[str, str]:
-        """Validate the current answer contract at the persistence boundary."""
-        if not (
-            isinstance(value, dict)
-            and set(value) == {"answer"}
-            and isinstance(value["answer"], str)
-        ):
-            raise ValueError("Exact-answer response must be exactly {'answer': string}")
-        if len(value["answer"]) > 4_000:
-            raise ValueError("Exact-answer response is too large")
-        return value
 
     @staticmethod
     def _page(*, limit: int | None, offset: int) -> tuple[int, int]:
@@ -197,6 +186,20 @@ class CourseAssessmentRepository:
         return attempt
 
     @staticmethod
+    def _server_option_order(question: PracticeQuestion) -> list[str] | None:
+        if not isinstance(question.answer_contract, SingleChoiceAnswerContract):
+            return None
+        authored = [option.option_id for option in question.options]
+        order = authored.copy()
+        secrets.SystemRandom().shuffle(order)
+        # Never preserve the authored first position when a permutation is
+        # possible. This depends only on authored presentation, not correctness.
+        if len(order) > 1 and order[0] == authored[0]:
+            swap_index = 1 + secrets.randbelow(len(order) - 1)
+            order[0], order[swap_index] = order[swap_index], order[0]
+        return order
+
+    @staticmethod
     def _presentations(
         questions: list[PracticeQuestion], item_presentations: Iterable[AttemptItemPresentation | dict[str, Any]]
     ) -> list[AttemptItemPresentation]:
@@ -209,7 +212,14 @@ class CourseAssessmentRepository:
         if len(questions) > _MAX_ITEMS:
             raise ValueError("Practice revision has too many questions")
         if not supplied:
-            return [AttemptItemPresentation(question_id=item.id, display_ordinal=index) for index, item in enumerate(questions, 1)]
+            return [
+                AttemptItemPresentation(
+                    question_id=item.id,
+                    display_ordinal=index,
+                    option_order=CourseAssessmentRepository._server_option_order(item),
+                )
+                for index, item in enumerate(questions, 1)
+            ]
         if len(supplied) != len(questions):
             raise ValueError("item_presentations must cover each revision question exactly once")
         try:
@@ -229,14 +239,27 @@ class CourseAssessmentRepository:
             )
             for presentation in presentations
         ]
+        server_presentations: list[AttemptItemPresentation] = []
         for presentation in presentations:
-            if presentation.option_order is not None:
+            question = next(
+                item for item in questions if item.id == presentation.question_id
+            )
+            if isinstance(question.answer_contract, SingleChoiceAnswerContract):
+                presentation = presentation.model_copy(
+                    update={
+                        "option_order": CourseAssessmentRepository._server_option_order(
+                            question
+                        )
+                    }
+                )
+            elif presentation.option_order is not None:
                 if len(presentation.option_order) > _MAX_ITEMS or any(not value or len(value) > 500 for value in presentation.option_order):
                     raise ValueError("option_order is invalid")
                 CourseAssessmentRepository._json(presentation.option_order, field="option_order")
             if presentation.randomized_values is not None:
                 CourseAssessmentRepository._json(presentation.randomized_values, field="randomized_values")
-        return presentations
+            server_presentations.append(presentation)
+        return server_presentations
 
     def _view(self, conn: sqlite3.Connection, attempt: QuizAttempt) -> QuizAttemptView:
         items = [self._item_from_row(row) for row in conn.execute(
@@ -251,12 +274,86 @@ class CourseAssessmentRepository:
         return QuizAttemptView(attempt=attempt, items=items, answers=answers)
 
     @staticmethod
-    def _question_from_row(row: sqlite3.Row) -> PracticeQuestion:
+    def _question_from_row(row: sqlite3.Row | dict[str, Any]) -> PracticeQuestion:
         payload = dict(row)
         payload["answer_contract"] = json.loads(payload.pop("answer_contract_json"))
+        payload["options"] = json.loads(payload.pop("options_json", "[]") or "[]")
         payload["objective_ids"] = json.loads(payload.pop("objective_ids_json") or "[]")
         payload["citations"] = json.loads(payload.pop("citation_json") or "[]")
         return PracticeQuestion.model_validate(payload)
+
+    @staticmethod
+    def _table_exists(conn: sqlite3.Connection, table_name: str) -> bool:
+        return conn.execute(
+            "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?",
+            (table_name,),
+        ).fetchone() is not None
+
+    def _admissible_questions(
+        self,
+        conn: sqlite3.Connection,
+        *,
+        course_id: str,
+        practice_set_id: str,
+        practice_set_revision_id: str,
+    ) -> list[PracticeQuestion]:
+        rows = conn.execute(
+            """SELECT * FROM practice_questions
+               WHERE practice_set_revision_id = ? ORDER BY ordinal, id""",
+            (practice_set_revision_id,),
+        ).fetchall()
+        questions = [self._question_from_row(row) for row in rows]
+        if not questions:
+            raise CourseConflictError("Ready Practice revision has no questions")
+
+        # Historical migration fixtures may intentionally stop before the C3
+        # invalidation ledger exists. Current databases apply migration 0015 at
+        # startup; in that schema, admission is derived from the durable ledger.
+        if not self._table_exists(conn, "practice_question_invalidations"):
+            return questions
+        invalidated_rows = conn.execute(
+            """SELECT DISTINCT question_id
+               FROM practice_question_invalidations
+               WHERE owner_user_id = ? AND course_id = ? AND practice_set_id = ?
+                 AND practice_set_revision_id = ?""",
+            (
+                self.owner_user_id,
+                course_id,
+                practice_set_id,
+                practice_set_revision_id,
+            ),
+        ).fetchall()
+        invalidated_ids = {str(row["question_id"]) for row in invalidated_rows}
+        admissible = [question for question in questions if question.id not in invalidated_ids]
+        if not admissible:
+            raise CourseConflictError("no_valid_questions")
+        return admissible
+
+    def _invalidated_question_ids_for_attempt(
+        self, conn: sqlite3.Connection, attempt_id: str
+    ) -> set[str]:
+        if not self._table_exists(conn, "practice_question_invalidations"):
+            return set()
+        rows = conn.execute(
+            """SELECT DISTINCT items.question_id
+               FROM quiz_attempt_items AS items
+               JOIN quiz_attempts AS attempts ON attempts.id = items.attempt_id
+               JOIN practice_question_invalidations AS invalidations
+                 ON invalidations.owner_user_id = attempts.owner_user_id
+                AND invalidations.course_id = attempts.course_id
+                AND invalidations.practice_set_id = attempts.practice_set_id
+                AND invalidations.practice_set_revision_id = attempts.practice_set_revision_id
+                AND invalidations.question_id = items.question_id
+               WHERE items.attempt_id = ? AND attempts.owner_user_id = ?""",
+            (attempt_id, self.owner_user_id),
+        ).fetchall()
+        return {str(row["question_id"]) for row in rows}
+
+    def _ensure_attempt_questions_writable(
+        self, conn: sqlite3.Connection, attempt_id: str
+    ) -> None:
+        if self._invalidated_question_ids_for_attempt(conn, attempt_id):
+            raise CourseConflictError("Attempt contains withdrawn questions")
 
     def start_or_resume_attempt(
         self,
@@ -298,6 +395,12 @@ class CourseAssessmentRepository:
                 )
                 if timing_mode not in {"untimed", "practice_timer"}:
                     raise CourseConflictError("Practice timing mode is invalid")
+            questions = self._admissible_questions(
+                conn,
+                course_id=course_id,
+                practice_set_id=practice_set_id,
+                practice_set_revision_id=practice_set_revision_id,
+            )
             existing = conn.execute(
                 """SELECT * FROM quiz_attempts WHERE owner_user_id = ?
                    AND practice_set_revision_id = ? AND state = 'in_progress'""",
@@ -312,7 +415,11 @@ class CourseAssessmentRepository:
                     or attempt.practice_set_write_epoch != expected_practice_set_write_epoch
                 ):
                     raise CourseConflictError("Attempt authority epoch is stale")
-                return self._view(conn, attempt)
+                view = self._view(conn, attempt)
+                admissible_ids = {question.id for question in questions}
+                if any(item.question_id not in admissible_ids for item in view.items):
+                    raise CourseConflictError("Attempt contains withdrawn questions")
+                return view
             retained = int(conn.execute(
                 """SELECT COUNT(*) FROM quiz_attempts
                    WHERE owner_user_id = ? AND course_id = ? AND practice_set_id = ?""",
@@ -320,13 +427,6 @@ class CourseAssessmentRepository:
             ).fetchone()[0])
             if retained >= _MAX_RETAINED_ATTEMPTS_PER_PRACTICE_SET:
                 raise CourseConflictError("Practice set has reached its retained attempt limit")
-            rows = conn.execute(
-                "SELECT * FROM practice_questions WHERE practice_set_revision_id = ? ORDER BY ordinal, id",
-                (practice_set_revision_id,),
-            ).fetchall()
-            questions = [self._question_from_row(row) for row in rows]
-            if not questions:
-                raise CourseConflictError("Ready Practice revision has no questions")
             presentations = self._presentations(questions, item_presentations)
             attempt_id = _attempt_id()
             attempt_columns = {
@@ -421,17 +521,47 @@ class CourseAssessmentRepository:
     ) -> QuizAttemptAnswer:
         if not isinstance(idempotency_token, str) or not idempotency_token.strip() or len(idempotency_token) > 160:
             raise ValueError("idempotency_token is required and bounded")
-        response = self._exact_answer_response(response)
-        response_json = self._json(response, field="response")
-        payload_sha256 = hashlib.sha256(
-            self._json({"attempt_item_id": attempt_item_id, "response": response, "expected_answer_revision": expected_answer_revision}, field="autosave payload").encode()
-        ).hexdigest()
         now = time.time()
         with self.course_repository._write_lock, self.course_repository._connect() as conn:
             conn.execute("BEGIN IMMEDIATE")
             attempt = self._write_attempt(conn, course_id, practice_set_id, attempt_id,
                 expected_course_write_epoch=expected_course_write_epoch,
                 expected_practice_set_write_epoch=expected_practice_set_write_epoch)
+            self._ensure_attempt_questions_writable(conn, attempt_id)
+            item = conn.execute(
+                """SELECT questions.*, items.option_order_json AS attempt_option_order_json
+                   FROM quiz_attempt_items AS items
+                   JOIN practice_questions AS questions ON questions.id = items.question_id
+                   WHERE items.id = ? AND items.attempt_id = ?""",
+                (attempt_item_id, attempt_id),
+            ).fetchone()
+            if item is None:
+                raise self._not_found()
+            question_payload = dict(item)
+            raw_option_order = question_payload.pop("attempt_option_order_json")
+            question = self._question_from_row(question_payload)
+            grade_assessment_response(response, question.answer_contract, question.options)
+            if isinstance(question.answer_contract, SingleChoiceAnswerContract):
+                option_order = json.loads(raw_option_order) if raw_option_order else None
+                selected = response.get("option_id") if isinstance(response, dict) else None
+                if (
+                    not isinstance(option_order, list)
+                    or len(option_order) != len(set(option_order))
+                    or set(option_order) != {option.option_id for option in question.options}
+                    or selected not in option_order
+                ):
+                    raise ValueError("Selected option is outside the frozen presentation")
+            response_json = self._json(response, field="response")
+            payload_sha256 = hashlib.sha256(
+                self._json(
+                    {
+                        "attempt_item_id": attempt_item_id,
+                        "response": response,
+                        "expected_answer_revision": expected_answer_revision,
+                    },
+                    field="autosave payload",
+                ).encode()
+            ).hexdigest()
             receipt = conn.execute(
                 """SELECT * FROM quiz_attempt_autosave_receipts
                    WHERE attempt_id = ? AND idempotency_token = ?""", (attempt_id, idempotency_token)
@@ -447,11 +577,6 @@ class CourseAssessmentRepository:
                 )
             if attempt.state != "in_progress":
                 raise CourseConflictError("Quiz attempt answers are frozen")
-            item = conn.execute(
-                "SELECT * FROM quiz_attempt_items WHERE id = ? AND attempt_id = ?", (attempt_item_id, attempt_id)
-            ).fetchone()
-            if item is None:
-                raise self._not_found()
             receipt_count, receipt_bytes = conn.execute(
                 """SELECT COUNT(*), COALESCE(SUM(length(CAST(response_json AS BLOB))), 0)
                    FROM quiz_attempt_autosave_receipts WHERE attempt_id = ?""",
@@ -497,10 +622,23 @@ class CourseAssessmentRepository:
             attempt = self._write_attempt(conn, course_id, practice_set_id, attempt_id,
                 expected_course_write_epoch=expected_course_write_epoch,
                 expected_practice_set_write_epoch=expected_practice_set_write_epoch)
+            self._ensure_attempt_questions_writable(conn, attempt_id)
             if attempt.state == "submitted":
                 return attempt
             if attempt.state != "in_progress":
                 raise CourseConflictError("Quiz attempt is terminal")
+            if conn.execute(
+                """SELECT 1 FROM quiz_attempt_items AS items
+                   WHERE items.attempt_id = ?
+                     AND NOT EXISTS (
+                         SELECT 1 FROM quiz_attempt_answers AS answers
+                         WHERE answers.attempt_item_id = items.id
+                           AND answers.response_json IS NOT NULL
+                     )
+                   LIMIT 1""",
+                (attempt_id,),
+            ).fetchone() is not None:
+                raise CourseConflictError("Quiz attempt requires every answer before submission")
             conn.execute(
                 """UPDATE quiz_attempts SET state = 'submitted', submitted_at = ?, revision = revision + 1, updated_at = ?
                    WHERE id = ? AND state = 'in_progress'""", (now, now, attempt_id)

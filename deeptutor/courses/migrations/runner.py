@@ -15,6 +15,16 @@ import time
 from typing import Any, Iterable
 import unicodedata
 
+from pydantic import TypeAdapter, ValidationError
+
+from deeptutor.courses.assessment_grading import grade_assessment_response
+from deeptutor.courses.practice_models import (
+    BoundedShortAnswerContract,
+    ExactAnswerContract,
+    PracticeAnswerContract,
+    SingleChoiceAnswerContract,
+    SingleChoiceOption,
+)
 from deeptutor.courses.database_lock import course_database_lock
 
 _MIGRATION_FILE = re.compile(r"^(?P<version>\d{4})_(?P<name>[a-z0-9_]+)\.sql$")
@@ -174,6 +184,182 @@ def _register_course_validation_functions(conn: sqlite3.Connection) -> None:
             and payload["error_type"] == actual_error
         )
 
+    answer_contract_adapter = TypeAdapter(PracticeAnswerContract)
+
+    def question_contract_valid(
+        question_type: object,
+        answer_contract_json: object,
+        options_json: object,
+    ) -> int:
+        try:
+            contract = answer_contract_adapter.validate_python(
+                json.loads(str(answer_contract_json))
+            )
+            raw_options = json.loads(str(options_json))
+            if not isinstance(raw_options, list):
+                return 0
+            options = [SingleChoiceOption.model_validate(item) for item in raw_options]
+            if isinstance(contract, SingleChoiceAnswerContract):
+                option_ids = [item.option_id for item in options]
+                option_text = [" ".join(item.text.casefold().split()) for item in options]
+                return int(
+                    str(question_type) == "single_choice"
+                    and 2 <= len(options) <= 8
+                    and len(option_ids) == len(set(option_ids))
+                    and len(option_text) == len(set(option_text))
+                    and contract.correct_option_id in option_ids
+                )
+            if isinstance(contract, BoundedShortAnswerContract):
+                return int(str(question_type) == "short_answer" and not options)
+            if isinstance(contract, ExactAnswerContract):
+                legacy_type = str(question_type)
+                return int(
+                    bool(legacy_type)
+                    and legacy_type == legacy_type.strip()
+                    and len(legacy_type) <= 80
+                    and legacy_type != "single_choice"
+                    and not options
+                )
+            return 0
+        except (TypeError, ValueError, json.JSONDecodeError, ValidationError):
+            return 0
+
+    def assessment_evidence_valid(
+        payload_sha256: object,
+        grading_json: object,
+        algorithm: object,
+        attempt_id: object,
+        attempt_item_id: object,
+        question_id: object,
+        objective_id: object,
+        module_id: object,
+        knowledge_type: object,
+        is_correct: object,
+        error_type: object,
+        answer_contract_json: object,
+        options_json: object,
+        option_order_json: object,
+        response_json: object,
+    ) -> int:
+        digest = canonical_sha256(grading_json)
+        if digest is None or digest != str(payload_sha256):
+            return 0
+        try:
+            payload = json.loads(str(grading_json))
+            contract = answer_contract_adapter.validate_python(
+                json.loads(str(answer_contract_json))
+            )
+            raw_options = json.loads(str(options_json))
+            response = json.loads(str(response_json))
+            if not isinstance(raw_options, list):
+                return 0
+            options = [SingleChoiceOption.model_validate(item) for item in raw_options]
+            decision = grade_assessment_response(response, contract, options)
+        except (TypeError, ValueError, json.JSONDecodeError, ValidationError):
+            return 0
+
+        contract_kind = contract.kind
+        expected_algorithm = (
+            "exact-v1" if contract_kind == "exact" else contract_kind
+        )
+        if algorithm != expected_algorithm:
+            return 0
+        base_keys = {
+            "algorithm",
+            "attempt_id",
+            "attempt_item_id",
+            "question_id",
+            "objective_id",
+            "module_id",
+            "knowledge_type",
+            "contract_sha256",
+            "response_sha256",
+            "is_correct",
+            "error_type",
+        }
+        if expected_algorithm == "exact-v1":
+            required_keys = base_keys
+        elif expected_algorithm == "bounded_short_answer_v1":
+            required_keys = base_keys | {
+                "answer_contract_kind",
+                "normalization_version",
+                "raw_response",
+                "normalized_response",
+            }
+        else:
+            required_keys = base_keys | {
+                "answer_contract_kind",
+                "selected_option_id",
+                "correct_option_id",
+                "options_sha256",
+                "option_order_sha256",
+            }
+        if not isinstance(payload, dict) or set(payload) != required_keys:
+            return 0
+        if any(
+            not isinstance(payload[key], str)
+            or len(payload[key]) != 64
+            or any(char not in "0123456789abcdef" for char in payload[key])
+            for key in (
+                "contract_sha256",
+                "response_sha256",
+                *(
+                    ("options_sha256", "option_order_sha256")
+                    if expected_algorithm == "single_choice_v1"
+                    else ()
+                ),
+            )
+        ):
+            return 0
+        expected = {
+            "algorithm": expected_algorithm,
+            "attempt_id": attempt_id,
+            "attempt_item_id": attempt_item_id,
+            "question_id": question_id,
+            "objective_id": objective_id,
+            "module_id": module_id,
+            "knowledge_type": knowledge_type,
+            "is_correct": bool(is_correct),
+            "error_type": error_type,
+        }
+        if not all(payload[key] == value for key, value in expected.items()):
+            return 0
+        if (
+            payload["contract_sha256"] != canonical_sha256(answer_contract_json)
+            or payload["response_sha256"] != canonical_sha256(response_json)
+            or payload["is_correct"] != decision.is_correct
+            or payload["error_type"] != decision.error_type
+        ):
+            return 0
+        if expected_algorithm == "bounded_short_answer_v1":
+            return int(
+                payload["answer_contract_kind"] == contract.kind
+                and payload["normalization_version"] == contract.normalization_version
+                and payload["raw_response"] == decision.raw_response
+                and payload["normalized_response"] == decision.normalized_response
+            )
+        if expected_algorithm == "single_choice_v1":
+            try:
+                option_order = json.loads(str(option_order_json))
+            except (TypeError, ValueError, json.JSONDecodeError):
+                return 0
+            option_ids = [item.option_id for item in options]
+            if (
+                not isinstance(option_order, list)
+                or any(not isinstance(item, str) for item in option_order)
+                or len(option_order) != len(set(option_order))
+                or set(option_order) != set(option_ids)
+            ):
+                return 0
+            return int(
+                payload["answer_contract_kind"] == contract.kind
+                and payload["selected_option_id"] == decision.raw_response
+                and payload["correct_option_id"] == contract.correct_option_id
+                and payload["options_sha256"] == canonical_sha256(options_json)
+                and payload["option_order_sha256"] == canonical_sha256(option_order_json)
+            )
+        return 1
+
     def item_grading_valid(grading_json: object, is_correct: object, error_type: object) -> int:
         try:
             payload = json.loads(str(grading_json))
@@ -181,7 +367,11 @@ def _register_course_validation_functions(conn: sqlite3.Connection) -> None:
             return int(
                 isinstance(payload, dict)
                 and set(payload) == {"algorithm", "is_correct", "evidence_ids"}
-                and payload["algorithm"] == "exact-v1"
+                and payload["algorithm"] in {
+                    "exact-v1",
+                    "bounded_short_answer_v1",
+                    "single_choice_v1",
+                }
                 and payload["is_correct"] == bool(is_correct)
                 and isinstance(ids, list) and bool(ids)
                 and len(ids) == len(set(ids)) and all(isinstance(item, str) and item.startswith("grd_") for item in ids)
@@ -203,6 +393,18 @@ def _register_course_validation_functions(conn: sqlite3.Connection) -> None:
 
     conn.create_function("teeechr_canonical_sha256", 1, canonical_sha256, deterministic=True)
     conn.create_function("teeechr_exact_evidence_valid", 13, exact_evidence_valid, deterministic=True)
+    conn.create_function(
+        "teeechr_question_contract_valid",
+        3,
+        question_contract_valid,
+        deterministic=True,
+    )
+    conn.create_function(
+        "teeechr_assessment_evidence_valid",
+        15,
+        assessment_evidence_valid,
+        deterministic=True,
+    )
     conn.create_function("teeechr_item_grading_valid", 3, item_grading_valid, deterministic=True)
     conn.create_function("teeechr_score_valid", 3, score_valid, deterministic=True)
 

@@ -20,7 +20,11 @@ class GradingEvidence(BaseModel):
     objective_id: str
     module_id: str | None = None
     knowledge_type: str | None = None
-    algorithm: Literal["exact-v1"]
+    algorithm: Literal[
+        "exact-v1",
+        "bounded_short_answer_v1",
+        "single_choice_v1",
+    ]
     payload_sha256: str
     is_correct: bool
     grading: dict[str, Any]

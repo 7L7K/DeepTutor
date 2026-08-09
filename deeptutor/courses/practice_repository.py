@@ -3,15 +3,17 @@
 from __future__ import annotations
 
 import json
+import secrets
 import sqlite3
 import time
 from typing import Any, Iterable
 from uuid import uuid4
 
-from pydantic import ValidationError
+from pydantic import TypeAdapter, ValidationError
 
 from .models import Course
 from .practice_models import (
+    PracticeAnswerContract,
     ExactAnswerContract,
     PracticeCitation,
     PracticeMode,
@@ -19,6 +21,8 @@ from .practice_models import (
     PracticeSet,
     PracticeSetRevision,
     PracticeSourceReceipt,
+    SingleChoiceOption,
+    SingleChoiceAnswerContract,
 )
 from .repository import CourseConflictError, CourseNotFoundError, CourseRepository
 
@@ -26,6 +30,7 @@ _MAX_OBJECTIVES = 64
 _MAX_SOURCES = 64
 _MAX_CITATIONS = 32
 _MAX_JSON_BYTES = 16_384
+_ANSWER_CONTRACT_ADAPTER = TypeAdapter(PracticeAnswerContract)
 
 
 def _practice_set_id() -> str:
@@ -38,6 +43,22 @@ def _practice_revision_id() -> str:
 
 def _practice_question_id() -> str:
     return f"qst_{uuid4().hex}"
+
+
+def _opaque_option_id() -> str:
+    return f"opt_{secrets.token_hex(16)}"
+
+
+def _server_option_permutation(
+    options: list[tuple[str, str]],
+) -> list[tuple[str, str]]:
+    order = options.copy()
+    secrets.SystemRandom().shuffle(order)
+    # Remove the imported first-position signal without consulting correctness.
+    if len(order) > 1 and order[0] == options[0]:
+        swap_index = 1 + secrets.randbelow(len(order) - 1)
+        order[0], order[swap_index] = order[swap_index], order[0]
+    return order
 
 
 class CoursePracticeRepository:
@@ -83,6 +104,91 @@ class CoursePracticeRepository:
             raise ValueError("objective_ids must not contain duplicates")
         return cleaned
 
+    @staticmethod
+    def _authoring_contract(
+        answer_contract: dict[str, Any] | PracticeAnswerContract,
+        options: Iterable[SingleChoiceOption | dict[str, Any]],
+    ) -> tuple[PracticeAnswerContract, list[SingleChoiceOption]]:
+        """Validate import identities, then replace them with server identities."""
+
+        if isinstance(options, (str, bytes)):
+            raise ValueError("options must be a list")
+        try:
+            raw_options = list(options)
+        except TypeError as exc:
+            raise ValueError("options must be a list") from exc
+
+        raw_contract: Any = (
+            answer_contract.model_dump(mode="python")
+            if isinstance(answer_contract, SingleChoiceAnswerContract)
+            else answer_contract
+        )
+        if isinstance(raw_contract, dict) and raw_contract.get("kind") == "single_choice_v1":
+            if set(raw_contract) != {"kind", "correct_option_id"} or not isinstance(
+                raw_contract.get("correct_option_id"), str
+            ):
+                raise ValueError("answer_contract must be a supported typed contract")
+
+            imported: list[tuple[str, str]] = []
+            for item in raw_options:
+                payload: Any = (
+                    item.model_dump(mode="python")
+                    if isinstance(item, SingleChoiceOption)
+                    else item
+                )
+                if not isinstance(payload, dict) or set(payload) != {"option_id", "text"}:
+                    raise ValueError("options must be typed single-choice options")
+                imported_id = payload.get("option_id")
+                text = payload.get("text")
+                if (
+                    not isinstance(imported_id, str)
+                    or not imported_id
+                    or len(imported_id) > 160
+                    or imported_id != imported_id.strip()
+                    or any(char.isspace() for char in imported_id)
+                    or not isinstance(text, str)
+                ):
+                    raise ValueError("options must be typed single-choice options")
+                imported.append((imported_id, text))
+
+            imported_ids = [item[0] for item in imported]
+            if len(imported_ids) != len(set(imported_ids)):
+                raise ValueError("single-choice option IDs must be unique")
+            correct_imported_id = raw_contract["correct_option_id"]
+            if correct_imported_id not in imported_ids:
+                raise ValueError("correct option must belong to the immutable question")
+
+            id_mapping: dict[str, str] = {}
+            allocated: set[str] = set()
+            for imported_id in imported_ids:
+                generated = _opaque_option_id()
+                while generated in allocated:
+                    generated = _opaque_option_id()
+                allocated.add(generated)
+                id_mapping[imported_id] = generated
+            try:
+                typed_options = [
+                    SingleChoiceOption(option_id=id_mapping[imported_id], text=text)
+                    for imported_id, text in _server_option_permutation(imported)
+                ]
+                contract = SingleChoiceAnswerContract(
+                    kind="single_choice_v1",
+                    correct_option_id=id_mapping[correct_imported_id],
+                )
+            except ValidationError as exc:
+                raise ValueError("options must be typed single-choice options") from exc
+            return contract, typed_options
+
+        try:
+            contract = _ANSWER_CONTRACT_ADAPTER.validate_python(answer_contract)
+        except ValidationError as exc:
+            raise ValueError("answer_contract must be a supported typed contract") from exc
+        try:
+            typed_options = [SingleChoiceOption.model_validate(item) for item in raw_options]
+        except (TypeError, ValidationError) as exc:
+            raise ValueError("options must be typed single-choice options") from exc
+        return contract, typed_options
+
     def _course_for_write(
         self,
         conn: sqlite3.Connection,
@@ -126,6 +232,7 @@ class CoursePracticeRepository:
     def _question_from_row(row: sqlite3.Row) -> PracticeQuestion:
         payload = dict(row)
         payload["answer_contract"] = json.loads(payload.pop("answer_contract_json"))
+        payload["options"] = json.loads(payload.pop("options_json", "[]") or "[]")
         payload["objective_ids"] = json.loads(payload.pop("objective_ids_json") or "[]")
         payload["citations"] = json.loads(payload.pop("citation_json") or "[]")
         return PracticeQuestion.model_validate(payload)
@@ -287,17 +394,15 @@ class CoursePracticeRepository:
         *,
         question_type: str,
         prompt: str,
-        answer_contract: dict[str, Any] | ExactAnswerContract,
+        answer_contract: dict[str, Any] | PracticeAnswerContract,
+        options: Iterable[SingleChoiceOption | dict[str, Any]] = (),
         explanation: str = "",
         objective_ids: Iterable[str] = (),
         citations: Iterable[PracticeCitation | dict[str, Any]] = (),
         ordinal: int | None = None,
         expected_course_write_epoch: int,
     ) -> PracticeQuestion:
-        try:
-            contract = ExactAnswerContract.model_validate(answer_contract)
-        except ValidationError as exc:
-            raise ValueError("answer_contract must be a supported typed contract") from exc
+        contract, typed_options = self._authoring_contract(answer_contract, options)
         objectives = self._objective_ids(objective_ids)
         if isinstance(citations, (str, bytes)):
             raise ValueError("citations must be a list")
@@ -324,6 +429,45 @@ class CoursePracticeRepository:
             raise ValueError("citations are too large")
         now = time.time()
         question_id = _practice_question_id()
+        cleaned_question_type = self._clean_text(
+            question_type, "Question type", maximum=80
+        )
+        if isinstance(contract, SingleChoiceAnswerContract):
+            if cleaned_question_type != "single_choice":
+                raise ValueError("single-choice contracts require question_type='single_choice'")
+        elif isinstance(contract, ExactAnswerContract) or contract.kind == "bounded_short_answer_v1":
+            if cleaned_question_type != "short_answer":
+                raise ValueError("short-answer contracts require question_type='short_answer'")
+        cleaned_prompt = self._clean_text(
+            prompt, "Question prompt", maximum=12_000
+        )
+        cleaned_explanation = self._clean_text(
+            explanation,
+            "Question explanation",
+            maximum=12_000,
+            required=False,
+        )
+        # Pydantic checks the cross-field contract before SQLite independently
+        # repeats the same fail-closed validation.
+        PracticeQuestion(
+            id=question_id,
+            practice_set_revision_id=revision_id,
+            question_type=cleaned_question_type,
+            prompt=cleaned_prompt,
+            options=typed_options,
+            answer_contract=contract,
+            explanation=cleaned_explanation,
+            objective_ids=objectives,
+            citations=typed_citations,
+            ordinal=ordinal or 1,
+            created_at=now,
+        )
+        options_json = json.dumps(
+            [item.model_dump(mode="json") for item in typed_options],
+            allow_nan=False,
+            ensure_ascii=False,
+            separators=(",", ":"),
+        )
         with self.course_repository._write_lock, self.course_repository._connect() as conn:
             conn.execute("BEGIN IMMEDIATE")
             self._course_for_write(conn, course_id, expected_course_write_epoch)
@@ -348,13 +492,65 @@ class CoursePracticeRepository:
             if not isinstance(ordinal, int) or ordinal < 1:
                 raise ValueError("ordinal must be a positive integer")
             try:
-                conn.execute(
-                    """INSERT INTO practice_questions
-                       (id, practice_set_revision_id, question_type, prompt, answer_contract_json,
-                        explanation, objective_ids_json, citation_json, ordinal, created_at)
-                       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-                    (question_id, revision_id, self._clean_text(question_type, "Question type", maximum=80), self._clean_text(prompt, "Question prompt", maximum=12_000), json.dumps(contract.model_dump(), allow_nan=False, separators=(",", ":")), self._clean_text(explanation, "Question explanation", maximum=12_000, required=False), json.dumps(objectives, allow_nan=False, separators=(",", ":")), citation_json, ordinal, now),
+                question_columns = {
+                    str(item["name"])
+                    for item in conn.execute("PRAGMA table_info(practice_questions)").fetchall()
+                }
+                contract_json = json.dumps(
+                    contract.model_dump(), allow_nan=False, separators=(",", ":")
                 )
+                objective_json = json.dumps(
+                    objectives, allow_nan=False, separators=(",", ":")
+                )
+                if "options_json" in question_columns:
+                    conn.execute(
+                        """INSERT INTO practice_questions
+                           (id, practice_set_revision_id, question_type, prompt, options_json,
+                            answer_contract_json, explanation, objective_ids_json, citation_json,
+                            ordinal, created_at)
+                           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                        (
+                            question_id,
+                            revision_id,
+                            cleaned_question_type,
+                            cleaned_prompt,
+                            options_json,
+                            contract_json,
+                            cleaned_explanation,
+                            objective_json,
+                            citation_json,
+                            ordinal,
+                            now,
+                        ),
+                    )
+                else:
+                    # Historical upgrade fixtures intentionally construct an
+                    # accepted pre-0015 exact-answer database with current
+                    # repository code. New bounded/choice contracts cannot be
+                    # represented until the forward migration is applied.
+                    if contract.kind != "exact" or typed_options:
+                        raise CourseConflictError(
+                            "Bounded assessment contracts require migration 0015"
+                        )
+                    conn.execute(
+                        """INSERT INTO practice_questions
+                           (id, practice_set_revision_id, question_type, prompt,
+                            answer_contract_json, explanation, objective_ids_json,
+                            citation_json, ordinal, created_at)
+                           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                        (
+                            question_id,
+                            revision_id,
+                            cleaned_question_type,
+                            cleaned_prompt,
+                            contract_json,
+                            cleaned_explanation,
+                            objective_json,
+                            citation_json,
+                            ordinal,
+                            now,
+                        ),
+                    )
             except sqlite3.IntegrityError as exc:
                 raise CourseConflictError("Practice question ordinal already exists") from exc
             row = conn.execute("SELECT * FROM practice_questions WHERE id = ?", (question_id,)).fetchone()

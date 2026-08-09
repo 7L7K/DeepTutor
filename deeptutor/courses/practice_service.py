@@ -5,11 +5,12 @@ from __future__ import annotations
 from typing import Any, Iterable
 
 from .practice_models import (
-    ExactAnswerContract,
+    PracticeAnswerContract,
     PracticeCitation,
     PracticeQuestion,
     PracticeSet,
     PracticeSetRevision,
+    SingleChoiceOption,
 )
 from .practice_repository import CoursePracticeRepository
 
@@ -37,7 +38,8 @@ class CoursePracticeService:
         *,
         question_type: str,
         prompt: str,
-        answer_contract: dict[str, Any] | ExactAnswerContract,
+        answer_contract: dict[str, Any] | PracticeAnswerContract,
+        options: Iterable[SingleChoiceOption | dict[str, Any]] = (),
         explanation: str = "",
         objective_ids: Iterable[str] = (),
         citations: Iterable[PracticeCitation | dict[str, Any]] = (),
@@ -51,6 +53,7 @@ class CoursePracticeService:
             question_type=question_type,
             prompt=prompt,
             answer_contract=answer_contract,
+            options=options,
             explanation=explanation,
             objective_ids=objective_ids,
             citations=citations,
