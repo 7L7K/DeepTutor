@@ -80,6 +80,15 @@ class AddPracticeQuestionRequest(_PracticeRequest):
     expected_course_write_epoch: int = Field(ge=1)
 
 
+class ReportPracticeQuestionRequest(_PracticeRequest):
+    reason: str = Field(min_length=1, max_length=1_000)
+
+
+class ResolvePracticeQuestionReportRequest(_PracticeRequest):
+    decision: Literal["reject", "invalidate"]
+    note: str = Field(min_length=1, max_length=1_000)
+
+
 class StartPracticeAttemptRequest(_PracticeRequest):
     practice_set_revision_id: str = Field(min_length=1, max_length=80)
     expected_course_write_epoch: int = Field(ge=1)
@@ -117,6 +126,7 @@ class CreateGeneratedPracticeRequest(_PracticeRequest):
     expected_course_write_epoch: int = Field(ge=1)
     item_limit: int = Field(default=5, ge=1, le=12)
     context_char_limit: int = Field(default=12_000, ge=1, le=48_000)
+    quality_profile: Literal["baseline-v1", "c3-biology-v1"] = "baseline-v1"
 
 
 class CreatePracticeGenerationPlanRequest(_PracticeRequest):
@@ -132,6 +142,7 @@ class CreatePracticeGenerationPlanRequest(_PracticeRequest):
     item_limit: int = Field(default=5, ge=1, le=12)
     difficulty: Literal["foundation", "mixed", "challenge"] = "mixed"
     timing_mode: Literal["untimed", "practice_timer"] = "untimed"
+    quality_profile: Literal["baseline-v1", "c3-biology-v1"] = "baseline-v1"
 
 
 class UpdatePracticeGenerationPlanRequest(_PracticeRequest):
@@ -166,6 +177,7 @@ class GeneratePracticeRevisionRequest(_PracticeRequest):
     expected_practice_set_write_epoch: int = Field(ge=1)
     item_limit: int = Field(default=5, ge=1, le=12)
     context_char_limit: int = Field(default=12_000, ge=1, le=48_000)
+    quality_profile: Literal["baseline-v1", "c3-biology-v1"] = "baseline-v1"
 
 
 class CreateFlashcardDeckRequest(_PracticeRequest):
@@ -400,7 +412,7 @@ async def _authoritative_flashcard_generation_arguments(
             source_ids=provenance["source_ids"],
             objective_ids=provenance["objective_ids"],
             focus="Review the concepts missed in this quiz attempt",
-            item_limit=8,
+            item_limit=4 if provenance.get("quality_profile") == "c3-biology-v1" else 8,
             card_type_mix=["recall", "application"],
             difficulty="mixed",
             answer_length="short",
@@ -664,6 +676,15 @@ def _practice_generation_service():
     return build_practice_generation_service(_service())
 
 
+def _content_quality_service():
+    from deeptutor.courses.content_quality_repository import CourseContentQualityRepository
+    from deeptutor.courses.content_quality_service import CourseContentQualityService
+
+    return CourseContentQualityService(
+        CourseContentQualityRepository(_service().repository)
+    )
+
+
 def _run_practice_generation(
     owner_user_id: str, course_id: str, operation_id: str
 ) -> None:
@@ -800,6 +821,7 @@ async def create_generated_practice(
                 expected_course_write_epoch=body.expected_course_write_epoch,
                 item_limit=body.item_limit,
                 context_char_limit=body.context_char_limit,
+                quality_profile=body.quality_profile,
             )
         )
     from deeptutor.courses.generation_service import register_live_practice_generation
@@ -857,6 +879,7 @@ async def create_practice_generation_plan(
                 item_limit=body.item_limit,
                 difficulty=body.difficulty,
                 timing_mode=body.timing_mode,
+                quality_profile=body.quality_profile,
                 origin={"kind": "practice"},
                 idempotency_key=idempotency_key,
             )
@@ -1000,6 +1023,7 @@ async def request_practice_generation_successor(
                 expected_practice_set_write_epoch=body.expected_practice_set_write_epoch,
                 item_limit=body.item_limit,
                 context_char_limit=body.context_char_limit,
+                quality_profile=body.quality_profile,
             )
         )
     from deeptutor.courses.generation_service import register_live_practice_generation
@@ -1170,6 +1194,51 @@ async def ready_practice_revision(
         return _learner_practice_revision_payload(revision)
 
 
+@router.post(
+    "/{course_id}/practice/{practice_set_id}/revisions/{revision_id}/questions/{question_id}/quality-report",
+    status_code=201,
+)
+async def report_practice_question(
+    course_id: str,
+    practice_set_id: str,
+    revision_id: str,
+    question_id: str,
+    body: ReportPracticeQuestionRequest,
+):
+    async with course_operation_lock(course_id):
+        report = _practice_call(
+            lambda: _content_quality_service().report_question(
+                course_id,
+                practice_set_id,
+                revision_id,
+                question_id,
+                reason=body.reason,
+            )
+        )
+    return report
+
+
+@router.post(
+    "/{course_id}/content-quality/reports/{report_id}/resolve",
+)
+async def resolve_practice_question_report(
+    course_id: str,
+    report_id: str,
+    body: ResolvePracticeQuestionReportRequest,
+):
+    async with course_operation_lock(course_id):
+        report, evidence_ids = _practice_call(
+            lambda: _content_quality_service().resolve_report(
+                course_id,
+                report_id,
+                decision=body.decision,
+                reviewer_user_id=_service().owner_user_id,
+                note=body.note,
+            )
+        )
+    return {"report": report, "invalidated_evidence_ids": evidence_ids}
+
+
 @router.post("/{course_id}/practice/{practice_set_id}/attempts")
 async def start_or_resume_practice_attempt(
     course_id: str, practice_set_id: str, body: StartPracticeAttemptRequest
@@ -1321,6 +1390,11 @@ async def get_practice_attempt_results(
     )
     if view.attempt.state != "graded":
         raise HTTPException(status_code=409, detail="Quiz attempt has not been graded")
+    quality = _practice_call(
+        lambda: _content_quality_service().effective_result(
+            course_id, practice_set_id, view
+        )
+    )
     questions = _practice_call(
         lambda: practice.list_questions(
             course_id,
@@ -1328,10 +1402,18 @@ async def get_practice_attempt_results(
             view.attempt.practice_set_revision_id,
         )
     )
+    invalidated_question_ids = set(quality["invalidated_question_ids"])
     return {
         **view.model_dump(mode="json"),
+        "effective_score": quality["score"],
+        "content_quality": quality,
         "questions": [
-            _practice_question_payload(item, include_answer_contract=True)
+            {
+                **_practice_question_payload(item, include_answer_contract=True),
+                "content_quality": (
+                    "invalidated" if item.id in invalidated_question_ids else "valid"
+                ),
+            }
             for item in questions
         ],
     }
@@ -1360,7 +1442,7 @@ async def prepare_practice_remediation_flashcard_brief(
             source_ids=provenance["source_ids"],
             objective_ids=provenance["objective_ids"],
             expected_course_write_epoch=course.write_epoch,
-            item_limit=8,
+            item_limit=4 if provenance.get("quality_profile") == "c3-biology-v1" else 8,
             card_type_mix=["recall", "application"],
             difficulty="mixed",
             answer_length="short",

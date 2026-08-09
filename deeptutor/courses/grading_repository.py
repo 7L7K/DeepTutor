@@ -71,6 +71,17 @@ class CourseGradingRepository:
         payload["response"] = json.loads(response_json) if response_json else None
         return GradingEvidence.model_validate(payload)
 
+    @staticmethod
+    def _content_quality_ledger_available(conn: sqlite3.Connection) -> bool:
+        """Keep historical pre-C3 fixtures readable without weakening C3 DBs."""
+        return (
+            conn.execute(
+                "SELECT 1 FROM sqlite_master WHERE type = 'table' "
+                "AND name = 'practice_question_invalidations'"
+            ).fetchone()
+            is not None
+        )
+
     def _attempt_for_grade(
         self, conn: sqlite3.Connection, course_id: str, practice_set_id: str, attempt_id: str,
         *, expected_course_write_epoch: int, expected_practice_set_write_epoch: int,
@@ -130,6 +141,16 @@ class CourseGradingRepository:
             ).fetchall()
             if not rows or any(row["response_json"] is None for row in rows):
                 raise CourseConflictError("Submitted quiz attempts require every answer before grading")
+            invalidated_question_ids: set[str] = set()
+            if self._content_quality_ledger_available(conn):
+                invalidated_question_ids = {
+                    str(item["question_id"])
+                    for item in conn.execute(
+                        """SELECT DISTINCT question_id FROM practice_question_invalidations
+                           WHERE course_id = ? AND practice_set_id = ?""",
+                        (course_id, practice_set_id),
+                    ).fetchall()
+                }
             # Build and bound the complete evidence plan before inserting any
             # evidence.  Attempts are immutable history, so admission control
             # must reject an oversized aggregate rather than relying on later
@@ -152,7 +173,11 @@ class CourseGradingRepository:
                 for objective_id in objectives:
                     mapping = objective_mapping.get(objective_id) if objective_id else None
                     module_id, knowledge_type = mapping if mapping else (None, None)
-                    state = "pending" if mapping else "unmapped"
+                    if str(row["question_id"]) in invalidated_question_ids:
+                        module_id, knowledge_type = None, None
+                        state = "unmapped"
+                    else:
+                        state = "pending" if mapping else "unmapped"
                     payload = {
                         "algorithm": "exact-v1", "attempt_id": attempt_id,
                         "attempt_item_id": row["attempt_item_id"], "question_id": row["question_id"],
@@ -283,16 +308,33 @@ class CourseGradingRepository:
                 raise CourseConflictError(
                     "Only graded quiz attempts can propose remediation flashcards"
                 )
-            rows = conn.execute(
-                """SELECT evidence.objective_id, questions.citation_json
-                   FROM quiz_item_grading_evidence AS evidence
-                   JOIN practice_questions AS questions
-                     ON questions.id = evidence.question_id
-                   WHERE evidence.attempt_id = ? AND evidence.course_id = ?
-                     AND evidence.owner_user_id = ? AND evidence.is_correct = 0
-                   ORDER BY evidence.attempt_item_id, evidence.objective_id""",
-                (attempt_id, course_id, self.owner_user_id),
-            ).fetchall()
+            if self._content_quality_ledger_available(conn):
+                rows = conn.execute(
+                    """SELECT evidence.objective_id, questions.citation_json
+                       FROM quiz_item_grading_evidence AS evidence
+                       JOIN practice_questions AS questions
+                         ON questions.id = evidence.question_id
+                       WHERE evidence.attempt_id = ? AND evidence.course_id = ?
+                         AND evidence.owner_user_id = ? AND evidence.is_correct = 0
+                         AND NOT EXISTS (
+                             SELECT 1 FROM practice_question_invalidations AS invalidations
+                             WHERE invalidations.course_id = evidence.course_id
+                               AND invalidations.question_id = evidence.question_id
+                         )
+                       ORDER BY evidence.attempt_item_id, evidence.objective_id""",
+                    (attempt_id, course_id, self.owner_user_id),
+                ).fetchall()
+            else:
+                rows = conn.execute(
+                    """SELECT evidence.objective_id, questions.citation_json
+                       FROM quiz_item_grading_evidence AS evidence
+                       JOIN practice_questions AS questions
+                         ON questions.id = evidence.question_id
+                       WHERE evidence.attempt_id = ? AND evidence.course_id = ?
+                         AND evidence.owner_user_id = ? AND evidence.is_correct = 0
+                       ORDER BY evidence.attempt_item_id, evidence.objective_id""",
+                    (attempt_id, course_id, self.owner_user_id),
+                ).fetchall()
             if not rows:
                 raise CourseConflictError(
                     "This quiz attempt has no missed answers to review"
@@ -364,19 +406,36 @@ class CourseGradingRepository:
         )
         with self.course_repository._connect() as conn:
             attempt = conn.execute(
-                """SELECT practice_set_revision_id
-                   FROM quiz_attempts
-                   WHERE id = ? AND course_id = ? AND owner_user_id = ?""",
+                """SELECT attempts.practice_set_revision_id, revisions.generation_receipt_json
+                   FROM quiz_attempts AS attempts
+                   JOIN practice_set_revisions AS revisions
+                     ON revisions.id = attempts.practice_set_revision_id
+                   WHERE attempts.id = ? AND attempts.course_id = ? AND attempts.owner_user_id = ?""",
                 (attempt_id, course_id, self.owner_user_id),
             ).fetchone()
-            rows = conn.execute(
-                """SELECT id, question_id
-                   FROM quiz_item_grading_evidence
-                   WHERE attempt_id = ? AND course_id = ?
-                     AND owner_user_id = ? AND is_correct = 0
-                   ORDER BY question_id, id""",
-                (attempt_id, course_id, self.owner_user_id),
-            ).fetchall()
+            if self._content_quality_ledger_available(conn):
+                rows = conn.execute(
+                    """SELECT id, question_id
+                       FROM quiz_item_grading_evidence
+                       WHERE attempt_id = ? AND course_id = ?
+                         AND owner_user_id = ? AND is_correct = 0
+                         AND NOT EXISTS (
+                             SELECT 1 FROM practice_question_invalidations AS invalidations
+                             WHERE invalidations.course_id = quiz_item_grading_evidence.course_id
+                               AND invalidations.question_id = quiz_item_grading_evidence.question_id
+                         )
+                       ORDER BY question_id, id""",
+                    (attempt_id, course_id, self.owner_user_id),
+                ).fetchall()
+            else:
+                rows = conn.execute(
+                    """SELECT id, question_id
+                       FROM quiz_item_grading_evidence
+                       WHERE attempt_id = ? AND course_id = ?
+                         AND owner_user_id = ? AND is_correct = 0
+                       ORDER BY question_id, id""",
+                    (attempt_id, course_id, self.owner_user_id),
+                ).fetchall()
         if attempt is None or not rows:
             raise self._not_found()
         return {
@@ -387,6 +446,13 @@ class CourseGradingRepository:
             "grading_evidence_ids": [str(row["id"]) for row in rows],
             "objective_ids": objective_ids,
             "source_ids": source_ids,
+            "quality_profile": (
+                json.loads(attempt["generation_receipt_json"] or "{}").get(
+                    "quality_profile", "baseline-v1"
+                )
+                if attempt["generation_receipt_json"]
+                else "baseline-v1"
+            ),
         }
 
     def has_course_evidence(self, course_id: str) -> bool:
