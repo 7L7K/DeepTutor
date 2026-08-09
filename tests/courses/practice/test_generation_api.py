@@ -740,18 +740,12 @@ def test_generation_api_background_completion_uses_only_server_resolved_source_s
     )
     assert questions.status_code == 200
     assert len(questions.json()["questions"]) == 5
-    # A ready revision is learner-safe: citations remain, answer authority does not.
+    # A ready revision is learner-safe: answer-adjacent citations and answer
+    # authority remain private until durable grading.
     question = questions.json()["questions"][0]
     assert "answer_contract" not in question
     assert "explanation" not in question
-    assert question["citations"] == [
-        {
-            "source_id": source["id"],
-            "source_revision": source["revision"],
-            "content_sha256": source["content_sha256"],
-            "locator": {},
-        }
-    ]
+    assert "citations" not in question
 
 
 def test_background_setup_failure_releases_live_marker_for_restart_reconciliation(

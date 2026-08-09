@@ -466,6 +466,10 @@ def test_manual_practice_api_keeps_same_title_users_and_all_foreign_ids_private(
             f"{prefix}/revisions/{alice_revision['id']}", headers=_auth("bob")
         ),
         practice_client.get(f"{prefix}/attempts/{attempt_id}", headers=_auth("bob")),
+        practice_client.get(f"{prefix}/attempts", headers=_auth("bob")),
+        practice_client.get(
+            f"{prefix}/attempts/{attempt_id}/results", headers=_auth("bob")
+        ),
         practice_client.patch(
             f"{prefix}/attempts/{attempt_id}",
             headers={**_auth("bob"), "Idempotency-Key": "foreign-item"},
@@ -478,7 +482,14 @@ def test_manual_practice_api_keeps_same_title_users_and_all_foreign_ids_private(
             },
         ),
     ]
-    assert [response.status_code for response in foreign_responses] == [404, 404, 404, 404]
+    assert [response.status_code for response in foreign_responses] == [
+        404,
+        404,
+        404,
+        404,
+        404,
+        404,
+    ]
     assert {response.json()["detail"] for response in foreign_responses} == {
         "Practice resource not found"
     }

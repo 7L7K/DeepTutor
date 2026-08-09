@@ -237,7 +237,7 @@ def test_database_rejects_question_insert_after_revision_is_ready(tmp_path: Path
         expected_course_write_epoch=course.write_epoch,
     )
 
-    with sqlite3.connect(courses.db_path) as conn, pytest.raises(sqlite3.IntegrityError):
+    with courses._connect() as conn, pytest.raises(sqlite3.IntegrityError):
         conn.execute(
             """INSERT INTO practice_questions
                (id, practice_set_revision_id, question_type, prompt,
@@ -262,7 +262,7 @@ def test_database_rejects_new_revision_or_question_below_archived_set(
         expected_course_write_epoch=course.write_epoch,
     )
 
-    with sqlite3.connect(courses.db_path) as conn:
+    with courses._connect() as conn:
         with pytest.raises(sqlite3.IntegrityError):
             conn.execute(
                 """INSERT INTO practice_set_revisions
@@ -338,7 +338,7 @@ def test_database_rejects_two_ready_revisions_for_one_practice_set(
         expected_course_write_epoch=course.write_epoch,
     )
 
-    with sqlite3.connect(courses.db_path) as conn:
+    with courses._connect() as conn:
         conn.execute(
             """INSERT INTO practice_set_revisions
                (id, practice_set_id, revision_number, state, source_snapshot_json,
@@ -387,7 +387,7 @@ def test_revision_and_question_uniqueness_are_enforced_by_the_database(tmp_path:
     course = courses.create_course("Physics")
     practice_set, revision, _ = _draft_with_question(service, course.id)
 
-    with sqlite3.connect(courses.db_path) as conn:
+    with courses._connect() as conn:
         with pytest.raises(sqlite3.IntegrityError):
             conn.execute(
                 """INSERT INTO practice_set_revisions

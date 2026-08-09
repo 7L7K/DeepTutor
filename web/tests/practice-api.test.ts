@@ -3,12 +3,17 @@ import test from "node:test";
 
 import {
   advancePracticeViewScope,
+  autosavePracticeAnswer,
+  createPracticeAnswerSaveQueue,
   formatPracticeScore,
+  getPracticeAttempt,
   hasUnsavedPracticeAnswers,
   isCurrentPracticeResponse,
   learnerSafePracticeQuestions,
   listPracticeAttempts,
+  orderedPracticeOptions,
   practiceLibrarySets,
+  practiceResponseValue,
   preparePracticeRemediationFlashcards,
   reportPracticeQuestion,
   updatePracticeGenerationPlan,
@@ -16,6 +21,9 @@ import {
   type PracticeGenerationOperation,
   type PracticeRequestScope,
   type PracticeSet,
+  type QuizAttempt,
+  type QuizAttemptAnswer,
+  type QuizAttemptResponse,
 } from "../lib/practice-api";
 
 const scope = (identity: string | null, courseId: string | null, epoch: number): PracticeRequestScope => ({
@@ -128,20 +136,136 @@ test("Practice scores render as percentage and exact ratio", () => {
 });
 
 test("Practice submission is blocked until local answer text matches the durable answer revision", () => {
-  const answers = [{ attempt_item_id: "ati_1", response: { answer: "saved" }, revision: 2, answered_at: 1 }];
-  assert.equal(hasUnsavedPracticeAnswers({ ati_1: "saved" }, answers), false);
-  assert.equal(hasUnsavedPracticeAnswers({ ati_1: "changed" }, answers), true);
+  const answers = [
+    { attempt_item_id: "ati_1", response: { answer: "saved" } as const, revision: 2, answered_at: 1 },
+    { attempt_item_id: "ati_2", response: { option_id: "opt_blue" } as const, revision: 3, answered_at: 1 },
+  ];
+  assert.equal(hasUnsavedPracticeAnswers({ ati_1: "saved", ati_2: "opt_blue" }, answers), false);
+  assert.equal(hasUnsavedPracticeAnswers({ ati_1: "changed", ati_2: "opt_blue" }, answers), true);
+  assert.equal(hasUnsavedPracticeAnswers({ ati_1: "saved", ati_2: "opt_red" }, answers), true);
   assert.equal(hasUnsavedPracticeAnswers({}, answers), true);
+  assert.equal(practiceResponseValue(answers[0].response), "saved");
+  assert.equal(practiceResponseValue(answers[1].response), "opt_blue");
 });
 
-test("publishing clears draft answer contracts from the learner-side question state", () => {
+test("Practice answer saves serialize revisions per item and rotate keys only after success", async () => {
+  const initialAnswer: QuizAttemptAnswer = {
+    attempt_item_id: "ati_1", response: null, revision: 1, answered_at: null,
+  };
+  const calls: Array<{ revision: number; answer: string; key: string }> = [];
+  let keyNumber = 0;
+  let activeWrites = 0;
+  let maximumActiveWrites = 0;
+  const save = async (
+    answer: QuizAttemptAnswer,
+    response: QuizAttemptResponse,
+    key: string,
+  ) => {
+    activeWrites += 1;
+    maximumActiveWrites = Math.max(maximumActiveWrites, activeWrites);
+    await Promise.resolve();
+    calls.push({
+      revision: answer.revision,
+      answer: "answer" in response ? response.answer : response.option_id,
+      key,
+    });
+    activeWrites -= 1;
+    return { ...answer, response, revision: answer.revision + 1, answered_at: 2 };
+  };
+  const queue = createPracticeAnswerSaveQueue({
+    initialAnswers: [initialAnswer],
+    createIdempotencyKey: () => `idem-${++keyNumber}`,
+  });
+
+  queue.enqueue("ati_1", { answer: "first" });
+  const firstFlush = queue.flush("ati_1", save);
+  queue.enqueue("ati_1", { answer: "second" });
+  const secondFlush = queue.flush("ati_1", save);
+  assert.deepEqual(await Promise.all([firstFlush, secondFlush]), [true, true]);
+  assert.equal(maximumActiveWrites, 1);
+  assert.deepEqual(calls, [
+    { revision: 1, answer: "first", key: "idem-1" },
+    { revision: 2, answer: "second", key: "idem-2" },
+  ]);
+  assert.deepEqual(queue.getAnswer("ati_1")?.response, { answer: "second" });
+});
+
+test("Practice answer save retries retain the failed idempotency key", async () => {
+  let durable: QuizAttemptAnswer = {
+    attempt_item_id: "ati_1", response: null, revision: 1, answered_at: null,
+  };
+  const keys: string[] = [];
+  let keyNumber = 0;
+  let fail = true;
+  const save = async (
+    answer: QuizAttemptAnswer,
+    response: QuizAttemptResponse,
+    key: string,
+  ) => {
+    keys.push(key);
+    if (fail) throw new Error("offline");
+    return { ...answer, response, revision: answer.revision + 1, answered_at: 2 };
+  };
+  const queue = createPracticeAnswerSaveQueue({
+    initialAnswers: [durable],
+    createIdempotencyKey: () => `idem-${++keyNumber}`,
+  });
+
+  queue.enqueue("ati_1", { answer: "retry me" });
+  assert.equal(await queue.flush("ati_1", save), false);
+  assert.equal(queue.hasPending("ati_1"), true);
+  fail = false;
+  assert.equal(await queue.flush("ati_1", save), true);
+  assert.deepEqual(keys, ["idem-1", "idem-1"]);
+  durable = queue.getAnswer("ati_1")!;
+  assert.deepEqual(durable.response, { answer: "retry me" });
+});
+
+test("publishing clears every answer-adjacent field while retaining learner-safe options", () => {
   const published = learnerSafePracticeQuestions([{
-    id: "qst_1", practice_set_revision_id: "prv_1", question_type: "exact",
-    prompt: "Question", answer_contract: { kind: "exact", answer: "secret" },
-    explanation: "", objective_ids: [], citations: [], ordinal: 1, created_at: 1,
+    id: "qst_1", practice_set_revision_id: "prv_1", question_type: "single_choice",
+    prompt: "Question", options: [
+      { option_id: "opt_public_a", text: "Visible choice A" },
+      { option_id: "opt_public_b", text: "Visible choice B" },
+    ],
+    answer_contract: { kind: "single_choice_v1", correct_option_id: "opt_public_b" },
+    explanation: "Secret explanation", objective_ids: [], citations: [{ evidence_quote: "Secret evidence" }], ordinal: 1, created_at: 1,
   }]);
   assert.equal(published[0].answer_contract, undefined);
+  assert.equal(published[0].explanation, undefined);
+  assert.equal(published[0].citations, undefined);
   assert.equal(published[0].prompt, "Question");
+  assert.deepEqual(published[0].options, [
+    { option_id: "opt_public_a", text: "Visible choice A" },
+    { option_id: "opt_public_b", text: "Visible choice B" },
+  ]);
+  assert.equal(JSON.stringify(published).includes("correct_option_id"), false);
+  assert.equal(JSON.stringify(published).includes("Secret explanation"), false);
+});
+
+test("single-choice rendering follows the exact server-owned option order and fails closed", () => {
+  const question = {
+    id: "qst_1", practice_set_revision_id: "prv_1", question_type: "single_choice" as const,
+    prompt: "Question", options: [
+      { option_id: "opt_alpha", text: "Alpha" },
+      { option_id: "opt_beta", text: "Beta" },
+      { option_id: "opt_gamma", text: "Gamma" },
+    ],
+    objective_ids: [], ordinal: 1, created_at: 1,
+  };
+  const item = {
+    id: "ati_1", attempt_id: "att_1", question_id: question.id, display_ordinal: 1,
+    option_order: ["opt_gamma", "opt_alpha", "opt_beta"], randomized_values: null,
+    grading: null, error_type: null, graded_at: null,
+  };
+  assert.deepEqual(
+    orderedPracticeOptions(question, item).map((option) => option.option_id),
+    ["opt_gamma", "opt_alpha", "opt_beta"],
+  );
+  assert.deepEqual(orderedPracticeOptions(question, {
+    ...item,
+    option_order: ["opt_gamma", "opt_gamma", "opt_beta"],
+  }), []);
 });
 
 test("failed unpublished generation shells stay in Activity instead of the Practice library", () => {
@@ -197,6 +321,87 @@ test("Practice attempt history requests bounded pages", async (t) => {
   assert.equal(
     requested,
     "/api/v1/courses/crs%2Fbio/practice/pst%2Fone/attempts?limit=50&offset=50",
+  );
+});
+
+test("an attempt deep link requests the exact attempt instead of scanning history", async (t) => {
+  const originalFetch = globalThis.fetch;
+  let requested = "";
+  let requestedInit: RequestInit | undefined;
+  t.after(() => {
+    globalThis.fetch = originalFetch;
+  });
+  globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+    requested = String(input);
+    requestedInit = init;
+    return new Response(JSON.stringify({
+      attempt: { id: "att/deep" },
+      items: [],
+      answers: [],
+    }), {
+      status: 200,
+      headers: { "Content-Type": "application/json" },
+    });
+  }) as typeof fetch;
+
+  await getPracticeAttempt("crs/bio", "pst/one", "att/deep");
+  assert.equal(
+    requested,
+    "/api/v1/courses/crs%2Fbio/practice/pst%2Fone/attempts/att%2Fdeep",
+  );
+  assert.equal(requested.includes("limit=50"), false);
+  assert.equal(requestedInit?.cache, "no-store");
+});
+
+test("Practice autosave serializes the strict single-choice response union", async (t) => {
+  const originalFetch = globalThis.fetch;
+  let requestedBody: Record<string, unknown> = {};
+  t.after(() => {
+    globalThis.fetch = originalFetch;
+  });
+  globalThis.fetch = (async (_input: RequestInfo | URL, init?: RequestInit) => {
+    requestedBody = JSON.parse(String(init?.body));
+    return new Response(JSON.stringify({
+      attempt_item_id: "ati_1",
+      response: { option_id: "opt_blue" },
+      revision: 2,
+      answered_at: 2,
+    }), {
+      status: 200,
+      headers: { "Content-Type": "application/json" },
+    });
+  }) as typeof fetch;
+
+  const practiceSet: PracticeSet = {
+    id: "pst_1", owner_user_id: "usr_1", course_id: "crs_1", title: "Quiz",
+    mode: "generated", state: "draft", current_revision_id: "prv_1",
+    revision: 1, write_epoch: 4, created_at: 1, updated_at: 1, archived_at: null,
+  };
+  const attempt: QuizAttempt = {
+    id: "att_1", owner_user_id: "usr_1", course_id: "crs_1",
+    practice_set_id: practiceSet.id, practice_set_revision_id: "prv_1",
+    timing_mode: "untimed", state: "in_progress", score: null, revision: 1,
+    course_write_epoch: 7, practice_set_write_epoch: 4, started_at: 1,
+    submitted_at: null, graded_at: null, archived_at: null, updated_at: 1,
+  };
+  await autosavePracticeAnswer(
+    "crs_1",
+    practiceSet,
+    attempt,
+    { attempt_item_id: "ati_1", response: null, revision: 1, answered_at: null },
+    { option_id: "opt_blue" },
+    "idem-choice-1",
+  );
+  assert.deepEqual(requestedBody, {
+    attempt_item_id: "ati_1",
+    response: { option_id: "opt_blue" },
+    expected_answer_revision: 1,
+    expected_course_write_epoch: 7,
+    expected_practice_set_write_epoch: 4,
+  });
+  assert.equal(
+    "answer" in (requestedBody.response as Record<string, unknown>),
+    false,
   );
 });
 

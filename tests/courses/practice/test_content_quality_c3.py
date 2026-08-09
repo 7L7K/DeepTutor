@@ -1235,6 +1235,26 @@ def test_invalidation_removes_graded_learning_effect_and_remediation_scope(
         expected_practice_set_write_epoch=2,
     )
     assert graded.score == {"correct": 0, "total": 1, "fraction": 0.0}
+    projected_before = adapter.service.get_or_create(f"lp_{course.id}")
+    assert "OBJ-RESP-02" in projected_before.mastery_levels
+    assert "OBJ-RESP-02" in projected_before.repetition_states
+    assert [item.knowledge_point_id for item in projected_before.review_queue] == [
+        "OBJ-RESP-02"
+    ]
+    with courses._connect() as conn:
+        evidence_before = [
+            dict(row)
+            for row in conn.execute(
+                "SELECT * FROM quiz_item_grading_evidence ORDER BY id"
+            ).fetchall()
+        ]
+        item_grade_before = dict(
+            conn.execute(
+                "SELECT grading_json, error_type, graded_at FROM quiz_attempt_items WHERE id = ?",
+                (item.id,),
+            ).fetchone()
+        )
+    assert evidence_before and {row["state"] for row in evidence_before} == {"applied"}
 
     class _Paths:
         def get_workspace_dir(self) -> Path:
@@ -1249,16 +1269,55 @@ def test_invalidation_removes_graded_learning_effect_and_remediation_scope(
         course.id, practice_set.id, revision.id, question.id,
         reason="The answer key does not match the approved source.",
     )
-    _resolved, invalidated_evidence_ids = CourseContentQualityService(
-        quality_repository
-    ).resolve_report(
-        course.id, report["id"], decision="invalidate", reviewer_user_id="u_alice",
+    quality_service = CourseContentQualityService(quality_repository)
+
+    def _crash_after_ledger_commit(*_args, **_kwargs):
+        raise RuntimeError("injected crash after invalidation ledger commit")
+
+    monkeypatch.setattr(quality_service, "_reconcile_learning", _crash_after_ledger_commit)
+    with pytest.raises(RuntimeError, match="injected crash"):
+        quality_service.resolve_report(
+            course.id,
+            report["id"],
+            decision="invalidate",
+            reviewer_user_id="u_alice",
+            note="Reviewed against the approved Biology packet.",
+        )
+
+    stale_after_crash = adapter.service.get_or_create(f"lp_{course.id}")
+    assert len(stale_after_crash.quiz_attempts) == 1
+    assert "OBJ-RESP-02" in stale_after_crash.repetition_states
+    assert stale_after_crash.review_queue
+    with courses._connect() as conn:
+        committed_report = conn.execute(
+            "SELECT state FROM practice_question_quality_reports WHERE id = ?",
+            (report["id"],),
+        ).fetchone()
+        committed_ledger = conn.execute(
+            "SELECT COUNT(*) FROM practice_question_invalidations WHERE report_id = ?",
+            (report["id"],),
+        ).fetchone()[0]
+    assert committed_report["state"] == "invalidated"
+    assert committed_ledger == len(evidence_before) + 1
+
+    recovered = CourseContentQualityService(quality_repository)
+    assert recovered.reconcile_pending(course.id) is True
+    repaired_version = adapter.service.get_or_create(f"lp_{course.id}").version
+    assert recovered.reconcile_pending(course.id) is False
+    assert adapter.service.get_or_create(f"lp_{course.id}").version == repaired_version
+
+    resolved, invalidated_evidence_ids = recovered.resolve_report(
+        course.id,
+        report["id"],
+        decision="invalidate",
+        reviewer_user_id="u_alice",
         note="Reviewed against the approved Biology packet.",
     )
+    assert resolved["id"] == report["id"]
     assert invalidated_evidence_ids
 
     attempt_view = attempts.get_attempt(course.id, practice_set.id, view.attempt.id)
-    effective = CourseContentQualityService(quality_repository).effective_result(
+    effective = recovered.effective_result(
         course.id, practice_set.id, attempt_view
     )
     assert effective["score"] == {"correct": 0, "total": 0, "fraction": 0.0}
@@ -1269,3 +1328,109 @@ def test_invalidation_removes_graded_learning_effect_and_remediation_scope(
     assert updated_progress.quiz_attempts == []
     assert updated_progress.error_records == []
     assert updated_progress.grading_evidence_receipts == {}
+    assert "OBJ-RESP-02" not in updated_progress.mastery_levels
+    assert "OBJ-RESP-02" not in updated_progress.repetition_states
+    assert updated_progress.review_queue == []
+    with courses._connect() as conn:
+        evidence_after = [
+            dict(row)
+            for row in conn.execute(
+                "SELECT * FROM quiz_item_grading_evidence ORDER BY id"
+            ).fetchall()
+        ]
+        item_grade_after = dict(
+            conn.execute(
+                "SELECT grading_json, error_type, graded_at FROM quiz_attempt_items WHERE id = ?",
+                (item.id,),
+            ).fetchone()
+        )
+        audit_rows = conn.execute(
+            """SELECT evidence_id, reason, invalidated_by
+               FROM practice_question_invalidations
+               WHERE report_id = ? ORDER BY evidence_id""",
+            (report["id"],),
+        ).fetchall()
+    assert evidence_after == evidence_before
+    assert item_grade_after == item_grade_before
+    assert len(audit_rows) == len(evidence_before) + 1
+    assert {row["invalidated_by"] for row in audit_rows} == {"u_alice"}
+
+
+def test_invalidation_rebuilds_repetition_from_retained_valid_events(
+    tmp_path: Path,
+) -> None:
+    adapter = CourseMasteryAdapter(LearningStore(root=tmp_path / "learning"))
+    progress = adapter.service.get_or_create("lp_rebuild")
+    adapter.service.init_modules(
+        progress,
+        [
+            LearningModule(
+                id="mod_resp",
+                name="Cellular respiration",
+                order=1,
+                knowledge_points=[
+                    KnowledgePoint(
+                        id="OBJ-RESP-02",
+                        name="Oxygen role",
+                        type=KnowledgeType.MEMORY,
+                        module_id="mod_resp",
+                    )
+                ],
+            )
+        ],
+    )
+    adapter.service.record_course_grading_evidence(
+        progress,
+        evidence_id="grd_valid",
+        payload_sha256="a" * 64,
+        question_id="q_valid",
+        knowledge_point_id="OBJ-RESP-02",
+        module_id="mod_resp",
+        is_correct=True,
+        user_answer="water",
+        knowledge_type=KnowledgeType.MEMORY,
+        scheduler=adapter.scheduler,
+        persist=False,
+    )
+    adapter.service.record_course_grading_evidence(
+        progress,
+        evidence_id="grd_invalid",
+        payload_sha256="b" * 64,
+        question_id="q_invalid",
+        knowledge_point_id="OBJ-RESP-02",
+        module_id="mod_resp",
+        is_correct=False,
+        user_answer="electron donor",
+        knowledge_type=KnowledgeType.MEMORY,
+        scheduler=adapter.scheduler,
+        persist=False,
+    )
+
+    changed = adapter.service.reconcile_invalidated_course_evidence(
+        progress,
+        invalidated_evidence_ids={"grd_invalid"},
+        invalidated_question_ids={"q_invalid"},
+        affected_knowledge_point_ids={"OBJ-RESP-02"},
+        scheduler=adapter.scheduler,
+    )
+
+    assert changed is True
+    assert [item.question_id for item in progress.quiz_attempts] == ["q_valid"]
+    assert progress.error_records == []
+    assert progress.grading_evidence_receipts == {"grd_valid": "a" * 64}
+    assert progress.mastery_levels["OBJ-RESP-02"] == 0.5
+    rebuilt = progress.repetition_states["OBJ-RESP-02"]
+    assert (rebuilt.interval_index, rebuilt.consecutive_correct) == (1, 1)
+    assert [item.knowledge_point_id for item in progress.review_queue] == [
+        "OBJ-RESP-02"
+    ]
+    assert (
+        adapter.service.reconcile_invalidated_course_evidence(
+            progress,
+            invalidated_evidence_ids={"grd_invalid"},
+            invalidated_question_ids={"q_invalid"},
+            affected_knowledge_point_ids={"OBJ-RESP-02"},
+            scheduler=adapter.scheduler,
+        )
+        is False
+    )

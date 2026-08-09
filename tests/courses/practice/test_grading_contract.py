@@ -7,11 +7,12 @@ import json
 from pathlib import Path
 import sqlite3
 
-from pydantic import ValidationError
 import pytest
 
+from deeptutor.courses.assessment_grading import grade_assessment_response
 from deeptutor.courses.attempt_repository import CourseAssessmentRepository
 from deeptutor.courses.attempt_service import CourseAssessmentService
+from deeptutor.courses.content_quality_repository import CourseContentQualityRepository
 from deeptutor.courses.grading_repository import CourseGradingRepository
 from deeptutor.courses.grading_service import CourseGradingService
 from deeptutor.courses.mastery_adapter import CourseMasteryAdapter
@@ -113,6 +114,12 @@ def _grade(grading, courses, course_id: str, practice_set_id: str, attempt_id: s
     )
 
 
+def _exact_is_correct(response: str, contract: ExactAnswerContract) -> bool:
+    return grade_assessment_response(
+        {"answer": response}, contract, []
+    ).is_correct
+
+
 @pytest.mark.parametrize("response, correct", [({"answer": "YES"}, True), ({"answer": "no"}, False), ({"answer": ""}, False)])
 def test_exact_grading_is_server_contract_driven_for_correct_wrong_and_blank(tmp_path: Path, response, correct: bool) -> None:
     courses, practice, attempts, adapter, grading = _services(tmp_path)
@@ -190,7 +197,7 @@ def test_exact_grader_requires_explicit_acetyl_coa_variants(
         accepted_answers=["acetyl CoA", "acetyl coenzyme A"],
     )
 
-    assert CourseGradingRepository._exact(response, contract) is accepted
+    assert _exact_is_correct(response, contract) is accepted
 
 
 def test_obj_resp_01_reviewer_amendment_is_bounded_and_artifact_bound() -> None:
@@ -227,10 +234,8 @@ def test_obj_resp_01_reviewer_amendment_is_bounded_and_artifact_bound() -> None:
     assert len(contract.accepted_answers) == 8
 
     for answer in [contract.answer, *contract.accepted_answers]:
-        assert CourseGradingRepository._exact(answer, contract) is True
-        assert CourseGradingRepository._exact(
-            f"  {answer.swapcase()}  ", contract
-        ) is True
+        assert _exact_is_correct(answer, contract) is True
+        assert _exact_is_correct(f"  {answer.swapcase()}  ", contract) is True
 
     for answer in (
         "Pyruvate enters the citric acid cycle unchanged.",
@@ -242,7 +247,7 @@ def test_obj_resp_01_reviewer_amendment_is_bounded_and_artifact_bound() -> None:
         "Pyruvate becomes acetyl–CoA.",
         "",
     ):
-        assert CourseGradingRepository._exact(answer, contract) is False
+        assert _exact_is_correct(answer, contract) is False
 
 
 def test_obj_resp_01_unsigned_candidate_contract_round_trips_exact_grading(
@@ -374,16 +379,16 @@ def test_exact_v1_normalization_is_explicit_and_does_not_accept_extra_wording(
 
 
 def test_unsupported_contract_fails_closed_before_any_evidence(tmp_path: Path) -> None:
-    courses, practice, attempts, adapter, grading = _services(tmp_path)
+    courses, practice, _attempts, _adapter, _grading = _services(tmp_path)
     course = courses.create_course("Chemistry")
-    _init_objectives(adapter, course.id, "kp_one")
-    practice_set, revision, _ = _practice(
-        courses, practice, course.id, raw_contract='{"kind":"unsupported"}'
-    )
-    with pytest.raises(ValidationError):
-        attempts.start_or_resume_attempt(
-            course.id, practice_set.id, revision.id,
-            expected_course_write_epoch=_epoch(courses, course.id), expected_practice_set_write_epoch=2,
+    with pytest.raises(
+        sqlite3.IntegrityError, match="practice question answer contract is invalid"
+    ):
+        _practice(
+            courses,
+            practice,
+            course.id,
+            raw_contract='{"kind":"unsupported"}',
         )
     with courses._connect() as conn:
         assert conn.execute("SELECT COUNT(*) FROM quiz_item_grading_evidence").fetchone()[0] == 0
@@ -542,6 +547,63 @@ def test_crash_before_learning_effect_or_before_finalization_recovers_from_pendi
     monkeypatch.undo()
     assert _grade(grading, courses, course.id, practice_set.id, attempt_id).state == "graded"
     assert len(adapter.service.get_or_create(f"lp_{course.id}").quiz_attempts) == 1
+
+
+def test_invalidated_pending_evidence_is_excluded_from_retry_delivery(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    courses, practice, attempts, adapter, grading = _services(tmp_path)
+    course = courses.create_course("Invalidated retry")
+    _init_objectives(adapter, course.id, "kp_one")
+    practice_set, revision, question = _practice(courses, practice, course.id)
+    attempt_id, _ = _submitted(
+        courses,
+        attempts,
+        course.id,
+        practice_set,
+        revision,
+        {"answer": "no"},
+    )
+
+    def fail_delivery(_evidence):
+        raise RuntimeError("pending delivery failed")
+
+    monkeypatch.setattr(grading, "_apply_effect_to_learning", fail_delivery)
+    with pytest.raises(RuntimeError, match="pending delivery failed"):
+        _grade(grading, courses, course.id, practice_set.id, attempt_id)
+    pending = grading.repository.pending(course.id, practice_set.id, attempt_id)
+    assert len(pending) == 1 and pending[0].state == "pending"
+
+    quality = CourseContentQualityRepository(courses)
+    report = quality.report_question(
+        course.id,
+        practice_set.id,
+        revision.id,
+        question.id,
+        reason="The retained answer contract is no longer authoritative.",
+    )
+    resolved, invalidated_evidence_ids = quality.resolve_report(
+        course.id,
+        report["id"],
+        decision="invalidate",
+        reviewer_user_id="u_alice",
+        note="Reviewed against the authoritative source.",
+    )
+    assert resolved["state"] == "invalidated"
+    assert invalidated_evidence_ids == [pending[0].id]
+    assert grading.repository.pending(course.id, practice_set.id, attempt_id) == []
+
+    monkeypatch.undo()
+    assert _grade(grading, courses, course.id, practice_set.id, attempt_id).state == "graded"
+    projected = adapter.service.get_or_create(f"lp_{course.id}")
+    assert projected.quiz_attempts == []
+    assert projected.error_records == []
+    assert projected.grading_evidence_receipts == {}
+    with courses._connect() as conn:
+        assert conn.execute(
+            "SELECT state FROM quiz_item_grading_evidence WHERE id = ?",
+            (pending[0].id,),
+        ).fetchone()[0] == "pending"
 
 
 def test_direct_sql_evidence_is_immutable_and_attempt_cannot_grade_without_all_effects(
@@ -738,7 +800,7 @@ def test_0002_upgrade_applies_grading_and_generation_migrations_preserves_rows_a
     with sqlite3.connect(path) as conn:
         conn.execute("INSERT INTO courses (id, owner_user_id, title, state, revision, write_epoch, managed_kb_ref, created_at, updated_at, archived_at) VALUES ('crs_keep', 'u_alice', 'Keep', 'active', 1, 1, NULL, 1, 1, NULL)")
     monkeypatch.setattr(runner, "discover_migrations", lambda: artifacts)
-    assert ensure_course_schema(path) == (3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14)
+    assert ensure_course_schema(path) == tuple(range(3, 16))
     with sqlite3.connect(path) as conn:
         assert conn.execute("SELECT title FROM courses WHERE id = 'crs_keep'").fetchone()[0] == "Keep"
 
@@ -768,14 +830,122 @@ def test_exact_p4_03_upgrade_applies_generation_and_flashcard_migrations_and_pre
     path = root / "courses.db"
     artifacts = runner.discover_migrations()
     monkeypatch.setattr(runner, "discover_migrations", lambda: artifacts[:4])
-    courses, practice, attempts, adapter, grading = _services(root, "u_alice")
+    courses, practice, attempts, _adapter, _grading = _services(root, "u_alice")
     course = courses.create_course("Biology")
-    _init_objectives(adapter, course.id, "kp_one")
-    practice_set, revision, _questions = _practice(courses, practice, course.id)
+    practice_set = practice.create_practice_set(
+        course.id,
+        title="Historical exact grading",
+        expected_course_write_epoch=course.write_epoch,
+    )
+    revision = practice.create_draft_revision(
+        course.id,
+        practice_set.id,
+        expected_course_write_epoch=course.write_epoch,
+    )
+    with courses._connect() as conn:
+        conn.execute(
+            """INSERT INTO practice_questions
+               (id, practice_set_revision_id, question_type, prompt,
+                answer_contract_json, explanation, objective_ids_json,
+                citation_json, ordinal, created_at)
+               VALUES ('qst_historical_exact', ?, 'short_answer', 'Type yes',
+                       '{"kind":"exact","answer":"yes"}', '', '["kp_one"]',
+                       '[]', 1, 1)""",
+            (revision.id,),
+        )
+    practice.ready_revision(
+        course.id,
+        practice_set.id,
+        revision.id,
+        expected_course_write_epoch=course.write_epoch,
+    )
+    _question = practice.list_questions(course.id, practice_set.id, revision.id)[0]
     attempt_id, _item_id = _submitted(
         courses, attempts, course.id, practice_set, revision, {"answer": "yes"}
     )
-    _grade(grading, courses, course.id, practice_set.id, attempt_id)
+    with courses._connect() as conn:
+        row = conn.execute(
+            """SELECT attempts.owner_user_id, attempts.submitted_at,
+                      items.question_id, answers.response_json,
+                      questions.answer_contract_json
+               FROM quiz_attempts AS attempts
+               JOIN quiz_attempt_items AS items ON items.attempt_id = attempts.id
+               JOIN quiz_attempt_answers AS answers
+                 ON answers.attempt_item_id = items.id
+               JOIN practice_questions AS questions ON questions.id = items.question_id
+               WHERE attempts.id = ? AND items.id = ?""",
+            (attempt_id, _item_id),
+        ).fetchone()
+        payload = {
+            "algorithm": "exact-v1",
+            "attempt_id": attempt_id,
+            "attempt_item_id": _item_id,
+            "question_id": row["question_id"],
+            "objective_id": "kp_one",
+            "module_id": "mod_one",
+            "knowledge_type": "memory",
+            "contract_sha256": CourseGradingRepository._digest(
+                json.loads(row["answer_contract_json"])
+            ),
+            "response_sha256": CourseGradingRepository._digest(
+                json.loads(row["response_json"])
+            ),
+            "is_correct": True,
+            "error_type": None,
+        }
+        grading_json = CourseGradingRepository._json(payload)
+        graded_at = float(row["submitted_at"]) + 1
+        conn.execute(
+            """INSERT INTO quiz_item_grading_evidence
+               (id, owner_user_id, course_id, practice_set_id, attempt_id,
+                attempt_item_id, question_id, objective_id, module_id,
+                knowledge_type, algorithm, payload_sha256, is_correct,
+                grading_json, error_type, state, created_at, applied_at)
+               VALUES ('grd_historical_exact', ?, ?, ?, ?, ?, ?, 'kp_one',
+                       'mod_one', 'memory', 'exact-v1', ?, 1, ?, NULL,
+                       'pending', ?, NULL)""",
+            (
+                row["owner_user_id"],
+                course.id,
+                practice_set.id,
+                attempt_id,
+                _item_id,
+                row["question_id"],
+                hashlib.sha256(grading_json.encode("utf-8")).hexdigest(),
+                grading_json,
+                graded_at,
+            ),
+        )
+        conn.execute(
+            """UPDATE quiz_attempt_items
+               SET grading_json = ?, error_type = NULL, graded_at = ?
+               WHERE id = ?""",
+            (
+                CourseGradingRepository._json(
+                    {
+                        "algorithm": "exact-v1",
+                        "is_correct": True,
+                        "evidence_ids": ["grd_historical_exact"],
+                    }
+                ),
+                graded_at,
+                _item_id,
+            ),
+        )
+        conn.execute(
+            """UPDATE quiz_attempts
+               SET state = 'graded', score_json = ?, graded_at = ?,
+                   revision = revision + 1, updated_at = ?
+               WHERE id = ?""",
+            (
+                CourseGradingRepository._json(
+                    {"correct": 1, "total": 1, "fraction": 1.0}
+                ),
+                graded_at,
+                graded_at,
+                attempt_id,
+            ),
+        )
     with courses._connect() as conn:
         before = {
             table: conn.execute(f'SELECT * FROM "{table}" ORDER BY rowid').fetchall()
@@ -792,7 +962,7 @@ def test_exact_p4_03_upgrade_applies_generation_and_flashcard_migrations_and_pre
         }
 
     monkeypatch.setattr(runner, "discover_migrations", lambda: artifacts)
-    assert ensure_course_schema(path) == (4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14)
+    assert ensure_course_schema(path) == tuple(range(4, 16))
     assert ensure_course_schema(path) == ()
     with courses._connect() as conn:
         after = {
@@ -822,7 +992,11 @@ def test_exact_p4_03_upgrade_applies_generation_and_flashcard_migrations_and_pre
         } <= effective_triggers
         assert tuple(
             row[0] for row in conn.execute("SELECT version FROM schema_migrations ORDER BY version")
-        ) == (0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14)
+        ) == tuple(range(16))
+        assert conn.execute(
+            "SELECT options_json FROM practice_questions WHERE id = ?",
+            (_question.id,),
+        ).fetchone()[0] == "[]"
     assert after == before
 
 

@@ -8,6 +8,7 @@ the Course database transaction are jointly enforceable.
 from __future__ import annotations
 
 from concurrent.futures import ThreadPoolExecutor
+import json
 from pathlib import Path
 import sqlite3
 
@@ -848,6 +849,17 @@ def test_database_freezes_answers_after_submit_or_parent_archive_and_receipts_ca
     )
     first_item = _item_ids(courses, first.id)[0]
     second_item = _item_ids(courses, second.id)[0]
+    attempts.autosave_answer(
+        course.id,
+        first_set.id,
+        first.id,
+        first_item,
+        response={"answer": "1"},
+        expected_answer_revision=1,
+        idempotency_token="first-answer-before-submit",
+        expected_course_write_epoch=_epoch(courses, course.id),
+        expected_practice_set_write_epoch=2,
+    )
     attempts.submit_attempt(
         course.id, first_set.id, first.id,
         expected_course_write_epoch=_epoch(courses, course.id), expected_practice_set_write_epoch=2,
@@ -887,7 +899,7 @@ def test_database_freezes_answers_after_submit_or_parent_archive_and_receipts_ca
 
 def test_migration_0002_replay_tamper_and_rollback_are_transactional(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     path = tmp_path / "courses.db"
-    assert ensure_course_schema(path) == (0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14)
+    assert ensure_course_schema(path) == tuple(range(16))
     assert ensure_course_schema(path) == ()
     artifacts = runner.discover_migrations()
     assessment = artifacts[2]
@@ -921,9 +933,40 @@ def test_upgrade_from_exact_p4_02b_state_applies_generation_migrations_and_prese
 
     courses, practice, _ = _services(path, "u_alice")
     course = courses.create_course("Biology")
-    practice_set, revision, questions = _ready_practice(
-        courses, practice, course.id, question_count=2
+    practice_set = practice.create_practice_set(
+        course.id,
+        title="Historical exact Practice",
+        expected_course_write_epoch=course.write_epoch,
     )
+    revision = practice.create_draft_revision(
+        course.id,
+        practice_set.id,
+        expected_course_write_epoch=course.write_epoch,
+    )
+    with courses._connect() as conn:
+        for ordinal in (1, 2):
+            conn.execute(
+                """INSERT INTO practice_questions
+                   (id, practice_set_revision_id, question_type, prompt,
+                    answer_contract_json, explanation, objective_ids_json,
+                    citation_json, ordinal, created_at)
+                   VALUES (?, ?, 'short_answer', ?, ?, '', '[]', '[]', ?, ?)""",
+                (
+                    f"qst_historical_{ordinal}",
+                    revision.id,
+                    f"Question {ordinal}?",
+                    json.dumps({"kind": "exact", "answer": str(ordinal)}),
+                    ordinal,
+                    float(ordinal),
+                ),
+            )
+    practice.ready_revision(
+        course.id,
+        practice_set.id,
+        revision.id,
+        expected_course_write_epoch=course.write_epoch,
+    )
+    questions = practice.list_questions(course.id, practice_set.id, revision.id)
     with courses._connect() as conn:
         before = {
             table: conn.execute(f'SELECT * FROM "{table}" ORDER BY rowid').fetchall()
@@ -936,7 +979,7 @@ def test_upgrade_from_exact_p4_02b_state_applies_generation_migrations_and_prese
         }
 
     monkeypatch.setattr(runner, "discover_migrations", lambda: artifacts)
-    assert ensure_course_schema(path) == (3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14)
+    assert ensure_course_schema(path) == tuple(range(3, 16))
     assert ensure_course_schema(path) == ()
     with courses._connect() as conn:
         after = {
@@ -955,6 +998,6 @@ def test_upgrade_from_exact_p4_02b_state_applies_generation_migrations_and_prese
             for row in conn.execute(
                 "SELECT version FROM schema_migrations ORDER BY version"
             )
-        ) == (0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14)
+        ) == tuple(range(16))
     assert before == after
     assert practice_set.id and revision.id and len(questions) == 2

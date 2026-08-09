@@ -42,6 +42,7 @@ export default defineConfig({
         "**/phase5-flashcards-ux.spec.ts",
         "**/blueway-launch-b2.spec.ts",
         "**/course-chat-c1.spec.ts",
+        "**/content-quality-c3-h2.spec.ts",
       ],
       use: { ...devices["Desktop Chrome"], channel: "chrome" },
     },

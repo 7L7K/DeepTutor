@@ -1,0 +1,1006 @@
+#!/usr/bin/env bash
+# Hermetic authenticated browser campaign for C3-H2 bounded assessments.
+set -euo pipefail
+umask 077
+
+repo_root="$(cd "$(dirname "$0")/.." && pwd)"
+temp_parent="${TMPDIR:-/tmp}"
+temp_parent="${temp_parent%/}"
+runtime_root="$(mktemp -d "$temp_parent/teeechr-c3-h2-browser.XXXXXX")"
+backend_port="${H2_BACKEND_PORT:-8037}"
+frontend_port="${H2_FRONTEND_PORT:-3817}"
+backend_url="http://127.0.0.1:${backend_port}"
+frontend_url="http://localhost:${frontend_port}"
+python_bin="${PYTHON_BIN:-/Users/home/.codex/runtimes/teeechr-b1-python311/bin/python}"
+node_bin_dir="/opt/homebrew/opt/node@22/bin"
+evidence_dir="${H2_EVIDENCE_DIR:-$repo_root/docs/verification/2026-08-09-teeechr-c3-h2-bounded-assessment}"
+backend_log="$runtime_root/backend.log"
+frontend_log="$runtime_root/frontend.log"
+owner_cookie="$runtime_root/owner.cookies"
+foreign_cookie="$runtime_root/foreign.cookies"
+fixture_json="$runtime_root/fixture.json"
+browser_state="$runtime_root/browser-state.json"
+migration_db="$runtime_root/populated-pre-0015.db"
+backend_pid=""
+frontend_pid=""
+startup_attempts="${H2_STARTUP_ATTEMPTS:-480}"
+inspection_hold_seconds="${H2_BROWSER_HOLD_SECONDS:-0}"
+
+mkdir -p \
+  "$evidence_dir/screenshots" \
+  "$evidence_dir/playwright-results/campaign" \
+  "$evidence_dir/playwright-results/corrected" \
+  "$evidence_dir/playwright-results/admission" \
+  "$evidence_dir/playwright-report/campaign" \
+  "$evidence_dir/playwright-report/corrected" \
+  "$evidence_dir/playwright-report/admission" \
+  "$evidence_dir/backend"
+
+cleanup() {
+  if [ -n "$frontend_pid" ]; then
+    kill "$frontend_pid" 2>/dev/null || true
+    wait "$frontend_pid" 2>/dev/null || true
+  fi
+  if [ -n "$backend_pid" ]; then
+    kill "$backend_pid" 2>/dev/null || true
+    wait "$backend_pid" 2>/dev/null || true
+  fi
+  cp "$backend_log" "$evidence_dir/backend/backend.log" 2>/dev/null || true
+  cp "$frontend_log" "$evidence_dir/backend/frontend.log" 2>/dev/null || true
+  case "$runtime_root" in
+    "$temp_parent"/teeechr-c3-h2-browser.*)
+      rm -rf -- "$runtime_root"
+      ;;
+  esac
+}
+trap cleanup EXIT INT TERM
+
+assert_port_free() {
+  local port="$1"
+  "$python_bin" - "$port" <<'PY'
+import socket
+import sys
+
+port = int(sys.argv[1])
+with socket.socket() as probe:
+    probe.settimeout(0.2)
+    if probe.connect_ex(("127.0.0.1", port)) == 0:
+        raise SystemExit(f"Refusing to use occupied port {port}")
+PY
+}
+
+wait_for_url() {
+  local url="$1"
+  local log_path="$2"
+  local process_id="$3"
+  for _attempt in $(seq 1 "$startup_attempts"); do
+    if curl --fail --silent --show-error "$url" >/dev/null 2>&1; then return 0; fi
+    if ! kill -0 "$process_id" 2>/dev/null; then
+      sed -n '1,240p' "$log_path" >&2
+      return 1
+    fi
+    sleep 0.25
+  done
+  sed -n '1,240p' "$log_path" >&2
+  return 1
+}
+
+login_cookie() {
+  local username="$1"
+  local password="$2"
+  local cookie="$3"
+  curl --fail --silent --show-error \
+    -c "$cookie" \
+    -X POST "$frontend_url/api/v1/auth/login" \
+    -H "Content-Type: application/json" \
+    --data "{\"username\":\"$username\",\"password\":\"$password\"}" >/dev/null
+}
+
+user_identity() {
+  local cookie="$1"
+  curl --fail --silent --show-error -b "$cookie" "$frontend_url/api/v1/auth/status" \
+    | "$python_bin" -c 'import json, sys; print(json.load(sys.stdin)["user_id"])'
+}
+
+if [ ! -x "$python_bin" ]; then
+  echo "Python 3.11 runtime is unavailable: $python_bin" >&2
+  exit 1
+fi
+case "$inspection_hold_seconds" in
+  ''|*[!0-9]*)
+    echo "H2_BROWSER_HOLD_SECONDS must be an integer from 0 through 60" >&2
+    exit 1
+    ;;
+esac
+if [ "$inspection_hold_seconds" -gt 60 ]; then
+  echo "H2_BROWSER_HOLD_SECONDS must not exceed 60" >&2
+  exit 1
+fi
+if [ ! -x "$node_bin_dir/node" ]; then
+  echo "Node 22 runtime is unavailable: $node_bin_dir/node" >&2
+  exit 1
+fi
+if [ "$("$python_bin" -c 'import sys; print(f"{sys.version_info.major}.{sys.version_info.minor}")')" != "3.11" ]; then
+  echo "C3-H2 requires external Python 3.11" >&2
+  exit 1
+fi
+if [ "$(env PATH="$node_bin_dir:$PATH" node -p 'process.versions.node.split(".")[0]')" != "22" ]; then
+  echo "C3-H2 requires Node 22" >&2
+  exit 1
+fi
+
+assert_port_free "$backend_port"
+assert_port_free "$frontend_port"
+
+# Prove 0015 against populated retained exact-answer, grade, and invalidation
+# history in a separate disposable database before any browser state is built.
+cd "$repo_root"
+DEEPTUTOR_HOME="$runtime_root" "$python_bin" - \
+  "$migration_db" "$evidence_dir/backend/migration-0015-populated-history.json" <<'PY'
+import hashlib
+import json
+from pathlib import Path
+import sqlite3
+import sys
+
+from deeptutor.courses import migrations as migrations_package
+from deeptutor.courses.migrations import runner
+from deeptutor.courses.attempt_repository import CourseAssessmentRepository
+from deeptutor.courses.attempt_service import CourseAssessmentService
+from deeptutor.courses.content_quality_repository import CourseContentQualityRepository
+from deeptutor.courses.grading_repository import CourseGradingRepository
+from deeptutor.courses.practice_repository import CoursePracticeRepository
+from deeptutor.courses.practice_service import CoursePracticeService
+from deeptutor.courses.repository import CourseRepository
+
+db_path = Path(sys.argv[1])
+receipt_path = Path(sys.argv[2])
+artifacts = runner.discover_migrations()
+assert artifacts[-1].version == 15
+real_discover = runner.discover_migrations
+runner.discover_migrations = lambda: artifacts[:15]
+try:
+    assert runner.ensure_course_schema(db_path) == tuple(range(15))
+    courses = CourseRepository(db_path, "h2_migration_owner")
+    practice = CoursePracticeService(CoursePracticeRepository(courses))
+    attempts = CourseAssessmentService(CourseAssessmentRepository(courses))
+    grading = CourseGradingRepository(courses)
+    quality = CourseContentQualityRepository(courses)
+    course = courses.create_course("Populated retained history")
+    practice_set = practice.create_practice_set(
+        course.id,
+        title="Retained exact assessment",
+        expected_course_write_epoch=course.write_epoch,
+    )
+    revision = practice.create_draft_revision(
+        course.id,
+        practice_set.id,
+        expected_course_write_epoch=course.write_epoch,
+    )
+    question = practice.add_question(
+        course.id,
+        practice_set.id,
+        revision.id,
+        question_type="short_answer",
+        prompt="What molecule is the terminal electron acceptor?",
+        answer_contract={"kind": "exact", "answer": "oxygen"},
+        explanation="Retained exact-answer history.",
+        objective_ids=["OBJ-LEGACY-01"],
+        expected_course_write_epoch=course.write_epoch,
+    )
+    practice.ready_revision(
+        course.id,
+        practice_set.id,
+        revision.id,
+        expected_course_write_epoch=course.write_epoch,
+    )
+    practice_set = practice.get_practice_set(course.id, practice_set.id)
+    view = attempts.start_or_resume_attempt(
+        course.id,
+        practice_set.id,
+        revision.id,
+        expected_course_write_epoch=course.write_epoch,
+        expected_practice_set_write_epoch=practice_set.write_epoch,
+    )
+    attempts.autosave_answer(
+        course.id,
+        practice_set.id,
+        view.attempt.id,
+        view.items[0].id,
+        response={"answer": "oxygen"},
+        expected_answer_revision=1,
+        idempotency_token="h2-populated-history-answer",
+        expected_course_write_epoch=course.write_epoch,
+        expected_practice_set_write_epoch=practice_set.write_epoch,
+    )
+    attempts.submit_attempt(
+        course.id,
+        practice_set.id,
+        view.attempt.id,
+        expected_course_write_epoch=course.write_epoch,
+        expected_practice_set_write_epoch=practice_set.write_epoch,
+    )
+    graded, evidence = grading.grade(
+        course.id,
+        practice_set.id,
+        view.attempt.id,
+        objective_mapping={"OBJ-LEGACY-01": None},
+        expected_course_write_epoch=course.write_epoch,
+        expected_practice_set_write_epoch=practice_set.write_epoch,
+    )
+    report = quality.report_question(
+        course.id,
+        practice_set.id,
+        revision.id,
+        question.id,
+        reason="Retained populated-history migration fixture",
+    )
+    quality.resolve_report(
+        course.id,
+        report["id"],
+        decision="invalidate",
+        reviewer_user_id="h2_fixture_reviewer",
+        note="Hermetic migration fixture only",
+    )
+finally:
+    runner.discover_migrations = real_discover
+
+def rows(table: str):
+    with sqlite3.connect(db_path) as conn:
+        conn.row_factory = sqlite3.Row
+        return [dict(row) for row in conn.execute(f'SELECT * FROM "{table}" ORDER BY rowid')]
+
+tables = (
+    "practice_questions",
+    "quiz_attempts",
+    "quiz_attempt_items",
+    "quiz_attempt_answers",
+    "quiz_item_grading_evidence",
+    "practice_question_quality_reports",
+    "practice_question_invalidations",
+)
+before = {table: rows(table) for table in tables}
+before_digest = hashlib.sha256(
+    json.dumps(before, sort_keys=True, separators=(",", ":")).encode()
+).hexdigest()
+assert runner.ensure_course_schema(db_path) == (15,)
+assert runner.ensure_course_schema(db_path) == ()
+after = {table: rows(table) for table in tables}
+after_without_options = {
+    table: [
+        {key: value for key, value in row.items() if key != "options_json"}
+        for row in values
+    ]
+    for table, values in after.items()
+}
+assert before == after_without_options
+with runner.open_course_connection(db_path) as conn:
+    versions = [int(row[0]) for row in conn.execute(
+        "SELECT version FROM schema_migrations ORDER BY version"
+    )]
+    foreign_key_issues = [tuple(row) for row in conn.execute("PRAGMA foreign_key_check")]
+    assert versions == list(range(16))
+    assert foreign_key_issues == []
+    assert conn.execute(
+        "SELECT options_json FROM practice_questions WHERE id = ?", (question.id,)
+    ).fetchone()[0] == "[]"
+
+payload = {
+    "status": "PASS_POPULATED_HISTORY_0015",
+    "migration": artifacts[-1].filename,
+    "migration_sha256": artifacts[-1].checksum_sha256,
+    "before_digest": before_digest,
+    "retained_counts": {table: len(values) for table, values in before.items()},
+    "migration_versions": versions,
+    "foreign_key_issues": foreign_key_issues,
+    "raw_grade": graded.model_dump(mode="json"),
+    "retained_evidence_ids": [item.id for item in evidence],
+}
+receipt_path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+receipt_path.chmod(0o600)
+PY
+
+cd "$repo_root"
+env -u OPENAI_API_KEY -u LLM_API_KEY \
+  DEEPTUTOR_HOME="$runtime_root" \
+  AUTH_ENABLED=true \
+  BACKEND_PORT="$backend_port" \
+  FRONTEND_PORT="$frontend_port" \
+  CORS_ORIGIN="$frontend_url" \
+  CORS_ORIGINS="$frontend_url" \
+  "$python_bin" -m uvicorn deeptutor.api.main:app \
+    --host 127.0.0.1 --port "$backend_port" --no-access-log \
+    >"$backend_log" 2>&1 &
+backend_pid=$!
+wait_for_url "$backend_url/api/v1/auth/status" "$backend_log" "$backend_pid"
+
+cd "$repo_root/web"
+env PATH="$node_bin_dir:$PATH" \
+  PORT="$frontend_port" \
+  HOSTNAME=127.0.0.1 \
+  DEEPTUTOR_API_BASE_URL="$backend_url" \
+  DEEPTUTOR_AUTH_ENABLED=true \
+  npm run dev >"$frontend_log" 2>&1 &
+frontend_pid=$!
+wait_for_url "$frontend_url/login" "$frontend_log" "$frontend_pid"
+
+owner_password="$("$python_bin" -c 'import secrets; print(secrets.token_urlsafe(32))')"
+foreign_password="$("$python_bin" -c 'import secrets; print(secrets.token_urlsafe(32))')"
+
+curl --fail --silent --show-error \
+  -X POST "$frontend_url/api/v1/auth/register" \
+  -H "Content-Type: application/json" \
+  --data "{\"username\":\"c3_h2_owner\",\"password\":\"$owner_password\"}" >/dev/null
+login_cookie "c3_h2_owner" "$owner_password" "$owner_cookie"
+curl --fail --silent --show-error \
+  -b "$owner_cookie" \
+  -X POST "$frontend_url/api/v1/auth/users" \
+  -H "Origin: $frontend_url" \
+  -H "Content-Type: application/json" \
+  --data "{\"username\":\"c3_h2_foreign\",\"password\":\"$foreign_password\"}" >/dev/null
+login_cookie "c3_h2_foreign" "$foreign_password" "$foreign_cookie"
+
+owner_identity="$(user_identity "$owner_cookie")"
+foreign_identity="$(user_identity "$foreign_cookie")"
+
+cd "$repo_root"
+DEEPTUTOR_HOME="$runtime_root" "$python_bin" - \
+  "$owner_identity" "$foreign_identity" "$fixture_json" <<'PY'
+import hashlib
+import json
+from pathlib import Path
+import sys
+
+from deeptutor.courses.practice_repository import CoursePracticeRepository
+from deeptutor.courses.practice_service import CoursePracticeService
+from deeptutor.courses.repository import CourseRepository
+from deeptutor.multi_user.paths import get_personal_path_service
+
+owner_id, foreign_id, fixture_path = sys.argv[1:]
+repo_root = Path.cwd()
+reference_root = repo_root / "evals/reference_course"
+v3_path = reference_root / "assessment_contracts_v3_evaluation_only.json"
+amendment_path = (
+    reference_root
+    / "reviewer_amendments/obj-resp-01-bounded-short-answer-v2.json"
+)
+evidence_path = reference_root / "objective_evidence_roles_v2.json"
+v3 = json.loads(v3_path.read_text(encoding="utf-8"))
+amendment = json.loads(amendment_path.read_text(encoding="utf-8"))
+evidence = json.loads(evidence_path.read_text(encoding="utf-8"))
+assert v3["status"] == "FROZEN_DESIGN_PRECALL_BLOCKED"
+assert amendment["status"] == "PROPOSED_PENDING_HUMAN_SIGNATURE"
+assert amendment["reviewer"] is None
+assert amendment["reviewed_at"] is None
+assert amendment["signature"] is None
+choice_contract = next(
+    item for item in v3["contracts"] if item["objective_id"] == "OBJ-RESP-02"
+)
+bindings = {item["objective_id"]: item for item in evidence["bindings"]}
+source_reference = bindings["OBJ-RESP-01"]["receipt"]
+assert source_reference == bindings["OBJ-RESP-02"]["receipt"]
+
+def opaque_option_id(contract_id: str, source_option_id: str) -> str:
+    digest = hashlib.sha256(f"{contract_id}:{source_option_id}".encode()).hexdigest()
+    return f"opt_{digest[:32]}"
+
+runtime_id_by_source = {
+    item["option_id"]: opaque_option_id(choice_contract["contract_id"], item["option_id"])
+    for item in choice_contract["options"]
+}
+runtime_options = [
+    {"option_id": runtime_id_by_source[item["option_id"]], "text": item["text"]}
+    for item in choice_contract["options"]
+]
+assert all(
+    not any(label in item["option_id"] for label in ("correct", "wrong", "answer", "distractor"))
+    for item in runtime_options
+)
+runtime_choice_contract = {
+    "kind": "single_choice_v1",
+    "correct_option_id": runtime_id_by_source[choice_contract["correct_option_id"]],
+}
+
+owner_paths = get_personal_path_service(owner_id)
+courses = CourseRepository(owner_paths.get_courses_db(), owner_id)
+practice = CoursePracticeService(CoursePracticeRepository(courses))
+course = courses.create_course("Biology Course")
+source = courses.create_source(
+    course.id,
+    kind="notes",
+    display_name="Cellular Respiration Course Transcript",
+    manifest=[],
+    content_sha256=source_reference["content_sha256"],
+    operation_id="h2_manual_reference_source",
+)
+source = courses.transition_source(
+    course.id,
+    source.id,
+    operation_id="h2_manual_reference_source",
+    expected_source_revision=source.revision,
+    expected_course_revision=courses.get_course(course.id).revision,
+    expected_write_epoch=courses.get_course(course.id).write_epoch,
+    state="ready",
+)
+practice_set = practice.create_practice_set(
+    course.id,
+    title="Cellular Respiration Mixed Practice",
+    expected_course_write_epoch=courses.get_course(course.id).write_epoch,
+)
+revision = practice.create_draft_revision(
+    course.id,
+    practice_set.id,
+    source_ids=[source.id],
+    objective_ids=["OBJ-RESP-01", "OBJ-RESP-02"],
+    expected_course_write_epoch=courses.get_course(course.id).write_epoch,
+)
+
+def citation(objective_id: str, evidence_id: str):
+    support = next(
+        item
+        for item in bindings[objective_id]["support_evidence"]
+        if item["evidence_id"] == evidence_id
+    )
+    return {
+        "source_id": source.id,
+        "source_revision": source.revision,
+        "content_sha256": source.content_sha256,
+        "locator": {
+            "evidence_id": support["evidence_id"],
+            "start_char": support["start_char"],
+            "end_char": support["end_char"],
+        },
+    }
+
+short_prompt = (
+    "What conversion during pyruvate oxidation links glycolysis-derived "
+    "pyruvate to the citric acid cycle?"
+)
+short_question = practice.add_question(
+    course.id,
+    practice_set.id,
+    revision.id,
+    question_type="short_answer",
+    prompt=short_prompt,
+    answer_contract=amendment["candidate_answer_contract"],
+    explanation=(
+        "Pyruvate oxidation converts pyruvate to acetyl-CoA before the citric "
+        "acid cycle."
+    ),
+    objective_ids=["OBJ-RESP-01"],
+    citations=[citation("OBJ-RESP-01", "ev_resp01_conversion")],
+    ordinal=1,
+    expected_course_write_epoch=courses.get_course(course.id).write_epoch,
+)
+choice_explanation = (
+    "Oxygen accepts electrons and protons to form water, allowing electron "
+    "flow to continue."
+)
+choice_question = practice.add_question(
+    course.id,
+    practice_set.id,
+    revision.id,
+    question_type="single_choice",
+    prompt=choice_contract["stem_contract"],
+    options=runtime_options,
+    answer_contract=runtime_choice_contract,
+    explanation=choice_explanation,
+    objective_ids=["OBJ-RESP-02"],
+    citations=[citation("OBJ-RESP-02", "ev_resp02_terminal_acceptor")],
+    ordinal=2,
+    expected_course_write_epoch=courses.get_course(course.id).write_epoch,
+)
+practice.ready_revision(
+    course.id,
+    practice_set.id,
+    revision.id,
+    expected_course_write_epoch=courses.get_course(course.id).write_epoch,
+)
+
+foreign_paths = get_personal_path_service(foreign_id)
+foreign_courses = CourseRepository(foreign_paths.get_courses_db(), foreign_id)
+foreign_course = foreign_courses.create_course("Foreign Private Course")
+
+wrong_product = next(
+    item["text"]
+    for item in choice_contract["options"]
+    if item["option_id"] == "opt_resp02_wrong_product"
+)
+correct_text = next(
+    item["text"]
+    for item in choice_contract["options"]
+    if item["option_id"] == choice_contract["correct_option_id"]
+)
+payload = {
+    "owner_identity": owner_id,
+    "foreign_identity": foreign_id,
+    "course_id": course.id,
+    "foreign_course_id": foreign_course.id,
+    "practice_set_id": practice_set.id,
+    "revision_id": revision.id,
+    "short_question_id": short_question.id,
+    "choice_question_id": choice_question.id,
+    "source_id": source.id,
+    "source_revision": source.revision,
+    "source_content_sha256": source.content_sha256,
+    "course_title": course.title,
+    "foreign_course_title": foreign_course.title,
+    "practice_title": "Cellular Respiration Mixed Practice",
+    "source_title": source.display_name,
+    "short_prompt": short_prompt,
+    "short_canonical_answer": amendment["candidate_answer_contract"]["canonical_answer"],
+    "short_browser_answer": "  PYRUVATE IS CONVERTED TO ACETYL—COA!  ",
+    "choice_prompt": choice_contract["stem_contract"],
+    "choice_option_texts": [item["text"] for item in runtime_options],
+    "choice_correct_text": correct_text,
+    "choice_selected_text": wrong_product,
+    "choice_explanation": choice_explanation,
+    "v3_contract_sha256": hashlib.sha256(v3_path.read_bytes()).hexdigest(),
+    "unsigned_amendment_sha256": hashlib.sha256(amendment_path.read_bytes()).hexdigest(),
+    "unsigned_amendment_status": amendment["status"],
+    "unsigned_amendment_authority": amendment["agent_authority"],
+    "manual_fixture_only": True,
+    "human_approval": False,
+    "provider_generation": False,
+}
+path = Path(fixture_path)
+path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+path.chmod(0o600)
+PY
+
+cd "$repo_root/web"
+env PATH="$node_bin_dir:$PATH" \
+  H2_PHASE=campaign \
+  H2_OWNER_PASSWORD="$owner_password" \
+  H2_FOREIGN_PASSWORD="$foreign_password" \
+  H2_FIXTURE_FILE="$fixture_json" \
+  H2_BROWSER_STATE_FILE="$browser_state" \
+  H2_EVIDENCE_DIR="$evidence_dir" \
+  WEB_BASE_URL="$frontend_url" \
+  PW_SERIAL=1 \
+  PW_OUTPUT_DIR="$evidence_dir/playwright-results/campaign" \
+  PW_HTML_REPORT_DIR="$evidence_dir/playwright-report/campaign" \
+  npx playwright test tests/e2e/content-quality-c3-h2.spec.ts \
+    --project=phase4-authenticated \
+    2>&1 | tee "$evidence_dir/playwright-campaign-output.txt"
+
+cd "$repo_root"
+cp "$fixture_json" "$evidence_dir/backend/fixture.json"
+cp "$browser_state" "$evidence_dir/backend/browser-state.json"
+chmod 600 "$evidence_dir/backend/fixture.json" "$evidence_dir/backend/browser-state.json"
+
+# Build a deterministic local derived Review, resolve both fixture reports,
+# replay reconciliation from the durable ledger, and retain immutable audit.
+DEEPTUTOR_HOME="$runtime_root" "$python_bin" - \
+  "$fixture_json" "$browser_state" "$evidence_dir/backend/backend-receipt.json" <<'PY'
+import hashlib
+import json
+from pathlib import Path
+import sqlite3
+import sys
+
+from deeptutor.courses.attempt_repository import CourseAssessmentRepository
+from deeptutor.courses.attempt_service import CourseAssessmentService
+from deeptutor.courses.content_quality_repository import CourseContentQualityRepository
+from deeptutor.courses.content_quality_service import CourseContentQualityService
+from deeptutor.courses.flashcard_generation_models import (
+    FlashcardCandidatePublication,
+    FlashcardCitation,
+    FlashcardSourceReceipt,
+    GeneratedFlashcard,
+    GeneratedFlashcardOutput,
+)
+from deeptutor.courses.flashcard_generation_repository import CourseFlashcardGenerationRepository
+from deeptutor.courses.grading_repository import CourseGradingRepository
+from deeptutor.courses.mastery_adapter import CourseMasteryAdapter
+from deeptutor.courses.repository import CourseConflictError, CourseRepository
+from deeptutor.learning.storage import LearningStore
+from deeptutor.multi_user.paths import get_personal_path_service
+
+fixture_path, browser_path, receipt_path = map(Path, sys.argv[1:])
+fixture = json.loads(fixture_path.read_text(encoding="utf-8"))
+browser = json.loads(browser_path.read_text(encoding="utf-8"))
+paths = get_personal_path_service(fixture["owner_identity"])
+courses = CourseRepository(paths.get_courses_db(), fixture["owner_identity"])
+attempts = CourseAssessmentService(CourseAssessmentRepository(courses))
+grading = CourseGradingRepository(courses)
+quality_repository = CourseContentQualityRepository(courses)
+quality = CourseContentQualityService(quality_repository)
+attempt_id = browser["primaryAttemptId"]
+
+def canonical(value):
+    return json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+
+def digest(value):
+    return hashlib.sha256(canonical(value).encode()).hexdigest()
+
+def evidence_rows():
+    with courses._connect() as conn:
+        return [
+            dict(row)
+            for row in conn.execute(
+                "SELECT * FROM quiz_item_grading_evidence WHERE attempt_id = ? ORDER BY id",
+                (attempt_id,),
+            )
+        ]
+
+raw_before = attempts.get_attempt(
+    fixture["course_id"], fixture["practice_set_id"], attempt_id
+).model_dump(mode="json")
+evidence_before = evidence_rows()
+effective_before = quality.effective_result(
+    fixture["course_id"], fixture["practice_set_id"],
+    attempts.get_attempt(fixture["course_id"], fixture["practice_set_id"], attempt_id),
+)
+assert raw_before["attempt"]["score"] == {"correct": 1, "total": 2, "fraction": 0.5}
+assert effective_before["score"] == raw_before["attempt"]["score"]
+
+source_receipt = FlashcardSourceReceipt(
+    source_id=fixture["source_id"],
+    source_revision=fixture["source_revision"],
+    content_sha256=fixture["source_content_sha256"],
+)
+flashcards = CourseFlashcardGenerationRepository(courses)
+request = flashcards.create_generated_deck(
+    fixture["course_id"],
+    title="C3-H2 Derived Review",
+    source_ids=[fixture["source_id"]],
+    objective_ids=["OBJ-RESP-02"],
+    idempotency_key="h2-derived-review-fixture",
+    expected_course_write_epoch=courses.get_course(fixture["course_id"]).write_epoch,
+    item_limit=1,
+    generation_brief={
+        "focus": "terminal electron acceptor",
+        "desired_count": 1,
+        "card_type_mix": ["recall"],
+        "difficulty": "mixed",
+        "answer_length": "short",
+        "include_hints": False,
+    },
+    origin={
+        "kind": "practice_remediation",
+        "practice_attempt_id": attempt_id,
+        "practice_set_id": fixture["practice_set_id"],
+        "practice_set_revision_id": fixture["revision_id"],
+        "practice_question_ids": [fixture["choice_question_id"]],
+    },
+)
+running, claimed = flashcards.claim_operation(fixture["course_id"], request.operation.id)
+assert claimed and running.state == "running"
+staged = flashcards.stage_candidates(
+    fixture["course_id"],
+    request.operation.id,
+    GeneratedFlashcardOutput(
+        provider_label="deterministic-local",
+        cards=[GeneratedFlashcard(
+            prompt="How does oxygen support aerobic electron flow?",
+            answer="It serves as the terminal acceptor and forms water.",
+            objective_ids=["OBJ-RESP-02"],
+            citations=[FlashcardCitation(**source_receipt.model_dump())],
+        )],
+    ),
+    account_active=True,
+    material_receipts=[source_receipt],
+)
+published = flashcards.publish_candidates(
+    fixture["course_id"],
+    request.operation.id,
+    FlashcardCandidatePublication(
+        candidate_ids=[staged.candidates[0].candidate_id],
+        expected_candidate_revision=staged.candidate_revision,
+    ),
+    account_active=True,
+)
+assert published.state == "completed"
+
+invalidated_evidence_ids = []
+for report_id in (browser["reportIds"]["choice"], browser["reportIds"]["short"]):
+    resolved, evidence_ids = quality.resolve_report(
+        fixture["course_id"],
+        report_id,
+        decision="invalidate",
+        reviewer_user_id="h2_fixture_reviewer_not_human_approval",
+        note="Hermetic C3-H2 correction fixture; not human approval",
+    )
+    assert resolved["state"] == "invalidated"
+    invalidated_evidence_ids.extend(evidence_ids)
+
+# Simulate a restarted worker discovering the durable invalidation ledger, then
+# replay cleanup twice through the public reconciliation boundary. Repetition
+# must leave the learning projection unchanged.
+with courses._connect() as conn:
+    durable_invalidated_evidence_ids = [
+        str(row[0])
+        for row in conn.execute(
+            "SELECT DISTINCT evidence_id FROM practice_question_invalidations "
+            "WHERE course_id = ? AND evidence_id IS NOT NULL ORDER BY evidence_id",
+            (fixture["course_id"],),
+        )
+    ]
+restarted_quality = CourseContentQualityService(
+    CourseContentQualityRepository(
+        CourseRepository(paths.get_courses_db(), fixture["owner_identity"])
+    )
+)
+restarted_quality.reconcile_pending(fixture["course_id"])
+adapter = CourseMasteryAdapter(
+    LearningStore(root=paths.get_workspace_dir() / "learning")
+)
+after_first_replay = adapter.service.get_or_create(
+    f"lp_{fixture['course_id']}"
+).model_dump(mode="json")
+restarted_quality.reconcile_pending(fixture["course_id"])
+after_second_replay = adapter.service.get_or_create(
+    f"lp_{fixture['course_id']}"
+).model_dump(mode="json")
+assert after_first_replay == after_second_replay
+
+raw_after = attempts.get_attempt(
+    fixture["course_id"], fixture["practice_set_id"], attempt_id
+).model_dump(mode="json")
+evidence_after = evidence_rows()
+effective_after = quality.effective_result(
+    fixture["course_id"], fixture["practice_set_id"],
+    attempts.get_attempt(fixture["course_id"], fixture["practice_set_id"], attempt_id),
+)
+assert raw_after == raw_before
+assert evidence_after == evidence_before
+assert effective_after["score"] == {"correct": 0, "total": 0, "fraction": 0.0}
+assert set(effective_after["invalidated_question_ids"]) == {
+    fixture["short_question_id"], fixture["choice_question_id"]
+}
+try:
+    grading.remediation_scope(fixture["course_id"], attempt_id)
+except CourseConflictError as exc:
+    remediation = {"safe": False, "reason": str(exc)}
+else:
+    raise AssertionError("Invalidated questions remained in remediation scope")
+
+with courses._connect() as conn:
+    deck = dict(conn.execute(
+        "SELECT id, state FROM flashcard_decks WHERE id = ?", (request.deck_id,)
+    ).fetchone())
+    cards = [dict(row) for row in conn.execute(
+        "SELECT id, state FROM flashcards WHERE deck_id = ? ORDER BY id", (request.deck_id,)
+    )]
+    operation = dict(conn.execute(
+        "SELECT id, state, provider_receipt_json FROM flashcard_generation_operations WHERE id = ?",
+        (request.operation.id,),
+    ).fetchone())
+    review_audit = [dict(row) for row in conn.execute(
+        "SELECT * FROM practice_review_invalidations WHERE flashcard_generation_operation_id = ? ORDER BY id",
+        (request.operation.id,),
+    )]
+    quality_reports = [dict(row) for row in conn.execute(
+        "SELECT * FROM practice_question_quality_reports WHERE id IN (?, ?) ORDER BY id",
+        (browser["reportIds"]["choice"], browser["reportIds"]["short"]),
+    )]
+    invalidation_audit = [dict(row) for row in conn.execute(
+        "SELECT * FROM practice_question_invalidations WHERE course_id = ? ORDER BY id",
+        (fixture["course_id"],),
+    )]
+    active_review_cards = int(conn.execute(
+        "SELECT COUNT(*) FROM flashcards WHERE deck_id = ? AND state = 'active'",
+        (request.deck_id,),
+    ).fetchone()[0])
+    duplicate_attempt_count = int(conn.execute(
+        "SELECT COUNT(*) FROM quiz_attempts WHERE id = ?", (attempt_id,)
+    ).fetchone()[0])
+    manual_revision = dict(conn.execute(
+        "SELECT generation_receipt_json FROM practice_set_revisions WHERE id = ?",
+        (fixture["revision_id"],),
+    ).fetchone())
+
+assert deck["state"] == "archived"
+assert cards and all(card["state"] == "archived" for card in cards)
+assert operation["state"] == "completed"
+assert active_review_cards == 0
+assert review_audit
+assert all(report["state"] == "invalidated" for report in quality_reports)
+assert invalidation_audit
+assert duplicate_attempt_count == 1
+assert manual_revision["generation_receipt_json"] is None
+provider_receipt = json.loads(operation["provider_receipt_json"])
+assert provider_receipt["provider"] == "deterministic-local"
+
+payload = {
+    "status": "PASS_BACKEND_CORRECTION_RECEIPT",
+    "boundary": {
+        "manual_fixture_only": True,
+        "human_approval": False,
+        "provider_generation": False,
+        "unsigned_amendment_status": fixture["unsigned_amendment_status"],
+        "unsigned_amendment_authority": fixture["unsigned_amendment_authority"],
+    },
+    "raw_grade_immutable": {
+        "before_sha256": digest(raw_before),
+        "after_sha256": digest(raw_after),
+        "score": raw_after["attempt"]["score"],
+        "evidence_before_sha256": digest(evidence_before),
+        "evidence_after_sha256": digest(evidence_after),
+        "evidence_count": len(evidence_after),
+    },
+    "effective_before": effective_before,
+    "effective_after": effective_after,
+    "invalidated_evidence_ids": sorted(set(invalidated_evidence_ids)),
+    "durable_reconciliation_evidence_ids": durable_invalidated_evidence_ids,
+    "reconciliation_replay": {
+        "restart_replay_count": 2,
+        "stable_after_repeat": after_first_replay == after_second_replay,
+        "learning_projection_sha256": digest(after_second_replay),
+    },
+    "derived_review": {
+        "deck": deck,
+        "cards": cards,
+        "operation": {"id": operation["id"], "state": operation["state"]},
+        "provider": provider_receipt["provider"],
+        "active_card_count": active_review_cards,
+        "remediation": remediation,
+    },
+    "audit_retained": {
+        "quality_reports": quality_reports,
+        "question_invalidations": invalidation_audit,
+        "review_invalidations": review_audit,
+        "duplicate_attempt_count": duplicate_attempt_count,
+    },
+}
+receipt_path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+receipt_path.chmod(0o600)
+PY
+
+cd "$repo_root/web"
+env PATH="$node_bin_dir:$PATH" \
+  H2_PHASE=corrected \
+  H2_OWNER_PASSWORD="$owner_password" \
+  H2_FOREIGN_PASSWORD="$foreign_password" \
+  H2_FIXTURE_FILE="$fixture_json" \
+  H2_BROWSER_STATE_FILE="$browser_state" \
+  H2_EVIDENCE_DIR="$evidence_dir" \
+  WEB_BASE_URL="$frontend_url" \
+  PW_SERIAL=1 \
+  PW_OUTPUT_DIR="$evidence_dir/playwright-results/corrected" \
+  PW_HTML_REPORT_DIR="$evidence_dir/playwright-report/corrected" \
+  npx playwright test tests/e2e/content-quality-c3-h2.spec.ts \
+    --project=phase4-authenticated \
+    2>&1 | tee "$evidence_dir/playwright-corrected-output.txt"
+
+# Add one separate partially-invalidated ready revision after the original H2
+# correction receipt is complete. This fixture proves future admission without
+# changing the immutable primary-attempt correction campaign.
+cd "$repo_root"
+DEEPTUTOR_HOME="$runtime_root" "$python_bin" - \
+  "$fixture_json" <<'PY'
+import json
+from pathlib import Path
+import sys
+
+from deeptutor.courses.content_quality_repository import CourseContentQualityRepository
+from deeptutor.courses.content_quality_service import CourseContentQualityService
+from deeptutor.courses.practice_repository import CoursePracticeRepository
+from deeptutor.courses.practice_service import CoursePracticeService
+from deeptutor.courses.repository import CourseRepository
+from deeptutor.multi_user.paths import get_personal_path_service
+
+fixture_path = Path(sys.argv[1])
+fixture = json.loads(fixture_path.read_text(encoding="utf-8"))
+paths = get_personal_path_service(fixture["owner_identity"])
+courses = CourseRepository(paths.get_courses_db(), fixture["owner_identity"])
+practice = CoursePracticeService(CoursePracticeRepository(courses))
+quality = CourseContentQualityService(CourseContentQualityRepository(courses))
+course = courses.get_course(fixture["course_id"])
+title = "Partial invalidation admission fixture"
+practice_set = practice.create_practice_set(
+    course.id,
+    title=title,
+    expected_course_write_epoch=course.write_epoch,
+)
+revision = practice.create_draft_revision(
+    course.id,
+    practice_set.id,
+    expected_course_write_epoch=course.write_epoch,
+)
+invalidated_prompt = "Which fixture question was withdrawn?"
+valid_prompt = "Which fixture question remains trustworthy?"
+invalidated = practice.add_question(
+    course.id,
+    practice_set.id,
+    revision.id,
+    question_type="short_answer",
+    prompt=invalidated_prompt,
+    answer_contract={
+        "kind": "bounded_short_answer_v1",
+        "canonical_answer": "A",
+        "accepted_normalized_answers": ["a"],
+        "normalization_version": "bounded-text-normalization-v1",
+    },
+    objective_ids=["OBJ-H2-ADMISSION-A"],
+    ordinal=1,
+    expected_course_write_epoch=course.write_epoch,
+)
+valid = practice.add_question(
+    course.id,
+    practice_set.id,
+    revision.id,
+    question_type="short_answer",
+    prompt=valid_prompt,
+    answer_contract={
+        "kind": "bounded_short_answer_v1",
+        "canonical_answer": "B",
+        "accepted_normalized_answers": ["b"],
+        "normalization_version": "bounded-text-normalization-v1",
+    },
+    objective_ids=["OBJ-H2-ADMISSION-B"],
+    ordinal=2,
+    expected_course_write_epoch=course.write_epoch,
+)
+practice.ready_revision(
+    course.id,
+    practice_set.id,
+    revision.id,
+    expected_course_write_epoch=course.write_epoch,
+)
+report = quality.report_question(
+    course.id,
+    practice_set.id,
+    revision.id,
+    invalidated.id,
+    reason="Hermetic partial-admission fixture",
+)
+resolved, evidence_ids = quality.resolve_report(
+    course.id,
+    report["id"],
+    decision="invalidate",
+    reviewer_user_id="h2_fixture_reviewer_not_human_approval",
+    note="Hermetic C3-H2.1 admission fixture; not human approval",
+)
+assert resolved["state"] == "invalidated"
+assert evidence_ids == []
+fixture.update({
+    "partial_practice_title": title,
+    "partial_practice_set_id": practice_set.id,
+    "partial_revision_id": revision.id,
+    "partial_invalidated_question_id": invalidated.id,
+    "partial_valid_question_id": valid.id,
+    "partial_invalidated_prompt": invalidated_prompt,
+    "partial_valid_prompt": valid_prompt,
+})
+fixture_path.write_text(
+    json.dumps(fixture, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+)
+fixture_path.chmod(0o600)
+PY
+
+cd "$repo_root/web"
+env PATH="$node_bin_dir:$PATH" \
+  H2_PHASE=admission \
+  H2_OWNER_PASSWORD="$owner_password" \
+  H2_FOREIGN_PASSWORD="$foreign_password" \
+  H2_FIXTURE_FILE="$fixture_json" \
+  H2_BROWSER_STATE_FILE="$browser_state" \
+  H2_EVIDENCE_DIR="$evidence_dir" \
+  WEB_BASE_URL="$frontend_url" \
+  PW_SERIAL=1 \
+  PW_OUTPUT_DIR="$evidence_dir/playwright-results/admission" \
+  PW_HTML_REPORT_DIR="$evidence_dir/playwright-report/admission" \
+  npx playwright test tests/e2e/content-quality-c3-h2.spec.ts \
+    --project=phase4-authenticated \
+    2>&1 | tee "$evidence_dir/playwright-admission-output.txt"
+
+cp "$browser_state" "$evidence_dir/backend/browser-state.json"
+cp "$fixture_json" "$evidence_dir/backend/fixture.json"
+chmod 600 "$evidence_dir/backend/browser-state.json"
+chmod 600 "$evidence_dir/backend/fixture.json"
+printf 'backend_port=%s\nfrontend_port=%s\nnode=%s\nnpm=%s\npython=%s\nbranch=%s\nhead=%s\nprovider_calls=%s\nhuman_approval=%s\n' \
+  "$backend_port" "$frontend_port" \
+  "$(env PATH="$node_bin_dir:$PATH" node --version)" \
+  "$(env PATH="$node_bin_dir:$PATH" npm --version)" \
+  "$("$python_bin" --version 2>&1)" \
+  "$(git branch --show-current)" \
+  "$(git rev-parse HEAD)" \
+  "0" "false" > "$evidence_dir/runtime.txt"
+
+if [ "$inspection_hold_seconds" -gt 0 ]; then
+  printf 'H2 browser inspection window: %s/login (%ss)\n' \
+    "$frontend_url" "$inspection_hold_seconds"
+  sleep "$inspection_hold_seconds"
+fi
