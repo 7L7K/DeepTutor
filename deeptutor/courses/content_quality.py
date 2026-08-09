@@ -57,9 +57,11 @@ def _supported_by_quote(answer: str, explanation: str, quote: str) -> bool:
     quote_tokens = _tokens(quote)
     answer_tokens = {item for item in _tokens(answer) if item not in {"the", "and", "from", "with", "that", "this"}}
     explanation_tokens = _tokens(explanation)
-    if not answer_tokens or not answer_tokens.intersection(quote_tokens):
+    if not explanation_tokens.intersection(quote_tokens):
         return False
-    return bool(explanation_tokens.intersection(quote_tokens))
+    # Short polarity answers such as "No" carry little lexical content; their
+    # supporting explanation is the evidence-bearing part of the contract.
+    return not answer_tokens or bool(answer_tokens.intersection(quote_tokens))
 
 
 def _locator_with_offsets(citation: PracticeCitation, text: str) -> PracticeCitation:
@@ -151,14 +153,25 @@ def validate_c3_output(
             except ValueError as exc:
                 findings.append(QualityFinding("CITATION_UNREACHABLE", index, str(exc)))
                 continue
-            quote = str(enriched_citation.locator["evidence_quote"])
-            answer_values = [question.answer_contract.answer, *question.answer_contract.accepted_answers]
-            if not all(_supported_by_quote(answer, question.explanation, quote) for answer in answer_values):
-                findings.append(QualityFinding("ANSWER_UNSUPPORTED", index, "answer/explanation is not supported by the cited quote"))
             new_citations.append(enriched_citation)
             cited = True
         if not cited:
             findings.append(QualityFinding("CITATION_MISSING", index, "at least one reachable citation is required"))
+        else:
+            # A question may cite multiple adjacent source fragments.  The
+            # answer and explanation must be supported by the reachable set as
+            # a whole, not redundantly by every individual fragment.
+            combined_quote = "\n".join(
+                str(citation.locator["evidence_quote"])
+                for citation in new_citations
+                if isinstance(citation.locator.get("evidence_quote"), str)
+            )
+            answer_values = [question.answer_contract.answer, *question.answer_contract.accepted_answers]
+            if not all(
+                _supported_by_quote(answer, question.explanation, combined_quote)
+                for answer in answer_values
+            ):
+                findings.append(QualityFinding("ANSWER_UNSUPPORTED", index, "answer/explanation is not supported by the cited source set"))
         enriched.append(question.model_copy(update={"citations": new_citations}))
 
     if findings:

@@ -138,6 +138,48 @@ def test_c3_validator_preserves_bounded_answer_variants_and_receipt_versions() -
     assert checked.questions[0].citations[0].locator["offsets_version"] == "exact-char-v1"
 
 
+def test_c3_validator_accepts_collective_citations_and_short_polarity_answer() -> None:
+    request, _original_material, output = _output(
+        prompt="Does fermentation replace glycolysis?",
+    )
+    source_text = (
+        "Fermentation does not replace glycolysis. "
+        "It lets a cell keep glycolysis running by regenerating NAD+."
+    )
+    material = GenerationSourceText(
+        receipt=PracticeSourceReceipt(
+            source_id="src_" + "f" * 32,
+            source_revision=1,
+            content_sha256=hashlib.sha256(source_text.encode()).hexdigest(),
+        ),
+        text=source_text,
+    )
+    request = request.model_copy(update={"source_material": [material]})
+    question = GeneratedPracticeQuestion.model_validate(
+        output.questions[0].model_dump(mode="json")
+        | {
+            "answer_contract": {"kind": "exact", "answer": "No"},
+            "explanation": "Fermentation does not replace glycolysis; it regenerates NAD+ so glycolysis can continue.",
+            "citations": [
+                {
+                    **material.receipt.model_dump(mode="json"),
+                    "locator": {"evidence_quote": "Fermentation does not replace glycolysis."},
+                },
+                {
+                    **material.receipt.model_dump(mode="json"),
+                    "locator": {"evidence_quote": "It lets a cell keep glycolysis running by regenerating NAD+."},
+                },
+            ],
+        }
+    )
+    checked = validate_c3_output(
+        request=request,
+        output=output.model_copy(update={"questions": [question]}),
+        material=[material],
+    )
+    assert checked.questions[0].citations[0].locator["offsets_version"] == "exact-char-v1"
+
+
 @pytest.mark.parametrize(
     ("prompt", "objectives", "code"),
     [

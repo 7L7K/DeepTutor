@@ -212,13 +212,22 @@ class OpenAIPracticeGenerationProvider:
         evidence: dict[tuple[str, int, str], list[str]] = {}
         try:
             for item in request.source_material:
+                quotes = OpenAIFlashcardGenerationProvider._evidence_quotes(item.text)
+                if request.quality_profile == "c3-biology-v1":
+                    # Markdown headings are useful navigation labels but are
+                    # not substantive evidence for a learner-facing answer.
+                    quotes = [
+                        quote
+                        for quote in quotes
+                        if not re.match(r"^#{1,6}\s+", quote.strip())
+                    ]
                 evidence[
                     (
                         item.receipt.source_id,
                         item.receipt.source_revision,
                         item.receipt.content_sha256,
                     )
-                ] = OpenAIFlashcardGenerationProvider._evidence_quotes(item.text)
+                ] = quotes
         except FlashcardGenerationProviderError as exc:
             raise PracticeGenerationProviderError(
                 "source evidence is unavailable"
@@ -505,8 +514,11 @@ class OpenAIPracticeGenerationProvider:
             "canonical answer is already one unambiguous token. Do not ask for an "
             "open-ended explanation that would be unfair to exact grading. "
             "Every factual question must cite a supplied receipt and one exact "
-            "allowed evidence quote. Use only allowed objective IDs. Never put a "
-            "source ID or other system identifier in learner-visible wording. "
+            "allowed evidence quote. Prefer a complete sentence or adjacent "
+            "sentences that contain the support; never cite a heading, timestamp, "
+            "or fragment alone. The citation set for each question must collectively "
+            "support its answer and explanation. Use only allowed objective IDs. "
+            "Never put a source ID or other system identifier in learner-visible wording. "
             "Return only "
             "the required structured object."
         )
