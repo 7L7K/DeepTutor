@@ -61,6 +61,9 @@ _DEFAULT_PRACTICE_GENERATION = ResolvedTextGeneration(
     reasoning_effort="minimal",
 )
 
+C3_PROMPT_VERSION = "course-practice-c3-v1"
+C3_SCHEMA_VERSION = "course-practice-c3-schema-v1"
+
 
 def _provider_request_diagnostic(exc: Exception) -> tuple[str, int | None, str | None]:
     """Return a bounded, content-free provider failure classification.
@@ -234,6 +237,7 @@ class OpenAIPracticeGenerationProvider:
         objective_items: dict[str, Any] = {"type": "string"}
         if request.objective_ids:
             objective_items["enum"] = list(request.objective_ids)
+        c3 = request.quality_profile == "c3-biology-v1"
         return {
             "type": "object",
             "additionalProperties": False,
@@ -250,6 +254,7 @@ class OpenAIPracticeGenerationProvider:
                             "question_type",
                             "prompt",
                             "answer",
+                            *(["accepted_answers"] if c3 else []),
                             "explanation",
                             "objective_ids",
                             "citations",
@@ -261,6 +266,16 @@ class OpenAIPracticeGenerationProvider:
                             },
                             "prompt": {"type": "string", "minLength": 1, "maxLength": 12000},
                             "answer": {"type": "string", "minLength": 1, "maxLength": 4000},
+                            "accepted_answers": {
+                                "type": "array",
+                                "minItems": 0,
+                                "maxItems": 8,
+                                "items": {
+                                    "type": "string",
+                                    "minLength": 1,
+                                    "maxLength": 4000,
+                                },
+                            },
                             "explanation": {
                                 "type": "string",
                                 "minLength": 1,
@@ -321,20 +336,32 @@ class OpenAIPracticeGenerationProvider:
             raise PracticeGenerationProviderError("provider output is invalid")
         normalized: list[GeneratedPracticeQuestion] = []
         seen_prompts: set[str] = set()
+        c3 = request.quality_profile == "c3-biology-v1"
         for raw in questions:
-            if not isinstance(raw, dict) or set(raw) != {
+            required_keys = {
                 "question_type",
                 "prompt",
                 "answer",
                 "explanation",
                 "objective_ids",
                 "citations",
-            }:
+            }
+            if c3:
+                required_keys.add("accepted_answers")
+            if not isinstance(raw, dict) or set(raw) != required_keys:
                 raise PracticeGenerationProviderError("provider output is invalid")
             if (
                 raw["question_type"] != "short_answer"
                 or not isinstance(raw["prompt"], str)
                 or not isinstance(raw["answer"], str)
+                or (
+                    c3
+                    and (
+                        not isinstance(raw["accepted_answers"], list)
+                        or len(raw["accepted_answers"]) > 8
+                        or any(not isinstance(item, str) for item in raw["accepted_answers"])
+                    )
+                )
                 or not isinstance(raw["explanation"], str)
                 or not isinstance(raw["objective_ids"], list)
                 or any(
@@ -400,7 +427,15 @@ class OpenAIPracticeGenerationProvider:
                     GeneratedPracticeQuestion(
                         question_type=raw["question_type"],
                         prompt=raw["prompt"],
-                        answer_contract={"kind": "exact", "answer": raw["answer"]},
+                        answer_contract={
+                            "kind": "exact",
+                            "answer": raw["answer"],
+                            **(
+                                {"accepted_answers": raw["accepted_answers"]}
+                                if c3
+                                else {}
+                            ),
+                        },
                         explanation=raw["explanation"],
                         objective_ids=raw["objective_ids"],
                         citations=citations,
@@ -465,6 +500,10 @@ class OpenAIPracticeGenerationProvider:
             "that a learner can understand without seeing its answer or explanation. "
             "Do not invert or splice source clauses into awkward question wording. "
             "Each question must have one exact, concise answer and a useful explanation. "
+            "For C3 short-answer questions, include a canonical answer plus a short list "
+            "of genuinely equivalent accepted_answers; use an empty list only when the "
+            "canonical answer is already one unambiguous token. Do not ask for an "
+            "open-ended explanation that would be unfair to exact grading. "
             "Every factual question must cite a supplied receipt and one exact "
             "allowed evidence quote. Use only allowed objective IDs. Never put a "
             "source ID or other system identifier in learner-visible wording. "
@@ -635,6 +674,16 @@ class OpenAIPracticeGenerationProvider:
             reasoning_output_tokens=reasoning_tokens,
             estimated_cost_microusd=estimated_cost,
             pricing_version=self.pricing.version,
+            prompt_version=(
+                C3_PROMPT_VERSION
+                if request.quality_profile == "c3-biology-v1"
+                else "course-practice-v1"
+            ),
+            schema_version=(
+                C3_SCHEMA_VERSION
+                if request.quality_profile == "c3-biology-v1"
+                else "course-practice-schema-v1"
+            ),
             reasoning_effort=self.reasoning_effort,
             response_status=status,
             latency_ms=max(0, round((time.perf_counter() - started) * 1000)),

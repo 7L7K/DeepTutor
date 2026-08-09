@@ -56,11 +56,16 @@ class CourseGradingRepository:
         return value["answer"]
 
     @staticmethod
-    def _exact(answer: str, expected: str) -> bool:
+    def _exact(answer: str, expected: str | ExactAnswerContract) -> bool:
         def normalize(value: str) -> str:
             return unicodedata.normalize("NFC", value).strip().casefold()
 
-        return normalize(answer) == normalize(expected)
+        expected_values = (
+            [expected]
+            if isinstance(expected, str)
+            else [expected.answer, *expected.accepted_answers]
+        )
+        return any(normalize(answer) == normalize(value) for value in expected_values)
 
     @staticmethod
     def _evidence_from_row(row: sqlite3.Row) -> GradingEvidence:
@@ -164,7 +169,7 @@ class CourseGradingRepository:
                 contract = ExactAnswerContract.model_validate(json.loads(row["answer_contract_json"]))
                 raw_response = json.loads(row["response_json"])
                 response = self._response(raw_response)
-                is_correct = self._exact(response, contract.answer)
+                is_correct = self._exact(response, contract)
                 error_type = None if is_correct else ("metacognitive" if not response.strip() else "application")
                 contract_sha = self._digest(contract.model_dump())
                 response_sha = self._digest(raw_response)

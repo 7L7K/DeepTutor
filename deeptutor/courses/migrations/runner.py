@@ -137,8 +137,14 @@ def _register_course_validation_functions(conn: sqlite3.Connection) -> None:
             contract = json.loads(str(answer_contract_json))
             response = json.loads(str(response_json))
             expected_answer = contract["answer"]
+            accepted_answers = contract.get("accepted_answers", [])
             actual_answer = response["answer"]
-            if set(contract) != {"kind", "answer"} or contract["kind"] != "exact":
+            if (
+                set(contract) not in ({"kind", "answer"}, {"kind", "answer", "accepted_answers"})
+                or contract["kind"] != "exact"
+                or not isinstance(accepted_answers, list)
+                or any(not isinstance(item, str) for item in accepted_answers)
+            ):
                 return 0
             if set(response) != {"answer"}:
                 return 0
@@ -146,7 +152,10 @@ def _register_course_validation_functions(conn: sqlite3.Connection) -> None:
                 return 0
             def normalize(value: str) -> str:
                 return unicodedata.normalize("NFC", value).strip().casefold()
-            actual_correct = normalize(actual_answer) == normalize(expected_answer)
+            actual_correct = any(
+                normalize(actual_answer) == normalize(candidate)
+                for candidate in [expected_answer, *accepted_answers]
+            )
             actual_error = None if actual_correct else (
                 "metacognitive" if not actual_answer.strip() else "application"
             )

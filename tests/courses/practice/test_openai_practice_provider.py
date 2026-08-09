@@ -231,6 +231,25 @@ def test_practice_provider_rejects_unexpected_actual_model(tmp_path: Path) -> No
         provider.generate(_request())
 
 
+def test_c3_provider_requires_and_normalizes_bounded_answer_variants(
+    tmp_path: Path,
+) -> None:
+    payload = _payload()
+    payload["questions"][0]["accepted_answers"] = ["energy"]
+    captured: dict = {}
+    provider = _provider(tmp_path, payload, captured)
+    request = _request().model_copy(update={"quality_profile": "c3-biology-v1"})
+
+    output = provider.generate(request)
+
+    assert output.prompt_version == "course-practice-c3-v1"
+    assert output.schema_version == "course-practice-c3-schema-v1"
+    assert output.store is False
+    assert output.questions[0].answer_contract.accepted_answers == ["energy"]
+    question_schema = captured["text"]["format"]["schema"]["properties"]["questions"]["items"]
+    assert "accepted_answers" in question_schema["required"]
+
+
 @pytest.mark.parametrize(
     "payload",
     [

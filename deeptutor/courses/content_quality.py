@@ -23,6 +23,7 @@ from .practice_models import PracticeCitation
 C3_BIOLOGY_PROFILE = "c3-biology-v1"
 _OPAQUE_ID = re.compile(r"\b(?:src|crs|prc|prv|qst|opg|pln)_[A-Za-z0-9]+\b")
 _TOKEN = re.compile(r"[a-z0-9]{3,}")
+_C3_LOCATOR_VERSION = "exact-char-v1"
 
 
 @dataclass(frozen=True)
@@ -72,6 +73,7 @@ def _locator_with_offsets(citation: PracticeCitation, text: str) -> PracticeCita
         update={
             "locator": {
                 **citation.locator,
+                "offsets_version": _C3_LOCATOR_VERSION,
                 "start_char": start,
                 "end_char": start + len(quote),
             }
@@ -96,6 +98,10 @@ def validate_c3_output(
         findings.append(QualityFinding("PROVIDER_RECEIPT_INCOMPLETE", None, "request and actual model IDs are required"))
     if output.input_tokens is None or output.output_tokens is None or output.latency_ms is None:
         findings.append(QualityFinding("PROVIDER_RUNTIME_RECEIPT_INCOMPLETE", None, "usage and latency are required"))
+    if output.store is not False:
+        findings.append(QualityFinding("PROVIDER_STORE_POLICY", None, "C3 provider output must record store=false"))
+    if not output.prompt_version or not output.schema_version:
+        findings.append(QualityFinding("PROVIDER_SCHEMA_RECEIPT_INCOMPLETE", None, "prompt and schema versions are required"))
     if not request.objective_ids:
         findings.append(QualityFinding("OBJECTIVES_EMPTY", None, "C3 requires approved objectives"))
     if len(output.questions) != request.item_limit:
@@ -146,7 +152,8 @@ def validate_c3_output(
                 findings.append(QualityFinding("CITATION_UNREACHABLE", index, str(exc)))
                 continue
             quote = str(enriched_citation.locator["evidence_quote"])
-            if not _supported_by_quote(question.answer_contract.answer, question.explanation, quote):
+            answer_values = [question.answer_contract.answer, *question.answer_contract.accepted_answers]
+            if not all(_supported_by_quote(answer, question.explanation, quote) for answer in answer_values):
                 findings.append(QualityFinding("ANSWER_UNSUPPORTED", index, "answer/explanation is not supported by the cited quote"))
             new_citations.append(enriched_citation)
             cited = True

@@ -37,14 +37,28 @@ def _epoch(courses: CourseRepository, course_id: str) -> int:
     return courses.get_course(course_id).write_epoch
 
 
-def _practice(courses, practice, course_id: str, *, objectives=("kp_one",), answer="yes", raw_contract: str | None = None):
+def _practice(
+    courses,
+    practice,
+    course_id: str,
+    *,
+    objectives=("kp_one",),
+    answer="yes",
+    accepted_answers=(),
+    raw_contract: str | None = None,
+):
     epoch = _epoch(courses, course_id)
     practice_set = practice.create_practice_set(course_id, title="Quiz", expected_course_write_epoch=epoch)
     revision = practice.create_draft_revision(course_id, practice_set.id, expected_course_write_epoch=epoch)
     question = practice.add_question(
         course_id, practice_set.id, revision.id,
         question_type="short_answer", prompt="Answer?",
-        answer_contract={"kind": "exact", "answer": answer}, objective_ids=objectives,
+        answer_contract={
+            "kind": "exact",
+            "answer": answer,
+            "accepted_answers": list(accepted_answers),
+        },
+        objective_ids=objectives,
         expected_course_write_epoch=epoch,
     )
     if raw_contract is not None:
@@ -117,6 +131,43 @@ def test_exact_grading_is_server_contract_driven_for_correct_wrong_and_blank(tmp
     else:
         assert progress.error_records[0].knowledge_point_id == "kp_one"
         assert progress.review_queue[0].knowledge_point_id == "kp_one"
+
+
+def test_exact_grading_accepts_only_explicit_bounded_variants(tmp_path: Path) -> None:
+    courses, practice, attempts, adapter, grading = _services(tmp_path)
+    course = courses.create_course("Biology")
+    _init_objectives(adapter, course.id, "kp_one")
+    practice_set, revision, _ = _practice(
+        courses,
+        practice,
+        course.id,
+        answer="oxygen",
+        accepted_answers=("O2", "molecular oxygen"),
+    )
+
+    accepted_attempt, _ = _submitted(
+        courses, attempts, course.id, practice_set, revision, {"answer": "O2"}
+    )
+    accepted = _grade(grading, courses, course.id, practice_set.id, accepted_attempt)
+    assert accepted.score == {"correct": 1, "total": 1, "fraction": 1.0}
+
+    second_set, second_revision, _ = _practice(
+        courses,
+        practice,
+        course.id,
+        answer="oxygen",
+        accepted_answers=("O2", "molecular oxygen"),
+    )
+    rejected_attempt, _ = _submitted(
+        courses,
+        attempts,
+        course.id,
+        second_set,
+        second_revision,
+        {"answer": "oxygen accepts electrons"},
+    )
+    rejected = _grade(grading, courses, course.id, second_set.id, rejected_attempt)
+    assert rejected.score == {"correct": 0, "total": 1, "fraction": 0.0}
 
 
 @pytest.mark.parametrize(

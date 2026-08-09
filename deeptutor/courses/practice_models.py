@@ -5,7 +5,7 @@ from __future__ import annotations
 import math
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 PracticeMode = Literal["manual", "generated"]
 PracticeSetState = Literal["draft", "archived"]
@@ -57,7 +57,7 @@ class PracticeCitation(PracticeSourceReceipt):
 
 
 class ExactAnswerContract(BaseModel):
-    """The deliberately small deterministic answer contract in P4-02A.
+    """A bounded deterministic answer contract.
 
     Additional grading kinds must be added as named, typed models instead of
     widening this record to an unbounded JSON blob.
@@ -67,6 +67,11 @@ class ExactAnswerContract(BaseModel):
 
     kind: Literal["exact"]
     answer: str
+    accepted_answers: list[str] = Field(
+        default_factory=list,
+        max_length=8,
+        exclude_if=lambda value: not value,
+    )
 
     @field_validator("answer")
     @classmethod
@@ -74,6 +79,23 @@ class ExactAnswerContract(BaseModel):
         if not value.strip() or len(value) > 4_000:
             raise ValueError("exact answer must be non-empty and bounded")
         return value
+
+    @field_validator("accepted_answers")
+    @classmethod
+    def _accepted_answers_are_bounded(cls, value: list[str]) -> list[str]:
+        if any(not item.strip() or len(item) > 4_000 for item in value):
+            raise ValueError("accepted exact answers must be non-empty and bounded")
+        normalized = [" ".join(item.casefold().split()) for item in value]
+        if len(set(normalized)) != len(normalized):
+            raise ValueError("accepted exact answers must be unique")
+        return value
+
+    @model_validator(mode="after")
+    def _accepted_answers_do_not_repeat_primary(self) -> "ExactAnswerContract":
+        primary = " ".join(self.answer.casefold().split())
+        if primary in {" ".join(item.casefold().split()) for item in self.accepted_answers}:
+            raise ValueError("accepted exact answers must differ from the primary answer")
+        return self
 
 
 class PracticeSet(BaseModel):
