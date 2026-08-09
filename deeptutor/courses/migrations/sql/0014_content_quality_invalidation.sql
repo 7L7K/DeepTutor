@@ -46,6 +46,63 @@ CREATE TABLE practice_question_invalidations (
 CREATE INDEX practice_question_invalidations_attempt_lookup
     ON practice_question_invalidations(course_id, practice_set_id, question_id, evidence_id);
 
+-- A question invalidation must also withdraw any already-derived Review deck.
+-- The generated operation and deck remain immutable history; this ledger makes
+-- their unsafe status explicit and lets readers exclude the archived artifact.
+CREATE TABLE practice_review_invalidations (
+    id TEXT PRIMARY KEY,
+    owner_user_id TEXT NOT NULL,
+    course_id TEXT NOT NULL REFERENCES courses(id) ON DELETE RESTRICT,
+    practice_set_id TEXT NOT NULL REFERENCES practice_sets(id) ON DELETE RESTRICT,
+    question_id TEXT NOT NULL REFERENCES practice_questions(id) ON DELETE RESTRICT,
+    report_id TEXT NOT NULL REFERENCES practice_question_quality_reports(id) ON DELETE RESTRICT,
+    flashcard_generation_operation_id TEXT NOT NULL
+        REFERENCES flashcard_generation_operations(id) ON DELETE RESTRICT,
+    deck_id TEXT NOT NULL REFERENCES flashcard_decks(id) ON DELETE RESTRICT,
+    reason TEXT NOT NULL,
+    invalidated_by TEXT NOT NULL,
+    invalidated_at REAL NOT NULL,
+    UNIQUE (question_id, flashcard_generation_operation_id)
+);
+CREATE INDEX practice_review_invalidations_course_lookup
+    ON practice_review_invalidations(course_id, practice_set_id, question_id, invalidated_at);
+
+CREATE TRIGGER practice_review_invalidation_owned_insert
+BEFORE INSERT ON practice_review_invalidations
+WHEN NEW.invalidated_by = ''
+ OR NOT EXISTS (
+    SELECT 1 FROM courses
+    JOIN flashcard_generation_operations AS operations
+      ON operations.course_id = courses.id
+    JOIN flashcard_decks AS decks ON decks.id = operations.deck_id
+    JOIN practice_question_quality_reports AS reports ON reports.id = NEW.report_id
+    WHERE courses.id = NEW.course_id AND courses.owner_user_id = NEW.owner_user_id
+      AND operations.id = NEW.flashcard_generation_operation_id
+      AND operations.owner_user_id = NEW.owner_user_id
+      AND operations.deck_id = NEW.deck_id
+      AND decks.owner_user_id = NEW.owner_user_id
+      AND decks.course_id = NEW.course_id
+      AND reports.course_id = NEW.course_id
+      AND reports.practice_set_id = NEW.practice_set_id
+      AND reports.question_id = NEW.question_id
+      AND reports.state = 'invalidated'
+ )
+BEGIN
+    SELECT RAISE(ABORT, 'Review invalidation must bind to owned derived Review history');
+END;
+
+CREATE TRIGGER practice_review_invalidation_no_update
+BEFORE UPDATE ON practice_review_invalidations
+BEGIN
+    SELECT RAISE(ABORT, 'Review invalidations are immutable');
+END;
+
+CREATE TRIGGER practice_review_invalidation_no_delete
+BEFORE DELETE ON practice_review_invalidations
+BEGIN
+    SELECT RAISE(ABORT, 'Review invalidations are retained history');
+END;
+
 CREATE TRIGGER practice_question_quality_report_owned_insert
 BEFORE INSERT ON practice_question_quality_reports
 WHEN NEW.state != 'reported'

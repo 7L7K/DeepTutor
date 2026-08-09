@@ -1226,17 +1226,31 @@ async def resolve_practice_question_report(
     report_id: str,
     body: ResolvePracticeQuestionReportRequest,
 ):
+    from deeptutor.multi_user.context import get_current_user
+
+    current_user = get_current_user()
+    if not current_user.is_admin:
+        raise HTTPException(
+            status_code=403,
+            detail="Only a trusted reviewer may resolve a Course quality report",
+        )
     async with course_operation_lock(course_id):
         report, evidence_ids = _practice_call(
             lambda: _content_quality_service().resolve_report(
                 course_id,
                 report_id,
                 decision=body.decision,
-                reviewer_user_id=_service().owner_user_id,
+                reviewer_user_id=current_user.id,
                 note=body.note,
             )
         )
-    return {"report": report, "invalidated_evidence_ids": evidence_ids}
+    return {
+        "report": report,
+        "invalidated_evidence_ids": evidence_ids,
+        "invalidated_review_operation_ids": _content_quality_service().invalidated_review_operation_ids(
+            course_id, str(report["question_id"])
+        ),
+    }
 
 
 @router.post("/{course_id}/practice/{practice_set_id}/attempts")

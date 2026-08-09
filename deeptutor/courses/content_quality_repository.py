@@ -19,6 +19,10 @@ def _invalidation_id() -> str:
     return f"cqi_{uuid4().hex}"
 
 
+def _review_invalidation_id() -> str:
+    return f"qri_{uuid4().hex}"
+
+
 class CourseContentQualityRepository:
     """Persist append-only learner reports and their review decisions."""
 
@@ -158,6 +162,16 @@ class CourseContentQualityRepository:
                          report["practice_set_revision_id"], report["question_id"], report_id,
                          evidence_id, note, reviewer_user_id, now),
                     )
+                self._archive_derived_reviews(
+                    conn,
+                    course_id=course_id,
+                    practice_set_id=str(report["practice_set_id"]),
+                    question_id=str(report["question_id"]),
+                    report_id=report_id,
+                    reason=note,
+                    reviewer_user_id=reviewer_user_id,
+                    now=now,
+                )
                 invalidation_evidence_ids = evidence_ids
             else:
                 conn.execute(
@@ -171,6 +185,91 @@ class CourseContentQualityRepository:
             ).fetchone()
         assert updated is not None
         return self._row(updated), invalidation_evidence_ids
+
+    def _archive_derived_reviews(
+        self,
+        conn: sqlite3.Connection,
+        *,
+        course_id: str,
+        practice_set_id: str,
+        question_id: str,
+        report_id: str,
+        reason: str,
+        reviewer_user_id: str,
+        now: float,
+    ) -> None:
+        """Archive Review artifacts whose provenance names an invalid question.
+
+        The generated operation, candidate payload, and raw cards remain
+        retained history.  The derived deck and active cards are archived, and
+        an immutable ledger row makes the withdrawal visible to readers.
+        """
+        rows = conn.execute(
+            """SELECT id, deck_id, state, origin_json
+               FROM flashcard_generation_operations
+               WHERE course_id = ? AND owner_user_id = ?""",
+            (course_id, self.owner_user_id),
+        ).fetchall()
+        for row in rows:
+            try:
+                origin = json.loads(str(row["origin_json"]))
+            except (TypeError, json.JSONDecodeError):
+                continue
+            if not isinstance(origin, dict) or origin.get("kind") != "practice_remediation":
+                continue
+            question_ids = origin.get("practice_question_ids")
+            if not isinstance(question_ids, list) or question_id not in question_ids:
+                continue
+            operation_id = str(row["id"])
+            deck_id = str(row["deck_id"])
+            conn.execute(
+                """INSERT OR IGNORE INTO practice_review_invalidations
+                   (id, owner_user_id, course_id, practice_set_id, question_id,
+                    report_id, flashcard_generation_operation_id, deck_id,
+                    reason, invalidated_by, invalidated_at)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                (
+                    _review_invalidation_id(),
+                    self.owner_user_id,
+                    course_id,
+                    practice_set_id,
+                    question_id,
+                    report_id,
+                    operation_id,
+                    deck_id,
+                    reason,
+                    reviewer_user_id,
+                    now,
+                ),
+            )
+            conn.execute(
+                """UPDATE flashcards
+                   SET state = 'archived', archived_at = ?, updated_at = ?
+                   WHERE deck_id = ? AND state = 'active'""",
+                (now, now, deck_id),
+            )
+            conn.execute(
+                """UPDATE flashcard_decks
+                   SET state = 'archived', archived_at = ?, updated_at = ?,
+                       revision = revision + 1, write_epoch = write_epoch + 1
+                   WHERE id = ? AND owner_user_id = ? AND state != 'archived'""",
+                (now, now, deck_id, self.owner_user_id),
+            )
+            if str(row["state"]) in {"queued", "awaiting_review"}:
+                conn.execute(
+                    """UPDATE flashcard_generation_operations
+                       SET state = 'cancelled', error_code = 'cancelled',
+                           cancel_requested_at = ?, completed_at = ?, updated_at = ?
+                       WHERE id = ? AND state IN ('queued', 'awaiting_review')""",
+                    (now, now, now, operation_id),
+                )
+            elif str(row["state"]) == "running":
+                conn.execute(
+                    """UPDATE flashcard_generation_operations
+                       SET state = 'cancelling', cancel_requested_at = ?, updated_at = ?
+                       WHERE id = ? AND state = 'running'""",
+                    (now, now, operation_id),
+                )
 
     def invalidated_for_attempt(
         self, course_id: str, practice_set_id: str, attempt_id: str
@@ -198,6 +297,17 @@ class CourseContentQualityRepository:
                 (course_id,),
             ).fetchall()
         return {str(row["question_id"]) for row in rows}
+
+    def invalidated_review_operation_ids(self, course_id: str, question_id: str) -> list[str]:
+        with self.course_repository._connect() as conn:
+            rows = conn.execute(
+                """SELECT flashcard_generation_operation_id
+                   FROM practice_review_invalidations
+                   WHERE course_id = ? AND question_id = ?
+                   ORDER BY flashcard_generation_operation_id""",
+                (course_id, question_id),
+            ).fetchall()
+        return [str(row["flashcard_generation_operation_id"]) for row in rows]
 
 
 __all__ = ["CourseContentQualityRepository"]

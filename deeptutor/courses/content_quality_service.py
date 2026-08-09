@@ -89,5 +89,8 @@ class CourseContentQualityService:
         progress.review_queue = adapter.scheduler.build_review_queue(progress)
         adapter.service.save(progress)
 
+    def invalidated_review_operation_ids(self, course_id: str, question_id: str) -> list[str]:
+        return self.repository.invalidated_review_operation_ids(course_id, question_id)
+
 
 __all__ = ["CourseContentQualityService"]
