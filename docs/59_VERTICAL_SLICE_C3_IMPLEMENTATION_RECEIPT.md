@@ -2,6 +2,8 @@
 
 Status: SOURCE / TEST / BUILD PROVEN; PROVIDER_REACHED_C3_QUALITY_GATE_FAILED; EDUCATIONAL QUALITY UNPROVEN; PRIVATE BETA BLOCKED_QUALITY_GATE
 
+Closeout verdict: `BLOCKED_MUST_FIX`
+
 Branch: `feature/teeechr-content-quality-c3`
 
 Base: `74d43de7ac437c13868b02ec14df6696c590693a`
@@ -64,9 +66,12 @@ The isolated external runtime used for the evaluation was:
 - C3 schema version: `course-practice-c3-schema-v1`
 
 The no-content preflight passed with a structured abstention (`store=false`).
-The subsequent bounded provider campaign made one primary, one repeat, one
-unsupported-content, and one remediation request; the generation ledger settled
-`10,602` micro-USD across those attempts, with no retries after each named case.
+The final bounded provider campaign made one primary, one repeat, one
+unsupported-content, and one remediation request; its generation ledger settled
+`7,918` micro-USD. An earlier primary output-rejection attempt settled another
+`2,684` micro-USD, for `10,602` micro-USD of recorded generation activity. The
+primary was rerun once after the in-scope citation repair; there were no
+automatic retries.
 No secret was created or persisted, and no deterministic output was relabeled as
 educational-quality evidence. The C3 fixture, rubric, failure ledger, provider
 outputs, and failed-provider receipt are durable under `evals/reference_course/`.
