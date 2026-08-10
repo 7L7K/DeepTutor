@@ -127,7 +127,9 @@ model-qualified statuses without converting them into human decisions.
 
 Final implementation commit: `b53a9f91`.
 
-The docs, machine ledger, and durable v4 evidence are included in the
-docs/proof closeout commit recorded in Git after this receipt update. The branch
-may be handed to the next lane only with the fork push state reported alongside
-that commit. Do not start the five-question campaign from this receipt alone.
+Evidence and docs closeout commit: `39be6cda`.
+
+The final receipt-binding metadata is committed separately after this evidence
+commit. The branch may be handed to the next lane only with the final fork push
+state reported alongside that metadata commit. Do not start the five-question
+campaign from this receipt alone.
