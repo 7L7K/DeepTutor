@@ -1,7 +1,7 @@
 from pathlib import Path
 
 from scripts import run_c3_final_set_plan_v3 as campaign
-from scripts.run_c3_final_set_plan_v2 import _instructions, _request, _slot_contracts
+from scripts.run_c3_final_set_plan_v2 import _instructions, _request, _set_failure_v2, _slot_contracts
 from scripts.run_c3_final_quality_campaign import _material, _objective_evidence
 
 
@@ -56,3 +56,22 @@ def test_v3_request_uses_three_items(monkeypatch) -> None:
         slots=slots,
     )
     assert request.item_limit == 3
+
+
+def test_v3_rejects_the_old_five_item_shape(monkeypatch) -> None:
+    _configure(monkeypatch)
+    slots = _slot_contracts(REFERENCE_ROOT)
+    request = _request(
+        campaign_id="test-c3-final-set-plan-v3-shape",
+        phase="primary",
+        candidate_number=1,
+        material=_material(REFERENCE_ROOT),
+        evidence=_objective_evidence(REFERENCE_ROOT),
+        purpose="practice",
+        item_limit=campaign.ITEM_LIMIT,
+        focus="test",
+        slots=slots,
+    )
+    failure, detail, _ = _set_failure_v2([{}] * 5, slots=slots, request=request)
+    assert failure == "MODEL_FORMAT_FAILURE"
+    assert "exactly 3" in detail

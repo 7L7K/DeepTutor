@@ -232,8 +232,8 @@ def _set_failure_v2(
     slots: dict[str, SlotContract],
     request: PracticeGenerationInput,
 ) -> tuple[str, str, list[dict[str, Any]]]:
-    if not isinstance(questions, list) or len(questions) != 5:
-        return "MODEL_FORMAT_FAILURE", "v2 requires exactly five questions", []
+    if not isinstance(questions, list) or len(questions) != ITEM_LIMIT:
+        return "MODEL_FORMAT_FAILURE", f"set requires exactly {ITEM_LIMIT} questions", []
     failures: list[dict[str, Any]] = []
     seen_slots: set[str] = set()
     prompts: list[tuple[str, str]] = []
@@ -370,7 +370,7 @@ def _run_candidate(
             "set_plan": [asdict(slot) for slot in slots.values()],
             "approved_evidence": [item.model_dump(mode="json") for binding in request.effective_objective_evidence_bindings() for item in binding.support_evidence],
         },
-        schema=_generation_schema(request_contract, 5, contract_ids, list(slots)),
+        schema=_generation_schema(request_contract, ITEM_LIMIT, contract_ids, list(slots)),
         output_limit=GENERATION_OUTPUT_LIMIT,
         artifact_root=artifact_root,
     )

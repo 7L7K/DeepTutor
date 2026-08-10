@@ -10,8 +10,8 @@ from scripts import run_c3_final_set_plan_v2 as base
 
 FINAL_SET_PLAN_ID = "c3-final-set-plan-v3"
 FINAL_SET_PLAN_FILENAME = "final_set_plan_v3.json"
-FINAL_CAMPAIGN_ID = "2026-08-10-teeechr-c3-final-learning-loop-v3"
-FINAL_GENERATION_PROMPT_ID = "c3-final-set-generation-prompt-v3"
+FINAL_CAMPAIGN_ID = "2026-08-10-teeechr-c3-final-learning-loop-v3-1"
+FINAL_GENERATION_PROMPT_ID = "c3-final-set-generation-prompt-v3-1"
 FINAL_CAMPAIGN_SCHEMA_VERSION = "c3-final-quality-campaign-v3"
 FINAL_GENERATION_RECEIPT_SCHEMA_VERSION = "c3-final-generation-receipt-v3"
 FINAL_NORMALIZED_SCHEMA_VERSION = "c3-final-normalized-questions-v3"
