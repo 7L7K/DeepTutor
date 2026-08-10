@@ -934,17 +934,42 @@ class CoursePracticeGenerationRepository:
                 raise CourseConflictError("Practice generation revision is stale")
             self._verify_snapshot(conn, course_id, operation.source_snapshot)
             self._validate_output(operation, output, material_receipts=material_receipts)
+            question_columns = {
+                str(item["name"])
+                for item in conn.execute("PRAGMA table_info(practice_questions)").fetchall()
+            }
             for ordinal, question in enumerate(output.questions, 1):
-                conn.execute(
-                    """INSERT INTO practice_questions
-                       (id, practice_set_revision_id, question_type, prompt, answer_contract_json,
-                        explanation, objective_ids_json, citation_json, ordinal, created_at)
-                       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-                    (_question_id(), operation.practice_set_revision_id, question.question_type,
-                     question.prompt, self._json(question.answer_contract.model_dump()), question.explanation,
-                     self._json(question.objective_ids), self._json([item.model_dump() for item in question.citations]),
-                     ordinal, now),
-                )
+                question_id = _question_id()
+                contract_json = self._json(question.answer_contract.model_dump())
+                objective_json = self._json(question.objective_ids)
+                citation_json = self._json([item.model_dump() for item in question.citations])
+                options_json = self._json([item.model_dump() for item in question.options])
+                if "options_json" in question_columns:
+                    conn.execute(
+                        """INSERT INTO practice_questions
+                           (id, practice_set_revision_id, question_type, prompt, options_json,
+                            answer_contract_json, explanation, objective_ids_json, citation_json,
+                            ordinal, created_at)
+                           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                        (question_id, operation.practice_set_revision_id, question.question_type,
+                         question.prompt, options_json, contract_json, question.explanation,
+                         objective_json, citation_json, ordinal, now),
+                    )
+                else:
+                    if question.options:
+                        raise CourseConflictError(
+                            "Single-choice generated questions require migration 0015"
+                        )
+                    conn.execute(
+                        """INSERT INTO practice_questions
+                           (id, practice_set_revision_id, question_type, prompt,
+                            answer_contract_json, explanation, objective_ids_json,
+                            citation_json, ordinal, created_at)
+                           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                        (question_id, operation.practice_set_revision_id, question.question_type,
+                         question.prompt, contract_json, question.explanation,
+                         objective_json, citation_json, ordinal, now),
+                    )
             receipt = self._json({
                 "operation_id": operation.id,
                 "provider": output.provider_label,

@@ -13,7 +13,15 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
-from .practice_models import ExactAnswerContract, PracticeCitation, PracticeSourceReceipt
+from .practice_models import (
+    BoundedShortAnswerContract,
+    ExactAnswerContract,
+    PracticeAnswerContract,
+    PracticeCitation,
+    PracticeSourceReceipt,
+    SingleChoiceAnswerContract,
+    SingleChoiceOption,
+)
 
 GenerationState = Literal["queued", "running", "completed", "failed"]
 PracticePlanState = Literal["draft", "confirmed", "expired"]
@@ -204,7 +212,8 @@ class GeneratedPracticeQuestion(BaseModel):
 
     question_type: str
     prompt: str
-    answer_contract: ExactAnswerContract
+    options: list[SingleChoiceOption] = Field(default_factory=list, max_length=8)
+    answer_contract: PracticeAnswerContract
     explanation: str = ""
     objective_ids: list[str] = Field(default_factory=list)
     citations: list[PracticeCitation]
@@ -223,6 +232,26 @@ class GeneratedPracticeQuestion(BaseModel):
         if len(value) > 12_000:
             raise ValueError("generated text is too long")
         return value
+
+    @model_validator(mode="after")
+    def _question_shape_matches_contract(self) -> "GeneratedPracticeQuestion":
+        if isinstance(self.answer_contract, SingleChoiceAnswerContract):
+            if self.question_type != "single_choice" or len(self.options) < 2:
+                raise ValueError("single-choice generated questions require options")
+            option_ids = [item.option_id for item in self.options]
+            if len(set(option_ids)) != len(option_ids):
+                raise ValueError("single-choice option IDs must be unique")
+            option_text = [" ".join(item.text.casefold().split()) for item in self.options]
+            if len(set(option_text)) != len(option_text):
+                raise ValueError("single-choice option text must be unique")
+            if self.answer_contract.correct_option_id not in option_ids:
+                raise ValueError("correct option must belong to the generated question")
+        elif isinstance(self.answer_contract, BoundedShortAnswerContract):
+            if self.options or self.question_type != "short_answer":
+                raise ValueError("bounded generated answers require short_answer")
+        elif self.options or self.question_type != "short_answer":
+            raise ValueError("exact generated answers require short_answer")
+        return self
 
 
 class PracticeGenerationRequestContract(BaseModel):
@@ -261,7 +290,9 @@ class GeneratedPracticeOutput(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     questions: list[GeneratedPracticeQuestion] = Field(default_factory=list, max_length=12)
-    provider_label: Literal["deterministic-local", "openai", "policy-local"]
+    provider_label: Literal[
+        "deterministic-local", "openai", "policy-local", "qualified-artifact"
+    ]
     request_contract: PracticeGenerationRequestContract | None = None
     outcome: PracticeGenerationOutcome = "generated"
     abstain_reason: PracticeGenerationAbstainReason | None = None

@@ -1,0 +1,98 @@
+#!/usr/bin/env bash
+# Hermetic authenticated browser campaign for C4 qualified-content materialization.
+set -euo pipefail
+umask 077
+
+repo_root="$(cd "$(dirname "$0")/.." && pwd)"
+runtime_root="$(mktemp -d "${TMPDIR:-/tmp}/teeechr-c3-c4-browser.XXXXXX")"
+backend_port="${C4_BACKEND_PORT:-8038}"
+frontend_port="${C4_FRONTEND_PORT:-3818}"
+backend_url="http://127.0.0.1:${backend_port}"
+frontend_url="http://localhost:${frontend_port}"
+python_bin="${PYTHON_BIN:-/Users/home/.codex/runtimes/teeechr-b1-python311/bin/python}"
+node_bin_dir="/opt/homebrew/opt/node@22/bin"
+evidence_dir="${C4_EVIDENCE_DIR:-$repo_root/docs/verification/2026-08-10-teeechr-c4-qualified-content-materialization}"
+backend_log="$runtime_root/backend.log"
+frontend_log="$runtime_root/frontend.log"
+owner_cookie="$runtime_root/owner.cookies"
+fixture_json="$runtime_root/fixture.json"
+backend_pid=""
+frontend_pid=""
+owner_password="${C4_OWNER_PASSWORD:-C4-browser-pass-2026}"
+
+mkdir -p "$evidence_dir/backend" "$evidence_dir/screenshots" "$evidence_dir/artifact"
+
+cleanup() {
+  if [ -n "$frontend_pid" ]; then kill "$frontend_pid" 2>/dev/null || true; wait "$frontend_pid" 2>/dev/null || true; fi
+  if [ -n "$backend_pid" ]; then kill "$backend_pid" 2>/dev/null || true; wait "$backend_pid" 2>/dev/null || true; fi
+  cp "$backend_log" "$evidence_dir/backend/backend.log" 2>/dev/null || true
+  cp "$frontend_log" "$evidence_dir/backend/frontend.log" 2>/dev/null || true
+  cp "$fixture_json" "$evidence_dir/backend/fixture.json" 2>/dev/null || true
+}
+trap cleanup EXIT INT TERM
+
+wait_for_url() {
+  local url="$1" log_path="$2" process_id="$3"
+  for _attempt in $(seq 1 480); do
+    if curl --fail --silent --show-error "$url" >/dev/null 2>&1; then return 0; fi
+    if ! kill -0 "$process_id" 2>/dev/null; then sed -n '1,240p' "$log_path" >&2; return 1; fi
+    sleep 0.25
+  done
+  sed -n '1,240p' "$log_path" >&2
+  return 1
+}
+
+cd "$repo_root"
+env -u OPENAI_API_KEY -u LLM_API_KEY \
+  DEEPTUTOR_HOME="$runtime_root" AUTH_ENABLED=true \
+  BACKEND_PORT="$backend_port" FRONTEND_PORT="$frontend_port" \
+  CORS_ORIGIN="$frontend_url" CORS_ORIGINS="$frontend_url" \
+  "$python_bin" -m uvicorn deeptutor.api.main:app --host 127.0.0.1 --port "$backend_port" --no-access-log \
+  >"$backend_log" 2>&1 &
+backend_pid=$!
+wait_for_url "$backend_url/api/v1/auth/status" "$backend_log" "$backend_pid"
+
+cd "$repo_root/web"
+env PATH="$node_bin_dir:$PATH" PORT="$frontend_port" HOSTNAME=127.0.0.1 \
+  DEEPTUTOR_API_BASE_URL="$backend_url" DEEPTUTOR_AUTH_ENABLED=true \
+  npm run dev >"$frontend_log" 2>&1 &
+frontend_pid=$!
+wait_for_url "$frontend_url/login" "$frontend_log" "$frontend_pid"
+
+curl --fail --silent --show-error -X POST "$frontend_url/api/v1/auth/register" \
+  -H "Content-Type: application/json" \
+  --data "{\"username\":\"c4_browser_owner\",\"password\":\"$owner_password\"}" >/dev/null
+curl --fail --silent --show-error -c "$owner_cookie" -X POST "$frontend_url/api/v1/auth/login" \
+  -H "Content-Type: application/json" \
+  --data "{\"username\":\"c4_browser_owner\",\"password\":\"$owner_password\"}" >/dev/null
+owner_id="$(curl --fail --silent --show-error -b "$owner_cookie" "$frontend_url/api/v1/auth/status" | "$python_bin" -c 'import json,sys; print(json.load(sys.stdin)["user_id"])')"
+
+cd "$repo_root"
+DEEPTUTOR_HOME="$runtime_root" "$python_bin" scripts/materialize_c4_fixture.py "$owner_id" "$fixture_json"
+cp "$fixture_json" "$evidence_dir/backend/fixture-initial.json"
+printf 'frontend_url=%s\nbackend_url=%s\nowner_username=c4_browser_owner\nowner_password=%s\nowner_id=%s\n' \
+  "$frontend_url" "$backend_url" "$owner_password" "$owner_id" > "$evidence_dir/runtime.txt"
+printf 'runtime_ready=true\ncourse_id=%s\npractice_set_id=%s\nrevision_id=%s\n' \
+  "$("$python_bin" -c 'import json,sys; x=json.load(open(sys.argv[1])); print(x["course_id"]);' "$fixture_json")" \
+  "$("$python_bin" -c 'import json,sys; x=json.load(open(sys.argv[1])); print(x["practice"]["practice_set_id"]);' "$fixture_json")" \
+  "$("$python_bin" -c 'import json,sys; x=json.load(open(sys.argv[1])); print(x["practice"]["revision_id"]);' "$fixture_json")" \
+  >> "$evidence_dir/runtime.txt"
+printf 'C4 runtime ready at %s. Drive the browser through submit/grade, then type grade to materialize remediation.\n' "$frontend_url"
+read -r phase
+if [ "$phase" != "grade" ]; then echo "expected grade phase" >&2; exit 1; fi
+
+attempt_id="$(curl --fail --silent --show-error -b "$owner_cookie" \
+  "$frontend_url/api/v1/courses/$("$python_bin" -c 'import json,sys; print(json.load(open(sys.argv[1]))["course_id"])' "$fixture_json")/practice/$("$python_bin" -c 'import json,sys; print(json.load(open(sys.argv[1]))["practice"]["practice_set_id"])' "$fixture_json")/attempts" \
+  | "$python_bin" -c 'import json,sys; x=json.load(sys.stdin)["attempts"]; assert x; print(x[0]["id"])')"
+cd "$repo_root"
+DEEPTUTOR_HOME="$runtime_root" "$python_bin" scripts/materialize_c4_remediation.py "$owner_id" "$fixture_json" "$attempt_id"
+cp "$fixture_json" "$evidence_dir/backend/fixture-remediation.json"
+printf 'attempt_id=%s\nremediation_materialized=true\n' "$attempt_id" >> "$evidence_dir/runtime.txt"
+printf 'C4 remediation ready. Refresh Results, open Review, then type done to finish the campaign.\n'
+read -r phase
+if [ "$phase" != "done" ]; then echo "expected done phase" >&2; exit 1; fi
+
+printf 'browser_campaign=PASS\nnode=%s\nnpm=%s\npython=%s\nprovider_calls=0\n' \
+  "$(env PATH="$node_bin_dir:$PATH" node --version)" \
+  "$(env PATH="$node_bin_dir:$PATH" npm --version)" \
+  "$($python_bin --version 2>&1)" >> "$evidence_dir/runtime.txt"

@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Added the C4 provider-free materialization path for the exact C3-H3
+  model-qualified Biology Practice and Review artifacts. Single-choice option
+  identities and four-source-citation remediation provenance are now persisted
+  through the existing Course runtime without making a provider request.
 - Added the secure reverse TEEECHR workspace read contract with dedicated
   metadata-only authorization, Ed25519 assertion verification, and the exact
   sanitized `teeechr.workspace.v1` projection. This documents the contract only;

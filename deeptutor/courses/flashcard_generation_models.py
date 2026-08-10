@@ -173,7 +173,7 @@ class FlashcardGenerationOrigin(BaseModel):
 class FlashcardProviderReceipt(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    provider: Literal["deterministic-local", "openai"]
+    provider: Literal["deterministic-local", "openai", "qualified-artifact"]
     requested_model: str = Field(min_length=1, max_length=160)
     actual_model: str = Field(min_length=1, max_length=160)
     request_id: str | None = Field(default=None, max_length=200)
@@ -290,7 +290,7 @@ class GeneratedFlashcard(BaseModel):
     hint: str | None = Field(default=None, max_length=2_000)
     card_type: CardType = "recall"
     objective_ids: list[str] = Field(default_factory=list, max_length=64)
-    citations: list[FlashcardCitation] = Field(default_factory=list, max_length=3)
+    citations: list[FlashcardCitation] = Field(default_factory=list, max_length=4)
 
 
 class FlashcardCandidate(GeneratedFlashcard):
@@ -308,7 +308,7 @@ class GeneratedFlashcardOutput(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     cards: list[GeneratedFlashcard] = Field(min_length=1, max_length=48)
-    provider_label: Literal["deterministic-local", "openai"]
+    provider_label: Literal["deterministic-local", "openai", "qualified-artifact"]
     requested_model: str = Field(default="deterministic-local", min_length=1, max_length=160)
     actual_model: str = Field(default="deterministic-local", min_length=1, max_length=160)
     request_id: str | None = Field(default=None, max_length=200)
