@@ -52,7 +52,8 @@ from scripts.run_c3_luna_probe import APPROVED_OBJECTIVE_IDS
 
 FINAL_SET_PLAN_ID = "c3-final-set-plan-v2"
 FINAL_SET_PLAN_FILENAME = "final_set_plan_v2.json"
-FINAL_CAMPAIGN_ID = "2026-08-10-teeechr-c3-final-learning-loop-v2"
+FINAL_CAMPAIGN_ID = "2026-08-10-teeechr-c3-final-learning-loop-v2-1"
+FINAL_GENERATION_PROMPT_ID = "c3-final-set-generation-prompt-v2-1"
 MAX_CANDIDATES = 3
 ALLOCATION = {"OBJ-RESP-01": 1, "OBJ-RESP-02": 2, "OBJ-RESP-03": 2}
 LEAKED_IDENTIFIER = re.compile(
@@ -305,6 +306,11 @@ def _instructions(slots: dict[str, SlotContract]) -> str:
         "is machine metadata only and must never appear in prompt, options, answer, "
         "explanation, accepted-answer, or hint text. Use only the slot's required "
         "claims and eligible evidence. Every answer and explanation must be supported. "
+        "For every single-choice slot, return four options that address every required "
+        "dimension, exactly one correct option, and exactly one false claim in each "
+        "distractor. Option word counts may differ by at most the slot's frozen "
+        "maximum_word_count_delta. If answer_text is present for a single-choice item, "
+        "it must exactly match the correct option text. Do not use all-or-none options. "
         "Return the strict structured object with the exact slot_id echoed per question.\n\n"
         + json.dumps({
             "campaign_contract_id": FINAL_SET_PLAN_ID,
@@ -351,6 +357,7 @@ def _run_candidate(
             "phase": phase,
             "candidate_number": candidate_number,
             "set_plan": FINAL_SET_PLAN_ID,
+            "generation_prompt_id": FINAL_GENERATION_PROMPT_ID,
             "requested_model": MODEL,
             "reasoning_effort": REASONING,
             "store": STORE,
@@ -432,6 +439,7 @@ def main() -> int:
     existing["phases"].append(result)
     existing["provider_policy"] = {"policy_id": FINAL_PROVIDER_POLICY_ID, "model": MODEL, "reasoning": REASONING, "store": STORE, "max_provider_spend_microusd": MAX_PROVIDER_SPEND_MICROUSD, "daily_output_token_limit": {"enforced": False, "scope": "final_c3_campaign_only", "historical_ledger_preserved": True}}
     existing["set_plan"] = {"id": FINAL_SET_PLAN_ID, "filename": FINAL_SET_PLAN_FILENAME, "candidate_limit": MAX_CANDIDATES}
+    existing["generation_prompt"] = {"id": FINAL_GENERATION_PROMPT_ID, "frozen_set_plan_unchanged": True, "frozen_individual_validator_unchanged": True}
     existing["usage_summary"] = client.ledger.usage_summary()
     _write_json(summary_path, existing)
     print(json.dumps({"phase": args.phase, "status": result["status"], "provider_spend_microusd": existing["usage_summary"]["admitted_cost_microusd"]}, sort_keys=True))

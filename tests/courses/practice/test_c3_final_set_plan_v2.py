@@ -5,9 +5,12 @@ from pathlib import Path
 
 from scripts.run_c3_final_set_plan_v2 import (
     ALLOCATION,
+    FINAL_CAMPAIGN_ID,
     FINAL_SET_PLAN_ID,
+    FINAL_GENERATION_PROMPT_ID,
     _request,
     _set_failure_v2,
+    _instructions,
     _slot_contracts,
 )
 from scripts.run_c3_final_quality_campaign import _material, _objective_evidence
@@ -80,6 +83,17 @@ def test_v2_plan_is_frozen_and_uses_supported_distinct_focuses() -> None:
     assert counts == ALLOCATION
     assert len({slot.assessment_focus_id for slot in slots.values()}) == 5
     assert len({(slot.objective_id, slot.required_claim_ids) for slot in slots.values()}) == 5
+
+
+def test_v2_generation_prompt_binds_the_frozen_choice_contract() -> None:
+    slots, _ = _request_for_test()
+    instructions = _instructions(slots)
+    assert FINAL_GENERATION_PROMPT_ID == "c3-final-set-generation-prompt-v2-1"
+    assert "exactly one false claim in each distractor" in instructions
+    assert "maximum_word_count_delta" in instructions
+    assert "answer_text is present for a single-choice item" in instructions
+    assert "all-or-none options" in instructions
+    assert FINAL_CAMPAIGN_ID == "2026-08-10-teeechr-c3-final-learning-loop-v2-1"
 
 
 def test_distinct_supported_v2_slots_pass_deterministic_set_fence() -> None:
