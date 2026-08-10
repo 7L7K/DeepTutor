@@ -8,6 +8,7 @@ from pathlib import Path
 from scripts.run_c3_final_quality_campaign import (
     FINAL_CONTRACT_ID,
     _objective_contracts,
+    _normalize_question,
     _request,
     _set_failure,
 )
@@ -236,6 +237,35 @@ def test_malformed_question_collections_fail_closed() -> None:
     )
     assert failure == "MODEL_FORMAT_FAILURE"
     assert "lists" in detail
+
+
+def test_single_choice_shadow_answer_is_normalized_only_when_exact() -> None:
+    contracts, request = _request_for_campaign()
+    candidate = _valid_primary()
+    candidate[2]["answer_text"] = candidate[2]["options"][0]["text"]
+    failure, detail, _ = _set_failure(
+        candidate,
+        phase="primary",
+        allocation={"OBJ-RESP-01": 2, "OBJ-RESP-02": 2, "OBJ-RESP-03": 1},
+        contracts=contracts,
+        request=request,
+    )
+    assert failure == ""
+    assert detail == ""
+    assert _normalize_question(candidate[2])["answer_text"] == ""
+
+    candidate[2]["answer_text"] = "A different answer"
+    failure, detail, _ = _set_failure(
+        candidate,
+        phase="primary",
+        allocation={"OBJ-RESP-01": 2, "OBJ-RESP-02": 2, "OBJ-RESP-03": 1},
+        contracts=contracts,
+        request=request,
+    )
+    assert failure == "DETERMINISTIC_CONTRACT_FAILURE"
+    assert "shadow answer" in detail
+
+
 
 
 def test_contract_identifier_remains_versioned() -> None:

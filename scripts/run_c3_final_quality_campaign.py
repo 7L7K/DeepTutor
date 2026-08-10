@@ -317,6 +317,15 @@ def _evidence_map(request: PracticeGenerationInput) -> dict[str, Any]:
     }
 
 
+def _normalize_question(question: dict[str, Any]) -> dict[str, Any]:
+    """Map the heterogeneous provider envelope to the frozen runtime shape."""
+    normalized = dict(question)
+    if normalized.get("question_type") == "single_choice_v1":
+        normalized["answer_text"] = ""
+        normalized["accepted_answers"] = []
+    return normalized
+
+
 def _deterministic_question_failure(
     question: object,
     *,
@@ -370,7 +379,7 @@ def _deterministic_question_failure(
         if not set(contract.accepted_answers).issubset(normalized):
             return "GRADING_CONTRACT_FAILURE", "frozen accepted answer variants are missing"
     else:
-        if question["answer_text"] or question["accepted_answers"] or len(options) != 4:
+        if accepted_answers or len(options) != 4:
             return "DETERMINISTIC_CONTRACT_FAILURE", "single-choice shape is invalid"
         keys = [item.get("option_key") for item in options if isinstance(item, dict)]
         if set(keys) != set(OPTION_KEYS) or question["correct_option_key"] not in keys:
@@ -384,6 +393,8 @@ def _deterministic_question_failure(
         if max(counts) - min(counts) > contract.maximum_word_count_delta:
             return "DISTRACTOR_FAILURE", "single-choice option lengths exceed frozen tolerance"
         correct_text = next(item["text"] for item in options if item["option_key"] == question["correct_option_key"])
+        if question["answer_text"].strip() and question["answer_text"].strip() != correct_text.strip():
+            return "DETERMINISTIC_CONTRACT_FAILURE", "single-choice shadow answer does not match the correct option"
         if correct_text.casefold().strip() in question["prompt"].casefold():
             return "ANSWER_CUE", "prompt reveals the correct option"
     return "", ""
@@ -647,28 +658,32 @@ def _run_set_candidate(
     allocation: dict[str, int],
     campaign_id: str,
     miss_context: list[dict[str, Any]] | None = None,
+    raw_override: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     request_contract = build_practice_generation_request_contract(request).model_dump(mode="json")
     item_limit = request.item_limit
     contract_ids = [contracts[item].contract_id for item in request.effective_requested_objective_ids()]
-    raw, receipt, events = _call_once(
-        client,
-        purpose=f"{phase}_generation",
-        operation_id=request.operation_id,
-        instructions=_instructions(phase, contracts, allocation, miss_context),
-        input_payload={
-            "request_contract": request_contract,
-            "allocation": allocation,
-            "assessment_contracts": [contract.__dict__ for contract in contracts.values() if contract.objective_id in request.effective_requested_objective_ids()],
-            "approved_evidence": [item.model_dump(mode="json") for binding in request.effective_objective_evidence_bindings() for item in binding.support_evidence],
-            "miss_context": miss_context or [],
-        },
-        schema=_generation_schema(request_contract, item_limit, contract_ids),
-        output_limit=GENERATION_OUTPUT_LIMIT,
-        artifact_root=artifact_root,
-    )
-    record = {"schema_version": "c3-final-generation-receipt-v1", "campaign_id": campaign_id, "phase": phase, "candidate_number": candidate_number, "requested_model": MODEL, "reasoning_effort": REASONING, "store": STORE, "request_contract": request_contract, "provider_receipt": receipt.as_dict(), "transport_events": events, "raw_output": raw}
-    _write_json(artifact_root / phase / f"candidate-{candidate_number}-generation.json", record)
+    if raw_override is None:
+        raw, receipt, events = _call_once(
+            client,
+            purpose=f"{phase}_generation",
+            operation_id=request.operation_id,
+            instructions=_instructions(phase, contracts, allocation, miss_context),
+            input_payload={
+                "request_contract": request_contract,
+                "allocation": allocation,
+                "assessment_contracts": [contract.__dict__ for contract in contracts.values() if contract.objective_id in request.effective_requested_objective_ids()],
+                "approved_evidence": [item.model_dump(mode="json") for binding in request.effective_objective_evidence_bindings() for item in binding.support_evidence],
+                "miss_context": miss_context or [],
+            },
+            schema=_generation_schema(request_contract, item_limit, contract_ids),
+            output_limit=GENERATION_OUTPUT_LIMIT,
+            artifact_root=artifact_root,
+        )
+        record = {"schema_version": "c3-final-generation-receipt-v1", "campaign_id": campaign_id, "phase": phase, "candidate_number": candidate_number, "requested_model": MODEL, "reasoning_effort": REASONING, "store": STORE, "request_contract": request_contract, "provider_receipt": receipt.as_dict(), "transport_events": events, "raw_output": raw}
+        _write_json(artifact_root / phase / f"candidate-{candidate_number}-generation.json", record)
+    else:
+        raw = raw_override
     if not isinstance(raw, dict) or raw.get("campaign_contract_id") != FINAL_CONTRACT_ID or raw.get("outcome") != "generated" or raw.get("abstain_reason") is not None:
         return {"status": "REJECT_RETRYABLE", "failure_class": "MODEL_FORMAT_FAILURE", "failure_detail": "generation envelope invalid"}
     if raw.get("request_contract") != request_contract:
@@ -679,14 +694,24 @@ def _run_set_candidate(
     failure_class, detail, failures = _set_failure(questions, phase=phase, allocation=allocation, contracts=contracts, request=request)
     if failure_class:
         return {"status": "REJECT_RETRYABLE", "failure_class": failure_class, "failure_detail": detail, "question_failures": failures}
-    for index, question in enumerate(questions, start=1):
+    normalized_questions = [_normalize_question(question) for question in questions]
+    _write_json(
+        artifact_root / phase / f"candidate-{candidate_number}-normalized.json",
+        {
+            "schema_version": "c3-final-normalized-questions-v1",
+            "phase": phase,
+            "candidate_number": candidate_number,
+            "questions": normalized_questions,
+        },
+    )
+    for index, question in enumerate(normalized_questions, start=1):
         evaluated, _ = _judge_question(client, question=question, objective_contract=contracts[question["objective_ids"][0]], request=request, phase=phase, candidate_number=candidate_number, question_number=index, artifact_root=artifact_root, campaign_id=campaign_id)
         if evaluated["status"] != "MODEL_QUALIFIED":
             return {"status": "REJECT_RETRYABLE", "failure_class": evaluated["failure_class"], "failure_detail": f"question {index} failed individual judge"}
-    set_result = _judge_set(client, phase=phase, candidate_number=candidate_number, questions=questions, allocation=allocation, artifact_root=artifact_root, campaign_id=campaign_id)
+    set_result = _judge_set(client, phase=phase, candidate_number=candidate_number, questions=normalized_questions, allocation=allocation, artifact_root=artifact_root, campaign_id=campaign_id)
     if set_result["status"] != "MODEL_QUALIFIED":
         return {"status": "REJECT_RETRYABLE", "failure_class": "SET_COHERENCE_FAILURE", "failure_detail": "set-level judge rejected candidate"}
-    qualified = {"phase": phase, "candidate_number": candidate_number, "questions": questions, "allocation": allocation, "status": "MODEL_QUALIFIED"}
+    qualified = {"phase": phase, "candidate_number": candidate_number, "questions": normalized_questions, "allocation": allocation, "status": "MODEL_QUALIFIED"}
     _write_json(artifact_root / phase / "model-qualified-candidate.json", qualified)
     return qualified
 
@@ -733,6 +758,7 @@ def main() -> int:
     parser.add_argument("--campaign-id", default=FINAL_CAMPAIGN_ID)
     parser.add_argument("--miss-context", type=Path)
     parser.add_argument("--start-candidate", type=int, default=1, choices=range(1, MAX_SET_CANDIDATES + 1))
+    parser.add_argument("--replay-candidate", type=int, choices=range(1, MAX_SET_CANDIDATES + 1))
     args = parser.parse_args()
     reference_root = args.reference_root.resolve()
     artifact_root = args.artifact_root.resolve()
@@ -751,7 +777,22 @@ def main() -> int:
     allocation = {"OBJ-RESP-01": 2, "OBJ-RESP-02": 2, "OBJ-RESP-03": 1} if args.phase in {"primary", "repeat"} else {item["objective_id"]: 1 for item in (miss_context or [])}
     objective_ids = APPROVED_OBJECTIVE_IDS if args.phase in {"primary", "repeat"} else list(allocation)
     item_limit = 5 if args.phase in {"primary", "repeat"} else len(objective_ids)
-    result = _run_phase(client, phase=args.phase, contracts=contracts, material=material, evidence=evidence, artifact_root=artifact_root, campaign_id=args.campaign_id, objective_ids=objective_ids, allocation=allocation, item_limit=item_limit, purpose="remediation" if args.phase == "remediation" else "practice", focus="Bounded Biology 101 cellular respiration Practice set" if args.phase != "remediation" else "Correct the exact missed Biology 101 objectives without unrelated review content", miss_context=miss_context, start_candidate=args.start_candidate)
+    if args.replay_candidate is not None:
+        if args.phase != "primary":
+            parser.error("--replay-candidate is only valid for the primary phase")
+        candidate_number = args.replay_candidate
+        generation_path = artifact_root / args.phase / f"candidate-{candidate_number}-generation.json"
+        if not generation_path.is_file():
+            raise FinalCampaignStop("REPLAY_GENERATION_ARTIFACT_MISSING")
+        raw_override = json.loads(generation_path.read_text(encoding="utf-8"))["raw_output"]
+        required_claims = {item: list(contracts[item].required_claim_ids) for item in objective_ids}
+        accepted = {item: list(contracts[item].accepted_answers) for item in objective_ids if contracts[item].accepted_answers}
+        request = _request(campaign_id=args.campaign_id, phase=args.phase, candidate_number=candidate_number, material=material, evidence=evidence, purpose="practice", objective_ids=objective_ids, required_claims=required_claims, accepted_answers=accepted, item_limit=item_limit, focus="Bounded Biology 101 cellular respiration Practice set")
+        result = _run_set_candidate(client, phase=args.phase, candidate_number=candidate_number, contracts=contracts, request=request, artifact_root=artifact_root, allocation=allocation, campaign_id=args.campaign_id, miss_context=miss_context, raw_override=raw_override)
+        if result["status"] == "MODEL_QUALIFIED":
+            result["replayed_generation"] = True
+    else:
+        result = _run_phase(client, phase=args.phase, contracts=contracts, material=material, evidence=evidence, artifact_root=artifact_root, campaign_id=args.campaign_id, objective_ids=objective_ids, allocation=allocation, item_limit=item_limit, purpose="remediation" if args.phase == "remediation" else "practice", focus="Bounded Biology 101 cellular respiration Practice set" if args.phase != "remediation" else "Correct the exact missed Biology 101 objectives without unrelated review content", miss_context=miss_context, start_candidate=args.start_candidate)
     summary_path = artifact_root / "campaign-summary.json"
     existing = json.loads(summary_path.read_text(encoding="utf-8")) if summary_path.is_file() else {"schema_version": "c3-final-quality-campaign-v1", "campaign_id": args.campaign_id, "phases": []}
     existing["phases"] = [phase for phase in existing.get("phases", []) if phase.get("phase") != args.phase]
