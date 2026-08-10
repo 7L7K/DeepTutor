@@ -16,6 +16,7 @@ import json
 import os
 from pathlib import Path
 import re
+import sqlite3
 import time
 from typing import Any
 
@@ -53,6 +54,8 @@ from scripts.run_c3_luna_probe import (
 
 MAX_PROVIDER_SPEND_MICROUSD = 500_000
 MAX_CANDIDATES_PER_OBJECTIVE = 3
+MAX_TRANSPORT_RETRIES_PER_REQUEST = 2
+TRANSPORT_BACKOFF_SECONDS = (1.0, 2.0)
 GENERATION_OUTPUT_LIMIT = 6_000
 JUDGE_OUTPUT_LIMIT = 3_000
 MODEL = "gpt-5.6-luna"
@@ -147,6 +150,14 @@ class CampaignClient:
             )
         )
         self.api_key = api_key
+
+    def reservation_state(self, operation_id: str) -> str | None:
+        with sqlite3.connect(self.ledger.path) as connection:
+            row = connection.execute(
+                "SELECT state FROM provider_usage_reservations WHERE operation_id=?",
+                (operation_id,),
+            ).fetchone()
+        return None if row is None else str(row[0])
 
     @staticmethod
     def _usage(usage: object, field: str) -> int:
@@ -663,6 +674,250 @@ def _write_json(path: Path, payload: object) -> None:
     path.write_text(json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True) + "\n", encoding="utf-8")
 
 
+def _transport_retry_operation_id(operation_id: str, retry_number: int) -> str:
+    return "opg_" + hashlib.sha256(
+        f"{operation_id}:transport-retry:{retry_number}".encode()
+    ).hexdigest()[:32]
+
+
+def _record_transport_event(artifact_root: Path, event: dict[str, Any]) -> None:
+    path = artifact_root / "transport-failures.json"
+    existing: list[dict[str, Any]] = []
+    if path.is_file():
+        payload = json.loads(path.read_text(encoding="utf-8"))
+        if isinstance(payload, dict) and isinstance(payload.get("events"), list):
+            existing = [item for item in payload["events"] if isinstance(item, dict)]
+    existing.append(event)
+    _write_json(
+        path,
+        {
+            "schema_version": "c3-h3-transport-failures-v1",
+            "events": existing,
+        },
+    )
+
+
+def _call_with_transport_retries(
+    client: CampaignClient,
+    *,
+    purpose: str,
+    operation_id: str,
+    instructions: str,
+    input_payload: dict[str, Any],
+    schema: dict[str, Any],
+    output_limit: int,
+    artifact_root: Path,
+) -> tuple[dict[str, Any], CallReceipt, list[dict[str, Any]]]:
+    """Retry only transport failures, preserving every uncertain reservation."""
+
+    state = client.reservation_state(operation_id)
+    if state in {"settled", "reserved"}:
+        raise CampaignStop("RESUME_OPERATION_STATE_UNSAFE")
+    first_retry = 1 if state == "uncertain" else 0
+    events: list[dict[str, Any]] = []
+    if state == "uncertain":
+        event = {
+            "purpose": purpose,
+            "intended_operation_id": operation_id,
+            "operation_id": operation_id,
+            "retry_number": 0,
+            "error": "PROVIDER_REQUEST_FAILED",
+            "source": "prior_resume_state",
+        }
+        events.append(event)
+        _record_transport_event(artifact_root, event)
+
+    for retry_number in range(first_retry, MAX_TRANSPORT_RETRIES_PER_REQUEST + 1):
+        attempt_operation_id = (
+            operation_id
+            if retry_number == 0
+            else _transport_retry_operation_id(operation_id, retry_number)
+        )
+        try:
+            payload, receipt = client.call(
+                purpose=purpose,
+                operation_id=attempt_operation_id,
+                instructions=instructions,
+                input_payload=input_payload,
+                schema=schema,
+                output_limit=output_limit,
+            )
+            return payload, receipt, events
+        except CampaignStop as exc:
+            if str(exc) != "PROVIDER_REQUEST_FAILED":
+                raise
+            event = {
+                "purpose": purpose,
+                "intended_operation_id": operation_id,
+                "operation_id": attempt_operation_id,
+                "retry_number": retry_number,
+                "error": str(exc),
+                "source": "current_request",
+            }
+            events.append(event)
+            _record_transport_event(artifact_root, event)
+            if retry_number >= MAX_TRANSPORT_RETRIES_PER_REQUEST:
+                raise
+            time.sleep(TRANSPORT_BACKOFF_SECONDS[retry_number])
+    raise CampaignStop("PROVIDER_REQUEST_FAILED")
+
+
+def _judge_candidate(
+    client: CampaignClient,
+    *,
+    question: dict[str, Any],
+    request: PracticeGenerationInput,
+    contract: dict[str, Any],
+    candidate_number: int,
+    generation_input: dict[str, Any],
+    artifact_root: Path,
+    campaign_id: str,
+) -> tuple[dict[str, Any], list[dict[str, Any]]]:
+    judge_input = {
+        "objective": {
+            "objective_id": contract["objective_id"],
+            "cognitive_target": contract["cognitive_target"],
+            "required_claim_ids": contract["required_claim_ids"],
+        },
+        "assessment_contract": {
+            "question_type": "single_choice_v1",
+            "required_claim_ids": contract["required_claim_ids"],
+            "required_evidence_ids": contract["required_evidence_ids"],
+            "option_constraints": {
+                "option_count": 4,
+                "exactly_one_correct": True,
+                "exactly_one_false_claim_per_distractor": True,
+                "balanced_option_length": True,
+                "maximum_word_count_delta": 0,
+                "all_or_none_options_prohibited": True,
+            },
+        },
+        "approved_evidence": generation_input["approved_evidence"],
+        "candidate": question,
+    }
+    judge_results: list[tuple[str, str | None, str]] = []
+    judge_records: list[dict[str, Any]] = []
+    transport_events: list[dict[str, Any]] = []
+    for judge_number in (1, 2):
+        judge_operation_id = "opg_" + hashlib.sha256(
+            f"{request.operation_id}:judge:{judge_number}".encode()
+        ).hexdigest()[:32]
+        raw_judge, judge_receipt, events = _call_with_transport_retries(
+            client,
+            purpose="judge",
+            operation_id=judge_operation_id,
+            instructions=_judge_instructions(),
+            input_payload=judge_input,
+            schema=_judge_schema(),
+            output_limit=JUDGE_OUTPUT_LIMIT,
+            artifact_root=artifact_root,
+        )
+        transport_events.extend(events)
+        verdict, judge_failure_class, rationale = _judge_result(raw_judge)
+        judge_results.append((verdict, judge_failure_class, rationale))
+        judge_records.append(
+            {
+                "judge_number": judge_number,
+                "provider_receipt": judge_receipt.as_dict(),
+                "transport_events": events,
+                "raw_output": raw_judge,
+            }
+        )
+    if judge_results[0][0] != judge_results[1][0]:
+        tie_operation_id = "opg_" + hashlib.sha256(
+            f"{request.operation_id}:judge:tie-break".encode()
+        ).hexdigest()[:32]
+        raw_tie, tie_receipt, events = _call_with_transport_retries(
+            client,
+            purpose="tie_break",
+            operation_id=tie_operation_id,
+            instructions=_judge_instructions(),
+            input_payload=judge_input,
+            schema=_judge_schema(),
+            output_limit=JUDGE_OUTPUT_LIMIT,
+            artifact_root=artifact_root,
+        )
+        transport_events.extend(events)
+        tie_result = _judge_result(raw_tie)
+        judge_results.append(tie_result)
+        judge_records.append(
+            {
+                "judge_number": 3,
+                "purpose": "tie_break",
+                "provider_receipt": tie_receipt.as_dict(),
+                "transport_events": events,
+                "raw_output": raw_tie,
+            }
+        )
+    counts: dict[str, int] = {}
+    for result in judge_results:
+        counts[result[0]] = counts.get(result[0], 0) + 1
+    winner = max(counts, key=counts.get)
+    if list(counts.values()).count(max(counts.values())) > 1:
+        raise CampaignStop("CONFLICTING_MODEL_JUDGES")
+    _write_json(
+        artifact_root / contract["objective_id"] / f"candidate-{candidate_number}-judges.json",
+        {
+            "schema_version": "c3-h3-judge-receipt-v1",
+            "campaign_id": campaign_id,
+            "objective_id": contract["objective_id"],
+            "candidate_number": candidate_number,
+            "judges": judge_records,
+            "consensus": winner,
+        },
+    )
+    if winner == "QUALIFY":
+        qualified = _qualified_candidate(question, request.operation_id)
+        _write_json(
+            artifact_root / contract["objective_id"] / "model-qualified-candidate.json",
+            qualified,
+        )
+        return (
+            {
+                "objective_id": contract["objective_id"],
+                "status": "MODEL_QUALIFIED",
+                "candidate_number": candidate_number,
+                "judge_count": len(judge_results),
+                "qualified_candidate": qualified,
+            },
+            transport_events,
+        )
+    if winner == "REJECT_CONTRACT":
+        return (
+            {
+                "objective_id": contract["objective_id"],
+                "status": "MODEL_REJECTED_CONTRACT",
+                "candidate_number": candidate_number,
+                "failures": [
+                    {
+                        "candidate_number": candidate_number,
+                        "stage": "judge",
+                        "failure_class": "DETERMINISTIC_CONTRACT_FAILURE",
+                        "detail": "judge classified structural contract failure",
+                    }
+                ],
+            },
+            transport_events,
+        )
+    failure = next(
+        (item[1] for item in judge_results if item[1]),
+        "PEDAGOGY_FAILURE",
+    )
+    return (
+        {
+            "objective_id": contract["objective_id"],
+            "status": "REJECT_RETRYABLE",
+            "candidate_number": candidate_number,
+            "failure": {
+                "stage": "judge",
+                "failure_class": failure,
+                "detail": "independent model judge rejected candidate for retry",
+            },
+        },
+        transport_events,
+    )
+
+
 def _run_objective(
     client: CampaignClient,
     objective_id: str,
@@ -683,6 +938,38 @@ def _run_objective(
             campaign_id=campaign_id,
         )
         request_contract = build_practice_generation_request_contract(request).model_dump(mode="json")
+        existing_generation_path = artifact_root / objective_id / f"candidate-{candidate_number}-generation.json"
+        if existing_generation_path.is_file():
+            existing_record = json.loads(existing_generation_path.read_text(encoding="utf-8"))
+            raw_generation = existing_record.get("raw_output")
+            failure_class, detail = _candidate_failure(raw_generation, request, contract)
+            if failure_class:
+                failures.append({"candidate_number": candidate_number, "stage": "deterministic", "failure_class": failure_class, "detail": detail, "source": "resumed_artifact"})
+                continue
+            generation_input = {
+                "approved_evidence": [
+                    {"evidence_id": item.evidence_id, "quote": item.quote, "claim_ids": item.claim_ids, "supports": item.supports}
+                    for binding in request.effective_objective_evidence_bindings()
+                    if binding.objective_id == objective_id
+                    for item in binding.support_evidence
+                ]
+            }
+            evaluated, _ = _judge_candidate(
+                client,
+                question=raw_generation["questions"][0],
+                request=request,
+                contract=contract,
+                candidate_number=candidate_number,
+                generation_input=generation_input,
+                artifact_root=artifact_root,
+                campaign_id=campaign_id,
+            )
+            if evaluated["status"] == "MODEL_QUALIFIED":
+                return {**evaluated, "failures": failures}
+            if evaluated["status"] == "MODEL_REJECTED_CONTRACT":
+                return {**evaluated, "failures": failures + evaluated["failures"]}
+            failures.append({"candidate_number": candidate_number, **evaluated["failure"]})
+            continue
         generation_input = {
             "objective": {
                 "objective_id": objective_id,
@@ -701,13 +988,15 @@ def _run_objective(
             ],
         }
         generation_schema = _generation_schema(request_contract, objective_id)
-        raw_generation, generation_receipt = client.call(
+        raw_generation, generation_receipt, transport_events = _call_with_transport_retries(
+            client,
             purpose="generation",
             operation_id=request.operation_id,
             instructions=_generation_instructions(contract),
             input_payload=generation_input,
             schema=generation_schema,
             output_limit=GENERATION_OUTPUT_LIMIT,
+            artifact_root=artifact_root,
         )
         generation_record = {
             "schema_version": "c3-h3-generation-receipt-v1",
@@ -719,6 +1008,7 @@ def _run_objective(
             "store": STORE,
             "request_contract": request_contract,
             "provider_receipt": generation_receipt.as_dict(),
+            "transport_events": transport_events,
             "raw_output": raw_generation,
         }
         _write_json(artifact_root / objective_id / f"candidate-{candidate_number}-generation.json", generation_record)
@@ -726,54 +1016,21 @@ def _run_objective(
         if failure_class:
             failures.append({"candidate_number": candidate_number, "stage": "deterministic", "failure_class": failure_class, "detail": detail})
             continue
-        question = raw_generation["questions"][0]
-        judge_input = {
-            "objective": {"objective_id": objective_id, "cognitive_target": contract["cognitive_target"], "required_claim_ids": contract["required_claim_ids"]},
-            "assessment_contract": {"question_type": "single_choice_v1", "required_claim_ids": contract["required_claim_ids"], "required_evidence_ids": contract["required_evidence_ids"], "option_constraints": {"option_count": 4, "exactly_one_correct": True, "exactly_one_false_claim_per_distractor": True, "balanced_option_length": True}},
-            "approved_evidence": generation_input["approved_evidence"],
-            "candidate": question,
-        }
-        judge_results: list[tuple[str, str | None, str]] = []
-        judge_records: list[dict[str, Any]] = []
-        for judge_number in (1, 2):
-            raw_judge, judge_receipt = client.call(
-                purpose="judge",
-                operation_id="opg_" + hashlib.sha256(f"{request.operation_id}:judge:{judge_number}".encode()).hexdigest()[:32],
-                instructions=_judge_instructions(),
-                input_payload=judge_input,
-                schema=_judge_schema(),
-                output_limit=JUDGE_OUTPUT_LIMIT,
-            )
-            verdict, judge_failure_class, rationale = _judge_result(raw_judge)
-            judge_results.append((verdict, judge_failure_class, rationale))
-            judge_records.append({"judge_number": judge_number, "provider_receipt": judge_receipt.as_dict(), "raw_output": raw_judge})
-        if judge_results[0][0] != judge_results[1][0]:
-            raw_tie, tie_receipt = client.call(
-                purpose="tie_break",
-                operation_id="opg_" + hashlib.sha256(f"{request.operation_id}:judge:tie-break".encode()).hexdigest()[:32],
-                instructions=_judge_instructions(),
-                input_payload=judge_input,
-                schema=_judge_schema(),
-                output_limit=JUDGE_OUTPUT_LIMIT,
-            )
-            tie_result = _judge_result(raw_tie)
-            judge_results.append(tie_result)
-            judge_records.append({"judge_number": 3, "purpose": "tie_break", "provider_receipt": tie_receipt.as_dict(), "raw_output": raw_tie})
-        counts: dict[str, int] = {}
-        for result in judge_results:
-            counts[result[0]] = counts.get(result[0], 0) + 1
-        winner = max(counts, key=counts.get)
-        if list(counts.values()).count(max(counts.values())) > 1:
-            raise CampaignStop("CONFLICTING_MODEL_JUDGES")
-        _write_json(artifact_root / objective_id / f"candidate-{candidate_number}-judges.json", {"schema_version": "c3-h3-judge-receipt-v1", "campaign_id": campaign_id, "objective_id": objective_id, "candidate_number": candidate_number, "judges": judge_records, "consensus": winner})
-        if winner == "QUALIFY":
-            qualified = _qualified_candidate(question, request.operation_id)
-            _write_json(artifact_root / objective_id / "model-qualified-candidate.json", qualified)
-            return {"objective_id": objective_id, "status": "MODEL_QUALIFIED", "candidate_number": candidate_number, "failures": failures, "judge_count": len(judge_results), "qualified_candidate": qualified}
-        if winner == "REJECT_CONTRACT":
-            return {"objective_id": objective_id, "status": "MODEL_REJECTED_CONTRACT", "candidate_number": candidate_number, "failures": failures + [{"candidate_number": candidate_number, "stage": "judge", "failure_class": "DETERMINISTIC_CONTRACT_FAILURE", "detail": "judge classified structural contract failure"}]}
-        failure = next((item[1] for item in judge_results if item[1]), "PEDAGOGY_FAILURE")
-        failures.append({"candidate_number": candidate_number, "stage": "judge", "failure_class": failure, "detail": "independent model judge rejected candidate for retry"})
+        evaluated, _ = _judge_candidate(
+            client,
+            question=raw_generation["questions"][0],
+            request=request,
+            contract=contract,
+            candidate_number=candidate_number,
+            generation_input=generation_input,
+            artifact_root=artifact_root,
+            campaign_id=campaign_id,
+        )
+        if evaluated["status"] == "MODEL_QUALIFIED":
+            return {**evaluated, "failures": failures}
+        if evaluated["status"] == "MODEL_REJECTED_CONTRACT":
+            return {**evaluated, "failures": failures + evaluated["failures"]}
+        failures.append({"candidate_number": candidate_number, **evaluated["failure"]})
     return {"objective_id": objective_id, "status": "REPEATED_QUALIFICATION_FAILURE", "failures": failures}
 
 
