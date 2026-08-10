@@ -788,9 +788,18 @@ def main() -> int:
         required_claims = {item: list(contracts[item].required_claim_ids) for item in objective_ids}
         accepted = {item: list(contracts[item].accepted_answers) for item in objective_ids if contracts[item].accepted_answers}
         request = _request(campaign_id=args.campaign_id, phase=args.phase, candidate_number=candidate_number, material=material, evidence=evidence, purpose="practice", objective_ids=objective_ids, required_claims=required_claims, accepted_answers=accepted, item_limit=item_limit, focus="Bounded Biology 101 cellular respiration Practice set")
-        result = _run_set_candidate(client, phase=args.phase, candidate_number=candidate_number, contracts=contracts, request=request, artifact_root=artifact_root, allocation=allocation, campaign_id=args.campaign_id, miss_context=miss_context, raw_override=raw_override)
-        if result["status"] == "MODEL_QUALIFIED":
-            result["replayed_generation"] = True
+        try:
+            result = _run_set_candidate(client, phase=args.phase, candidate_number=candidate_number, contracts=contracts, request=request, artifact_root=artifact_root, allocation=allocation, campaign_id=args.campaign_id, miss_context=miss_context, raw_override=raw_override)
+            if result["status"] == "MODEL_QUALIFIED":
+                result["replayed_generation"] = True
+        except CampaignStop as exc:
+            result = {
+                "phase": args.phase,
+                "candidate_number": candidate_number,
+                "status": "BLOCKED_PROVIDER_LEDGER",
+                "failure_class": str(exc),
+                "replayed_generation": True,
+            }
     else:
         result = _run_phase(client, phase=args.phase, contracts=contracts, material=material, evidence=evidence, artifact_root=artifact_root, campaign_id=args.campaign_id, objective_ids=objective_ids, allocation=allocation, item_limit=item_limit, purpose="remediation" if args.phase == "remediation" else "practice", focus="Bounded Biology 101 cellular respiration Practice set" if args.phase != "remediation" else "Correct the exact missed Biology 101 objectives without unrelated review content", miss_context=miss_context, start_candidate=args.start_candidate)
     summary_path = artifact_root / "campaign-summary.json"
