@@ -47,6 +47,7 @@ FINAL_CAMPAIGN_ID = "2026-08-09-teeechr-c3-final-learning-loop-v1"
 FINAL_CONTRACT_ID = "c3-final-learning-loop-v1"
 MAX_SET_CANDIDATES = 3
 FINAL_PROVIDER_TIMEOUT_SECONDS = 120.0
+FINAL_INDIVIDUAL_JUDGE_OUTPUT_LIMIT = 1_500
 OPTION_KEYS = ("A", "B", "C", "D")
 LEAKED_IDENTIFIER = re.compile(
     r"(?:src|ev|qst|grd|prv|prc|ati|OBJ-RESP)[_-][A-Za-z0-9_-]+"
@@ -536,7 +537,7 @@ def _judge_question(
             instructions=_individual_judge_instructions(),
             input_payload=input_payload,
             schema=_individual_judge_schema(),
-            output_limit=3_000,
+            output_limit=FINAL_INDIVIDUAL_JUDGE_OUTPUT_LIMIT,
             artifact_root=artifact_root,
         )
         result = _judge_result(raw)
@@ -551,7 +552,7 @@ def _judge_question(
             instructions=_individual_judge_instructions(),
             input_payload=input_payload,
             schema=_individual_judge_schema(),
-            output_limit=3_000,
+            output_limit=FINAL_INDIVIDUAL_JUDGE_OUTPUT_LIMIT,
             artifact_root=artifact_root,
         )
         result = _judge_result(raw)

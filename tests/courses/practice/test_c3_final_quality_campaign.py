@@ -7,6 +7,7 @@ from pathlib import Path
 
 from scripts.run_c3_final_quality_campaign import (
     FINAL_CONTRACT_ID,
+    FINAL_INDIVIDUAL_JUDGE_OUTPUT_LIMIT,
     _objective_contracts,
     _normalize_question,
     _request,
@@ -270,5 +271,6 @@ def test_single_choice_shadow_answer_is_normalized_only_when_exact() -> None:
 
 def test_contract_identifier_remains_versioned() -> None:
     assert FINAL_CONTRACT_ID == "c3-final-learning-loop-v1"
+    assert FINAL_INDIVIDUAL_JUDGE_OUTPUT_LIMIT == 1500
     payload = json.loads((REFERENCE_ROOT / "assessment_contracts_v4_generation_only.json").read_text())
     assert payload["status"] == "FROZEN_GENERATION_ONLY"
