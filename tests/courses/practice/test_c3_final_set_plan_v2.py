@@ -88,12 +88,14 @@ def test_v2_plan_is_frozen_and_uses_supported_distinct_focuses() -> None:
 def test_v2_generation_prompt_binds_the_frozen_choice_contract() -> None:
     slots, _ = _request_for_test()
     instructions = _instructions(slots)
-    assert FINAL_GENERATION_PROMPT_ID == "c3-final-set-generation-prompt-v2-1"
+    assert FINAL_GENERATION_PROMPT_ID == "c3-final-set-generation-prompt-v2-2"
     assert "exactly one false claim in each distractor" in instructions
     assert "maximum_word_count_delta" in instructions
     assert "answer_text is present for a single-choice item" in instructions
     assert "all-or-none options" in instructions
-    assert FINAL_CAMPAIGN_ID == "2026-08-10-teeechr-c3-final-learning-loop-v2-1"
+    assert "primary assessment target for each slot is exactly its required claim bundle" in instructions
+    assert "use correct_option_key A, B, C, and D exactly once each" in instructions
+    assert FINAL_CAMPAIGN_ID == "2026-08-10-teeechr-c3-final-learning-loop-v2-2"
 
 
 def test_distinct_supported_v2_slots_pass_deterministic_set_fence() -> None:

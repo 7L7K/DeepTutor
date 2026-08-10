@@ -52,8 +52,8 @@ from scripts.run_c3_luna_probe import APPROVED_OBJECTIVE_IDS
 
 FINAL_SET_PLAN_ID = "c3-final-set-plan-v2"
 FINAL_SET_PLAN_FILENAME = "final_set_plan_v2.json"
-FINAL_CAMPAIGN_ID = "2026-08-10-teeechr-c3-final-learning-loop-v2-1"
-FINAL_GENERATION_PROMPT_ID = "c3-final-set-generation-prompt-v2-1"
+FINAL_CAMPAIGN_ID = "2026-08-10-teeechr-c3-final-learning-loop-v2-2"
+FINAL_GENERATION_PROMPT_ID = "c3-final-set-generation-prompt-v2-2"
 MAX_CANDIDATES = 3
 ALLOCATION = {"OBJ-RESP-01": 1, "OBJ-RESP-02": 2, "OBJ-RESP-03": 2}
 LEAKED_IDENTIFIER = re.compile(
@@ -306,11 +306,19 @@ def _instructions(slots: dict[str, SlotContract]) -> str:
         "is machine metadata only and must never appear in prompt, options, answer, "
         "explanation, accepted-answer, or hint text. Use only the slot's required "
         "claims and eligible evidence. Every answer and explanation must be supported. "
+        "The primary assessment target for each slot is exactly its required claim "
+        "bundle; do not turn eligible but non-required claims into a second assessment "
+        "target. In particular, slot_resp02_terminal_mechanism must assess terminal "
+        "acceptor identity and electron/proton acceptance without assessing water "
+        "formation or continued flow, while slot_resp02_flow_consequence must assess "
+        "water formation and continued flow without re-testing terminal-acceptor identity. "
         "For every single-choice slot, return four options that address every required "
         "dimension, exactly one correct option, and exactly one false claim in each "
         "distractor. Option word counts may differ by at most the slot's frozen "
         "maximum_word_count_delta. If answer_text is present for a single-choice item, "
         "it must exactly match the correct option text. Do not use all-or-none options. "
+        "Across the four single-choice slots, use correct_option_key A, B, C, and D "
+        "exactly once each. "
         "Return the strict structured object with the exact slot_id echoed per question.\n\n"
         + json.dumps({
             "campaign_contract_id": FINAL_SET_PLAN_ID,
