@@ -128,7 +128,7 @@ class CallReceipt:
 
 
 class CampaignClient:
-    def __init__(self, api_key: str, state_dir: Path) -> None:
+    def __init__(self, api_key: str, state_dir: Path, *, timeout_seconds: float = 25.0) -> None:
         registry = TextGenerationRegistry.from_catalog(
             {"text_generation": default_text_generation_catalog()}
         )
@@ -153,6 +153,7 @@ class CampaignClient:
             )
         )
         self.api_key = api_key
+        self.timeout_seconds = timeout_seconds
 
     def reservation_state(self, operation_id: str) -> str | None:
         with sqlite3.connect(self.ledger.path) as connection:
@@ -227,7 +228,7 @@ class CampaignClient:
                 api_key=self.api_key,
                 base_url="https://api.openai.com/v1",
                 max_retries=0,
-                timeout=25.0,
+                timeout=self.timeout_seconds,
             )
             response = client.responses.create(
                 model=MODEL,

@@ -32,7 +32,7 @@ from scripts.run_c3_h3_model_qualification import (
     MODEL,
     REASONING,
     STORE,
-    _call_with_transport_retries,
+    _record_transport_event,
     _judge_result,
     _load_generation_contracts,
     _material,
@@ -46,6 +46,7 @@ from scripts.run_c3_luna_probe import APPROVED_OBJECTIVE_IDS
 FINAL_CAMPAIGN_ID = "2026-08-09-teeechr-c3-final-learning-loop-v1"
 FINAL_CONTRACT_ID = "c3-final-learning-loop-v1"
 MAX_SET_CANDIDATES = 3
+FINAL_PROVIDER_TIMEOUT_SECONDS = 120.0
 OPTION_KEYS = ("A", "B", "C", "D")
 LEAKED_IDENTIFIER = re.compile(
     r"(?:src|ev|qst|grd|prv|prc|ati|OBJ-RESP)[_-][A-Za-z0-9_-]+"
@@ -63,6 +64,44 @@ SET_HARD_FAILURES = {
 
 class FinalCampaignStop(RuntimeError):
     """Fail-closed final campaign stop."""
+
+
+def _call_once(
+    client: CampaignClient,
+    *,
+    purpose: str,
+    operation_id: str,
+    instructions: str,
+    input_payload: dict[str, Any],
+    schema: dict[str, Any],
+    output_limit: int,
+    artifact_root: Path,
+) -> tuple[dict[str, Any], Any, list[dict[str, Any]]]:
+    """Make exactly one provider request and preserve uncertain failures."""
+    try:
+        payload, receipt = client.call(
+            purpose=purpose,
+            operation_id=operation_id,
+            instructions=instructions,
+            input_payload=input_payload,
+            schema=schema,
+            output_limit=output_limit,
+        )
+        return payload, receipt, []
+    except CampaignStop as exc:
+        if str(exc) == "PROVIDER_REQUEST_FAILED":
+            _record_transport_event(
+                artifact_root,
+                {
+                    "purpose": purpose,
+                    "intended_operation_id": operation_id,
+                    "operation_id": operation_id,
+                    "retry_number": 0,
+                    "error": str(exc),
+                    "source": "single_attempt",
+                },
+            )
+        raise
 
 
 @dataclass(frozen=True)
@@ -479,7 +518,7 @@ def _judge_question(
     verdicts: list[tuple[str, str | None, str]] = []
     for judge_number in (1, 2):
         op = "opg_" + _digest({"campaign": campaign_id, "phase": phase, "candidate": candidate_number, "question": question_number, "judge": judge_number})[:32]
-        raw, receipt, events = _call_with_transport_retries(
+        raw, receipt, events = _call_once(
             client,
             purpose="question_judge",
             operation_id=op,
@@ -494,7 +533,7 @@ def _judge_question(
         records.append({"judge_number": judge_number, "provider_receipt": receipt.as_dict(), "raw_output": raw, "transport_events": events})
     if verdicts[0][0] != verdicts[1][0]:
         op = "opg_" + _digest({"campaign": campaign_id, "phase": phase, "candidate": candidate_number, "question": question_number, "judge": "tie-break"})[:32]
-        raw, receipt, events = _call_with_transport_retries(
+        raw, receipt, events = _call_once(
             client,
             purpose="question_judge_tie_break",
             operation_id=op,
@@ -531,7 +570,7 @@ def _judge_set(
     verdicts: list[str] = []
     for judge_number in (1, 2):
         op = "opg_" + _digest({"campaign": campaign_id, "phase": phase, "candidate": candidate_number, "judge": f"set-{judge_number}"})[:32]
-        raw, receipt, events = _call_with_transport_retries(
+        raw, receipt, events = _call_once(
             client,
             purpose="set_judge",
             operation_id=op,
@@ -555,7 +594,7 @@ def _judge_set(
         records.append({"judge_number": judge_number, "provider_receipt": receipt.as_dict(), "raw_output": raw, "transport_events": events})
     if verdicts[0] != verdicts[1]:
         op = "opg_" + _digest({"campaign": campaign_id, "phase": phase, "candidate": candidate_number, "judge": "set-tie-break"})[:32]
-        raw, receipt, events = _call_with_transport_retries(
+        raw, receipt, events = _call_once(
             client,
             purpose="set_judge_tie_break",
             operation_id=op,
@@ -612,7 +651,7 @@ def _run_set_candidate(
     request_contract = build_practice_generation_request_contract(request).model_dump(mode="json")
     item_limit = request.item_limit
     contract_ids = [contracts[item].contract_id for item in request.effective_requested_objective_ids()]
-    raw, receipt, events = _call_with_transport_retries(
+    raw, receipt, events = _call_once(
         client,
         purpose=f"{phase}_generation",
         operation_id=request.operation_id,
@@ -667,13 +706,17 @@ def _run_phase(
     purpose: str,
     focus: str,
     miss_context: list[dict[str, Any]] | None = None,
+    start_candidate: int = 1,
 ) -> dict[str, Any]:
     required_claims = {item: list(contracts[item].required_claim_ids) for item in objective_ids}
     accepted = {item: list(contracts[item].accepted_answers) for item in objective_ids if contracts[item].accepted_answers}
     failures: list[dict[str, Any]] = []
-    for candidate_number in range(1, MAX_SET_CANDIDATES + 1):
+    for candidate_number in range(start_candidate, MAX_SET_CANDIDATES + 1):
         request = _request(campaign_id=campaign_id, phase=phase, candidate_number=candidate_number, material=material, evidence=evidence, purpose=purpose, objective_ids=objective_ids, required_claims=required_claims, accepted_answers=accepted, item_limit=item_limit, focus=focus)
-        result = _run_set_candidate(client, phase=phase, candidate_number=candidate_number, contracts=contracts, request=request, artifact_root=artifact_root, allocation=allocation, campaign_id=campaign_id, miss_context=miss_context)
+        try:
+            result = _run_set_candidate(client, phase=phase, candidate_number=candidate_number, contracts=contracts, request=request, artifact_root=artifact_root, allocation=allocation, campaign_id=campaign_id, miss_context=miss_context)
+        except CampaignStop as exc:
+            return {"phase": phase, "status": "BLOCKED_PROVIDER_TRANSPORT", "failure_class": str(exc), "candidate_number": candidate_number, "failures": failures}
         if result["status"] == "MODEL_QUALIFIED":
             return {**result, "failures": failures}
         failures.append({"candidate_number": candidate_number, **{key: value for key, value in result.items() if key != "status"}})
@@ -689,6 +732,7 @@ def main() -> int:
     parser.add_argument("--env-file", type=Path)
     parser.add_argument("--campaign-id", default=FINAL_CAMPAIGN_ID)
     parser.add_argument("--miss-context", type=Path)
+    parser.add_argument("--start-candidate", type=int, default=1, choices=range(1, MAX_SET_CANDIDATES + 1))
     args = parser.parse_args()
     reference_root = args.reference_root.resolve()
     artifact_root = args.artifact_root.resolve()
@@ -698,12 +742,16 @@ def main() -> int:
     evidence = _objective_evidence(reference_root)
     from scripts.run_c3_h3_model_qualification import _load_api_key
 
-    client = CampaignClient(_load_api_key(args.env_file.resolve() if args.env_file else None), args.state_dir.resolve())
+    client = CampaignClient(
+        _load_api_key(args.env_file.resolve() if args.env_file else None),
+        args.state_dir.resolve(),
+        timeout_seconds=FINAL_PROVIDER_TIMEOUT_SECONDS,
+    )
     miss_context = json.loads(args.miss_context.read_text(encoding="utf-8")) if args.miss_context else None
     allocation = {"OBJ-RESP-01": 2, "OBJ-RESP-02": 2, "OBJ-RESP-03": 1} if args.phase in {"primary", "repeat"} else {item["objective_id"]: 1 for item in (miss_context or [])}
     objective_ids = APPROVED_OBJECTIVE_IDS if args.phase in {"primary", "repeat"} else list(allocation)
     item_limit = 5 if args.phase in {"primary", "repeat"} else len(objective_ids)
-    result = _run_phase(client, phase=args.phase, contracts=contracts, material=material, evidence=evidence, artifact_root=artifact_root, campaign_id=args.campaign_id, objective_ids=objective_ids, allocation=allocation, item_limit=item_limit, purpose="remediation" if args.phase == "remediation" else "practice", focus="Bounded Biology 101 cellular respiration Practice set" if args.phase != "remediation" else "Correct the exact missed Biology 101 objectives without unrelated review content", miss_context=miss_context)
+    result = _run_phase(client, phase=args.phase, contracts=contracts, material=material, evidence=evidence, artifact_root=artifact_root, campaign_id=args.campaign_id, objective_ids=objective_ids, allocation=allocation, item_limit=item_limit, purpose="remediation" if args.phase == "remediation" else "practice", focus="Bounded Biology 101 cellular respiration Practice set" if args.phase != "remediation" else "Correct the exact missed Biology 101 objectives without unrelated review content", miss_context=miss_context, start_candidate=args.start_candidate)
     summary_path = artifact_root / "campaign-summary.json"
     existing = json.loads(summary_path.read_text(encoding="utf-8")) if summary_path.is_file() else {"schema_version": "c3-final-quality-campaign-v1", "campaign_id": args.campaign_id, "phases": []}
     existing["phases"] = [phase for phase in existing.get("phases", []) if phase.get("phase") != args.phase]
