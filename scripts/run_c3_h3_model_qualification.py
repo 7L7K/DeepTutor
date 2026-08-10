@@ -61,7 +61,8 @@ JUDGE_OUTPUT_LIMIT = 3_000
 MODEL = "gpt-5.6-luna"
 REASONING = "high"
 STORE = False
-CAMPAIGN_ID = "2026-08-09-teeechr-c3-h3-model-qualification"
+CAMPAIGN_ID = "2026-08-09-teeechr-c3-h3-model-qualification-v4-delta3"
+CONTRACT_FILENAME = "assessment_contracts_v4_generation_only.json"
 HARD_FAILURES = {
     "incorrect_key",
     "unsupported_claim",
@@ -83,7 +84,9 @@ FAILURE_CLASSES = {
 }
 OPTION_KEYS = ("A", "B", "C", "D")
 OPAQUE_ID = re.compile(r"opt_[0-9a-f]{32}\Z")
-LEAKED_IDENTIFIER = re.compile(r"(?:src|ev|OBJ-RESP)[_-][A-Za-z0-9_-]+")
+LEAKED_IDENTIFIER = re.compile(
+    r"(?:src|ev|qst|grd|prv|prc|ati|OBJ-RESP)[_-][A-Za-z0-9_-]+"
+)
 
 
 class CampaignStop(RuntimeError):
@@ -325,12 +328,29 @@ def _load_api_key(env_file: Path | None) -> str:
     )
 
 
-def _load_v3_contracts(reference_root: Path) -> dict[str, dict[str, Any]]:
+def _load_generation_contracts(reference_root: Path) -> dict[str, dict[str, Any]]:
     payload = json.loads(
-        (reference_root / "assessment_contracts_v3_evaluation_only.json").read_text(
+        (reference_root / CONTRACT_FILENAME).read_text(
             encoding="utf-8"
         )
     )
+    if payload.get("schema_version") != "c3-assessment-contracts-v4-generation-only":
+        raise CampaignStop("ASSESSMENT_CONTRACT_INVALID")
+    learner_policy = payload.get("learner_text_policy", {})
+    required_forbidden_patterns = {
+        "ev_*",
+        "src_*",
+        "qst_*",
+        "grd_*",
+        "prv_*",
+        "prc_*",
+        "ati_*",
+        "OBJ-RESP-*",
+    }
+    if not required_forbidden_patterns.issubset(
+        set(learner_policy.get("forbidden_patterns", []))
+    ):
+        raise CampaignStop("ASSESSMENT_CONTRACT_INVALID")
     contracts = {
         item["objective_id"]: item
         for item in payload.get("contracts", [])
@@ -340,6 +360,10 @@ def _load_v3_contracts(reference_root: Path) -> dict[str, dict[str, Any]]:
         raise CampaignStop("ASSESSMENT_CONTRACT_INVALID")
     for contract in contracts.values():
         if contract.get("question_type") != "single_answer_multiple_choice":
+            raise CampaignStop("ASSESSMENT_CONTRACT_INVALID")
+        if contract.get("option_constraints", {}).get("maximum_word_count_delta") != 3:
+            raise CampaignStop("ASSESSMENT_CONTRACT_INVALID")
+        if "options" in contract or "stem_contract" in contract:
             raise CampaignStop("ASSESSMENT_CONTRACT_INVALID")
     return contracts
 
@@ -379,7 +403,9 @@ def _request(
     )
 
 
-def _generation_schema(request_contract: dict[str, Any], objective_id: str) -> dict[str, Any]:
+def _generation_schema(
+    request_contract: dict[str, Any], objective_id: str, assessment_contract_id: str
+) -> dict[str, Any]:
     option = {
         "type": "object",
         "additionalProperties": False,
@@ -429,8 +455,18 @@ def _generation_schema(request_contract: dict[str, Any], objective_id: str) -> d
     return {
         "type": "object",
         "additionalProperties": False,
-        "required": ["request_contract", "outcome", "abstain_reason", "questions"],
+        "required": [
+            "assessment_contract_id",
+            "request_contract",
+            "outcome",
+            "abstain_reason",
+            "questions",
+        ],
         "properties": {
+            "assessment_contract_id": {
+                "type": "string",
+                "enum": [assessment_contract_id],
+            },
             "request_contract": {
                 "type": "object",
                 "additionalProperties": False,
@@ -499,10 +535,13 @@ def _generation_instructions(contract: dict[str, Any]) -> str:
         "cognitive target; do not use any manually authored option text. Cite only "
         "eligible evidence IDs and collectively cover every required claim for both "
         "the answer and explanation. Use only the requested objective. If the request "
-        "cannot be answered from eligible evidence, abstain with no questions. Return "
-        "only the required structured object.\n\n"
+        "cannot be answered from eligible evidence, abstain with no questions. Evidence "
+        "IDs are machine metadata only and must not appear in the prompt, options, "
+        "explanation, hints, or learner answer text. Return only the required "
+        "structured object.\n\n"
         + json.dumps(
             {
+                "assessment_contract_id": contract["contract_id"],
                 "objective_id": contract["objective_id"],
                 "cognitive_target": contract["cognitive_target"],
                 "required_claim_ids": contract["required_claim_ids"],
@@ -513,9 +552,19 @@ def _generation_instructions(contract: dict[str, Any]) -> str:
                     "exactly_one_correct": True,
                     "exactly_one_false_claim_per_distractor": True,
                     "balanced_option_length": True,
-                    "maximum_word_count_delta": 0,
+                    "maximum_word_count_delta": contract["option_constraints"]["maximum_word_count_delta"],
                     "all_or_none_options_prohibited": True,
                 },
+                "learner_text_forbidden_patterns": [
+                    "ev_*",
+                    "src_*",
+                    "qst_*",
+                    "grd_*",
+                    "prv_*",
+                    "prc_*",
+                    "ati_*",
+                    "OBJ-RESP-*",
+                ],
             },
             ensure_ascii=False,
             sort_keys=True,
@@ -543,9 +592,17 @@ def _judge_instructions() -> str:
 def _candidate_failure(raw: object, request: PracticeGenerationInput, contract: dict[str, Any]) -> tuple[str, str]:
     if not isinstance(raw, dict):
         return "MODEL_FORMAT_FAILURE", "response is not an object"
-    expected = {"request_contract", "outcome", "abstain_reason", "questions"}
+    expected = {
+        "assessment_contract_id",
+        "request_contract",
+        "outcome",
+        "abstain_reason",
+        "questions",
+    }
     if set(raw) != expected or raw.get("outcome") != "generated" or raw.get("abstain_reason") is not None:
         return "MODEL_FORMAT_FAILURE", "response envelope is invalid"
+    if raw.get("assessment_contract_id") != contract.get("contract_id"):
+        return "DETERMINISTIC_CONTRACT_FAILURE", "assessment contract version mismatch"
     try:
         if raw["request_contract"] != build_practice_generation_request_contract(request).model_dump(mode="json"):
             return "DETERMINISTIC_CONTRACT_FAILURE", "request contract echo mismatch"
@@ -574,7 +631,8 @@ def _candidate_failure(raw: object, request: PracticeGenerationInput, contract: 
     if any(not isinstance(text, str) or not text.strip() for text in texts) or len({text.casefold().strip() for text in texts}) != 4:
         return "DISTRACTOR_FAILURE", "options must be unique and non-empty"
     word_counts = [len(text.split()) for text in texts]
-    if max(word_counts) != min(word_counts):
+    maximum_delta = int(contract["option_constraints"]["maximum_word_count_delta"])
+    if max(word_counts) - min(word_counts) > maximum_delta:
         return "DISTRACTOR_FAILURE", "option lengths are not balanced"
     learner_text = " ".join([str(question["prompt"]), str(question["explanation"]), *texts])
     if LEAKED_IDENTIFIER.search(learner_text):
@@ -776,10 +834,12 @@ def _judge_candidate(
     judge_input = {
         "objective": {
             "objective_id": contract["objective_id"],
+            "assessment_contract_id": contract["contract_id"],
             "cognitive_target": contract["cognitive_target"],
             "required_claim_ids": contract["required_claim_ids"],
         },
         "assessment_contract": {
+            "assessment_contract_id": contract["contract_id"],
             "question_type": "single_choice_v1",
             "required_claim_ids": contract["required_claim_ids"],
             "required_evidence_ids": contract["required_evidence_ids"],
@@ -788,7 +848,7 @@ def _judge_candidate(
                 "exactly_one_correct": True,
                 "exactly_one_false_claim_per_distractor": True,
                 "balanced_option_length": True,
-                "maximum_word_count_delta": 0,
+                "maximum_word_count_delta": contract["option_constraints"]["maximum_word_count_delta"],
                 "all_or_none_options_prohibited": True,
             },
         },
@@ -973,11 +1033,19 @@ def _run_objective(
         generation_input = {
             "objective": {
                 "objective_id": objective_id,
+                "assessment_contract_id": contract["contract_id"],
                 "cognitive_target": contract["cognitive_target"],
                 "required_claim_ids": contract["required_claim_ids"],
                 "required_evidence_ids": contract["required_evidence_ids"],
                 "question_type": "single_choice_v1",
-                "option_constraints": {"option_count": 4, "exactly_one_correct": True, "exactly_one_false_claim_per_distractor": True, "balanced_option_length": True},
+                "option_constraints": {
+                    "option_count": 4,
+                    "exactly_one_correct": True,
+                    "exactly_one_false_claim_per_distractor": True,
+                    "balanced_option_length": True,
+                    "maximum_word_count_delta": contract["option_constraints"]["maximum_word_count_delta"],
+                    "all_or_none_options_prohibited": True,
+                },
             },
             "request_contract": request_contract,
             "approved_evidence": [
@@ -987,7 +1055,9 @@ def _run_objective(
                 for item in binding.support_evidence
             ],
         }
-        generation_schema = _generation_schema(request_contract, objective_id)
+        generation_schema = _generation_schema(
+            request_contract, objective_id, contract["contract_id"]
+        )
         raw_generation, generation_receipt, transport_events = _call_with_transport_retries(
             client,
             purpose="generation",
@@ -1046,7 +1116,7 @@ def main() -> int:
     artifact_root = args.artifact_root.resolve()
     args.state_dir.resolve().mkdir(parents=True, exist_ok=True)
     api_key = _load_api_key(args.env_file.resolve() if args.env_file else None)
-    contracts = _load_v3_contracts(reference_root)
+    contracts = _load_generation_contracts(reference_root)
     material = _material(reference_root)
     evidence = _objective_evidence(reference_root)
     client = CampaignClient(api_key, args.state_dir.resolve())

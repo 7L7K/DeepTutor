@@ -13,7 +13,7 @@ from scripts.run_c3_h3_model_qualification import (
     _candidate_failure,
     _generation_instructions,
     _judge_result,
-    _load_v3_contracts,
+    _load_generation_contracts,
     _material,
     _objective_evidence,
     _qualified_candidate,
@@ -26,7 +26,7 @@ REFERENCE_ROOT = Path(__file__).resolve().parents[3] / "evals/reference_course"
 
 
 def _request_and_contract(objective_id: str = "OBJ-RESP-02"):
-    contracts = _load_v3_contracts(REFERENCE_ROOT)
+    contracts = _load_generation_contracts(REFERENCE_ROOT)
     material = _material(REFERENCE_ROOT)
     evidence = _objective_evidence(REFERENCE_ROOT)
     request = _request(objective_id, 1, material, evidence, contracts[objective_id])
@@ -51,6 +51,7 @@ def _candidate(request, objective_id: str) -> dict[str, object]:
         {"option_key": "D", "text": "Oxygen accepts ATP and protons, forms water, and permits continued electron flow."},
     ]
     return {
+        "assessment_contract_id": "ac_resp_02_causal_role_v4_generation",
         "request_contract": request_contract,
         "outcome": "generated",
         "abstain_reason": None,
@@ -76,7 +77,58 @@ def test_generation_candidate_uses_only_frozen_scope_and_passes_deterministic_sh
     instructions = _generation_instructions(contract)
     assert "opt_resp02_correct" not in instructions
     assert "Oxygen accepts electrons and protons to form water; as the final acceptor" not in instructions
-    assert '"maximum_word_count_delta": 0' in instructions
+    assert '"maximum_word_count_delta": 3' in instructions
+    assert '"assessment_contract_id": "ac_resp_02_causal_role_v4_generation"' in instructions
+    assert "ev_*" in instructions
+
+
+def test_generation_contract_is_versioned_and_contains_no_manual_options() -> None:
+    contracts = _load_generation_contracts(REFERENCE_ROOT)
+
+    assert set(contracts) == {"OBJ-RESP-02", "OBJ-RESP-03"}
+    assert all("options" not in contract for contract in contracts.values())
+    assert all(
+        contract["option_constraints"]["maximum_word_count_delta"] == 3
+        for contract in contracts.values()
+    )
+
+
+def test_machine_evidence_metadata_is_allowed_but_learner_text_ids_are_rejected() -> None:
+    request, contract = _request_and_contract()
+    raw = _candidate(request, contract["objective_id"])
+    assert _candidate_failure(raw, request, contract) == ("", "")
+
+    for field, value in (
+        ("prompt", "Explain ev_resp02_terminal_acceptor without using an ID."),
+        ("explanation", "The claim is supported by src_course_source."),
+    ):
+        candidate = json.loads(json.dumps(raw))
+        candidate["questions"][0][field] = value
+        assert _candidate_failure(candidate, request, contract)[0] == "DETERMINISTIC_CONTRACT_FAILURE"
+
+    candidate = json.loads(json.dumps(raw))
+    candidate["questions"][0]["options"][0]["text"] += " qst_question_123"
+    assert _candidate_failure(candidate, request, contract)[0] == "DETERMINISTIC_CONTRACT_FAILURE"
+
+    # Evidence IDs remain valid in machine-only citation metadata.
+    assert raw["questions"][0]["citation_evidence_ids"]
+
+
+def test_option_word_count_delta_allows_zero_one_and_three_but_rejects_four() -> None:
+    request, contract = _request_and_contract()
+    base = _candidate(request, contract["objective_id"])
+    for extra_words in (0, 1, 3):
+        candidate = json.loads(json.dumps(base))
+        candidate["questions"][0]["options"][3]["text"] += " " + " ".join(
+            f"word{index}" for index in range(extra_words)
+        )
+        assert _candidate_failure(candidate, request, contract) == ("", "")
+
+    rejected = json.loads(json.dumps(base))
+    rejected["questions"][0]["options"][3]["text"] += " " + " ".join(
+        f"word{index}" for index in range(4)
+    )
+    assert _candidate_failure(rejected, request, contract)[0] == "DISTRACTOR_FAILURE"
 
 
 def test_generation_candidate_rejects_objective_substitution() -> None:

@@ -1,0 +1,92 @@
+{
+  "schema_version": "c3-assessment-contracts-v4-generation-only",
+  "supersedes_schema_version": "c3-assessment-contracts-v3-evaluation-only",
+  "source_packet_revision": "reference-course-c3-v1",
+  "status": "FROZEN_GENERATION_ONLY",
+  "assessment_format_precedence": {
+    "applies_to_objective_ids": [
+      "OBJ-RESP-02",
+      "OBJ-RESP-03"
+    ],
+    "source_packet_is_content_evidence_only": true,
+    "qualification_question_type": "single_answer_multiple_choice",
+    "supersedes_source_packet_short_answer_format_statement": true
+  },
+  "learner_text_policy": {
+    "machine_metadata_may_contain_evidence_ids": true,
+    "learner_visible_text_must_not_contain_opaque_ids": true,
+    "forbidden_patterns": [
+      "ev_*",
+      "src_*",
+      "qst_*",
+      "grd_*",
+      "prv_*",
+      "prc_*",
+      "ati_*",
+      "OBJ-RESP-*"
+    ],
+    "applies_to": [
+      "prompt",
+      "option_text",
+      "explanation",
+      "learner_answer_text",
+      "hint"
+    ]
+  },
+  "contracts": [
+    {
+      "contract_id": "ac_resp_02_causal_role_v4_generation",
+      "supersedes_contract_id": "ac_resp_02_causal_role_v3",
+      "objective_id": "OBJ-RESP-02",
+      "question_type": "single_answer_multiple_choice",
+      "cognitive_target": "Explain that oxygen is the terminal electron acceptor, accepts electrons and protons to form water, and thereby permits electron flow through the aerobic electron transport chain to continue.",
+      "required_claim_ids": [
+        "oxygen_is_terminal_acceptor",
+        "oxygen_accepts_electrons_and_protons",
+        "oxygen_forms_water",
+        "terminal_acceptor_enables_flow"
+      ],
+      "required_evidence_ids": [
+        "ev_resp02_terminal_acceptor",
+        "ev_resp02_accepts_electrons",
+        "ev_resp02_forms_water",
+        "ev_resp02_flow_continues"
+      ],
+      "option_constraints": {
+        "option_count": 4,
+        "exactly_one_correct": true,
+        "all_options_address_every_required_dimension": true,
+        "exactly_one_false_claim_per_distractor": true,
+        "maximum_word_count_delta": 3,
+        "all_or_none_options_prohibited": true
+      }
+    },
+    {
+      "contract_id": "ac_resp_03_bounded_contrast_v4_generation",
+      "supersedes_contract_id": "ac_resp_03_bounded_contrast_v3",
+      "objective_id": "OBJ-RESP-03",
+      "question_type": "single_answer_multiple_choice",
+      "cognitive_target": "Contrast fermentation and aerobic respiration using preservation of glycolysis through NAD+ regeneration, oxygen's terminal-acceptor role, and relative ATP yield per glucose.",
+      "required_claim_ids": [
+        "fermentation_preserves_glycolysis",
+        "fermentation_regenerates_nad",
+        "fermentation_no_oxygen_acceptor",
+        "fermentation_lower_atp"
+      ],
+      "required_evidence_ids": [
+        "ev_resp03_fermentation_context",
+        "ev_resp03_regenerates_nad",
+        "ev_resp03_no_oxygen_low_atp",
+        "ev_resp03_aerobic_comparison"
+      ],
+      "option_constraints": {
+        "option_count": 4,
+        "exactly_one_correct": true,
+        "all_options_address_every_required_dimension": true,
+        "exactly_one_false_claim_per_distractor": true,
+        "maximum_word_count_delta": 3,
+        "all_or_none_options_prohibited": true
+      }
+    }
+  ]
+}
