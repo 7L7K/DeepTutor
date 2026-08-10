@@ -1,0 +1,20 @@
+{
+  "campaign_id": "2026-08-09-teeechr-c3-h3-model-qualification-v2",
+  "max_provider_spend_microusd": 500000,
+  "reasoning_effort": "high",
+  "requested_model": "gpt-5.6-luna",
+  "results": [
+    {
+      "status": "PROVIDER_REQUEST_FAILED"
+    }
+  ],
+  "schema_version": "c3-h3-model-qualification-campaign-v1",
+  "store": false,
+  "usage_summary": {
+    "admitted_cost_microusd": 17649,
+    "alert_threshold_microusd": 0,
+    "remaining_cost_microusd": 482351,
+    "reserved_or_uncertain_cost_microusd": 9105,
+    "settled_cost_microusd": 8544
+  }
+}
