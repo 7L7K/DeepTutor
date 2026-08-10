@@ -54,6 +54,10 @@ FINAL_SET_PLAN_ID = "c3-final-set-plan-v2"
 FINAL_SET_PLAN_FILENAME = "final_set_plan_v2.json"
 FINAL_CAMPAIGN_ID = "2026-08-10-teeechr-c3-final-learning-loop-v2-2"
 FINAL_GENERATION_PROMPT_ID = "c3-final-set-generation-prompt-v2-2"
+FINAL_CAMPAIGN_SCHEMA_VERSION = "c3-final-quality-campaign-v2"
+FINAL_GENERATION_RECEIPT_SCHEMA_VERSION = "c3-final-generation-receipt-v2"
+FINAL_NORMALIZED_SCHEMA_VERSION = "c3-final-normalized-questions-v2"
+ITEM_LIMIT = 5
 MAX_CANDIDATES = 3
 ALLOCATION = {"OBJ-RESP-01": 1, "OBJ-RESP-02": 2, "OBJ-RESP-03": 2}
 LEAKED_IDENTIFIER = re.compile(
@@ -124,7 +128,7 @@ def _slot_contracts(reference_root: Path) -> dict[str, SlotContract]:
         )
         focus_by_objective[objective_id].add(focus)
         claim_bundle_by_objective[objective_id].add(claims)
-    if len(slots) != 5:
+    if len(slots) != ITEM_LIMIT:
         raise FinalCampaignStop("FINAL_SET_PLAN_SLOT_COUNT_INVALID")
     if {objective: sum(slot.objective_id == objective for slot in slots.values()) for objective in ALLOCATION} != ALLOCATION:
         raise FinalCampaignStop("FINAL_SET_PLAN_OBJECTIVE_ALLOCATION_INVALID")
@@ -300,6 +304,20 @@ def _set_failure_v2(
 
 
 def _instructions(slots: dict[str, SlotContract]) -> str:
+    if {"slot_resp02_terminal_mechanism", "slot_resp02_flow_consequence"}.issubset(slots):
+        slot_separation = (
+            " In particular, slot_resp02_terminal_mechanism must assess terminal "
+            "acceptor identity and electron/proton acceptance without assessing water "
+            "formation or continued flow, while slot_resp02_flow_consequence must assess "
+            "water formation and continued flow without re-testing terminal-acceptor identity."
+        )
+    else:
+        slot_separation = ""
+    choice_slots = [slot for slot in slots.values() if slot.question_type == "single_choice_v1"]
+    if len(choice_slots) == 4:
+        position_rule = "Across the four single-choice slots, use correct_option_key A, B, C, and D exactly once each."
+    else:
+        position_rule = "Use distinct correct_option_key values across the single-choice slots."
     return (
         "Generate exactly one learner-facing question for each server-owned slot. "
         "Do not merge slots, duplicate slots, or substitute objectives. The slot_id "
@@ -308,17 +326,16 @@ def _instructions(slots: dict[str, SlotContract]) -> str:
         "claims and eligible evidence. Every answer and explanation must be supported. "
         "The primary assessment target for each slot is exactly its required claim "
         "bundle; do not turn eligible but non-required claims into a second assessment "
-        "target. In particular, slot_resp02_terminal_mechanism must assess terminal "
-        "acceptor identity and electron/proton acceptance without assessing water "
-        "formation or continued flow, while slot_resp02_flow_consequence must assess "
-        "water formation and continued flow without re-testing terminal-acceptor identity. "
+        "target."
+        + slot_separation
+        + " "
         "For every single-choice slot, return four options that address every required "
         "dimension, exactly one correct option, and exactly one false claim in each "
         "distractor. Option word counts may differ by at most the slot's frozen "
         "maximum_word_count_delta. If answer_text is present for a single-choice item, "
         "it must exactly match the correct option text. Do not use all-or-none options. "
-        "Across the four single-choice slots, use correct_option_key A, B, C, and D "
-        "exactly once each. "
+        + position_rule
+        + " "
         "Return the strict structured object with the exact slot_id echoed per question.\n\n"
         + json.dumps({
             "campaign_contract_id": FINAL_SET_PLAN_ID,
@@ -360,7 +377,7 @@ def _run_candidate(
     _write_json(
         artifact_root / phase / f"candidate-{candidate_number}-generation.json",
         {
-            "schema_version": "c3-final-generation-receipt-v2",
+            "schema_version": FINAL_GENERATION_RECEIPT_SCHEMA_VERSION,
             "campaign_id": campaign_id,
             "phase": phase,
             "candidate_number": candidate_number,
@@ -386,7 +403,7 @@ def _run_candidate(
     if failure_class:
         return {"status": "REJECT_RETRYABLE", "failure_class": failure_class, "failure_detail": detail, "question_failures": failures}
     normalized_questions = [_normalize_question(question) for question in questions]
-    _write_json(artifact_root / phase / f"candidate-{candidate_number}-normalized.json", {"schema_version": "c3-final-normalized-questions-v2", "phase": phase, "candidate_number": candidate_number, "set_plan": FINAL_SET_PLAN_ID, "questions": normalized_questions})
+    _write_json(artifact_root / phase / f"candidate-{candidate_number}-normalized.json", {"schema_version": FINAL_NORMALIZED_SCHEMA_VERSION, "phase": phase, "candidate_number": candidate_number, "set_plan": FINAL_SET_PLAN_ID, "questions": normalized_questions})
     for index, question in enumerate(normalized_questions, start=1):
         slot = slots[question["slot_id"]]
         evaluated, _ = _judge_question(client, question=question, objective_contract=slot, request=request, phase=phase, candidate_number=candidate_number, question_number=index, artifact_root=artifact_root, campaign_id=campaign_id)
@@ -427,7 +444,7 @@ def main() -> int:
     failures: list[dict[str, Any]] = []
     result: dict[str, Any] | None = None
     for candidate_number in range(args.start_candidate, MAX_CANDIDATES + 1):
-        request = _request(campaign_id=args.campaign_id, phase=args.phase, candidate_number=candidate_number, material=material, evidence=evidence, purpose="practice", item_limit=5, focus="Bounded Biology 101 cellular respiration Practice set with frozen diverse assessment slots", slots=slots)
+        request = _request(campaign_id=args.campaign_id, phase=args.phase, candidate_number=candidate_number, material=material, evidence=evidence, purpose="practice", item_limit=ITEM_LIMIT, focus="Bounded Biology 101 cellular respiration Practice set with frozen diverse assessment slots", slots=slots)
         try:
             result = _run_candidate(client, phase=args.phase, candidate_number=candidate_number, slots=slots, request=request, material=material, evidence=evidence, artifact_root=artifact_root, campaign_id=args.campaign_id)
         except CampaignStop as exc:
@@ -442,7 +459,7 @@ def main() -> int:
     elif result.get("status") != "MODEL_QUALIFIED" and result.get("status") != "BLOCKED_PROVIDER_TRANSPORT":
         result = {"phase": args.phase, "status": "REPEATED_QUALIFICATION_FAILURE" if len(failures) >= MAX_CANDIDATES else result.get("status"), "failures": failures}
     summary_path = artifact_root / "campaign-summary.json"
-    existing = json.loads(summary_path.read_text(encoding="utf-8")) if summary_path.is_file() else {"schema_version": "c3-final-quality-campaign-v2", "campaign_id": args.campaign_id, "phases": []}
+    existing = json.loads(summary_path.read_text(encoding="utf-8")) if summary_path.is_file() else {"schema_version": FINAL_CAMPAIGN_SCHEMA_VERSION, "campaign_id": args.campaign_id, "phases": []}
     existing["phases"] = [item for item in existing.get("phases", []) if item.get("phase") != args.phase]
     existing["phases"].append(result)
     existing["provider_policy"] = {"policy_id": FINAL_PROVIDER_POLICY_ID, "model": MODEL, "reasoning": REASONING, "store": STORE, "max_provider_spend_microusd": MAX_PROVIDER_SPEND_MICROUSD, "daily_output_token_limit": {"enforced": False, "scope": "final_c3_campaign_only", "historical_ledger_preserved": True}}
