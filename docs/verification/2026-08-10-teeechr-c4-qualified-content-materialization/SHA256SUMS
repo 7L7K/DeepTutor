@@ -1,0 +1,16 @@
+fc538529d7c70be5372173d95e59802396ac8813db9872cbc0efdaccecdc4e0d  docs/verification/2026-08-10-teeechr-c4-qualified-content-materialization/artifact/qualified-primary-model-artifact.json
+77279ac29ef9e246485b8c23c7b0b22db7ca11665338f0434495cffb9992dcb4  docs/verification/2026-08-10-teeechr-c4-qualified-content-materialization/artifact/qualified-remediation-model-artifact.json
+f5c4c858cb45f1c8d2e3f53592a42554f6336f07a164a513821d1a90c7a93b07  docs/verification/2026-08-10-teeechr-c4-qualified-content-materialization/backend/backend.log
+e530953980769c97eaa5ce7927aeb76209538a9440539d8588cfa96c2589bf09  docs/verification/2026-08-10-teeechr-c4-qualified-content-materialization/backend/fixture-initial.json
+0e601e9a22cdfbd909442fb4c6b130fa5238fffe2f2e350516fc9358cd2349b7  docs/verification/2026-08-10-teeechr-c4-qualified-content-materialization/backend/fixture-remediation.json
+6aa906964d671cda9671c0c07895a8cfc09874562c70f95de1c459a84cf38495  docs/verification/2026-08-10-teeechr-c4-qualified-content-materialization/backend/fixture.json
+8358c83fe96ba704a0b86d6d4dbb7031a71fe52a4bd2924bfaa9ac17a9131a33  docs/verification/2026-08-10-teeechr-c4-qualified-content-materialization/backend/frontend.log
+3a149a926c459ee6eb0e5ce4a1a196309000d2d3860d637e430afc54a117385a  docs/verification/2026-08-10-teeechr-c4-qualified-content-materialization/runtime.txt
+b2b2239496dd3b95ffd16655bb1c6b19a7f69ada867f7763c466d411473220d3  docs/verification/2026-08-10-teeechr-c4-qualified-content-materialization/screenshots/desktop-classes.png
+ca5721cc0cdd7e8fcea3bde997540de9043ff80ccdf23ab6dbad9b8be2860fa2  docs/verification/2026-08-10-teeechr-c4-qualified-content-materialization/screenshots/desktop-course-hub.png
+bddd78ff7b84221a09e45e35d1dbfe6dc5876b390f500ce9e9c8aa2514d2b938  docs/verification/2026-08-10-teeechr-c4-qualified-content-materialization/screenshots/desktop-practice-ready.png
+375c83979a57b1894acf8a45e2885ae9a52dbd662f36860df9aa205a505ca95e  docs/verification/2026-08-10-teeechr-c4-qualified-content-materialization/screenshots/desktop-results-1-of-3.png
+3377041106454606cead4d701ab54737daeeb0c36b326981a3cabea20b90f6d4  docs/verification/2026-08-10-teeechr-c4-qualified-content-materialization/screenshots/desktop-review-two-cards.png
+2e69c047a01c54c18ce0d242bd1820f43d08dcc303860ba2e9a11535b7a38898  docs/verification/2026-08-10-teeechr-c4-qualified-content-materialization/screenshots/mobile-course-hub-390x844-viewport.png
+323811bb33b5b52b0a4d83168e1d33a95c38a36a3a7bf7e82c5ff1169b044467  docs/verification/2026-08-10-teeechr-c4-qualified-content-materialization/screenshots/mobile-practice-390x844-viewport.png
+7cc60d1dbdb0c521ccf477728e4db770e793fe2c49ce5670eeda05e3d5f56cb0  docs/verification/2026-08-10-teeechr-c4-qualified-content-materialization/screenshots/mobile-results-1-of-2-withdrawn.png

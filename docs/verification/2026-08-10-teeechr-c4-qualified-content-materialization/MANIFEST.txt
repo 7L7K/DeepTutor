@@ -1,0 +1,5 @@
+C4 qualified content materialization evidence manifest
+Generated: 2026-08-10
+Scope: local authenticated runtime only; provider_calls=0
+Files are covered by SHA256SUMS in this directory.
+Excluded from checksums: transient full-page black screenshot duplicate.

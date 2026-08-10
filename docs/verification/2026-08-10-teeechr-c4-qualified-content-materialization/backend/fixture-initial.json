@@ -1,0 +1,28 @@
+{
+  "course_id": "crs_b06fdb2bb3df47488bd3f7ffeda6cac1",
+  "course_title": "Biology 101",
+  "human_approval": false,
+  "owner_id": "u_c340c2de9635453f89e333649fa58337",
+  "practice": {
+    "artifact_path": "docs/verification/2026-08-10-teeechr-c3-final-learning-loop-v3-1/primary/model-qualified-candidate.json",
+    "artifact_sha256": "fc538529d7c70be5372173d95e59802396ac8813db9872cbc0efdaccecdc4e0d",
+    "generation_operation_id": "opg_f4661e9bc70e48389b70488c48294a24",
+    "generation_state": "completed",
+    "objectives": [
+      "OBJ-RESP-01",
+      "OBJ-RESP-02",
+      "OBJ-RESP-03"
+    ],
+    "practice_set_id": "prc_c97c62006a6c411185c9c85fe1e8b299",
+    "question_count": 3,
+    "revision_id": "prv_9bcfaac9a9e146899673ea6faf06f596"
+  },
+  "provider_calls": 0,
+  "remediation_artifact_path": "docs/verification/2026-08-10-teeechr-c3-final-learning-loop-v3-1-remediation-v2/remediation/model-qualified-candidate.json",
+  "remediation_artifact_sha256": "77279ac29ef9e246485b8c23c7b0b22db7ca11665338f0434495cffb9992dcb4",
+  "remediation_question_count": 2,
+  "source_content_sha256": "0f48b6e354accde0a2ed0026612e62854c2d0fd68668147b4b0a100a85d8bf65",
+  "source_id": "src_ad5c2bfe47d24c848705f4709b1d57e2",
+  "source_revision": 2,
+  "status": "C4_FIXTURE_READY"
+}

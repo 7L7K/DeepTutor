@@ -1,0 +1,33 @@
+
+> opentutor-web@1.0.0 predev
+> node ./scripts/check-node-version.mjs
+
+
+> opentutor-web@1.0.0 dev
+> node --max-old-space-size=4096 ./node_modules/next/dist/bin/next dev
+
+▲ Next.js 16.2.3 (Turbopack)
+- Local:         http://localhost:3819
+- Network:       http://10.0.0.83:3819
+✓ Ready in 312ms
+- Experiments (use with caution):
+  · proxyClientMaxBodySize: 220200960
+
+ GET /login 200 in 262ms (next.js: 43ms, proxy.ts: 81ms, application-code: 138ms)
+ GET /login 200 in 37ms (next.js: 4ms, proxy.ts: 2ms, application-code: 30ms)
+ GET /classes 200 in 87ms (next.js: 15ms, proxy.ts: 5ms, application-code: 67ms)
+ GET /login?next=%2Fclasses 200 in 26ms (next.js: 1805µs, proxy.ts: 2ms, application-code: 22ms)
+ GET /classes 200 in 20ms (next.js: 2ms, proxy.ts: 3ms, application-code: 15ms)
+ GET /classes/crs_b06fdb2bb3df47488bd3f7ffeda6cac1/practice 200 in 371ms (next.js: 323ms, proxy.ts: 2ms, application-code: 46ms)
+ GET /classes/crs_b06fdb2bb3df47488bd3f7ffeda6cac1/practice/prc_c97c62006a6c411185c9c85fe1e8b299/attempts/att_9c333842f6934c27a9249385f537843f 200 in 245ms (next.js: 227ms, proxy.ts: 2ms, application-code: 15ms)
+ GET /classes/crs_b06fdb2bb3df47488bd3f7ffeda6cac1/practice/prc_c97c62006a6c411185c9c85fe1e8b299/attempts/att_9c333842f6934c27a9249385f537843f 200 in 70ms (next.js: 5ms, proxy.ts: 3ms, application-code: 63ms)
+ GET /classes/crs_b06fdb2bb3df47488bd3f7ffeda6cac1/review 200 in 762ms (next.js: 721ms, proxy.ts: 1488µs, application-code: 40ms)
+ GET /classes/crs_b06fdb2bb3df47488bd3f7ffeda6cac1 200 in 459ms (next.js: 405ms, proxy.ts: 3ms, application-code: 51ms)
+ GET /classes/crs_b06fdb2bb3df47488bd3f7ffeda6cac1/practice 200 in 35ms (next.js: 5ms, proxy.ts: 1174µs, application-code: 29ms)
+ GET /classes/crs_b06fdb2bb3df47488bd3f7ffeda6cac1/practice/prc_c97c62006a6c411185c9c85fe1e8b299/attempts/att_9c333842f6934c27a9249385f537843f 200 in 40ms (next.js: 5ms, proxy.ts: 1793µs, application-code: 33ms)
+ GET /classes/crs_b06fdb2bb3df47488bd3f7ffeda6cac1 200 in 31ms (next.js: 4ms, proxy.ts: 1301µs, application-code: 26ms)
+ GET /classes/crs_b06fdb2bb3df47488bd3f7ffeda6cac1/practice 200 in 23ms (next.js: 4ms, proxy.ts: 1856µs, application-code: 16ms)
+ GET /classes/crs_b06fdb2bb3df47488bd3f7ffeda6cac1/practice 200 in 16ms (next.js: 5ms, proxy.ts: 3ms, application-code: 8ms)
+ GET /classes/crs_b06fdb2bb3df47488bd3f7ffeda6cac1/practice/prc_c97c62006a6c411185c9c85fe1e8b299/attempts/att_9c333842f6934c27a9249385f537843f 200 in 15ms (next.js: 3ms, proxy.ts: 1386µs, application-code: 11ms)
+ GET /classes/crs_b06fdb2bb3df47488bd3f7ffeda6cac1/review 200 in 38ms (next.js: 4ms, proxy.ts: 1263µs, application-code: 33ms)
+[?25h
