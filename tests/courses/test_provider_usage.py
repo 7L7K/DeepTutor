@@ -218,6 +218,35 @@ def test_settlement_cannot_silently_exceed_reserved_budget(tmp_path: Path) -> No
         )
 
 
+def test_daily_output_limit_can_be_disabled_for_bounded_campaign_only(
+    tmp_path: Path,
+) -> None:
+    ledger = ProviderUsageLedger(tmp_path / "usage" / "provider_usage.db")
+    ledger.configure(
+        _enabled(
+            max_daily_output_tokens_per_user=50,
+            max_daily_output_tokens_global=50,
+        )
+    )
+
+    reservation = ledger.reserve(
+        operation_id="ofg_campaign_override",
+        owner_user_id="u_alice",
+        provider="openai",
+        requested_model="gpt-5.6-luna",
+        pricing_version="test-v1",
+        input_tokens=1,
+        output_tokens=60,
+        estimated_cost_microusd=125,
+        enforce_daily_output_limits=False,
+    )
+
+    assert reservation.state == "reserved"
+    assert ledger.load_policy().max_daily_output_tokens_per_user == 50
+    assert ledger.load_policy().max_daily_output_tokens_global == 50
+    ledger.release("ofg_campaign_override")
+
+
 def test_stale_crash_reservation_releases_concurrency_conservatively(
     tmp_path: Path,
 ) -> None:

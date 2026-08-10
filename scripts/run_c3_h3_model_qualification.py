@@ -62,6 +62,7 @@ MODEL = "gpt-5.6-luna"
 REASONING = "high"
 STORE = False
 CAMPAIGN_ID = "2026-08-09-teeechr-c3-h3-model-qualification-v4-delta3"
+DEFAULT_PROVIDER_POLICY_ID = "c3-provider-policy-default-v1"
 CONTRACT_FILENAME = "assessment_contracts_v4_generation_only.json"
 HARD_FAILURES = {
     "incorrect_key",
@@ -108,6 +109,7 @@ class CallReceipt:
     settled_spend_microusd: int
     store: bool
     reasoning_effort: str
+    provider_policy_id: str
 
     def as_dict(self) -> dict[str, Any]:
         return {
@@ -124,11 +126,20 @@ class CallReceipt:
             "settled_spend_microusd": self.settled_spend_microusd,
             "store": self.store,
             "reasoning_effort": self.reasoning_effort,
+            "provider_policy_id": self.provider_policy_id,
         }
 
 
 class CampaignClient:
-    def __init__(self, api_key: str, state_dir: Path, *, timeout_seconds: float = 25.0) -> None:
+    def __init__(
+        self,
+        api_key: str,
+        state_dir: Path,
+        *,
+        timeout_seconds: float = 25.0,
+        enforce_daily_output_limits: bool = True,
+        provider_policy_id: str = DEFAULT_PROVIDER_POLICY_ID,
+    ) -> None:
         registry = TextGenerationRegistry.from_catalog(
             {"text_generation": default_text_generation_catalog()}
         )
@@ -154,6 +165,8 @@ class CampaignClient:
         )
         self.api_key = api_key
         self.timeout_seconds = timeout_seconds
+        self.enforce_daily_output_limits = enforce_daily_output_limits
+        self.provider_policy_id = provider_policy_id
 
     def reservation_state(self, operation_id: str) -> str | None:
         with sqlite3.connect(self.ledger.path) as connection:
@@ -216,6 +229,7 @@ class CampaignClient:
                 input_tokens=estimated_input,
                 output_tokens=output_limit,
                 estimated_cost_microusd=reserved_ceiling,
+                enforce_daily_output_limits=self.enforce_daily_output_limits,
             )
         except ProviderUsageError as exc:
             if "daily" in str(exc).casefold():
@@ -307,6 +321,7 @@ class CampaignClient:
             settled_spend_microusd=summary["admitted_cost_microusd"],
             store=STORE,
             reasoning_effort=REASONING,
+            provider_policy_id=self.provider_policy_id,
         )
         return payload, receipt
 

@@ -197,3 +197,16 @@ def test_campaign_client_configures_luna_high_and_hard_budget(tmp_path: Path) ->
     assert REASONING == "high"
     assert policy.max_lifetime_cost_microusd == MAX_PROVIDER_SPEND_MICROUSD
     assert client.ledger.usage_summary()["admitted_cost_microusd"] == 0
+    assert client.enforce_daily_output_limits is True
+
+
+def test_campaign_client_preserves_explicit_provider_policy_override(tmp_path: Path) -> None:
+    client = CampaignClient(
+        "test-only-not-used",
+        tmp_path,
+        enforce_daily_output_limits=False,
+        provider_policy_id="c3-final-provider-policy-daily-output-disabled-v1",
+    )
+
+    assert client.enforce_daily_output_limits is False
+    assert client.provider_policy_id == "c3-final-provider-policy-daily-output-disabled-v1"

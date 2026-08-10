@@ -270,6 +270,7 @@ class ProviderUsageLedger:
         input_tokens: int,
         output_tokens: int,
         estimated_cost_microusd: int,
+        enforce_daily_output_limits: bool = True,
     ) -> ProviderUsageReservation:
         if (
             not operation_id.startswith(("ofg_", "opg_"))
@@ -280,6 +281,7 @@ class ProviderUsageLedger:
             or isinstance(input_tokens, bool)
             or isinstance(output_tokens, bool)
             or isinstance(estimated_cost_microusd, bool)
+            or not isinstance(enforce_daily_output_limits, bool)
             or input_tokens < 1
             or output_tokens < 1
             or estimated_cost_microusd < 1
@@ -398,16 +400,19 @@ class ProviderUsageLedger:
                     WHERE usage_day=? AND state IN ({placeholders})""",
                 (usage_day, *counted_states),
             ).fetchone()
-            if (
+            input_limit_exceeded = (
                 int(owner_totals[0]) + input_tokens
                 > policy.max_daily_input_tokens_per_user
-                or int(owner_totals[1]) + output_tokens
-                > policy.max_daily_output_tokens_per_user
                 or int(global_totals[0]) + input_tokens
                 > policy.max_daily_input_tokens_global
+            )
+            output_limit_exceeded = enforce_daily_output_limits and (
+                int(owner_totals[1]) + output_tokens
+                > policy.max_daily_output_tokens_per_user
                 or int(global_totals[1]) + output_tokens
                 > policy.max_daily_output_tokens_global
-            ):
+            )
+            if input_limit_exceeded or output_limit_exceeded:
                 raise ProviderUsageError("Paid provider daily token limit reached")
             connection.execute(
                 """INSERT INTO provider_usage_reservations

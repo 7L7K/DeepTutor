@@ -48,6 +48,7 @@ FINAL_CONTRACT_ID = "c3-final-learning-loop-v1"
 MAX_SET_CANDIDATES = 3
 FINAL_PROVIDER_TIMEOUT_SECONDS = 120.0
 FINAL_INDIVIDUAL_JUDGE_OUTPUT_LIMIT = 1_500
+FINAL_PROVIDER_POLICY_ID = "c3-final-provider-policy-daily-output-disabled-v1"
 OPTION_KEYS = ("A", "B", "C", "D")
 LEAKED_IDENTIFIER = re.compile(
     r"(?:src|ev|qst|grd|prv|prc|ati|OBJ-RESP)[_-][A-Za-z0-9_-]+"
@@ -773,6 +774,8 @@ def main() -> int:
         _load_api_key(args.env_file.resolve() if args.env_file else None),
         args.state_dir.resolve(),
         timeout_seconds=FINAL_PROVIDER_TIMEOUT_SECONDS,
+        enforce_daily_output_limits=False,
+        provider_policy_id=FINAL_PROVIDER_POLICY_ID,
     )
     miss_context = json.loads(args.miss_context.read_text(encoding="utf-8")) if args.miss_context else None
     allocation = {"OBJ-RESP-01": 2, "OBJ-RESP-02": 2, "OBJ-RESP-03": 1} if args.phase in {"primary", "repeat"} else {item["objective_id"]: 1 for item in (miss_context or [])}
@@ -807,7 +810,18 @@ def main() -> int:
     existing = json.loads(summary_path.read_text(encoding="utf-8")) if summary_path.is_file() else {"schema_version": "c3-final-quality-campaign-v1", "campaign_id": args.campaign_id, "phases": []}
     existing["phases"] = [phase for phase in existing.get("phases", []) if phase.get("phase") != args.phase]
     existing["phases"].append(result)
-    existing["provider_policy"] = {"model": MODEL, "reasoning": REASONING, "store": STORE, "max_provider_spend_microusd": MAX_PROVIDER_SPEND_MICROUSD}
+    existing["provider_policy"] = {
+        "policy_id": FINAL_PROVIDER_POLICY_ID,
+        "model": MODEL,
+        "reasoning": REASONING,
+        "store": STORE,
+        "max_provider_spend_microusd": MAX_PROVIDER_SPEND_MICROUSD,
+        "daily_output_token_limit": {
+            "enforced": False,
+            "scope": "final_c3_campaign_only",
+            "historical_ledger_preserved": True,
+        },
+    }
     existing["usage_summary"] = client.ledger.usage_summary()
     _write_json(summary_path, existing)
     print(json.dumps({"phase": args.phase, "status": result["status"], "provider_spend_microusd": existing["usage_summary"]["admitted_cost_microusd"]}, sort_keys=True))
