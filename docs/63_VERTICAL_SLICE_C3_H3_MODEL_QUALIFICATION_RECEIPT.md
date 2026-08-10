@@ -17,7 +17,8 @@ content must never be described as independently human-reviewed.
 The H3B campaign policy is:
 
 - generation and judging use `gpt-5.6-luna` with reasoning `high`;
-- `store=false` and OpenAI transport retries are disabled;
+- `store=false` and OpenAI transport retries are bounded to two retries per
+  intended request, separately from educational candidate retries;
 - each objective receives at most three generated candidates after a classified
   deterministic or judge rejection;
 - only deterministic-publication candidates reach two independent Luna judges;
@@ -34,20 +35,26 @@ campaign.
 
 `OBJ-RESP-02` did not qualify.
 
-Campaign v1 made three successful generation requests. Each candidate satisfied
-the structured response shape and cited the four eligible evidence IDs, but the
-deterministic v3 contract rejected it as `DISTRACTOR_FAILURE` because the four
-option word counts differed by one word. This is consistent with the frozen
-`maximum_word_count_delta: 0` contract; no candidate reached model judging.
+The three v1 outputs are preserved as `SUPERSEDED_CONTRACT_FAILURE` evidence.
+They are not part of the active v2 candidate limit.
 
-The first bounded repair surfaced the exact zero-delta constraint to the model
-without supplying any manually authored option text. Campaign v2 then made one
-successful generation request before the next candidate encountered a provider
-transport failure. Transport retries are disabled by policy, so the campaign
-stopped and marked that reservation uncertain rather than retrying silently.
+The first active v2 candidate was preserved from the earlier run and was
+revalidated before any judge call. Its option counts were `[21, 21, 21, 22]`,
+so it failed the frozen `maximum_word_count_delta: 0` contract as
+`DISTRACTOR_FAILURE`. It was not deterministic-valid and was correctly not sent
+to judges.
 
-Campaign v2 therefore also did not reach model judging. `OBJ-RESP-03` was not
-started automatically because H3B2 did not qualify.
+The later transport failure was not counted as an educational candidate. The
+same intended generation operation was retried through two bounded transport
+retry slots under the cumulative ledger. The retry returned a complete v2
+candidate and consumed the next active candidate slot. A final active candidate
+was then generated. Both had exactly balanced option lengths, but both leaked
+opaque evidence IDs into the learner-facing explanation and were rejected as
+`DETERMINISTIC_CONTRACT_FAILURE`.
+
+H3B2 therefore exhausted its three completed candidates under the current
+contract without reaching model judging. `OBJ-RESP-03` was not started
+automatically because H3B2 did not qualify.
 
 ## Provider and budget receipt
 
@@ -57,47 +64,54 @@ started automatically because H3B2 did not qualify.
 | Actual model | `gpt-5.6-luna` |
 | Reasoning | `high` |
 | Storage | `store=false` |
-| Transport retries | `0` |
-| Successful requests | `4` |
-| Provider transport failures | `1` |
+| Transport retries | `2` allowed per intended request |
+| Successful requests | `6` |
+| Provider transport failures | `1` initial failure; bounded retry succeeded |
 | Model judges | `0` |
 | Tie-break judges | `0` |
-| Settled spend | `8544` micro-USD (`$0.008544`) |
+| Settled spend | `12264` micro-USD (`$0.012264`) |
 | Uncertain reservation | `9105` micro-USD (`$0.009105`) |
-| Cumulative admitted ledger spend | `17649` micro-USD (`$0.017649`) |
+| Cumulative admitted ledger spend | `21369` micro-USD (`$0.021369`) |
 | Hard campaign ceiling | `500000` micro-USD (`$0.50`) |
 
-The uncertain reservation remains counted against the cap. No automatic retry or
-manual settlement was performed.
+The uncertain reservation remains counted against the cap. The bounded
+transport retry reused the same intended operation with fresh ledger operation
+IDs; it did not create another educational candidate unless a complete
+structured response was returned.
 
 ## Durable artifacts
 
 The raw structured provider outputs and campaign summaries are preserved under:
 
 - `docs/verification/2026-08-09-teeechr-c3-h3-model-qualification/`;
-- `docs/verification/2026-08-09-teeechr-c3-h3-model-qualification-v2/`.
+- `docs/verification/2026-08-09-teeechr-c3-h3-model-qualification-v2/`;
+- `docs/verification/2026-08-09-teeechr-c3-h3-model-qualification-v2-resume/`.
 
 The v1 artifacts preserve all three deterministic `DISTRACTOR_FAILURE` records.
-The v2 artifacts preserve the successful generation response and the
-`PROVIDER_REQUEST_FAILED` campaign stop. The external SQLite usage ledger is
+The original v2 artifacts preserve the first active candidate and the original
+uncertain transport reservation. The resumed v2 artifacts preserve the
+revalidated candidate, the successful bounded transport retry, the final active
+candidate, and the three-candidate stop. The external SQLite usage ledger is
 outside the repository and contains administrative reservation metadata only;
 it contains no credential, prompt, source excerpt, or learner content.
 
 ## Validation boundary
 
 - H3 harness compilation: passed.
-- H3-focused contract gate: `51 passed in 0.22s` before provider calls.
-- Canonical deterministic C3/H3 gate after the provider runs: `119 passed in
-  33.57s`, exit `0`.
-- Full broad regression: not run after this failed provider campaign.
+- Canonical deterministic C3/H3 gate before the resumed provider run:
+  `119 passed in 33.20s`, exit `0`.
+- Full broad regression: not run after this resume-harness change; the previous
+  clean broad regression remains `4011 passed, 8 skipped, 34 warnings in
+  281.59s`, exit `0`.
 - Educational qualification: not proven.
 - Human review: intentionally not started; it is no longer the H3 blocking gate.
 - Browser proof, private beta, five-question generation, repeat generation,
   remediation, Progress, Study Sessions, and recommendations: not started.
 
 The current result is a productive fail-closed stop, not a model qualification.
-The v1 formatting failure and v2 provider transport failure must remain visible
-in the next authorized campaign. Do not relabel either as an educational pass.
+The v1 superseded-contract failures, the v2 exact-length failure, the v2
+transport uncertainty, and the v2 opaque-ID failures remain visible. Do not
+relabel any of them as an educational pass.
 
 ## Historical boundaries preserved
 
@@ -105,7 +119,9 @@ The H3A records and H3B-1 OBJ-RESP-01 successor proof remain unchanged. No
 BlueWay checkout, C2 checkout, frozen migration, hosted environment,
 production configuration, or production student content was modified.
 
-The next valid step is a separately authorized bounded H3B rerun after the
-transport environment is stable. If it clears deterministic publication, use
+The next valid step is a separately authorized v3 contract decision: either
+retain the frozen exact-length contract and run a fresh bounded campaign, or
+explicitly version the assessment contract before changing that constraint. Do
+not silently loosen it. If a deterministic candidate clears publication, use
 the two-judge Luna-high evaluation automatically; do not reinstate human review
 as a blocking gate and do not call model-qualified content human-reviewed.

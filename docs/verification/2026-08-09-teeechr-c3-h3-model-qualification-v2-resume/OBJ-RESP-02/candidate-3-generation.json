@@ -1,0 +1,80 @@
+{
+  "campaign_id": "2026-08-09-teeechr-c3-h3-model-qualification-v2",
+  "candidate_number": 3,
+  "objective_id": "OBJ-RESP-02",
+  "provider_receipt": {
+    "actual_model": "gpt-5.6-luna",
+    "cached_input_tokens": 0,
+    "estimated_cost_microusd": 1859,
+    "input_tokens": 1097,
+    "latency_ms": 8470,
+    "operation_id": "opg_73b049480062cb4a64c1e3ea3d9cab6d",
+    "output_tokens": 1366,
+    "purpose": "generation",
+    "reasoning_effort": "high",
+    "reasoning_tokens": 935,
+    "request_id": "resp_04ae87ea89ecf142016a7930734860819e8e4a701c14df4547",
+    "settled_spend_microusd": 21369,
+    "store": false
+  },
+  "raw_output": {
+    "abstain_reason": null,
+    "outcome": "generated",
+    "questions": [
+      {
+        "citation_evidence_ids": [
+          "ev_resp02_terminal_acceptor",
+          "ev_resp02_accepts_electrons",
+          "ev_resp02_forms_water",
+          "ev_resp02_flow_continues"
+        ],
+        "correct_option_key": "A",
+        "explanation": "Oxygen is the terminal electron acceptor. It accepts electrons and protons to form water, and this final acceptance permits electron flow through the aerobic electron transport chain to continue normally. [ev_resp02_terminal_acceptor; ev_resp02_accepts_electrons; ev_resp02_forms_water; ev_resp02_flow_continues]",
+        "objective_ids": [
+          "OBJ-RESP-02"
+        ],
+        "options": [
+          {
+            "option_key": "A",
+            "text": "Oxygen is the terminal electron acceptor; it accepts electrons and protons to form water, allowing electron flow through the aerobic electron transport chain to continue."
+          },
+          {
+            "option_key": "B",
+            "text": "Oxygen is the initial electron donor; it accepts electrons and protons to form water, allowing electron flow through the aerobic electron transport chain to continue."
+          },
+          {
+            "option_key": "C",
+            "text": "Oxygen is the terminal electron acceptor; it releases electrons and protons to form water, allowing electron flow through the aerobic electron transport chain to continue."
+          },
+          {
+            "option_key": "D",
+            "text": "Oxygen is the terminal electron acceptor; it accepts electrons and protons to produce peroxide, allowing electron flow through the aerobic electron transport chain to continue."
+          }
+        ],
+        "prompt": "Which statement best explains oxygen’s role at the end of the aerobic electron transport chain?",
+        "question_type": "single_choice_v1"
+      }
+    ],
+    "request_contract": {
+      "generation_purpose": "practice",
+      "request_contract_id": "pgc_4dc7ba5f73bd980a842e9cbc46ffe756",
+      "requested_objective_ids": [
+        "OBJ-RESP-02"
+      ],
+      "source_scope_hash": "5b47182f19440bdcafb1f77c02f7e40b85699dbbeea674fc4fd99e2d25731d3b"
+    }
+  },
+  "reasoning_effort": "high",
+  "request_contract": {
+    "generation_purpose": "practice",
+    "request_contract_id": "pgc_4dc7ba5f73bd980a842e9cbc46ffe756",
+    "requested_objective_ids": [
+      "OBJ-RESP-02"
+    ],
+    "source_scope_hash": "5b47182f19440bdcafb1f77c02f7e40b85699dbbeea674fc4fd99e2d25731d3b"
+  },
+  "requested_model": "gpt-5.6-luna",
+  "schema_version": "c3-h3-generation-receipt-v1",
+  "store": false,
+  "transport_events": []
+}

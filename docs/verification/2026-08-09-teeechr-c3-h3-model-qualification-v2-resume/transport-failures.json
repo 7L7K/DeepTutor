@@ -1,0 +1,13 @@
+{
+  "events": [
+    {
+      "error": "PROVIDER_REQUEST_FAILED",
+      "intended_operation_id": "opg_34f66f7e9786310fb546091b5deae825",
+      "operation_id": "opg_34f66f7e9786310fb546091b5deae825",
+      "purpose": "generation",
+      "retry_number": 0,
+      "source": "prior_resume_state"
+    }
+  ],
+  "schema_version": "c3-h3-transport-failures-v1"
+}
