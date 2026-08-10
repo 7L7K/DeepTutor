@@ -452,7 +452,12 @@ def _set_failure(
 def _individual_judge_schema() -> dict[str, Any]:
     from scripts.run_c3_h3_model_qualification import _judge_schema
 
-    return _judge_schema()
+    schema = _judge_schema()
+    # The final campaign keeps the frozen judge dimensions and verdict contract,
+    # but bounds free-form rationale so the 1,500-token response ceiling cannot
+    # turn a valid judge into an incomplete provider response.
+    schema["properties"]["rationale"]["maxLength"] = 1_200
+    return schema
 
 
 def _individual_judge_instructions() -> str:
@@ -465,7 +470,8 @@ def _individual_judge_instructions() -> str:
         "distractor quality as answer-boundary clarity. Add a hard failure for any "
         "incorrect key, unsupported claim, multiple defensible answers, wrong scope, "
         "citation mismatch, answer leakage, opaque learner ID, or misleading "
-        "explanation. Return only the structured judge object."
+        "explanation. Keep the rationale concise (100 words or fewer). Return only "
+        "the structured judge object."
     )
 
 
@@ -499,9 +505,37 @@ def _set_judge_instructions() -> str:
         "dimension from 0 to 4; every dimension must be at least 3 for QUALIFY. "
         "Use hard failures for missing approved objectives, material duplicates, "
         "repeated answer cues, cross-question leakage, objective imbalance, an "
-        "obvious paraphrase set, or wrong Course scope. Return only the structured "
-        "judge object."
+        "obvious paraphrase set, or wrong Course scope. Keep the rationale concise "
+        "(100 words or fewer). Return only the structured judge object."
     )
+
+
+def _resume_question_judges(
+    path: Path,
+    *,
+    phase: str,
+    candidate_number: int,
+    question_number: int,
+) -> tuple[dict[str, Any], list[dict[str, Any]]] | None:
+    if not path.is_file():
+        return None
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    records = payload.get("judges")
+    if not isinstance(records, list) or len(records) < 2:
+        raise FinalCampaignStop("RESUME_JUDGE_ARTIFACT_INVALID")
+    verdicts = [_judge_result(record["raw_output"]) for record in records]
+    if verdicts[0][0] != verdicts[1][0] and len(verdicts) < 3:
+        raise FinalCampaignStop("RESUME_JUDGE_ARTIFACT_MISSING_TIE_BREAK")
+    if any(item[0] != "QUALIFY" for item in verdicts):
+        result = {
+            "status": "REJECT_RETRYABLE",
+            "failure_class": next(
+                (item[1] for item in verdicts if item[1]), "PEDAGOGY_FAILURE"
+            ),
+        }
+    else:
+        result = {"status": "MODEL_QUALIFIED"}
+    return result, records
 
 
 def _judge_question(
@@ -515,7 +549,19 @@ def _judge_question(
     question_number: int,
     artifact_root: Path,
     campaign_id: str,
+    resume_judges: bool = False,
+    judge_attempt: str = "",
 ) -> tuple[dict[str, Any], list[dict[str, Any]]]:
+    artifact_path = artifact_root / phase / f"candidate-{candidate_number}-question-{question_number}-judges.json"
+    if resume_judges:
+        resumed = _resume_question_judges(
+            artifact_path,
+            phase=phase,
+            candidate_number=candidate_number,
+            question_number=question_number,
+        )
+        if resumed is not None:
+            return resumed
     input_payload = {
         "phase": phase,
         "objective": objective_contract.__dict__,
@@ -530,7 +576,8 @@ def _judge_question(
     records: list[dict[str, Any]] = []
     verdicts: list[tuple[str, str | None, str]] = []
     for judge_number in (1, 2):
-        op = "opg_" + _digest({"campaign": campaign_id, "phase": phase, "candidate": candidate_number, "question": question_number, "judge": judge_number})[:32]
+        judge_key: object = judge_number if not judge_attempt else f"{judge_number}:{judge_attempt}"
+        op = "opg_" + _digest({"campaign": campaign_id, "phase": phase, "candidate": candidate_number, "question": question_number, "judge": judge_key})[:32]
         raw, receipt, events = _call_once(
             client,
             purpose="question_judge",
@@ -545,7 +592,8 @@ def _judge_question(
         verdicts.append(result)
         records.append({"judge_number": judge_number, "provider_receipt": receipt.as_dict(), "raw_output": raw, "transport_events": events})
     if verdicts[0][0] != verdicts[1][0]:
-        op = "opg_" + _digest({"campaign": campaign_id, "phase": phase, "candidate": candidate_number, "question": question_number, "judge": "tie-break"})[:32]
+        tie_key: object = "tie-break" if not judge_attempt else f"tie-break:{judge_attempt}"
+        op = "opg_" + _digest({"campaign": campaign_id, "phase": phase, "candidate": candidate_number, "question": question_number, "judge": tie_key})[:32]
         raw, receipt, events = _call_once(
             client,
             purpose="question_judge_tie_break",
@@ -560,8 +608,8 @@ def _judge_question(
         verdicts.append(result)
         records.append({"judge_number": 3, "provider_receipt": receipt.as_dict(), "raw_output": raw, "transport_events": events})
     _write_json(
-        artifact_root / phase / f"candidate-{candidate_number}-question-{question_number}-judges.json",
-        {"schema_version": "c3-final-question-judges-v1", "phase": phase, "candidate_number": candidate_number, "question_number": question_number, "judges": records},
+        artifact_path,
+        {"schema_version": "c3-final-question-judges-v1", "phase": phase, "candidate_number": candidate_number, "question_number": question_number, "judge_attempt": judge_attempt or "initial", "judges": records},
     )
     if any(item[0] != "QUALIFY" for item in verdicts):
         return {"status": "REJECT_RETRYABLE", "failure_class": next((item[1] for item in verdicts if item[1]), "PEDAGOGY_FAILURE")}, records
@@ -577,12 +625,23 @@ def _judge_set(
     allocation: dict[str, int],
     artifact_root: Path,
     campaign_id: str,
+    resume_judges: bool = False,
+    judge_attempt: str = "",
 ) -> dict[str, Any]:
+    artifact_path = artifact_root / phase / f"candidate-{candidate_number}-set-judges.json"
+    if resume_judges and artifact_path.is_file():
+        payload = json.loads(artifact_path.read_text(encoding="utf-8"))
+        records = payload.get("judges")
+        if not isinstance(records, list) or len(records) < 2:
+            raise FinalCampaignStop("RESUME_SET_JUDGE_ARTIFACT_INVALID")
+        verdicts = [str(record["raw_output"]["verdict"]) for record in records]
+        return {"status": "MODEL_QUALIFIED" if all(item == "QUALIFY" for item in verdicts) else "REJECT_RETRYABLE", "judge_count": len(verdicts)}
     payload = {"phase": phase, "allocation": allocation, "questions": questions}
     records: list[dict[str, Any]] = []
     verdicts: list[str] = []
     for judge_number in (1, 2):
-        op = "opg_" + _digest({"campaign": campaign_id, "phase": phase, "candidate": candidate_number, "judge": f"set-{judge_number}"})[:32]
+        judge_key = f"set-{judge_number}" if not judge_attempt else f"set-{judge_number}:{judge_attempt}"
+        op = "opg_" + _digest({"campaign": campaign_id, "phase": phase, "candidate": candidate_number, "judge": judge_key})[:32]
         raw, receipt, events = _call_once(
             client,
             purpose="set_judge",
@@ -606,7 +665,8 @@ def _judge_set(
         verdicts.append(verdict)
         records.append({"judge_number": judge_number, "provider_receipt": receipt.as_dict(), "raw_output": raw, "transport_events": events})
     if verdicts[0] != verdicts[1]:
-        op = "opg_" + _digest({"campaign": campaign_id, "phase": phase, "candidate": candidate_number, "judge": "set-tie-break"})[:32]
+        tie_key = "set-tie-break" if not judge_attempt else f"set-tie-break:{judge_attempt}"
+        op = "opg_" + _digest({"campaign": campaign_id, "phase": phase, "candidate": candidate_number, "judge": tie_key})[:32]
         raw, receipt, events = _call_once(
             client,
             purpose="set_judge_tie_break",
@@ -620,8 +680,8 @@ def _judge_set(
         verdicts.append(raw["verdict"])
         records.append({"judge_number": 3, "provider_receipt": receipt.as_dict(), "raw_output": raw, "transport_events": events})
     _write_json(
-        artifact_root / phase / f"candidate-{candidate_number}-set-judges.json",
-        {"schema_version": "c3-final-set-judges-v1", "phase": phase, "candidate_number": candidate_number, "judges": records},
+        artifact_path,
+        {"schema_version": "c3-final-set-judges-v1", "phase": phase, "candidate_number": candidate_number, "judge_attempt": judge_attempt or "initial", "judges": records},
     )
     return {"status": "MODEL_QUALIFIED" if all(item == "QUALIFY" for item in verdicts) else "REJECT_RETRYABLE", "judge_count": len(verdicts)}
 
@@ -661,6 +721,7 @@ def _run_set_candidate(
     campaign_id: str,
     miss_context: list[dict[str, Any]] | None = None,
     raw_override: dict[str, Any] | None = None,
+    resume_judges: bool = False,
 ) -> dict[str, Any]:
     request_contract = build_practice_generation_request_contract(request).model_dump(mode="json")
     item_limit = request.item_limit
@@ -707,10 +768,23 @@ def _run_set_candidate(
         },
     )
     for index, question in enumerate(normalized_questions, start=1):
-        evaluated, _ = _judge_question(client, question=question, objective_contract=contracts[question["objective_ids"][0]], request=request, phase=phase, candidate_number=candidate_number, question_number=index, artifact_root=artifact_root, campaign_id=campaign_id)
+        judge_attempt = "resume-provider-response-incomplete-v1" if resume_judges else ""
+        evaluated, _ = _judge_question(
+            client,
+            question=question,
+            objective_contract=contracts[question["objective_ids"][0]],
+            request=request,
+            phase=phase,
+            candidate_number=candidate_number,
+            question_number=index,
+            artifact_root=artifact_root,
+            campaign_id=campaign_id,
+            resume_judges=resume_judges,
+            judge_attempt=judge_attempt,
+        )
         if evaluated["status"] != "MODEL_QUALIFIED":
             return {"status": "REJECT_RETRYABLE", "failure_class": evaluated["failure_class"], "failure_detail": f"question {index} failed individual judge"}
-    set_result = _judge_set(client, phase=phase, candidate_number=candidate_number, questions=normalized_questions, allocation=allocation, artifact_root=artifact_root, campaign_id=campaign_id)
+    set_result = _judge_set(client, phase=phase, candidate_number=candidate_number, questions=normalized_questions, allocation=allocation, artifact_root=artifact_root, campaign_id=campaign_id, resume_judges=resume_judges, judge_attempt="resume-provider-response-incomplete-v1" if resume_judges else "")
     if set_result["status"] != "MODEL_QUALIFIED":
         return {"status": "REJECT_RETRYABLE", "failure_class": "SET_COHERENCE_FAILURE", "failure_detail": "set-level judge rejected candidate"}
     qualified = {"phase": phase, "candidate_number": candidate_number, "questions": normalized_questions, "allocation": allocation, "status": "MODEL_QUALIFIED"}
@@ -793,7 +867,7 @@ def main() -> int:
         accepted = {item: list(contracts[item].accepted_answers) for item in objective_ids if contracts[item].accepted_answers}
         request = _request(campaign_id=args.campaign_id, phase=args.phase, candidate_number=candidate_number, material=material, evidence=evidence, purpose="practice", objective_ids=objective_ids, required_claims=required_claims, accepted_answers=accepted, item_limit=item_limit, focus="Bounded Biology 101 cellular respiration Practice set")
         try:
-            result = _run_set_candidate(client, phase=args.phase, candidate_number=candidate_number, contracts=contracts, request=request, artifact_root=artifact_root, allocation=allocation, campaign_id=args.campaign_id, miss_context=miss_context, raw_override=raw_override)
+            result = _run_set_candidate(client, phase=args.phase, candidate_number=candidate_number, contracts=contracts, request=request, artifact_root=artifact_root, allocation=allocation, campaign_id=args.campaign_id, miss_context=miss_context, raw_override=raw_override, resume_judges=True)
             if result["status"] == "MODEL_QUALIFIED":
                 result["replayed_generation"] = True
         except CampaignStop as exc:

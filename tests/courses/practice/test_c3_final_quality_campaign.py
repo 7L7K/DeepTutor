@@ -9,6 +9,8 @@ from scripts.run_c3_final_quality_campaign import (
     FINAL_CONTRACT_ID,
     FINAL_INDIVIDUAL_JUDGE_OUTPUT_LIMIT,
     FINAL_PROVIDER_POLICY_ID,
+    _individual_judge_instructions,
+    _individual_judge_schema,
     _objective_contracts,
     _normalize_question,
     _request,
@@ -274,5 +276,7 @@ def test_contract_identifier_remains_versioned() -> None:
     assert FINAL_CONTRACT_ID == "c3-final-learning-loop-v1"
     assert FINAL_INDIVIDUAL_JUDGE_OUTPUT_LIMIT == 1500
     assert FINAL_PROVIDER_POLICY_ID == "c3-final-provider-policy-daily-output-disabled-v1"
+    assert _individual_judge_schema()["properties"]["rationale"]["maxLength"] == 1200
+    assert "100 words or fewer" in _individual_judge_instructions()
     payload = json.loads((REFERENCE_ROOT / "assessment_contracts_v4_generation_only.json").read_text())
     assert payload["status"] == "FROZEN_GENERATION_ONLY"
