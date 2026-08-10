@@ -1,0 +1,36 @@
+{
+  "answer_contract": {
+    "correct_option_id": "opt_b5a227121ba8e1b387f302f171f16c37",
+    "kind": "single_choice_v1"
+  },
+  "citation_evidence_ids": [
+    "ev_resp03_fermentation_context",
+    "ev_resp03_regenerates_nad",
+    "ev_resp03_no_oxygen_low_atp",
+    "ev_resp03_aerobic_comparison"
+  ],
+  "explanation": "Fermentation preserves glycolysis by regenerating NAD+. It uses no oxygen as a terminal electron acceptor and produces much less ATP per glucose than aerobic respiration.",
+  "objective_ids": [
+    "OBJ-RESP-03"
+  ],
+  "options": [
+    {
+      "option_id": "opt_851331c21170a3e855fd7fcb1eadf528",
+      "text": "Fermentation preserves glycolysis, fails to regenerate NAD+, lacks oxygen as terminal acceptor, and yields less ATP per glucose."
+    },
+    {
+      "option_id": "opt_671bf1eaaff5b563d1eb230ebccb63ca",
+      "text": "Fermentation preserves glycolysis, regenerates NAD+, uses oxygen as terminal acceptor, and yields less ATP per glucose."
+    },
+    {
+      "option_id": "opt_40a117b0999b141a68331814355029c1",
+      "text": "Fermentation preserves glycolysis, regenerates NAD+, lacks oxygen as terminal acceptor, and yields similar ATP per glucose."
+    },
+    {
+      "option_id": "opt_b5a227121ba8e1b387f302f171f16c37",
+      "text": "Fermentation preserves glycolysis, regenerates NAD+, lacks oxygen as terminal acceptor, and yields less ATP per glucose."
+    }
+  ],
+  "prompt": "Which statement correctly contrasts fermentation with aerobic respiration?",
+  "question_type": "single_choice"
+}

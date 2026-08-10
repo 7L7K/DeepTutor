@@ -1,0 +1,83 @@
+{
+  "campaign_id": "2026-08-09-teeechr-c3-h3-model-qualification-v4-delta3",
+  "candidate_number": 1,
+  "consensus": "QUALIFY",
+  "judges": [
+    {
+      "judge_number": 1,
+      "provider_receipt": {
+        "actual_model": "gpt-5.6-luna",
+        "cached_input_tokens": 0,
+        "estimated_cost_microusd": 902,
+        "input_tokens": 1154,
+        "latency_ms": 5351,
+        "operation_id": "opg_de29ef08866f758b4bacff2def86b4d6",
+        "output_tokens": 559,
+        "purpose": "judge",
+        "reasoning_effort": "high",
+        "reasoning_tokens": 385,
+        "request_id": "resp_03699a706369027d016a7937d7e3a8819c892df802072c9460",
+        "settled_spend_microusd": 27944,
+        "store": false
+      },
+      "raw_output": {
+        "dimensions": {
+          "answer_cue_resistance": 4,
+          "cognitive_target_alignment": 4,
+          "course_evidence_support": 4,
+          "distractor_quality": 4,
+          "explanation_quality": 4,
+          "factual_correctness": 4,
+          "grading_fairness": 4,
+          "objective_alignment": 4,
+          "scope_and_difficulty": 4,
+          "single_correct_answer": 4
+        },
+        "failure_class": null,
+        "hard_failures": [],
+        "rationale": "Option D correctly states all four required claims: fermentation preserves glycolysis, regenerates NAD+, does not use oxygen as the terminal electron acceptor, and produces less ATP per glucose than aerobic respiration. Each distractor contains exactly one false claim, options are balanced in length, the explanation is evidence-supported, and the item aligns with the stated contrast objective.",
+        "verdict": "QUALIFY"
+      },
+      "transport_events": []
+    },
+    {
+      "judge_number": 2,
+      "provider_receipt": {
+        "actual_model": "gpt-5.6-luna",
+        "cached_input_tokens": 1151,
+        "estimated_cost_microusd": 531,
+        "input_tokens": 1154,
+        "latency_ms": 4423,
+        "operation_id": "opg_5eb3a17cc3acb513db72f4ece0e91b32",
+        "output_tokens": 422,
+        "purpose": "judge",
+        "reasoning_effort": "high",
+        "reasoning_tokens": 239,
+        "request_id": "resp_00d6f31a17566e51016a7937dd3ec481a3b5470cdd558a0d9e",
+        "settled_spend_microusd": 28475,
+        "store": false
+      },
+      "raw_output": {
+        "dimensions": {
+          "answer_cue_resistance": 4,
+          "cognitive_target_alignment": 4,
+          "course_evidence_support": 4,
+          "distractor_quality": 4,
+          "explanation_quality": 4,
+          "factual_correctness": 4,
+          "grading_fairness": 4,
+          "objective_alignment": 4,
+          "scope_and_difficulty": 4,
+          "single_correct_answer": 4
+        },
+        "failure_class": null,
+        "hard_failures": [],
+        "rationale": "The prompt and options directly assess the stated contrast among glycolysis preservation, NAD+ regeneration, oxygen’s terminal-acceptor role, and ATP yield. Option D is the only fully correct statement, while each distractor contains exactly one false claim. The explanation is accurate, supported by the cited evidence, and clearly justifies the answer. Options are balanced in structure and length without material answer cues.",
+        "verdict": "QUALIFY"
+      },
+      "transport_events": []
+    }
+  ],
+  "objective_id": "OBJ-RESP-03",
+  "schema_version": "c3-h3-judge-receipt-v1"
+}

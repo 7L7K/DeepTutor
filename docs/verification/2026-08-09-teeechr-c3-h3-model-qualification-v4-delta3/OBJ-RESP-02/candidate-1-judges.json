@@ -1,0 +1,83 @@
+{
+  "campaign_id": "2026-08-09-teeechr-c3-h3-model-qualification-v4-delta3",
+  "candidate_number": 1,
+  "consensus": "QUALIFY",
+  "judges": [
+    {
+      "judge_number": 1,
+      "provider_receipt": {
+        "actual_model": "gpt-5.6-luna",
+        "cached_input_tokens": 0,
+        "estimated_cost_microusd": 1195,
+        "input_tokens": 1167,
+        "latency_ms": 6710,
+        "operation_id": "opg_42a5cbefba1fee6ba5d3daa44aa19cda",
+        "output_tokens": 801,
+        "purpose": "judge",
+        "reasoning_effort": "high",
+        "reasoning_tokens": 629,
+        "request_id": "resp_02c8dbccc5595a32016a7937c19ccc81a09ab89e35bba8fd10",
+        "settled_spend_microusd": 24467,
+        "store": false
+      },
+      "raw_output": {
+        "dimensions": {
+          "answer_cue_resistance": 4,
+          "cognitive_target_alignment": 4,
+          "course_evidence_support": 4,
+          "distractor_quality": 4,
+          "explanation_quality": 4,
+          "factual_correctness": 4,
+          "grading_fairness": 4,
+          "objective_alignment": 4,
+          "scope_and_difficulty": 4,
+          "single_correct_answer": 4
+        },
+        "failure_class": null,
+        "hard_failures": [],
+        "rationale": "The keyed option accurately states all required claims and is fully supported by the approved evidence. Each distractor contains one distinct false claim while preserving the other relevant claims, option lengths are balanced, and the explanation clearly identifies why each distractor is incorrect. The item aligns with the objective and explanation-level cognitive target and has one defensible correct answer.",
+        "verdict": "QUALIFY"
+      },
+      "transport_events": []
+    },
+    {
+      "judge_number": 2,
+      "provider_receipt": {
+        "actual_model": "gpt-5.6-luna",
+        "cached_input_tokens": 1164,
+        "estimated_cost_microusd": 726,
+        "input_tokens": 1167,
+        "latency_ms": 5943,
+        "operation_id": "opg_f9ff677410d72b5a02b5262ae4ba080c",
+        "output_tokens": 585,
+        "purpose": "judge",
+        "reasoning_effort": "high",
+        "reasoning_tokens": 399,
+        "request_id": "resp_091e96f096b9d4f5016a7937c85a9481a2b65f94240034704a",
+        "settled_spend_microusd": 25193,
+        "store": false
+      },
+      "raw_output": {
+        "dimensions": {
+          "answer_cue_resistance": 4,
+          "cognitive_target_alignment": 4,
+          "course_evidence_support": 4,
+          "distractor_quality": 4,
+          "explanation_quality": 4,
+          "factual_correctness": 4,
+          "grading_fairness": 4,
+          "objective_alignment": 4,
+          "scope_and_difficulty": 3,
+          "single_correct_answer": 4
+        },
+        "failure_class": null,
+        "hard_failures": [],
+        "rationale": "The keyed option accurately includes all four required claims and is fully supported by the approved evidence. Each distractor changes exactly one claim while preserving the others, producing one clearly correct answer with balanced wording and no material answer cues. The explanation correctly identifies and explains each distractor’s error. The item aligns with the objective and explanatory cognitive target, though the task remains relatively straightforward because the options differ by only one claim.",
+        "verdict": "QUALIFY"
+      },
+      "transport_events": []
+    }
+  ],
+  "objective_id": "OBJ-RESP-02",
+  "schema_version": "c3-h3-judge-receipt-v1"
+}

@@ -1,0 +1,36 @@
+{
+  "answer_contract": {
+    "correct_option_id": "opt_2b58efabe953bdc31fc97f311e98ea3a",
+    "kind": "single_choice_v1"
+  },
+  "citation_evidence_ids": [
+    "ev_resp02_terminal_acceptor",
+    "ev_resp02_accepts_electrons",
+    "ev_resp02_forms_water",
+    "ev_resp02_flow_continues"
+  ],
+  "explanation": "Oxygen is the terminal electron acceptor. It accepts electrons and protons to form water, which permits electron flow through the aerobic electron transport chain to continue. Option B incorrectly identifies oxygen as the initial electron donor; option C incorrectly excludes protons; and option D incorrectly replaces water with another product.",
+  "objective_ids": [
+    "OBJ-RESP-02"
+  ],
+  "options": [
+    {
+      "option_id": "opt_2b58efabe953bdc31fc97f311e98ea3a",
+      "text": "Oxygen is the terminal electron acceptor, accepts electrons and protons to form water, and permits aerobic electron flow to continue."
+    },
+    {
+      "option_id": "opt_e93aee38a9f8b4dc066b921d6e6a907c",
+      "text": "Oxygen is the initial electron donor, accepts electrons and protons to form water, and permits aerobic electron flow to continue."
+    },
+    {
+      "option_id": "opt_2f9df3054599c469cdc59e9cf2e57609",
+      "text": "Oxygen is the terminal electron acceptor, accepts electrons but not protons to form water, and permits aerobic electron flow to continue."
+    },
+    {
+      "option_id": "opt_fe779a7940a8f36da1772dd3adf1e41e",
+      "text": "Oxygen is the terminal electron acceptor, accepts electrons and protons to form another product, and permits aerobic electron flow to continue."
+    }
+  ],
+  "prompt": "Which statement best explains oxygen’s role at the end of the aerobic electron transport chain?",
+  "question_type": "single_choice"
+}
