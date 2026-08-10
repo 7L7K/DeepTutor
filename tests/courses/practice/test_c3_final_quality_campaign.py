@@ -15,6 +15,7 @@ from scripts.run_c3_final_quality_campaign import (
     _normalize_question,
     _request,
     _set_failure,
+    _instructions,
 )
 from scripts.run_c3_luna_probe import _material, _objective_evidence
 
@@ -226,6 +227,36 @@ def test_remediation_is_bounded_to_two_through_four_items() -> None:
     )
     assert failure == "OBJECTIVE_ALLOCATION_FAILURE"
     assert "OBJ-RESP-03" in detail
+
+
+def test_remediation_rejects_repeated_correct_option_positions() -> None:
+    contracts, request = _request_for_campaign()
+    remediation = [
+        {**_valid_primary()[2], "objective_ids": ["OBJ-RESP-02"], "remediation_purpose": "direct_correction"},
+        {**_valid_primary()[4], "correct_option_key": "A", "prompt": "How does fermentation compare with aerobic respiration?", "remediation_purpose": "contrast"},
+    ]
+    failure, detail, failures = _set_failure(
+        remediation,
+        phase="remediation",
+        allocation={"OBJ-RESP-02": 1, "OBJ-RESP-03": 1},
+        contracts=contracts,
+        request=request,
+    )
+    assert failure == "ANSWER_CUE"
+    assert "correct-option position" in detail
+    assert failures
+
+
+def test_remediation_instructions_bind_answer_position_and_structure_diversity() -> None:
+    contracts, _ = _request_for_campaign()
+    instructions = _instructions(
+        "remediation",
+        contracts,
+        {"OBJ-RESP-02": 1, "OBJ-RESP-03": 1},
+        [{"objective_id": "OBJ-RESP-02"}, {"objective_id": "OBJ-RESP-03"}],
+    )
+    assert "different correct option position" in instructions
+    assert "distinct distractor constructions" in instructions
 
 
 def test_malformed_question_collections_fail_closed() -> None:

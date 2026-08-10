@@ -443,6 +443,18 @@ def _set_failure(
                 "failure_class": "OBJECTIVE_ALLOCATION_FAILURE",
                 "detail": f"remediation must cover exact misses; missing={missing}, unapproved={unapproved}",
             })
+        correct_option_keys = [
+            str(question.get("correct_option_key"))
+            for question in questions
+            if isinstance(question, dict)
+            and question.get("question_type") == "single_choice_v1"
+            and question.get("correct_option_key") in OPTION_KEYS
+        ]
+        if len(correct_option_keys) >= 2 and len(set(correct_option_keys)) != len(correct_option_keys):
+            failures.append({
+                "failure_class": "ANSWER_CUE",
+                "detail": "remediation single-choice items repeat a correct-option position",
+            })
     if failures:
         first = failures[0]
         return str(first["failure_class"]), str(first["detail"]), failures
@@ -687,6 +699,14 @@ def _judge_set(
 
 
 def _instructions(phase: str, contracts: dict[str, ObjectiveContract], allocation: dict[str, int], miss_context: list[dict[str, Any]] | None) -> str:
+    remediation_constraints = (
+        " For remediation sets with two or more single-choice items, use a different "
+        "correct option position for each item; never key every item to A. Use "
+        "distinct distractor constructions across items rather than repeating one "
+        "all-clauses-correct statement with one clause mutated."
+        if phase == "remediation"
+        else ""
+    )
     return (
         "Generate only the requested complete Course Practice set. Use the exact "
         "approved objective allocation and frozen assessment contracts supplied in "
@@ -697,7 +717,8 @@ def _instructions(phase: str, contracts: dict[str, ObjectiveContract], allocatio
         "distractor must contain exactly one false claim and option word counts may "
         "differ by at most 3. For bounded short answers, preserve the frozen accepted "
         "answer variants. Use remediation_purpose=none except in remediation phase. "
-        "Return only the strict structured object.\n\n"
+        + remediation_constraints
+        + " Return only the strict structured object.\n\n"
         + json.dumps({
             "campaign_contract_id": FINAL_CONTRACT_ID,
             "phase": phase,
