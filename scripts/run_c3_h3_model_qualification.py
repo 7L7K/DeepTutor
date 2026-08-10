@@ -218,6 +218,8 @@ class CampaignClient:
                 estimated_cost_microusd=reserved_ceiling,
             )
         except ProviderUsageError as exc:
+            if "daily" in str(exc).casefold():
+                raise CampaignStop("STOP_DAILY_PROVIDER_LIMIT") from exc
             raise CampaignStop("STOP_BUDGET_EXHAUSTED") from exc
 
         started = time.perf_counter()
