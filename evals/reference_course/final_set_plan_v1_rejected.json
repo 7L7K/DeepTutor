@@ -1,0 +1,17 @@
+{
+  "schema_version": "c3-final-set-plan-v1",
+  "status": "REJECTED_SET_DESIGN_REDUNDANCY",
+  "source_packet_revision": "reference-course-c3-v1",
+  "campaign_contract_id": "c3-final-learning-loop-v1",
+  "allocation": {
+    "OBJ-RESP-01": 2,
+    "OBJ-RESP-02": 2,
+    "OBJ-RESP-03": 1
+  },
+  "historical_artifacts": "The Candidate 3 raw generation, normalized questions, individual judges, and set judges remain immutable under the 2026-08-09 final-learning-loop-v1 verification directory.",
+  "rejection": {
+    "failure_class": "SET_REDUNDANCY_FAILURE",
+    "reason": "The repeated OBJ-RESP-01 and OBJ-RESP-02 questions were materially near-duplicate assessment targets with repeated answer cues and low cognitive variety."
+  },
+  "next_version": "c3-final-set-plan-v2"
+}

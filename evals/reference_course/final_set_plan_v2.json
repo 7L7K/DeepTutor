@@ -1,0 +1,91 @@
+{
+  "schema_version": "c3-final-set-plan-v2",
+  "status": "FROZEN",
+  "source_packet_revision": "reference-course-c3-v1",
+  "campaign_contract_id": "c3-final-set-plan-v2",
+  "assessment_format": "bounded_course_practice_v2",
+  "item_count": 5,
+  "allocation": {
+    "OBJ-RESP-01": 1,
+    "OBJ-RESP-02": 2,
+    "OBJ-RESP-03": 2
+  },
+  "composition_rule": "Repeated objectives require distinct supported assessment_focus_id values and distinct required_claim_ids bundles.",
+  "slots": [
+    {
+      "slot_id": "slot_resp01_conversion_identity",
+      "objective_id": "OBJ-RESP-01",
+      "assessment_focus_id": "resp01_conversion_identity",
+      "focus_description": "Identify the supported conversion performed during pyruvate oxidation.",
+      "required_claim_ids": ["pyruvate_to_acetyl_coa"],
+      "eligible_evidence_ids": ["ev_resp01_conversion"],
+      "question_type": "bounded_short_answer_v1",
+      "grading_contract_kind": "bounded_short_answer_v1"
+    },
+    {
+      "slot_id": "slot_resp02_terminal_mechanism",
+      "objective_id": "OBJ-RESP-02",
+      "assessment_focus_id": "resp02_terminal_acceptor_mechanism",
+      "focus_description": "Explain what oxygen accepts at the end of the aerobic electron transport chain and its immediate product.",
+      "required_claim_ids": [
+        "oxygen_is_terminal_acceptor",
+        "oxygen_accepts_electrons_and_protons"
+      ],
+      "eligible_evidence_ids": [
+        "ev_resp02_terminal_acceptor",
+        "ev_resp02_accepts_electrons",
+        "ev_resp02_forms_water"
+      ],
+      "question_type": "single_choice_v1",
+      "grading_contract_kind": "single_choice_v1"
+    },
+    {
+      "slot_id": "slot_resp02_flow_consequence",
+      "objective_id": "OBJ-RESP-02",
+      "assessment_focus_id": "resp02_flow_continuation_consequence",
+      "focus_description": "Explain why oxygen's terminal-acceptor role allows aerobic electron flow to continue and forms water.",
+      "required_claim_ids": [
+        "oxygen_forms_water",
+        "terminal_acceptor_enables_flow"
+      ],
+      "eligible_evidence_ids": [
+        "ev_resp02_forms_water",
+        "ev_resp02_flow_continues"
+      ],
+      "question_type": "single_choice_v1",
+      "grading_contract_kind": "single_choice_v1"
+    },
+    {
+      "slot_id": "slot_resp03_nad_continuity",
+      "objective_id": "OBJ-RESP-03",
+      "assessment_focus_id": "resp03_nad_regeneration_continuity",
+      "focus_description": "Explain how fermentation regenerates NAD+ so glycolysis can continue.",
+      "required_claim_ids": [
+        "fermentation_preserves_glycolysis",
+        "fermentation_regenerates_nad"
+      ],
+      "eligible_evidence_ids": [
+        "ev_resp03_fermentation_context",
+        "ev_resp03_regenerates_nad"
+      ],
+      "question_type": "single_choice_v1",
+      "grading_contract_kind": "single_choice_v1"
+    },
+    {
+      "slot_id": "slot_resp03_energy_oxygen_contrast",
+      "objective_id": "OBJ-RESP-03",
+      "assessment_focus_id": "resp03_oxygen_energy_contrast",
+      "focus_description": "Contrast fermentation with aerobic respiration by oxygen use and ATP yield.",
+      "required_claim_ids": [
+        "fermentation_no_oxygen_acceptor",
+        "fermentation_lower_atp"
+      ],
+      "eligible_evidence_ids": [
+        "ev_resp03_no_oxygen_low_atp",
+        "ev_resp03_aerobic_comparison"
+      ],
+      "question_type": "single_choice_v1",
+      "grading_contract_kind": "single_choice_v1"
+    }
+  ]
+}
