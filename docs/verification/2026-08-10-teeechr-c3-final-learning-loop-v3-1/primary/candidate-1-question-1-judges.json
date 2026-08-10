@@ -1,0 +1,85 @@
+{
+  "candidate_number": 1,
+  "judge_attempt": "initial",
+  "judges": [
+    {
+      "judge_number": 1,
+      "provider_receipt": {
+        "actual_model": "gpt-5.6-luna",
+        "cached_input_tokens": 0,
+        "estimated_cost_microusd": 613,
+        "input_tokens": 897,
+        "latency_ms": 3957,
+        "operation_id": "opg_e46cffe14aa718b121f784bacf1aad23",
+        "output_tokens": 361,
+        "provider_policy_id": "c3-final-provider-policy-daily-output-disabled-v1",
+        "purpose": "question_judge",
+        "reasoning_effort": "high",
+        "reasoning_tokens": 171,
+        "request_id": "resp_0dc79d6c73a317c9016a7a147e93d481a2b58c7e2b3b8332f1",
+        "settled_spend_microusd": 191253,
+        "store": false
+      },
+      "raw_output": {
+        "dimensions": {
+          "answer_cue_resistance": 4,
+          "cognitive_target_alignment": 4,
+          "course_evidence_support": 4,
+          "distractor_quality": 4,
+          "explanation_quality": 4,
+          "factual_correctness": 4,
+          "grading_fairness": 4,
+          "objective_alignment": 4,
+          "scope_and_difficulty": 4,
+          "single_correct_answer": 4
+        },
+        "failure_class": null,
+        "hard_failures": [],
+        "rationale": "The prompt directly assesses the frozen objective: identifying the conversion in pyruvate oxidation. The keyed answer and explanation are factually correct and exactly supported by the approved evidence. Accepted-answer variants define a clear response boundary, enabling fair grading without requiring extraneous claims. The item has no options, answer leakage, unsupported claims, citation mismatch, opaque learner identifier, or misleading explanation. Scope and cognitive demand are appropriately limited to supported identification.",
+        "verdict": "QUALIFY"
+      },
+      "transport_events": []
+    },
+    {
+      "judge_number": 2,
+      "provider_receipt": {
+        "actual_model": "gpt-5.6-luna",
+        "cached_input_tokens": 0,
+        "estimated_cost_microusd": 719,
+        "input_tokens": 897,
+        "latency_ms": 5508,
+        "operation_id": "opg_14545bda1ac99c760524886f7f06a70b",
+        "output_tokens": 449,
+        "provider_policy_id": "c3-final-provider-policy-daily-output-disabled-v1",
+        "purpose": "question_judge",
+        "reasoning_effort": "high",
+        "reasoning_tokens": 260,
+        "request_id": "resp_0fb2c545c9bbf7fb016a7a1482a8ac819d821d8a23a2d8e104",
+        "settled_spend_microusd": 191972,
+        "store": false
+      },
+      "raw_output": {
+        "dimensions": {
+          "answer_cue_resistance": 4,
+          "cognitive_target_alignment": 4,
+          "course_evidence_support": 4,
+          "distractor_quality": 4,
+          "explanation_quality": 4,
+          "factual_correctness": 4,
+          "grading_fairness": 4,
+          "objective_alignment": 4,
+          "scope_and_difficulty": 4,
+          "single_correct_answer": 4
+        },
+        "failure_class": null,
+        "hard_failures": [],
+        "rationale": "The prompt directly assesses the frozen objective: identifying the conversion of pyruvate to acetyl-CoA. The keyed response and explanation are factually correct and explicitly supported by the approved evidence. Accepted-answer variants provide fair grading for equivalent wording, while the bounded response format keeps the answer boundary clear. The item has a single defensible answer, appropriate scope and difficulty, and no citation, leakage, or learner-identification issues.",
+        "verdict": "QUALIFY"
+      },
+      "transport_events": []
+    }
+  ],
+  "phase": "primary",
+  "question_number": 1,
+  "schema_version": "c3-final-question-judges-v1"
+}

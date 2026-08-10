@@ -1,0 +1,105 @@
+{
+  "candidate_number": 2,
+  "phase": "repeat",
+  "questions": [
+    {
+      "accepted_answers": [
+        "pyruvate is converted to acetyl-coa",
+        "pyruvate becomes acetyl-coa",
+        "pyruvate converts to acetyl-coa",
+        "conversion of pyruvate to acetyl-coa",
+        "pyruvate is converted to acetyl coenzyme a"
+      ],
+      "answer_text": "pyruvate is converted to acetyl-coa",
+      "citation_evidence_ids": [
+        "ev_resp01_conversion"
+      ],
+      "correct_option_key": "",
+      "explanation": "Pyruvate oxidation converts pyruvate to acetyl-CoA.",
+      "objective_ids": [
+        "OBJ-RESP-01"
+      ],
+      "options": [],
+      "prompt": "What conversion occurs during pyruvate oxidation?",
+      "question_type": "bounded_short_answer_v1",
+      "remediation_purpose": "none",
+      "slot_id": "slot_resp01_conversion_identity"
+    },
+    {
+      "accepted_answers": [],
+      "answer_text": "",
+      "citation_evidence_ids": [
+        "ev_resp02_terminal_acceptor",
+        "ev_resp02_accepts_electrons",
+        "ev_resp02_forms_water",
+        "ev_resp02_flow_continues"
+      ],
+      "correct_option_key": "A",
+      "explanation": "Oxygen is the terminal electron acceptor. It accepts electrons and protons to form water, and this final acceptance allows aerobic electron flow to continue; without it, flow cannot continue normally. The other choices each change one of these required facts.",
+      "objective_ids": [
+        "OBJ-RESP-02"
+      ],
+      "options": [
+        {
+          "option_key": "A",
+          "text": "Oxygen is the terminal electron acceptor; it accepts electrons and protons, forms water, and allows aerobic electron flow to continue."
+        },
+        {
+          "option_key": "B",
+          "text": "Oxygen is not the terminal electron acceptor; it accepts electrons and protons, forms water, and allows aerobic electron flow to continue."
+        },
+        {
+          "option_key": "C",
+          "text": "Oxygen is the terminal electron acceptor; it accepts only electrons, forms water, and allows aerobic electron flow to continue."
+        },
+        {
+          "option_key": "D",
+          "text": "Oxygen is the terminal electron acceptor; it accepts electrons and protons, does not form water, and allows aerobic electron flow to continue."
+        }
+      ],
+      "prompt": "Which statement best describes oxygen's complete role at the end of aerobic electron transport?",
+      "question_type": "single_choice_v1",
+      "remediation_purpose": "none",
+      "slot_id": "slot_resp02_complete_terminal_role"
+    },
+    {
+      "accepted_answers": [],
+      "answer_text": "",
+      "citation_evidence_ids": [
+        "ev_resp03_fermentation_context",
+        "ev_resp03_regenerates_nad",
+        "ev_resp03_no_oxygen_low_atp",
+        "ev_resp03_aerobic_comparison"
+      ],
+      "correct_option_key": "B",
+      "explanation": "Fermentation does not replace glycolysis; it keeps glycolysis running by regenerating NAD+. It uses no oxygen as a terminal electron acceptor and produces much less ATP per glucose than aerobic respiration. The other choices incorrectly change one of these points.",
+      "objective_ids": [
+        "OBJ-RESP-03"
+      ],
+      "options": [
+        {
+          "option_key": "A",
+          "text": "Fermentation replaces glycolysis while regenerating NAD+; it uses no oxygen as terminal electron acceptor and produces much less ATP per glucose than aerobic respiration."
+        },
+        {
+          "option_key": "B",
+          "text": "Fermentation keeps glycolysis running by regenerating NAD+; it uses no oxygen as terminal electron acceptor and produces much less ATP per glucose than aerobic respiration."
+        },
+        {
+          "option_key": "C",
+          "text": "Fermentation keeps glycolysis running but does not regenerate NAD+; it uses no oxygen as terminal electron acceptor and produces much less ATP per glucose than aerobic respiration."
+        },
+        {
+          "option_key": "D",
+          "text": "Fermentation keeps glycolysis running by regenerating NAD+; it uses oxygen as terminal electron acceptor and produces much less ATP per glucose than aerobic respiration."
+        }
+      ],
+      "prompt": "Which statement best contrasts fermentation with aerobic respiration?",
+      "question_type": "single_choice_v1",
+      "remediation_purpose": "none",
+      "slot_id": "slot_resp03_complete_fermentation_contrast"
+    }
+  ],
+  "schema_version": "c3-final-normalized-questions-v3",
+  "set_plan": "c3-final-set-plan-v3"
+}

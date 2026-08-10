@@ -1,0 +1,46 @@
+{
+  "campaign_id": "2026-08-10-teeechr-c3-final-learning-loop-v3-1-remediation",
+  "phases": [
+    {
+      "failures": [
+        {
+          "candidate_number": 1,
+          "failure_class": "SET_COHERENCE_FAILURE",
+          "failure_detail": "set-level judge rejected candidate"
+        },
+        {
+          "candidate_number": 2,
+          "failure_class": "SET_COHERENCE_FAILURE",
+          "failure_detail": "set-level judge rejected candidate"
+        },
+        {
+          "candidate_number": 3,
+          "failure_class": "SET_COHERENCE_FAILURE",
+          "failure_detail": "set-level judge rejected candidate"
+        }
+      ],
+      "phase": "remediation",
+      "status": "REPEATED_QUALIFICATION_FAILURE"
+    }
+  ],
+  "provider_policy": {
+    "daily_output_token_limit": {
+      "enforced": false,
+      "historical_ledger_preserved": true,
+      "scope": "final_c3_campaign_only"
+    },
+    "max_provider_spend_microusd": 500000,
+    "model": "gpt-5.6-luna",
+    "policy_id": "c3-final-provider-policy-daily-output-disabled-v1",
+    "reasoning": "high",
+    "store": false
+  },
+  "schema_version": "c3-final-quality-campaign-v1",
+  "usage_summary": {
+    "admitted_cost_microusd": 250740,
+    "alert_threshold_microusd": 250000,
+    "remaining_cost_microusd": 249260,
+    "reserved_or_uncertain_cost_microusd": 39816,
+    "settled_cost_microusd": 210924
+  }
+}

@@ -1,0 +1,82 @@
+{
+  "candidate_number": 1,
+  "judge_attempt": "initial",
+  "judges": [
+    {
+      "judge_number": 1,
+      "provider_receipt": {
+        "actual_model": "gpt-5.6-luna",
+        "cached_input_tokens": 0,
+        "estimated_cost_microusd": 924,
+        "input_tokens": 945,
+        "latency_ms": 6424,
+        "operation_id": "opg_9ad1174000fabc9202754f0243cfaa57",
+        "output_tokens": 612,
+        "provider_policy_id": "c3-final-provider-policy-daily-output-disabled-v1",
+        "purpose": "set_judge",
+        "reasoning_effort": "high",
+        "reasoning_tokens": 418,
+        "request_id": "resp_09f12c084b1c4b7d016a7a177266a8819eab5421063c926591",
+        "settled_spend_microusd": 258219,
+        "store": false
+      },
+      "raw_output": {
+        "dimensions": {
+          "assessment_coherence": 4,
+          "cognitive_variety": 3,
+          "course_scope": 4,
+          "cross_question_answer_cues": 3,
+          "difficulty_balance": 3,
+          "objective_coverage": 4,
+          "overall_student_usefulness": 4,
+          "question_distinctness": 4,
+          "redundancy": 3
+        },
+        "failure_class": null,
+        "hard_failures": [],
+        "rationale": "Both approved objectives are represented exactly once with clearly distinct questions: one addresses oxygen’s terminal-acceptor role, while the other contrasts fermentation with aerobic respiration. The set is coherent and appropriately scoped, with useful corrective explanations and evidence citations. Cognitive variety and difficulty are adequate, though both items use similar single-choice, multi-claim formats and relatively transparent distractors. The shared oxygen/terminal-acceptor terminology creates mild conceptual overlap but does not duplicate content or provide a sufficient answer to the other question.",
+        "verdict": "QUALIFY"
+      },
+      "transport_events": []
+    },
+    {
+      "judge_number": 2,
+      "provider_receipt": {
+        "actual_model": "gpt-5.6-luna",
+        "cached_input_tokens": 0,
+        "estimated_cost_microusd": 915,
+        "input_tokens": 945,
+        "latency_ms": 6649,
+        "operation_id": "opg_61551ec394052ed410ab9eb523d20ca6",
+        "output_tokens": 605,
+        "provider_policy_id": "c3-final-provider-policy-daily-output-disabled-v1",
+        "purpose": "set_judge",
+        "reasoning_effort": "high",
+        "reasoning_tokens": 431,
+        "request_id": "resp_06f45260b31a8fb4016a7a1778cdc0819db3d24a0131cc5288",
+        "settled_spend_microusd": 259134,
+        "store": false
+      },
+      "raw_output": {
+        "dimensions": {
+          "assessment_coherence": 4,
+          "cognitive_variety": 3,
+          "course_scope": 4,
+          "cross_question_answer_cues": 4,
+          "difficulty_balance": 3,
+          "objective_coverage": 4,
+          "overall_student_usefulness": 4,
+          "question_distinctness": 4,
+          "redundancy": 4
+        },
+        "failure_class": null,
+        "hard_failures": [],
+        "rationale": "The set covers both allocated objectives exactly once with accurate, relevant questions. The items are distinct: one targets oxygen’s terminal-acceptor role, while the other contrasts fermentation with aerobic respiration. Both provide clear remediation-oriented discrimination, though cognitive variety and difficulty are moderate because both use conventional single-choice recognition formats and are relatively straightforward. Options are parallel and do not leak answers across questions or create material duplication.",
+        "verdict": "QUALIFY"
+      },
+      "transport_events": []
+    }
+  ],
+  "phase": "remediation",
+  "schema_version": "c3-final-set-judges-v1"
+}

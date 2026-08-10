@@ -1,0 +1,125 @@
+{
+  "candidate_number": 1,
+  "judge_attempt": "initial",
+  "judges": [
+    {
+      "judge_number": 1,
+      "provider_receipt": {
+        "actual_model": "gpt-5.6-luna",
+        "cached_input_tokens": 0,
+        "estimated_cost_microusd": 2271,
+        "input_tokens": 966,
+        "latency_ms": 17236,
+        "operation_id": "opg_94b0d11250e0f84613549cfcb1b069af",
+        "output_tokens": 1731,
+        "provider_policy_id": "c3-final-provider-policy-daily-output-disabled-v1",
+        "purpose": "set_judge",
+        "reasoning_effort": "high",
+        "reasoning_tokens": 1552,
+        "request_id": "resp_016869c71de2b8b9016a7a160327a4819db52bd5e64c885e33",
+        "settled_spend_microusd": 224180,
+        "store": false
+      },
+      "raw_output": {
+        "dimensions": {
+          "assessment_coherence": 4,
+          "cognitive_variety": 3,
+          "course_scope": 4,
+          "cross_question_answer_cues": 1,
+          "difficulty_balance": 2,
+          "objective_coverage": 4,
+          "overall_student_usefulness": 3,
+          "question_distinctness": 3,
+          "redundancy": 3
+        },
+        "failure_class": "SET_COHERENCE_FAILURE",
+        "hard_failures": [
+          "repeated_answer_cue"
+        ],
+        "rationale": "Both approved objectives are covered with accurate, remediation-appropriate content, but both items use the same correct option position (A) and nearly identical all-clauses-correct construction, creating a repeated answer cue. The items also provide limited difficulty and format variation, with overlapping terminal-acceptor content. Revise distractor construction and answer-key distribution before reuse.",
+        "verdict": "REJECT_CONTRACT"
+      },
+      "transport_events": []
+    },
+    {
+      "judge_number": 2,
+      "provider_receipt": {
+        "actual_model": "gpt-5.6-luna",
+        "cached_input_tokens": 0,
+        "estimated_cost_microusd": 3366,
+        "input_tokens": 966,
+        "latency_ms": 24961,
+        "operation_id": "opg_0d7b943bcb4071737d36750b262c5801",
+        "output_tokens": 2644,
+        "provider_policy_id": "c3-final-provider-policy-daily-output-disabled-v1",
+        "purpose": "set_judge",
+        "reasoning_effort": "high",
+        "reasoning_tokens": 2461,
+        "request_id": "resp_0a8c28b731b6ff4a016a7a1614623881a28d902f8393044169",
+        "settled_spend_microusd": 227546,
+        "store": false
+      },
+      "raw_output": {
+        "dimensions": {
+          "assessment_coherence": 3,
+          "cognitive_variety": 3,
+          "course_scope": 4,
+          "cross_question_answer_cues": 1,
+          "difficulty_balance": 3,
+          "objective_coverage": 4,
+          "overall_student_usefulness": 3,
+          "question_distinctness": 4,
+          "redundancy": 4
+        },
+        "failure_class": "SET_COHERENCE_FAILURE",
+        "hard_failures": [
+          "repeated_answer_cue"
+        ],
+        "rationale": "The two questions cover the allocated objectives and are not material duplicates. However, both correct answers are option A, and each uses the same construction: A is the fully correct multi-clause statement while every distractor changes one clause. In this two-item set, that repeated position and structure creates a direct guessing cue. Randomize answer positions and vary distractor construction before reuse.",
+        "verdict": "REJECT_RETRYABLE"
+      },
+      "transport_events": []
+    },
+    {
+      "judge_number": 3,
+      "provider_receipt": {
+        "actual_model": "gpt-5.6-luna",
+        "cached_input_tokens": 0,
+        "estimated_cost_microusd": 1048,
+        "input_tokens": 966,
+        "latency_ms": 7485,
+        "operation_id": "opg_dbaedc89246caa6f052143b9901e9464",
+        "output_tokens": 712,
+        "provider_policy_id": "c3-final-provider-policy-daily-output-disabled-v1",
+        "purpose": "set_judge_tie_break",
+        "reasoning_effort": "high",
+        "reasoning_tokens": 516,
+        "request_id": "resp_074c82ca448ad867016a7a162d6674819eaa1f0472aa1580ef",
+        "settled_spend_microusd": 228594,
+        "store": false
+      },
+      "raw_output": {
+        "dimensions": {
+          "assessment_coherence": 3,
+          "cognitive_variety": 2,
+          "course_scope": 4,
+          "cross_question_answer_cues": 3,
+          "difficulty_balance": 3,
+          "objective_coverage": 4,
+          "overall_student_usefulness": 3,
+          "question_distinctness": 4,
+          "redundancy": 3
+        },
+        "failure_class": "SET_COHERENCE_FAILURE",
+        "hard_failures": [
+          "repeated_answer_cue"
+        ],
+        "rationale": "Both approved objectives are covered with distinct, content-aligned questions, and the set remains within respiration scope. However, both correct answers are keyed to option A, creating a repeated positional cue. The questions also use near-identical true-statement constructions with single-clause mutations, limiting cognitive variety and making answer recognition easier than conceptual application. Revise distractor structure and vary correct-option positions; adding a brief application context would improve remediation value.",
+        "verdict": "REJECT_RETRYABLE"
+      },
+      "transport_events": []
+    }
+  ],
+  "phase": "remediation",
+  "schema_version": "c3-final-set-judges-v1"
+}

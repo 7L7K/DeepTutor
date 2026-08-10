@@ -1,0 +1,85 @@
+{
+  "candidate_number": 1,
+  "judge_attempt": "initial",
+  "judges": [
+    {
+      "judge_number": 1,
+      "provider_receipt": {
+        "actual_model": "gpt-5.6-luna",
+        "cached_input_tokens": 0,
+        "estimated_cost_microusd": 712,
+        "input_tokens": 1164,
+        "latency_ms": 5001,
+        "operation_id": "opg_33fca0b2302212498440a9914e3d9679",
+        "output_tokens": 399,
+        "provider_policy_id": "c3-final-provider-policy-daily-output-disabled-v1",
+        "purpose": "question_judge",
+        "reasoning_effort": "high",
+        "reasoning_tokens": 220,
+        "request_id": "resp_01fb9bdf03552754016a7a17681a2c81a2a4a74d40048ffc9b",
+        "settled_spend_microusd": 256743,
+        "store": false
+      },
+      "raw_output": {
+        "dimensions": {
+          "answer_cue_resistance": 4,
+          "cognitive_target_alignment": 4,
+          "course_evidence_support": 4,
+          "distractor_quality": 4,
+          "explanation_quality": 4,
+          "factual_correctness": 4,
+          "grading_fairness": 4,
+          "objective_alignment": 4,
+          "scope_and_difficulty": 4,
+          "single_correct_answer": 4
+        },
+        "failure_class": null,
+        "hard_failures": [],
+        "rationale": "Option D is the sole fully correct statement and accurately contrasts fermentation with aerobic respiration across all four required claims. Each distractor contains one clearly identifiable factual error, creating fair and unambiguous grading. The explanation is concise, directly supported by all cited evidence, and aligned with the objective’s contrast target. The question remains within scope and presents no meaningful answer leakage or unsupported claims.",
+        "verdict": "QUALIFY"
+      },
+      "transport_events": []
+    },
+    {
+      "judge_number": 2,
+      "provider_receipt": {
+        "actual_model": "gpt-5.6-luna",
+        "cached_input_tokens": 1161,
+        "estimated_cost_microusd": 552,
+        "input_tokens": 1164,
+        "latency_ms": 5298,
+        "operation_id": "opg_b3d2dd3eaec390e8d1a57da827112388",
+        "output_tokens": 440,
+        "provider_policy_id": "c3-final-provider-policy-daily-output-disabled-v1",
+        "purpose": "question_judge",
+        "reasoning_effort": "high",
+        "reasoning_tokens": 258,
+        "request_id": "resp_09891488d5f5f5aa016a7a176d1a8881a1a35440812062b245",
+        "settled_spend_microusd": 257295,
+        "store": false
+      },
+      "raw_output": {
+        "dimensions": {
+          "answer_cue_resistance": 4,
+          "cognitive_target_alignment": 4,
+          "course_evidence_support": 4,
+          "distractor_quality": 4,
+          "explanation_quality": 4,
+          "factual_correctness": 4,
+          "grading_fairness": 4,
+          "objective_alignment": 4,
+          "scope_and_difficulty": 4,
+          "single_correct_answer": 4
+        },
+        "failure_class": null,
+        "hard_failures": [],
+        "rationale": "Option D is the only fully correct statement and accurately incorporates all four required claims: fermentation does not replace glycolysis, regenerates NAD+, does not use oxygen as the terminal electron acceptor, and yields less ATP than aerobic respiration. Each distractor contains one clear factual error. The explanation is supported by the cited evidence, directly addresses the objective, and the single-choice grading contract is satisfied.",
+        "verdict": "QUALIFY"
+      },
+      "transport_events": []
+    }
+  ],
+  "phase": "remediation",
+  "question_number": 2,
+  "schema_version": "c3-final-question-judges-v1"
+}

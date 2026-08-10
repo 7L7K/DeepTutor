@@ -1,0 +1,79 @@
+{
+  "candidate_number": 3,
+  "phase": "remediation",
+  "questions": [
+    {
+      "accepted_answers": [],
+      "answer_text": "",
+      "citation_evidence_ids": [
+        "ev_resp02_terminal_acceptor",
+        "ev_resp02_accepts_electrons",
+        "ev_resp02_forms_water",
+        "ev_resp02_flow_continues"
+      ],
+      "correct_option_key": "A",
+      "explanation": "Oxygen is the terminal electron acceptor. It accepts electrons and protons to form water, and this final acceptance allows electron flow through the aerobic electron transport chain to continue normally.",
+      "objective_ids": [
+        "OBJ-RESP-02"
+      ],
+      "options": [
+        {
+          "option_key": "A",
+          "text": "Oxygen is the terminal electron acceptor; it accepts electrons and protons to form water, allowing electron flow through the aerobic electron transport chain to continue normally."
+        },
+        {
+          "option_key": "B",
+          "text": "Oxygen is the terminal electron acceptor; it accepts electrons and protons to form carbon dioxide, allowing electron flow through the aerobic electron transport chain to continue normally."
+        },
+        {
+          "option_key": "C",
+          "text": "Oxygen is the terminal electron acceptor; it accepts electrons and protons to form water, but electron flow through the aerobic electron transport chain cannot continue normally."
+        },
+        {
+          "option_key": "D",
+          "text": "Oxygen is not the terminal electron acceptor; it accepts electrons and protons to form water, allowing electron flow through the aerobic electron transport chain to continue normally."
+        }
+      ],
+      "prompt": "Which statement correctly explains oxygen's role in the aerobic electron transport chain?",
+      "question_type": "single_choice_v1",
+      "remediation_purpose": "direct_correction"
+    },
+    {
+      "accepted_answers": [],
+      "answer_text": "",
+      "citation_evidence_ids": [
+        "ev_resp03_fermentation_context",
+        "ev_resp03_regenerates_nad",
+        "ev_resp03_no_oxygen_low_atp",
+        "ev_resp03_aerobic_comparison"
+      ],
+      "correct_option_key": "A",
+      "explanation": "Fermentation does not replace glycolysis. It regenerates NAD+ so glycolysis can keep running, uses no oxygen as a terminal electron acceptor, and produces much less ATP per glucose than aerobic respiration.",
+      "objective_ids": [
+        "OBJ-RESP-03"
+      ],
+      "options": [
+        {
+          "option_key": "A",
+          "text": "Fermentation preserves glycolysis by regenerating NAD+; it uses no oxygen as a terminal electron acceptor and produces much less ATP per glucose than aerobic respiration."
+        },
+        {
+          "option_key": "B",
+          "text": "Fermentation replaces glycolysis rather than preserving it; it uses no oxygen as a terminal electron acceptor and produces much less ATP per glucose than aerobic respiration."
+        },
+        {
+          "option_key": "C",
+          "text": "Fermentation preserves glycolysis by regenerating NAD+; it uses oxygen as a terminal electron acceptor and produces much less ATP per glucose than aerobic respiration."
+        },
+        {
+          "option_key": "D",
+          "text": "Fermentation preserves glycolysis by regenerating NAD+; it uses no oxygen as a terminal electron acceptor and produces more ATP per glucose than aerobic respiration."
+        }
+      ],
+      "prompt": "Which statement best contrasts fermentation with aerobic respiration?",
+      "question_type": "single_choice_v1",
+      "remediation_purpose": "contrast"
+    }
+  ],
+  "schema_version": "c3-final-normalized-questions-v1"
+}

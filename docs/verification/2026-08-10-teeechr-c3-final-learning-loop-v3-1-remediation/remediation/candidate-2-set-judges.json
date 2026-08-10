@@ -1,0 +1,86 @@
+{
+  "candidate_number": 2,
+  "judge_attempt": "initial",
+  "judges": [
+    {
+      "judge_number": 1,
+      "provider_receipt": {
+        "actual_model": "gpt-5.6-luna",
+        "cached_input_tokens": 0,
+        "estimated_cost_microusd": 1498,
+        "input_tokens": 916,
+        "latency_ms": 11305,
+        "operation_id": "opg_b6d14d0301d1a41051c8248705b1956d",
+        "output_tokens": 1095,
+        "provider_policy_id": "c3-final-provider-policy-daily-output-disabled-v1",
+        "purpose": "set_judge",
+        "reasoning_effort": "high",
+        "reasoning_tokens": 918,
+        "request_id": "resp_0d0c5299513e8737016a7a165c0240819d9089b22edfc15f4e",
+        "settled_spend_microusd": 236166,
+        "store": false
+      },
+      "raw_output": {
+        "dimensions": {
+          "assessment_coherence": 4,
+          "cognitive_variety": 3,
+          "course_scope": 4,
+          "cross_question_answer_cues": 2,
+          "difficulty_balance": 3,
+          "objective_coverage": 4,
+          "overall_student_usefulness": 3,
+          "question_distinctness": 3,
+          "redundancy": 3
+        },
+        "failure_class": "SET_COHERENCE_FAILURE",
+        "hard_failures": [
+          "repeated_answer_cue"
+        ],
+        "rationale": "Both approved objectives are covered with relevant, distinct remediation questions, but both correct answers are option A. Each item also uses highly parallel options that differ by only one clause, creating a strong positional and structural answer cue rather than testing independent reasoning. Revise by varying correct-option positions and making distractors more plausibly distinct while preserving the intended contrasts.",
+        "verdict": "REJECT_RETRYABLE"
+      },
+      "transport_events": []
+    },
+    {
+      "judge_number": 2,
+      "provider_receipt": {
+        "actual_model": "gpt-5.6-luna",
+        "cached_input_tokens": 0,
+        "estimated_cost_microusd": 1630,
+        "input_tokens": 916,
+        "latency_ms": 12296,
+        "operation_id": "opg_85a5da8311a3d3066325f47d40a97043",
+        "output_tokens": 1205,
+        "provider_policy_id": "c3-final-provider-policy-daily-output-disabled-v1",
+        "purpose": "set_judge",
+        "reasoning_effort": "high",
+        "reasoning_tokens": 1034,
+        "request_id": "resp_0141822612cf62d6016a7a16674cb881a3bf563484c02a8e00",
+        "settled_spend_microusd": 237796,
+        "store": false
+      },
+      "raw_output": {
+        "dimensions": {
+          "assessment_coherence": 4,
+          "cognitive_variety": 3,
+          "course_scope": 4,
+          "cross_question_answer_cues": 2,
+          "difficulty_balance": 3,
+          "objective_coverage": 4,
+          "overall_student_usefulness": 2,
+          "question_distinctness": 4,
+          "redundancy": 2
+        },
+        "failure_class": "SET_REDUNDANCY_FAILURE",
+        "hard_failures": [
+          "repeated_answer_cue"
+        ],
+        "rationale": "Both approved objectives are covered with distinct content and appropriate remediation intent. However, both items use the same correct-option position (A), and each distractor changes only one clause of an otherwise identical statement. This creates a strong repeated answer cue and makes the set overly testwise, reducing usefulness despite sound content and scope.",
+        "verdict": "REJECT_RETRYABLE"
+      },
+      "transport_events": []
+    }
+  ],
+  "phase": "remediation",
+  "schema_version": "c3-final-set-judges-v1"
+}

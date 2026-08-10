@@ -1,0 +1,85 @@
+{
+  "candidate_number": 1,
+  "judge_attempt": "initial",
+  "judges": [
+    {
+      "judge_number": 1,
+      "provider_receipt": {
+        "actual_model": "gpt-5.6-luna",
+        "cached_input_tokens": 0,
+        "estimated_cost_microusd": 750,
+        "input_tokens": 1230,
+        "latency_ms": 4811,
+        "operation_id": "opg_1a2c7327e5ae6172e4fb50e95749ad9f",
+        "output_tokens": 420,
+        "provider_policy_id": "c3-final-provider-policy-daily-output-disabled-v1",
+        "purpose": "question_judge",
+        "reasoning_effort": "high",
+        "reasoning_tokens": 225,
+        "request_id": "resp_03f1f4b4e0c6830e016a7a149b749881a29f089e4ab8fb7690",
+        "settled_spend_microusd": 195114,
+        "store": false
+      },
+      "raw_output": {
+        "dimensions": {
+          "answer_cue_resistance": 4,
+          "cognitive_target_alignment": 4,
+          "course_evidence_support": 4,
+          "distractor_quality": 4,
+          "explanation_quality": 4,
+          "factual_correctness": 4,
+          "grading_fairness": 4,
+          "objective_alignment": 4,
+          "scope_and_difficulty": 4,
+          "single_correct_answer": 4
+        },
+        "failure_class": null,
+        "hard_failures": [],
+        "rationale": "The keyed answer C is factually correct and directly supported by all four approved evidence claims. The question fully targets the stated contrast: glycolysis continuity, NAD+ regeneration, oxygen’s terminal-acceptor role, and relative ATP yield. Each distractor changes one substantive claim, creating clear boundaries without introducing another defensible answer or an obvious answer cue. The explanation is accurate, concise, and evidence-aligned. Scope and difficulty are appropriate for the objective.",
+        "verdict": "QUALIFY"
+      },
+      "transport_events": []
+    },
+    {
+      "judge_number": 2,
+      "provider_receipt": {
+        "actual_model": "gpt-5.6-luna",
+        "cached_input_tokens": 1227,
+        "estimated_cost_microusd": 520,
+        "input_tokens": 1230,
+        "latency_ms": 4262,
+        "operation_id": "opg_07605f4de4b218376eb3cb53cf57c38b",
+        "output_tokens": 412,
+        "provider_policy_id": "c3-final-provider-policy-daily-output-disabled-v1",
+        "purpose": "question_judge",
+        "reasoning_effort": "high",
+        "reasoning_tokens": 224,
+        "request_id": "resp_0b3f5457420a8618016a7a14a03f748192acb89abfdfae64c0",
+        "settled_spend_microusd": 195634,
+        "store": false
+      },
+      "raw_output": {
+        "dimensions": {
+          "answer_cue_resistance": 4,
+          "cognitive_target_alignment": 4,
+          "course_evidence_support": 4,
+          "distractor_quality": 4,
+          "explanation_quality": 4,
+          "factual_correctness": 4,
+          "grading_fairness": 4,
+          "objective_alignment": 4,
+          "scope_and_difficulty": 4,
+          "single_correct_answer": 4
+        },
+        "failure_class": null,
+        "hard_failures": [],
+        "rationale": "Option C is the uniquely correct answer and accurately contrasts fermentation with aerobic respiration on all required dimensions: glycolysis continuity, NAD+ regeneration, oxygen’s terminal-acceptor role, and relative ATP yield. Every substantive claim in the explanation and correct option is directly supported by the approved evidence. Distractors each contain a clear, substantive error, with no multiple defensible answers, answer leakage, citation mismatch, or scope problem.",
+        "verdict": "QUALIFY"
+      },
+      "transport_events": []
+    }
+  ],
+  "phase": "primary",
+  "question_number": 3,
+  "schema_version": "c3-final-question-judges-v1"
+}

@@ -1,0 +1,85 @@
+{
+  "candidate_number": 3,
+  "judge_attempt": "initial",
+  "judges": [
+    {
+      "judge_number": 1,
+      "provider_receipt": {
+        "actual_model": "gpt-5.6-luna",
+        "cached_input_tokens": 0,
+        "estimated_cost_microusd": 804,
+        "input_tokens": 1124,
+        "latency_ms": 5708,
+        "operation_id": "opg_c0aa5f6992d95d3675378c3d94e7e5de",
+        "output_tokens": 482,
+        "provider_policy_id": "c3-final-provider-policy-daily-output-disabled-v1",
+        "purpose": "question_judge",
+        "reasoning_effort": "high",
+        "reasoning_tokens": 283,
+        "request_id": "resp_039f57b746d9a691016a7a1688bac481a0a571cc8b3bf4db44",
+        "settled_spend_microusd": 242623,
+        "store": false
+      },
+      "raw_output": {
+        "dimensions": {
+          "answer_cue_resistance": 4,
+          "cognitive_target_alignment": 4,
+          "course_evidence_support": 4,
+          "distractor_quality": 4,
+          "explanation_quality": 4,
+          "factual_correctness": 4,
+          "grading_fairness": 4,
+          "objective_alignment": 4,
+          "scope_and_difficulty": 4,
+          "single_correct_answer": 4
+        },
+        "failure_class": null,
+        "hard_failures": [],
+        "rationale": "The keyed answer is factually correct and directly supported by all cited evidence claims. It fully addresses the objective by identifying oxygen as the terminal electron acceptor, formation of water, and continued electron flow. Each distractor changes one essential causal or factual element, leaving one clearly defensible answer. The explanation accurately restates the answer and evidence. Option structure, wording, and length do not create a meaningful answer cue, and the scope and difficulty are appropriate for the remediation objective.",
+        "verdict": "QUALIFY"
+      },
+      "transport_events": []
+    },
+    {
+      "judge_number": 2,
+      "provider_receipt": {
+        "actual_model": "gpt-5.6-luna",
+        "cached_input_tokens": 1121,
+        "estimated_cost_microusd": 536,
+        "input_tokens": 1124,
+        "latency_ms": 4839,
+        "operation_id": "opg_61b2cfca876ffe7840c7ecf32ae3b21d",
+        "output_tokens": 427,
+        "provider_policy_id": "c3-final-provider-policy-daily-output-disabled-v1",
+        "purpose": "question_judge",
+        "reasoning_effort": "high",
+        "reasoning_tokens": 233,
+        "request_id": "resp_0989f60ec7504efc016a7a168e66f8819dbb80ab3808668171",
+        "settled_spend_microusd": 243159,
+        "store": false
+      },
+      "raw_output": {
+        "dimensions": {
+          "answer_cue_resistance": 4,
+          "cognitive_target_alignment": 4,
+          "course_evidence_support": 4,
+          "distractor_quality": 4,
+          "explanation_quality": 4,
+          "factual_correctness": 4,
+          "grading_fairness": 4,
+          "objective_alignment": 4,
+          "scope_and_difficulty": 4,
+          "single_correct_answer": 4
+        },
+        "failure_class": null,
+        "hard_failures": [],
+        "rationale": "Option A correctly includes all four required claims: oxygen is the terminal electron acceptor, accepts electrons and protons, forms water, and permits aerobic electron flow to continue. The explanation is accurate and directly supported by the cited evidence. Options B, C, and D each introduce a clear, single factual error, preserving one defensible answer without relying on superficial cues. The question aligns with the objective, scope, remediation purpose, and single-choice format.",
+        "verdict": "QUALIFY"
+      },
+      "transport_events": []
+    }
+  ],
+  "phase": "remediation",
+  "question_number": 1,
+  "schema_version": "c3-final-question-judges-v1"
+}

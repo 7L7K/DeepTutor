@@ -1,0 +1,157 @@
+{
+  "campaign_id": "2026-08-10-teeechr-c3-final-learning-loop-v3-1",
+  "candidate_number": 2,
+  "generation_prompt_id": "c3-final-set-generation-prompt-v3-1",
+  "phase": "repeat",
+  "provider_receipt": {
+    "actual_model": "gpt-5.6-luna",
+    "cached_input_tokens": 0,
+    "estimated_cost_microusd": 4920,
+    "input_tokens": 2895,
+    "latency_ms": 26989,
+    "operation_id": "opg_2b7fcc3bde6f5315ac2e80ac7aec5353",
+    "output_tokens": 3617,
+    "provider_policy_id": "c3-final-provider-policy-daily-output-disabled-v1",
+    "purpose": "repeat_generation_v2",
+    "reasoning_effort": "high",
+    "reasoning_tokens": 2588,
+    "request_id": "resp_0f0c5d63d0567f2e016a7a151a01508192a643107c2bdb41ae",
+    "settled_spend_microusd": 207913,
+    "store": false
+  },
+  "raw_output": {
+    "abstain_reason": null,
+    "assessment_contract_ids": [
+      "c3-final-set-plan-v3:slot_resp01_conversion_identity",
+      "c3-final-set-plan-v3:slot_resp02_complete_terminal_role",
+      "c3-final-set-plan-v3:slot_resp03_complete_fermentation_contrast"
+    ],
+    "campaign_contract_id": "c3-final-set-plan-v3",
+    "outcome": "generated",
+    "questions": [
+      {
+        "accepted_answers": [
+          "pyruvate is converted to acetyl-coa",
+          "pyruvate becomes acetyl-coa",
+          "pyruvate converts to acetyl-coa",
+          "conversion of pyruvate to acetyl-coa",
+          "pyruvate is converted to acetyl coenzyme a"
+        ],
+        "answer_text": "pyruvate is converted to acetyl-coa",
+        "citation_evidence_ids": [
+          "ev_resp01_conversion"
+        ],
+        "correct_option_key": "",
+        "explanation": "Pyruvate oxidation converts pyruvate to acetyl-CoA.",
+        "objective_ids": [
+          "OBJ-RESP-01"
+        ],
+        "options": [],
+        "prompt": "What conversion occurs during pyruvate oxidation?",
+        "question_type": "bounded_short_answer_v1",
+        "remediation_purpose": "none",
+        "slot_id": "slot_resp01_conversion_identity"
+      },
+      {
+        "accepted_answers": [],
+        "answer_text": "Oxygen is the terminal electron acceptor; it accepts electrons and protons, forms water, and allows aerobic electron flow to continue.",
+        "citation_evidence_ids": [
+          "ev_resp02_terminal_acceptor",
+          "ev_resp02_accepts_electrons",
+          "ev_resp02_forms_water",
+          "ev_resp02_flow_continues"
+        ],
+        "correct_option_key": "A",
+        "explanation": "Oxygen is the terminal electron acceptor. It accepts electrons and protons to form water, and this final acceptance allows aerobic electron flow to continue; without it, flow cannot continue normally. The other choices each change one of these required facts.",
+        "objective_ids": [
+          "OBJ-RESP-02"
+        ],
+        "options": [
+          {
+            "option_key": "A",
+            "text": "Oxygen is the terminal electron acceptor; it accepts electrons and protons, forms water, and allows aerobic electron flow to continue."
+          },
+          {
+            "option_key": "B",
+            "text": "Oxygen is not the terminal electron acceptor; it accepts electrons and protons, forms water, and allows aerobic electron flow to continue."
+          },
+          {
+            "option_key": "C",
+            "text": "Oxygen is the terminal electron acceptor; it accepts only electrons, forms water, and allows aerobic electron flow to continue."
+          },
+          {
+            "option_key": "D",
+            "text": "Oxygen is the terminal electron acceptor; it accepts electrons and protons, does not form water, and allows aerobic electron flow to continue."
+          }
+        ],
+        "prompt": "Which statement best describes oxygen's complete role at the end of aerobic electron transport?",
+        "question_type": "single_choice_v1",
+        "remediation_purpose": "none",
+        "slot_id": "slot_resp02_complete_terminal_role"
+      },
+      {
+        "accepted_answers": [],
+        "answer_text": "Fermentation keeps glycolysis running by regenerating NAD+; it uses no oxygen as terminal electron acceptor and produces much less ATP per glucose than aerobic respiration.",
+        "citation_evidence_ids": [
+          "ev_resp03_fermentation_context",
+          "ev_resp03_regenerates_nad",
+          "ev_resp03_no_oxygen_low_atp",
+          "ev_resp03_aerobic_comparison"
+        ],
+        "correct_option_key": "B",
+        "explanation": "Fermentation does not replace glycolysis; it keeps glycolysis running by regenerating NAD+. It uses no oxygen as a terminal electron acceptor and produces much less ATP per glucose than aerobic respiration. The other choices incorrectly change one of these points.",
+        "objective_ids": [
+          "OBJ-RESP-03"
+        ],
+        "options": [
+          {
+            "option_key": "A",
+            "text": "Fermentation replaces glycolysis while regenerating NAD+; it uses no oxygen as terminal electron acceptor and produces much less ATP per glucose than aerobic respiration."
+          },
+          {
+            "option_key": "B",
+            "text": "Fermentation keeps glycolysis running by regenerating NAD+; it uses no oxygen as terminal electron acceptor and produces much less ATP per glucose than aerobic respiration."
+          },
+          {
+            "option_key": "C",
+            "text": "Fermentation keeps glycolysis running but does not regenerate NAD+; it uses no oxygen as terminal electron acceptor and produces much less ATP per glucose than aerobic respiration."
+          },
+          {
+            "option_key": "D",
+            "text": "Fermentation keeps glycolysis running by regenerating NAD+; it uses oxygen as terminal electron acceptor and produces much less ATP per glucose than aerobic respiration."
+          }
+        ],
+        "prompt": "Which statement best contrasts fermentation with aerobic respiration?",
+        "question_type": "single_choice_v1",
+        "remediation_purpose": "none",
+        "slot_id": "slot_resp03_complete_fermentation_contrast"
+      }
+    ],
+    "request_contract": {
+      "generation_purpose": "practice",
+      "request_contract_id": "pgc_de9a62e2b912bc452aa6c9858fea3fa5",
+      "requested_objective_ids": [
+        "OBJ-RESP-01",
+        "OBJ-RESP-02",
+        "OBJ-RESP-03"
+      ],
+      "source_scope_hash": "ce3ca64daa45b514dbadf17e6ca1d5a806517e8c5218c06a953bdeba89b71221"
+    }
+  },
+  "reasoning_effort": "high",
+  "request_contract": {
+    "generation_purpose": "practice",
+    "request_contract_id": "pgc_de9a62e2b912bc452aa6c9858fea3fa5",
+    "requested_objective_ids": [
+      "OBJ-RESP-01",
+      "OBJ-RESP-02",
+      "OBJ-RESP-03"
+    ],
+    "source_scope_hash": "ce3ca64daa45b514dbadf17e6ca1d5a806517e8c5218c06a953bdeba89b71221"
+  },
+  "requested_model": "gpt-5.6-luna",
+  "schema_version": "c3-final-generation-receipt-v3",
+  "set_plan": "c3-final-set-plan-v3",
+  "store": false,
+  "transport_events": []
+}

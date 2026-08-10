@@ -1,0 +1,125 @@
+{
+  "candidate_number": 3,
+  "judge_attempt": "initial",
+  "judges": [
+    {
+      "judge_number": 1,
+      "provider_receipt": {
+        "actual_model": "gpt-5.6-luna",
+        "cached_input_tokens": 0,
+        "estimated_cost_microusd": 3681,
+        "input_tokens": 957,
+        "latency_ms": 28098,
+        "operation_id": "opg_af18961ed4f0b7367730e66907a0ffee",
+        "output_tokens": 2908,
+        "provider_policy_id": "c3-final-provider-policy-daily-output-disabled-v1",
+        "purpose": "set_judge",
+        "reasoning_effort": "high",
+        "reasoning_tokens": 2743,
+        "request_id": "resp_09c3583400dacac3016a7a16b2651481a0a529d7a3c481f53f",
+        "settled_spend_microusd": 248177,
+        "store": false
+      },
+      "raw_output": {
+        "dimensions": {
+          "assessment_coherence": 3,
+          "cognitive_variety": 3,
+          "course_scope": 4,
+          "cross_question_answer_cues": 3,
+          "difficulty_balance": 3,
+          "objective_coverage": 4,
+          "overall_student_usefulness": 3,
+          "question_distinctness": 3,
+          "redundancy": 2
+        },
+        "failure_class": "SET_REDUNDANCY_FAILURE",
+        "hard_failures": [
+          "repeated_answer_cue"
+        ],
+        "rationale": "Both approved objectives are covered with substantively distinct content, but both items key option A and use highly parallel, one-clause-change distractors. This creates a repeated positional and structural answer cue that can reward test-taking rather than understanding. Revise option ordering and distractor construction before use.",
+        "verdict": "REJECT_CONTRACT"
+      },
+      "transport_events": []
+    },
+    {
+      "judge_number": 2,
+      "provider_receipt": {
+        "actual_model": "gpt-5.6-luna",
+        "cached_input_tokens": 0,
+        "estimated_cost_microusd": 1020,
+        "input_tokens": 957,
+        "latency_ms": 7745,
+        "operation_id": "opg_821b0beb1a3b57e016f4ac26a1aa165b",
+        "output_tokens": 690,
+        "provider_policy_id": "c3-final-provider-policy-daily-output-disabled-v1",
+        "purpose": "set_judge",
+        "reasoning_effort": "high",
+        "reasoning_tokens": 516,
+        "request_id": "resp_0c667bc0ee4ecbf3016a7a16ce61d08191b95c5b7b73411a7a",
+        "settled_spend_microusd": 249197,
+        "store": false
+      },
+      "raw_output": {
+        "dimensions": {
+          "assessment_coherence": 4,
+          "cognitive_variety": 2,
+          "course_scope": 4,
+          "cross_question_answer_cues": 1,
+          "difficulty_balance": 3,
+          "objective_coverage": 4,
+          "overall_student_usefulness": 2,
+          "question_distinctness": 3,
+          "redundancy": 3
+        },
+        "failure_class": "SET_COHERENCE_FAILURE",
+        "hard_failures": [
+          "repeated_answer_cue"
+        ],
+        "rationale": "Both approved objectives are represented with scientifically coherent, distinct remediation questions. However, both correct answers use option A, creating a repeated answer-position cue, and both items rely on the same single-choice format with relatively shallow recognition-level reasoning. The set remains usable after retry: shuffle correct-option positions and introduce greater cognitive or response-format variety.",
+        "verdict": "REJECT_RETRYABLE"
+      },
+      "transport_events": []
+    },
+    {
+      "judge_number": 3,
+      "provider_receipt": {
+        "actual_model": "gpt-5.6-luna",
+        "cached_input_tokens": 0,
+        "estimated_cost_microusd": 1543,
+        "input_tokens": 957,
+        "latency_ms": 12938,
+        "operation_id": "opg_503995cec7491c6bfb6818cb7205e289",
+        "output_tokens": 1126,
+        "provider_policy_id": "c3-final-provider-policy-daily-output-disabled-v1",
+        "purpose": "set_judge_tie_break",
+        "reasoning_effort": "high",
+        "reasoning_tokens": 941,
+        "request_id": "resp_047c92c820755b98016a7a16d62d74819f8dcf23969dd411a5",
+        "settled_spend_microusd": 250740,
+        "store": false
+      },
+      "raw_output": {
+        "dimensions": {
+          "assessment_coherence": 4,
+          "cognitive_variety": 3,
+          "course_scope": 4,
+          "cross_question_answer_cues": 2,
+          "difficulty_balance": 3,
+          "objective_coverage": 4,
+          "overall_student_usefulness": 3,
+          "question_distinctness": 4,
+          "redundancy": 4
+        },
+        "failure_class": "SET_REDUNDANCY_FAILURE",
+        "hard_failures": [
+          "repeated_answer_cue"
+        ],
+        "rationale": "Both approved objectives are covered by distinct, relevant questions with appropriate remediation purposes. However, both questions use option A as the correct answer, creating a repeated answer-position cue that can reward test-taking strategy rather than knowledge. The questions also share a closely related oxygen/terminal-acceptor concept, though they are not material duplicates. Randomize correct-option positions and preserve the objective-specific distinctions.",
+        "verdict": "REJECT_RETRYABLE"
+      },
+      "transport_events": []
+    }
+  ],
+  "phase": "remediation",
+  "schema_version": "c3-final-set-judges-v1"
+}

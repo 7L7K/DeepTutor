@@ -1,0 +1,85 @@
+{
+  "candidate_number": 1,
+  "judge_attempt": "initial",
+  "judges": [
+    {
+      "judge_number": 1,
+      "provider_receipt": {
+        "actual_model": "gpt-5.6-luna",
+        "cached_input_tokens": 0,
+        "estimated_cost_microusd": 955,
+        "input_tokens": 1169,
+        "latency_ms": 6178,
+        "operation_id": "opg_c747183c0098a61caa0af9f4d7767bad",
+        "output_tokens": 601,
+        "provider_policy_id": "c3-final-provider-policy-daily-output-disabled-v1",
+        "purpose": "question_judge",
+        "reasoning_effort": "high",
+        "reasoning_tokens": 405,
+        "request_id": "resp_0460e743ef89770a016a7a15eee0d88191a84e843ea63d6d4a",
+        "settled_spend_microusd": 221023,
+        "store": false
+      },
+      "raw_output": {
+        "dimensions": {
+          "answer_cue_resistance": 4,
+          "cognitive_target_alignment": 4,
+          "course_evidence_support": 4,
+          "distractor_quality": 4,
+          "explanation_quality": 4,
+          "factual_correctness": 4,
+          "grading_fairness": 4,
+          "objective_alignment": 4,
+          "scope_and_difficulty": 4,
+          "single_correct_answer": 4
+        },
+        "failure_class": null,
+        "hard_failures": [],
+        "rationale": "The keyed answer accurately and completely contrasts fermentation with aerobic respiration using all four required claims: glycolysis is preserved, NAD+ is regenerated, oxygen is not the terminal electron acceptor, and ATP yield is lower. The approved evidence directly supports each claim and the explanation matches the key. Distractors each alter one required feature, producing one clearly correct option without meaningful answer cues. The item aligns with the objective, cognitive target, scope, and single-choice grading contract.",
+        "verdict": "QUALIFY"
+      },
+      "transport_events": []
+    },
+    {
+      "judge_number": 2,
+      "provider_receipt": {
+        "actual_model": "gpt-5.6-luna",
+        "cached_input_tokens": 1166,
+        "estimated_cost_microusd": 886,
+        "input_tokens": 1169,
+        "latency_ms": 14195,
+        "operation_id": "opg_742a93c6afaf808aab89369abd1206d0",
+        "output_tokens": 718,
+        "provider_policy_id": "c3-final-provider-policy-daily-output-disabled-v1",
+        "purpose": "question_judge",
+        "reasoning_effort": "high",
+        "reasoning_tokens": 516,
+        "request_id": "resp_0ea7f46d9a1b68e5016a7a15f525fc819c936b40148fdb8f2e",
+        "settled_spend_microusd": 221909,
+        "store": false
+      },
+      "raw_output": {
+        "dimensions": {
+          "answer_cue_resistance": 4,
+          "cognitive_target_alignment": 4,
+          "course_evidence_support": 4,
+          "distractor_quality": 4,
+          "explanation_quality": 4,
+          "factual_correctness": 4,
+          "grading_fairness": 4,
+          "objective_alignment": 4,
+          "scope_and_difficulty": 4,
+          "single_correct_answer": 4
+        },
+        "failure_class": null,
+        "hard_failures": [],
+        "rationale": "The keyed answer is factually correct and directly supported by all four approved evidence items. It addresses every required claim in the objective: glycolysis continuation through NAD+ regeneration, absence of oxygen as terminal acceptor, and lower ATP yield. Each distractor changes one substantive claim, leaving exactly one defensible answer. The explanation is accurate, concise, and aligned with the evidence. Wording and option structure do not create a meaningful answer cue, and the scope and difficulty fit the contrast objective.",
+        "verdict": "QUALIFY"
+      },
+      "transport_events": []
+    }
+  ],
+  "phase": "remediation",
+  "question_number": 2,
+  "schema_version": "c3-final-question-judges-v1"
+}

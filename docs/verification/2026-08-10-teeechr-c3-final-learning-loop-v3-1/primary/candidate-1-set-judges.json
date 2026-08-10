@@ -1,0 +1,82 @@
+{
+  "candidate_number": 1,
+  "judge_attempt": "initial",
+  "judges": [
+    {
+      "judge_number": 1,
+      "provider_receipt": {
+        "actual_model": "gpt-5.6-luna",
+        "cached_input_tokens": 0,
+        "estimated_cost_microusd": 1005,
+        "input_tokens": 1142,
+        "latency_ms": 7621,
+        "operation_id": "opg_b14c632e02380944552f66641636ecda",
+        "output_tokens": 647,
+        "provider_policy_id": "c3-final-provider-policy-daily-output-disabled-v1",
+        "purpose": "set_judge",
+        "reasoning_effort": "high",
+        "reasoning_tokens": 463,
+        "request_id": "resp_0eed4aa8e577ba3b016a7a14a48cf881a19f4a18e474d96031",
+        "settled_spend_microusd": 196639,
+        "store": false
+      },
+      "raw_output": {
+        "dimensions": {
+          "assessment_coherence": 4,
+          "cognitive_variety": 3,
+          "course_scope": 4,
+          "cross_question_answer_cues": 4,
+          "difficulty_balance": 3,
+          "objective_coverage": 4,
+          "overall_student_usefulness": 4,
+          "question_distinctness": 4,
+          "redundancy": 3
+        },
+        "failure_class": null,
+        "hard_failures": [],
+        "rationale": "The set covers all three approved objectives exactly once, with distinct content: pyruvate oxidation, oxygen’s terminal-acceptor role, and fermentation. Questions are coherent and appropriately focused, combining bounded recall with conceptual discrimination. The two selected-response items use parallel statement structures and may be somewhat formulaic, but they do not create material duplication or cross-question answer leakage. Difficulty is reasonable, though the set is weighted toward foundational rather than higher-order application.",
+        "verdict": "QUALIFY"
+      },
+      "transport_events": []
+    },
+    {
+      "judge_number": 2,
+      "provider_receipt": {
+        "actual_model": "gpt-5.6-luna",
+        "cached_input_tokens": 1139,
+        "estimated_cost_microusd": 2115,
+        "input_tokens": 1142,
+        "latency_ms": 16801,
+        "operation_id": "opg_e81fa870f4b04e1998d0bcaf9804b7a4",
+        "output_tokens": 1743,
+        "provider_policy_id": "c3-final-provider-policy-daily-output-disabled-v1",
+        "purpose": "set_judge",
+        "reasoning_effort": "high",
+        "reasoning_tokens": 1552,
+        "request_id": "resp_031313b5c0ecd5bb016a7a14ac20ac819fad034547b7ff4b7d",
+        "settled_spend_microusd": 198754,
+        "store": false
+      },
+      "raw_output": {
+        "dimensions": {
+          "assessment_coherence": 4,
+          "cognitive_variety": 3,
+          "course_scope": 4,
+          "cross_question_answer_cues": 3,
+          "difficulty_balance": 3,
+          "objective_coverage": 4,
+          "overall_student_usefulness": 3,
+          "question_distinctness": 3,
+          "redundancy": 3
+        },
+        "failure_class": null,
+        "hard_failures": [],
+        "rationale": "All three approved objectives are covered exactly once with appropriate, in-scope questions. The set includes bounded recall and single-choice conceptual comparison, giving acceptable cognitive variety. Questions 2 and 3 share oxygen/terminal-acceptor terminology, but neither supplies the other’s complete answer and they assess distinct objectives. Difficulty is foundational and somewhat limited, while the highly similar option structures reduce discrimination, but no material duplicates, paraphrase set, objective imbalance, or disqualifying leakage is present.",
+        "verdict": "QUALIFY"
+      },
+      "transport_events": []
+    }
+  ],
+  "phase": "primary",
+  "schema_version": "c3-final-set-judges-v1"
+}

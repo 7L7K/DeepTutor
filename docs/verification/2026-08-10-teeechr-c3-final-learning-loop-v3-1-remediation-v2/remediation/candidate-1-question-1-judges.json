@@ -1,0 +1,85 @@
+{
+  "candidate_number": 1,
+  "judge_attempt": "initial",
+  "judges": [
+    {
+      "judge_number": 1,
+      "provider_receipt": {
+        "actual_model": "gpt-5.6-luna",
+        "cached_input_tokens": 0,
+        "estimated_cost_microusd": 1075,
+        "input_tokens": 1095,
+        "latency_ms": 8215,
+        "operation_id": "opg_d598a5b53a596f7e6ff35b1596908047",
+        "output_tokens": 713,
+        "provider_policy_id": "c3-final-provider-policy-daily-output-disabled-v1",
+        "purpose": "question_judge",
+        "reasoning_effort": "high",
+        "reasoning_tokens": 516,
+        "request_id": "resp_00a88fff905d6d23016a7a175a230881a2a9d1eb94371a865f",
+        "settled_spend_microusd": 255406,
+        "store": false
+      },
+      "raw_output": {
+        "dimensions": {
+          "answer_cue_resistance": 4,
+          "cognitive_target_alignment": 4,
+          "course_evidence_support": 4,
+          "distractor_quality": 4,
+          "explanation_quality": 4,
+          "factual_correctness": 4,
+          "grading_fairness": 4,
+          "objective_alignment": 4,
+          "scope_and_difficulty": 3,
+          "single_correct_answer": 4
+        },
+        "failure_class": null,
+        "hard_failures": [],
+        "rationale": "Option B is the only statement that correctly includes all required claims: oxygen is the terminal electron acceptor, accepts electrons and protons to form water, and permits aerobic electron flow to continue. The evidence directly supports the answer and explanation, which accurately explains the causal role. Distractors each contain a clear substantive error, while the parallel wording limits answer cues. The item is appropriately scoped and suitable for direct remediation, though its relatively explicit recognition format makes the difficulty modest.",
+        "verdict": "QUALIFY"
+      },
+      "transport_events": []
+    },
+    {
+      "judge_number": 2,
+      "provider_receipt": {
+        "actual_model": "gpt-5.6-luna",
+        "cached_input_tokens": 1092,
+        "estimated_cost_microusd": 625,
+        "input_tokens": 1095,
+        "latency_ms": 5743,
+        "operation_id": "opg_b120c185b9e0b0cedbc9ad52eae4b97c",
+        "output_tokens": 502,
+        "provider_policy_id": "c3-final-provider-policy-daily-output-disabled-v1",
+        "purpose": "question_judge",
+        "reasoning_effort": "high",
+        "reasoning_tokens": 302,
+        "request_id": "resp_0ee99ad6535c3d41016a7a17626cb881a39f57e96a26251b3b",
+        "settled_spend_microusd": 256031,
+        "store": false
+      },
+      "raw_output": {
+        "dimensions": {
+          "answer_cue_resistance": 4,
+          "cognitive_target_alignment": 4,
+          "course_evidence_support": 4,
+          "distractor_quality": 4,
+          "explanation_quality": 4,
+          "factual_correctness": 4,
+          "grading_fairness": 4,
+          "objective_alignment": 4,
+          "scope_and_difficulty": 4,
+          "single_correct_answer": 4
+        },
+        "failure_class": null,
+        "hard_failures": [],
+        "rationale": "The question accurately tests oxygen’s terminal-acceptor role and its causal relationship to water formation and continued aerobic electron flow. Option B is uniquely correct; A, C, and D each contain a clear factual error. All required evidence is cited and supports the answer and explanation. The explanation is accurate and concise. The options use parallel structure and do not leak the answer, though all share a minor grammatical omission (“to” before “continue”) that does not affect interpretation or grading.",
+        "verdict": "QUALIFY"
+      },
+      "transport_events": []
+    }
+  ],
+  "phase": "remediation",
+  "question_number": 1,
+  "schema_version": "c3-final-question-judges-v1"
+}

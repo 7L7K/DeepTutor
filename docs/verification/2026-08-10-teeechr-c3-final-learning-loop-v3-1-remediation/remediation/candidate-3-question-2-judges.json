@@ -1,0 +1,85 @@
+{
+  "candidate_number": 3,
+  "judge_attempt": "initial",
+  "judges": [
+    {
+      "judge_number": 1,
+      "provider_receipt": {
+        "actual_model": "gpt-5.6-luna",
+        "cached_input_tokens": 0,
+        "estimated_cost_microusd": 701,
+        "input_tokens": 1147,
+        "latency_ms": 4900,
+        "operation_id": "opg_dc5eed1e68ff44ed6d5496419ed8b915",
+        "output_tokens": 393,
+        "provider_policy_id": "c3-final-provider-policy-daily-output-disabled-v1",
+        "purpose": "question_judge",
+        "reasoning_effort": "high",
+        "reasoning_tokens": 215,
+        "request_id": "resp_0d30bc3fee0ca7e2016a7a169335d481928856cd3646d528c7",
+        "settled_spend_microusd": 243860,
+        "store": false
+      },
+      "raw_output": {
+        "dimensions": {
+          "answer_cue_resistance": 4,
+          "cognitive_target_alignment": 4,
+          "course_evidence_support": 4,
+          "distractor_quality": 4,
+          "explanation_quality": 4,
+          "factual_correctness": 4,
+          "grading_fairness": 4,
+          "objective_alignment": 4,
+          "scope_and_difficulty": 4,
+          "single_correct_answer": 4
+        },
+        "failure_class": null,
+        "hard_failures": [],
+        "rationale": "The question accurately contrasts fermentation and aerobic respiration across all four required claims. Option A is uniquely correct, while each distractor changes one substantive claim, creating clear answer boundaries without introducing ambiguity. The explanation is factually correct and directly supported by the approved evidence. The item aligns with the stated contrast objective, uses an appropriate single-choice format, and has fair scope and difficulty.",
+        "verdict": "QUALIFY"
+      },
+      "transport_events": []
+    },
+    {
+      "judge_number": 2,
+      "provider_receipt": {
+        "actual_model": "gpt-5.6-luna",
+        "cached_input_tokens": 1144,
+        "estimated_cost_microusd": 636,
+        "input_tokens": 1147,
+        "latency_ms": 26158,
+        "operation_id": "opg_f1f2408a308b23483a5f21dffa6aeead",
+        "output_tokens": 510,
+        "provider_policy_id": "c3-final-provider-policy-daily-output-disabled-v1",
+        "purpose": "question_judge",
+        "reasoning_effort": "high",
+        "reasoning_tokens": 324,
+        "request_id": "resp_0ad66a28090c70b9016a7a16982d0081a09fdcdd89a2902a25",
+        "settled_spend_microusd": 244496,
+        "store": false
+      },
+      "raw_output": {
+        "dimensions": {
+          "answer_cue_resistance": 4,
+          "cognitive_target_alignment": 4,
+          "course_evidence_support": 4,
+          "distractor_quality": 4,
+          "explanation_quality": 4,
+          "factual_correctness": 4,
+          "grading_fairness": 4,
+          "objective_alignment": 4,
+          "scope_and_difficulty": 4,
+          "single_correct_answer": 4
+        },
+        "failure_class": null,
+        "hard_failures": [],
+        "rationale": "The keyed answer is factually correct and directly supported by all four approved evidence claims. It fully addresses the objective by contrasting glycolysis preservation, NAD+ regeneration, oxygen’s terminal-acceptor role, and ATP yield. Each distractor changes exactly one required claim, creating clear boundaries and a single defensible answer without obvious cues. The explanation accurately restates the answer and remains within the intended scope and difficulty.",
+        "verdict": "QUALIFY"
+      },
+      "transport_events": []
+    }
+  ],
+  "phase": "remediation",
+  "question_number": 2,
+  "schema_version": "c3-final-question-judges-v1"
+}

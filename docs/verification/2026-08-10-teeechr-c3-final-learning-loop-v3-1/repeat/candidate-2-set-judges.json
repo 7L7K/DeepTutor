@@ -1,0 +1,82 @@
+{
+  "candidate_number": 2,
+  "judge_attempt": "initial",
+  "judges": [
+    {
+      "judge_number": 1,
+      "provider_receipt": {
+        "actual_model": "gpt-5.6-luna",
+        "cached_input_tokens": 0,
+        "estimated_cost_microusd": 1689,
+        "input_tokens": 1142,
+        "latency_ms": 12234,
+        "operation_id": "opg_b29672154e464482a82f7c47ecf2e4ec",
+        "output_tokens": 1217,
+        "provider_policy_id": "c3-final-provider-policy-daily-output-disabled-v1",
+        "purpose": "set_judge",
+        "reasoning_effort": "high",
+        "reasoning_tokens": 1034,
+        "request_id": "resp_005c197a9c92821c016a7a155d582481a3bb92f7c86c83546b",
+        "settled_spend_microusd": 214568,
+        "store": false
+      },
+      "raw_output": {
+        "dimensions": {
+          "assessment_coherence": 4,
+          "cognitive_variety": 3,
+          "course_scope": 4,
+          "cross_question_answer_cues": 3,
+          "difficulty_balance": 3,
+          "objective_coverage": 4,
+          "overall_student_usefulness": 4,
+          "question_distinctness": 4,
+          "redundancy": 3
+        },
+        "failure_class": null,
+        "hard_failures": [],
+        "rationale": "All three approved objectives are represented exactly once, with distinct coverage of pyruvate oxidation, oxygen’s terminal role, and fermentation. The set includes short-answer recall and conceptual single-choice items, though the two multiple-choice questions use similar complete-statement structures and are relatively easy because distractors negate one fact at a time. The respiration concepts overlap appropriately without materially duplicating one another or directly revealing another answer. Scope and explanations are coherent and useful.",
+        "verdict": "QUALIFY"
+      },
+      "transport_events": []
+    },
+    {
+      "judge_number": 2,
+      "provider_receipt": {
+        "actual_model": "gpt-5.6-luna",
+        "cached_input_tokens": 1139,
+        "estimated_cost_microusd": 1469,
+        "input_tokens": 1142,
+        "latency_ms": 12628,
+        "operation_id": "opg_969cb925581a3d1b72318103f4201c27",
+        "output_tokens": 1204,
+        "provider_policy_id": "c3-final-provider-policy-daily-output-disabled-v1",
+        "purpose": "set_judge",
+        "reasoning_effort": "high",
+        "reasoning_tokens": 1010,
+        "request_id": "resp_0610e35c0a6ef5c2016a7a1569902c819290c0d1b676b0c8af",
+        "settled_spend_microusd": 216037,
+        "store": false
+      },
+      "raw_output": {
+        "dimensions": {
+          "assessment_coherence": 4,
+          "cognitive_variety": 3,
+          "course_scope": 4,
+          "cross_question_answer_cues": 3,
+          "difficulty_balance": 3,
+          "objective_coverage": 4,
+          "overall_student_usefulness": 3,
+          "question_distinctness": 4,
+          "redundancy": 3
+        },
+        "failure_class": null,
+        "hard_failures": [],
+        "rationale": "The set covers all three allocated objectives exactly once, with distinct focus on pyruvate oxidation, oxygen’s terminal-acceptor role, and fermentation. It includes short-answer and single-choice formats and maintains coherent cellular-respiration scope. The two multiple-choice items share a statement-comparison structure and some oxygen/terminal-acceptor content, but they assess different concepts and do not materially reveal one another’s answers. Difficulty is mostly foundational rather than application-oriented, limiting cognitive variety and overall usefulness somewhat.",
+        "verdict": "QUALIFY"
+      },
+      "transport_events": []
+    }
+  ],
+  "phase": "repeat",
+  "schema_version": "c3-final-set-judges-v1"
+}

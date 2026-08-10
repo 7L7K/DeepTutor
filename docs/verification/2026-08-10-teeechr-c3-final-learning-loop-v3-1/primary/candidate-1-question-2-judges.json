@@ -1,0 +1,85 @@
+{
+  "candidate_number": 1,
+  "judge_attempt": "initial",
+  "judges": [
+    {
+      "judge_number": 1,
+      "provider_receipt": {
+        "actual_model": "gpt-5.6-luna",
+        "cached_input_tokens": 0,
+        "estimated_cost_microusd": 987,
+        "input_tokens": 1183,
+        "latency_ms": 7675,
+        "operation_id": "opg_4b6ebdf4faede67c506fd1be215f01f8",
+        "output_tokens": 625,
+        "provider_policy_id": "c3-final-provider-policy-daily-output-disabled-v1",
+        "purpose": "question_judge",
+        "reasoning_effort": "high",
+        "reasoning_tokens": 440,
+        "request_id": "resp_0b1a17b526eacddb016a7a14881974819f84ccfc68048b0a9f",
+        "settled_spend_microusd": 192959,
+        "store": false
+      },
+      "raw_output": {
+        "dimensions": {
+          "answer_cue_resistance": 4,
+          "cognitive_target_alignment": 3,
+          "course_evidence_support": 4,
+          "distractor_quality": 4,
+          "explanation_quality": 4,
+          "factual_correctness": 4,
+          "grading_fairness": 4,
+          "objective_alignment": 4,
+          "scope_and_difficulty": 4,
+          "single_correct_answer": 4
+        },
+        "failure_class": null,
+        "hard_failures": [],
+        "rationale": "The question accurately assesses all four required claims: oxygen is the terminal acceptor, accepts electrons and protons, forms water, and enables continued electron flow. Option B is uniquely correct, while each distractor reverses or omits one required element. The explanation is directly supported by the approved evidence and the wording provides no meaningful answer cue. The item is appropriately scoped and fair for the single-choice contract.",
+        "verdict": "QUALIFY"
+      },
+      "transport_events": []
+    },
+    {
+      "judge_number": 2,
+      "provider_receipt": {
+        "actual_model": "gpt-5.6-luna",
+        "cached_input_tokens": 1180,
+        "estimated_cost_microusd": 1405,
+        "input_tokens": 1183,
+        "latency_ms": 11726,
+        "operation_id": "opg_17dd0ae2653d9728b333422414bb43a2",
+        "output_tokens": 1150,
+        "provider_policy_id": "c3-final-provider-policy-daily-output-disabled-v1",
+        "purpose": "question_judge",
+        "reasoning_effort": "high",
+        "reasoning_tokens": 961,
+        "request_id": "resp_08a46ed7574f1172016a7a148fc06081919a08197eefdbcbb9",
+        "settled_spend_microusd": 194364,
+        "store": false
+      },
+      "raw_output": {
+        "dimensions": {
+          "answer_cue_resistance": 4,
+          "cognitive_target_alignment": 4,
+          "course_evidence_support": 4,
+          "distractor_quality": 4,
+          "explanation_quality": 4,
+          "factual_correctness": 4,
+          "grading_fairness": 4,
+          "objective_alignment": 4,
+          "scope_and_difficulty": 3,
+          "single_correct_answer": 4
+        },
+        "failure_class": null,
+        "hard_failures": [],
+        "rationale": "Option B uniquely includes all four required claims: terminal-acceptor status, electron and proton acceptance, water formation, and inability of electron flow to continue normally without oxygen. The approved evidence directly supports both the answer and explanation. Distractors each negate one required claim, while maintaining parallel structure without a meaningful answer cue. The item is appropriately scoped, though its one-claim-at-a-time distractors make the difficulty relatively low.",
+        "verdict": "QUALIFY"
+      },
+      "transport_events": []
+    }
+  ],
+  "phase": "primary",
+  "question_number": 2,
+  "schema_version": "c3-final-question-judges-v1"
+}

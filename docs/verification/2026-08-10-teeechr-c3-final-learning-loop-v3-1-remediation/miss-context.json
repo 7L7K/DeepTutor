@@ -1,0 +1,40 @@
+[
+  {
+    "objective_id": "OBJ-RESP-02",
+    "question_id": "slot_resp02_complete_terminal_role",
+    "learner_answer": "Oxygen is not the terminal electron acceptor, forms carbon dioxide, and electron flow continues without it.",
+    "missed_claim_ids": [
+      "resp02_terminal_acceptor",
+      "resp02_accepts_electrons",
+      "resp02_forms_water",
+      "resp02_flow_continues"
+    ],
+    "source_evidence_ids": [
+      "ev_resp02_terminal_acceptor",
+      "ev_resp02_accepts_electrons",
+      "ev_resp02_forms_water",
+      "ev_resp02_flow_continues"
+    ],
+    "miss_type": "deliberate_fixture_miss",
+    "human_review": false
+  },
+  {
+    "objective_id": "OBJ-RESP-03",
+    "question_id": "slot_resp03_complete_fermentation_contrast",
+    "learner_answer": "Fermentation replaces glycolysis, uses oxygen as the terminal acceptor, and produces more ATP than aerobic respiration.",
+    "missed_claim_ids": [
+      "resp03_fermentation_context",
+      "resp03_regenerates_nad",
+      "resp03_no_oxygen_low_atp",
+      "resp03_aerobic_comparison"
+    ],
+    "source_evidence_ids": [
+      "ev_resp03_fermentation_context",
+      "ev_resp03_regenerates_nad",
+      "ev_resp03_no_oxygen_low_atp",
+      "ev_resp03_aerobic_comparison"
+    ],
+    "miss_type": "deliberate_fixture_miss",
+    "human_review": false
+  }
+]

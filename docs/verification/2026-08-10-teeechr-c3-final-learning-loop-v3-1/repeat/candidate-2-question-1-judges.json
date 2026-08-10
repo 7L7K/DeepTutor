@@ -1,0 +1,85 @@
+{
+  "candidate_number": 2,
+  "judge_attempt": "initial",
+  "judges": [
+    {
+      "judge_number": 1,
+      "provider_receipt": {
+        "actual_model": "gpt-5.6-luna",
+        "cached_input_tokens": 0,
+        "estimated_cost_microusd": 700,
+        "input_tokens": 896,
+        "latency_ms": 4856,
+        "operation_id": "opg_276a2d13a2671fdc6cb90918b1bd9320",
+        "output_tokens": 434,
+        "provider_policy_id": "c3-final-provider-policy-daily-output-disabled-v1",
+        "purpose": "question_judge",
+        "reasoning_effort": "high",
+        "reasoning_tokens": 251,
+        "request_id": "resp_0b58679f4043e8dd016a7a1534f010819180214f35af887c7d",
+        "settled_spend_microusd": 208613,
+        "store": false
+      },
+      "raw_output": {
+        "dimensions": {
+          "answer_cue_resistance": 4,
+          "cognitive_target_alignment": 4,
+          "course_evidence_support": 4,
+          "distractor_quality": 4,
+          "explanation_quality": 4,
+          "factual_correctness": 4,
+          "grading_fairness": 4,
+          "objective_alignment": 4,
+          "scope_and_difficulty": 4,
+          "single_correct_answer": 4
+        },
+        "failure_class": null,
+        "hard_failures": [],
+        "rationale": "The question directly assesses the frozen objective at the intended identification level. The keyed response, accepted variants, explanation, and citation are factually accurate and supported by the approved evidence. The bounded short-answer contract clearly defines the answer boundary, yielding a single gradable response without distractors or answer leakage. Scope and difficulty are appropriate, and no citation, scope, identity, or explanation failures are present.",
+        "verdict": "QUALIFY"
+      },
+      "transport_events": []
+    },
+    {
+      "judge_number": 2,
+      "provider_receipt": {
+        "actual_model": "gpt-5.6-luna",
+        "cached_input_tokens": 0,
+        "estimated_cost_microusd": 769,
+        "input_tokens": 896,
+        "latency_ms": 5189,
+        "operation_id": "opg_46332c5606d46e00479549453beb51f5",
+        "output_tokens": 491,
+        "provider_policy_id": "c3-final-provider-policy-daily-output-disabled-v1",
+        "purpose": "question_judge",
+        "reasoning_effort": "high",
+        "reasoning_tokens": 308,
+        "request_id": "resp_04ca67231ec09f64016a7a1539b7ac819dbd1a035c944f1f30",
+        "settled_spend_microusd": 209382,
+        "store": false
+      },
+      "raw_output": {
+        "dimensions": {
+          "answer_cue_resistance": 4,
+          "cognitive_target_alignment": 4,
+          "course_evidence_support": 4,
+          "distractor_quality": 4,
+          "explanation_quality": 4,
+          "factual_correctness": 4,
+          "grading_fairness": 4,
+          "objective_alignment": 4,
+          "scope_and_difficulty": 4,
+          "single_correct_answer": 4
+        },
+        "failure_class": null,
+        "hard_failures": [],
+        "rationale": "The prompt directly assesses the stated conversion, and the keyed answer is factually correct and explicitly supported by the approved evidence. The accepted-answer variants preserve the same meaning, providing a clear grading boundary for this bounded short-answer item. The explanation is concise, accurate, and evidence-aligned. The item has appropriate scope and difficulty, with no answer leakage, unsupported claim, citation mismatch, or ambiguity.",
+        "verdict": "QUALIFY"
+      },
+      "transport_events": []
+    }
+  ],
+  "phase": "repeat",
+  "question_number": 1,
+  "schema_version": "c3-final-question-judges-v1"
+}

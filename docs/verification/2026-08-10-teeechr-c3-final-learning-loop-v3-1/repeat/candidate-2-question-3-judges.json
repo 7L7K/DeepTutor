@@ -1,0 +1,85 @@
+{
+  "candidate_number": 2,
+  "judge_attempt": "initial",
+  "judges": [
+    {
+      "judge_number": 1,
+      "provider_receipt": {
+        "actual_model": "gpt-5.6-luna",
+        "cached_input_tokens": 0,
+        "estimated_cost_microusd": 879,
+        "input_tokens": 1233,
+        "latency_ms": 8904,
+        "operation_id": "opg_f97da296537634afe0c08d115f9974a3",
+        "output_tokens": 527,
+        "provider_policy_id": "c3-final-provider-policy-daily-output-disabled-v1",
+        "purpose": "question_judge",
+        "reasoning_effort": "high",
+        "reasoning_tokens": 320,
+        "request_id": "resp_08073b31689ff91f016a7a154f6868819fabac1ab5a383b6b3",
+        "settled_spend_microusd": 212269,
+        "store": false
+      },
+      "raw_output": {
+        "dimensions": {
+          "answer_cue_resistance": 4,
+          "cognitive_target_alignment": 4,
+          "course_evidence_support": 4,
+          "distractor_quality": 4,
+          "explanation_quality": 4,
+          "factual_correctness": 4,
+          "grading_fairness": 4,
+          "objective_alignment": 4,
+          "scope_and_difficulty": 4,
+          "single_correct_answer": 4
+        },
+        "failure_class": null,
+        "hard_failures": [],
+        "rationale": "The keyed answer is factually correct and fully supported by the approved evidence. It addresses all required claims: glycolysis continues, NAD+ is regenerated, oxygen is not used as the terminal electron acceptor in fermentation, and ATP yield is lower than in aerobic respiration. Each distractor changes one specific claim, producing one clearly correct option without meaningful answer cues. The explanation is accurate, concise, and appropriately tied to the distractors. The question matches the objective, cognitive target, scope, and single-choice grading contract.",
+        "verdict": "QUALIFY"
+      },
+      "transport_events": []
+    },
+    {
+      "judge_number": 2,
+      "provider_receipt": {
+        "actual_model": "gpt-5.6-luna",
+        "cached_input_tokens": 1230,
+        "estimated_cost_microusd": 610,
+        "input_tokens": 1233,
+        "latency_ms": 5048,
+        "operation_id": "opg_ce9743875530b8649a033450fec7ab6d",
+        "output_tokens": 487,
+        "provider_policy_id": "c3-final-provider-policy-daily-output-disabled-v1",
+        "purpose": "question_judge",
+        "reasoning_effort": "high",
+        "reasoning_tokens": 275,
+        "request_id": "resp_065edfbe555a8ab5016a7a155847e4819cb13c84039c2fa693",
+        "settled_spend_microusd": 212879,
+        "store": false
+      },
+      "raw_output": {
+        "dimensions": {
+          "answer_cue_resistance": 4,
+          "cognitive_target_alignment": 4,
+          "course_evidence_support": 4,
+          "distractor_quality": 4,
+          "explanation_quality": 4,
+          "factual_correctness": 4,
+          "grading_fairness": 4,
+          "objective_alignment": 4,
+          "scope_and_difficulty": 4,
+          "single_correct_answer": 4
+        },
+        "failure_class": null,
+        "hard_failures": [],
+        "rationale": "The keyed answer B accurately integrates all four required claims: fermentation preserves glycolysis through NAD+ regeneration, does not use oxygen as a terminal electron acceptor, and yields less ATP than aerobic respiration. Each claim is directly supported by approved evidence. The alternatives each alter one essential claim, creating a single defensible answer with clear grading boundaries. Options are parallel in structure and length, minimizing answer cues. The explanation is accurate, concise, and appropriately tied to the distractors. The item matches the stated contrast objective and has suitable scope and difficulty.",
+        "verdict": "QUALIFY"
+      },
+      "transport_events": []
+    }
+  ],
+  "phase": "repeat",
+  "question_number": 3,
+  "schema_version": "c3-final-question-judges-v1"
+}

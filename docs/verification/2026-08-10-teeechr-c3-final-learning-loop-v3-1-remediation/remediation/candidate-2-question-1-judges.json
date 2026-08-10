@@ -1,0 +1,85 @@
+{
+  "candidate_number": 2,
+  "judge_attempt": "initial",
+  "judges": [
+    {
+      "judge_number": 1,
+      "provider_receipt": {
+        "actual_model": "gpt-5.6-luna",
+        "cached_input_tokens": 0,
+        "estimated_cost_microusd": 914,
+        "input_tokens": 1094,
+        "latency_ms": 6292,
+        "operation_id": "opg_b42ec18fc48c4b72372762090fc71bc1",
+        "output_tokens": 579,
+        "provider_policy_id": "c3-final-provider-policy-daily-output-disabled-v1",
+        "purpose": "question_judge",
+        "reasoning_effort": "high",
+        "reasoning_tokens": 396,
+        "request_id": "resp_0046c234f1f0bf58016a7a1644e654819f975274d7eb5318eb",
+        "settled_spend_microusd": 232672,
+        "store": false
+      },
+      "raw_output": {
+        "dimensions": {
+          "answer_cue_resistance": 4,
+          "cognitive_target_alignment": 4,
+          "course_evidence_support": 4,
+          "distractor_quality": 4,
+          "explanation_quality": 4,
+          "factual_correctness": 4,
+          "grading_fairness": 4,
+          "objective_alignment": 4,
+          "scope_and_difficulty": 4,
+          "single_correct_answer": 4
+        },
+        "failure_class": null,
+        "hard_failures": [],
+        "rationale": "The question directly tests the stated causal role of oxygen and includes all four required claims in option A and the explanation. Evidence citations support each claim and are correctly matched. The distractors each introduce one clear scientific error while preserving the relevant context, yielding one defensible correct answer and fair grading. Wording is parallel, with no material answer cue, unsupported claim, scope mismatch, or misleading explanation.",
+        "verdict": "QUALIFY"
+      },
+      "transport_events": []
+    },
+    {
+      "judge_number": 2,
+      "provider_receipt": {
+        "actual_model": "gpt-5.6-luna",
+        "cached_input_tokens": 1091,
+        "estimated_cost_microusd": 502,
+        "input_tokens": 1094,
+        "latency_ms": 6168,
+        "operation_id": "opg_1a1908f9def1aa55b5a765e475e448a9",
+        "output_tokens": 399,
+        "provider_policy_id": "c3-final-provider-policy-daily-output-disabled-v1",
+        "purpose": "question_judge",
+        "reasoning_effort": "high",
+        "reasoning_tokens": 227,
+        "request_id": "resp_015faac78a8d8f00016a7a164b2cf0819db485aecb2c0f3620",
+        "settled_spend_microusd": 233174,
+        "store": false
+      },
+      "raw_output": {
+        "dimensions": {
+          "answer_cue_resistance": 4,
+          "cognitive_target_alignment": 4,
+          "course_evidence_support": 4,
+          "distractor_quality": 4,
+          "explanation_quality": 4,
+          "factual_correctness": 4,
+          "grading_fairness": 4,
+          "objective_alignment": 4,
+          "scope_and_difficulty": 4,
+          "single_correct_answer": 4
+        },
+        "failure_class": null,
+        "hard_failures": [],
+        "rationale": "The keyed answer accurately states all four required causal claims and is directly supported by the approved evidence. The explanation matches the key and remains concise. Each distractor changes one scientifically decisive claim, producing one clearly correct option without ambiguity. Parallel option structure minimizes answer cues, and the question appropriately targets the stated objective at a suitable difficulty for direct correction.",
+        "verdict": "QUALIFY"
+      },
+      "transport_events": []
+    }
+  ],
+  "phase": "remediation",
+  "question_number": 1,
+  "schema_version": "c3-final-question-judges-v1"
+}

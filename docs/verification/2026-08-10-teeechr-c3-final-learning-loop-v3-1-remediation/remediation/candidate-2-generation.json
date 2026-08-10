@@ -1,0 +1,127 @@
+{
+  "campaign_id": "2026-08-10-teeechr-c3-final-learning-loop-v3-1-remediation",
+  "candidate_number": 2,
+  "phase": "remediation",
+  "provider_receipt": {
+    "actual_model": "gpt-5.6-luna",
+    "cached_input_tokens": 0,
+    "estimated_cost_microusd": 3164,
+    "input_tokens": 2738,
+    "latency_ms": 16037,
+    "operation_id": "opg_c0d36d4566eaddc86cd7bd8c3bf2182d",
+    "output_tokens": 2180,
+    "provider_policy_id": "c3-final-provider-policy-daily-output-disabled-v1",
+    "purpose": "remediation_generation",
+    "reasoning_effort": "high",
+    "reasoning_tokens": 1458,
+    "request_id": "resp_0141fd9a3f6f8a99016a7a1634de58819ebf74e0bde69cb3e4",
+    "settled_spend_microusd": 231758,
+    "store": false
+  },
+  "raw_output": {
+    "abstain_reason": null,
+    "assessment_contract_ids": [
+      "ac_resp_02_causal_role_v4_generation",
+      "ac_resp_03_bounded_contrast_v4_generation"
+    ],
+    "campaign_contract_id": "c3-final-learning-loop-v1",
+    "outcome": "generated",
+    "questions": [
+      {
+        "accepted_answers": [],
+        "answer_text": "",
+        "citation_evidence_ids": [
+          "ev_resp02_terminal_acceptor",
+          "ev_resp02_accepts_electrons",
+          "ev_resp02_forms_water",
+          "ev_resp02_flow_continues"
+        ],
+        "correct_option_key": "A",
+        "explanation": "Oxygen is the terminal electron acceptor. It accepts electrons and protons to form water, allowing electron flow through the aerobic electron transport chain to continue.",
+        "objective_ids": [
+          "OBJ-RESP-02"
+        ],
+        "options": [
+          {
+            "option_key": "A",
+            "text": "Oxygen is the terminal electron acceptor; it accepts electrons and protons, forms water, and allows chain electron flow to continue."
+          },
+          {
+            "option_key": "B",
+            "text": "Oxygen is the terminal electron acceptor; it accepts electrons and protons, forms carbon dioxide, and allows chain electron flow to continue."
+          },
+          {
+            "option_key": "C",
+            "text": "Oxygen is the terminal electron acceptor; it releases electrons and protons, forms water, and allows chain electron flow to continue."
+          },
+          {
+            "option_key": "D",
+            "text": "Oxygen is the terminal electron acceptor; it accepts electrons and protons, forms water, and stops chain electron flow."
+          }
+        ],
+        "prompt": "Which statement correctly explains oxygen’s role in aerobic electron transport?",
+        "question_type": "single_choice_v1",
+        "remediation_purpose": "direct_correction"
+      },
+      {
+        "accepted_answers": [],
+        "answer_text": "",
+        "citation_evidence_ids": [
+          "ev_resp03_fermentation_context",
+          "ev_resp03_regenerates_nad",
+          "ev_resp03_no_oxygen_low_atp",
+          "ev_resp03_aerobic_comparison"
+        ],
+        "correct_option_key": "A",
+        "explanation": "Fermentation does not replace glycolysis. It regenerates NAD+ so glycolysis can continue, uses no oxygen as a terminal electron acceptor, and produces much less ATP per glucose than aerobic respiration.",
+        "objective_ids": [
+          "OBJ-RESP-03"
+        ],
+        "options": [
+          {
+            "option_key": "A",
+            "text": "Fermentation preserves glycolysis by regenerating NAD+, uses no oxygen as terminal acceptor, and yields much less ATP per glucose than aerobic respiration."
+          },
+          {
+            "option_key": "B",
+            "text": "Fermentation replaces glycolysis but regenerates NAD+, uses no oxygen as terminal acceptor, and yields much less ATP per glucose than aerobic respiration."
+          },
+          {
+            "option_key": "C",
+            "text": "Fermentation preserves glycolysis by regenerating NAD+, uses oxygen as the terminal acceptor, and yields much less ATP per glucose than aerobic respiration."
+          },
+          {
+            "option_key": "D",
+            "text": "Fermentation preserves glycolysis by regenerating NAD+, uses no oxygen as terminal acceptor, and yields more ATP per glucose than aerobic respiration."
+          }
+        ],
+        "prompt": "Which statement correctly contrasts fermentation with aerobic respiration?",
+        "question_type": "single_choice_v1",
+        "remediation_purpose": "contrast"
+      }
+    ],
+    "request_contract": {
+      "generation_purpose": "remediation",
+      "request_contract_id": "pgc_e5981508a52e6f90cbf384bd8a59a9db",
+      "requested_objective_ids": [
+        "OBJ-RESP-02",
+        "OBJ-RESP-03"
+      ],
+      "source_scope_hash": "6dc507ff6a227bf4198acc3ca90314d62429788a7a3a17075b2bc68c2eea3100"
+    }
+  },
+  "reasoning_effort": "high",
+  "request_contract": {
+    "generation_purpose": "remediation",
+    "request_contract_id": "pgc_e5981508a52e6f90cbf384bd8a59a9db",
+    "requested_objective_ids": [
+      "OBJ-RESP-02",
+      "OBJ-RESP-03"
+    ],
+    "source_scope_hash": "6dc507ff6a227bf4198acc3ca90314d62429788a7a3a17075b2bc68c2eea3100"
+  },
+  "requested_model": "gpt-5.6-luna",
+  "schema_version": "c3-final-generation-receipt-v1",
+  "store": false,
+  "transport_events": []
+}

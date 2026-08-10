@@ -1,0 +1,85 @@
+{
+  "candidate_number": 2,
+  "judge_attempt": "initial",
+  "judges": [
+    {
+      "judge_number": 1,
+      "provider_receipt": {
+        "actual_model": "gpt-5.6-luna",
+        "cached_input_tokens": 0,
+        "estimated_cost_microusd": 1409,
+        "input_tokens": 1181,
+        "latency_ms": 10780,
+        "operation_id": "opg_6250290c0ef13bfb4ec681ea768e5623",
+        "output_tokens": 977,
+        "provider_policy_id": "c3-final-provider-policy-daily-output-disabled-v1",
+        "purpose": "question_judge",
+        "reasoning_effort": "high",
+        "reasoning_tokens": 789,
+        "request_id": "resp_016375181861726e016a7a153efc7081a19797958f89b6e8c2",
+        "settled_spend_microusd": 210791,
+        "store": false
+      },
+      "raw_output": {
+        "dimensions": {
+          "answer_cue_resistance": 3,
+          "cognitive_target_alignment": 4,
+          "course_evidence_support": 4,
+          "distractor_quality": 3,
+          "explanation_quality": 4,
+          "factual_correctness": 4,
+          "grading_fairness": 4,
+          "objective_alignment": 4,
+          "scope_and_difficulty": 4,
+          "single_correct_answer": 4
+        },
+        "failure_class": null,
+        "hard_failures": [],
+        "rationale": "The keyed answer is factually correct and directly supported by all four cited evidence claims. It fully matches the objective by identifying oxygen as the terminal acceptor, its acceptance of electrons and protons, water formation, and continued aerobic electron flow. Each distractor isolates one incorrect claim, giving clear answer boundaries, though the simple negation pattern creates a minor cue. The explanation accurately addresses the required facts and why alternatives fail.",
+        "verdict": "QUALIFY"
+      },
+      "transport_events": []
+    },
+    {
+      "judge_number": 2,
+      "provider_receipt": {
+        "actual_model": "gpt-5.6-luna",
+        "cached_input_tokens": 1178,
+        "estimated_cost_microusd": 599,
+        "input_tokens": 1181,
+        "latency_ms": 5675,
+        "operation_id": "opg_5bbab79377198b41e920d41bc5854f21",
+        "output_tokens": 479,
+        "provider_policy_id": "c3-final-provider-policy-daily-output-disabled-v1",
+        "purpose": "question_judge",
+        "reasoning_effort": "high",
+        "reasoning_tokens": 281,
+        "request_id": "resp_0f8f2f8fd6a92fc9016a7a1549b3fc81a085a4bcea01792434",
+        "settled_spend_microusd": 211390,
+        "store": false
+      },
+      "raw_output": {
+        "dimensions": {
+          "answer_cue_resistance": 4,
+          "cognitive_target_alignment": 4,
+          "course_evidence_support": 4,
+          "distractor_quality": 4,
+          "explanation_quality": 4,
+          "factual_correctness": 4,
+          "grading_fairness": 4,
+          "objective_alignment": 4,
+          "scope_and_difficulty": 4,
+          "single_correct_answer": 4
+        },
+        "failure_class": null,
+        "hard_failures": [],
+        "rationale": "The keyed option accurately includes all four required claims: oxygen is the terminal electron acceptor, accepts electrons and protons, forms water, and enables continued aerobic electron flow. Each distractor changes exactly one required fact, creating clear answer boundaries without introducing competing interpretations. The explanation is evidence-supported and appropriately addresses the distractors. The question directly matches the objective, scope, cognitive target, and single-choice grading contract, with no citation mismatch, unsupported claim, or answer leakage.",
+        "verdict": "QUALIFY"
+      },
+      "transport_events": []
+    }
+  ],
+  "phase": "repeat",
+  "question_number": 2,
+  "schema_version": "c3-final-question-judges-v1"
+}
