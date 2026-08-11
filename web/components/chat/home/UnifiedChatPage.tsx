@@ -313,6 +313,7 @@ export interface UnifiedChatPageProps {
   courseReadiness?: import('@/lib/course-api').CourseChatReadiness | null
   hideCourseBar?: boolean
   hideCourseScope?: boolean
+  hideSurfaceLabel?: boolean
   surfaceLabel?: string
   disableCourseLearnerActions?: boolean
 }
@@ -324,6 +325,7 @@ export default function UnifiedChatPage({
   courseReadiness = null,
   hideCourseBar = false,
   hideCourseScope = false,
+  hideSurfaceLabel = false,
   surfaceLabel,
   disableCourseLearnerActions = false,
 }: UnifiedChatPageProps = {}) {
@@ -2008,7 +2010,7 @@ export default function UnifiedChatPage({
           className="chat-preview-shell flex h-full flex-col overflow-hidden bg-[var(--background)]"
         >
           {hideCourseBar ? null : <CourseBar onCourseChange={handleCourseChange} />}
-          {surfaceLabel && !courseMode ? (
+          {surfaceLabel && !courseMode && !hideSurfaceLabel ? (
             <div className="mx-auto w-full max-w-[960px] px-6 pt-3 text-xs font-medium uppercase tracking-[0.14em] text-[var(--muted-foreground)]">
               {surfaceLabel}
             </div>
@@ -2057,26 +2059,31 @@ export default function UnifiedChatPage({
               ) : null}
             </div>
             <div className="flex shrink-0 items-center gap-0.5">
-              <HeaderActionButton
-                onClick={() => setShowSaveModal(true)}
-                disabled={!chatSavePayload}
-                icon={BookmarkPlus}
-                label={t('Save to Notebook')}
-              />
-              <HeaderActionButton
-                onClick={handleDownloadMarkdown}
-                disabled={!state.messages.length}
-                icon={Download}
-                label={t('Download Markdown')}
-                title={t('Download chat history as Markdown')}
-              />
-              <HeaderActionButton
-                onClick={toggleViewerPanel}
-                active={viewerPanelOpen}
-                icon={PanelRight}
-                label={t('Activity')}
-                title={t('Session activity, attachments & previews')}
-              />
+              {state.messages.length ? (
+                <>
+                  <HeaderActionButton
+                    onClick={() => setShowSaveModal(true)}
+                    disabled={!chatSavePayload}
+                    icon={BookmarkPlus}
+                    label={t('Save to Notebook')}
+                  />
+                  <HeaderActionButton
+                    onClick={handleDownloadMarkdown}
+                    icon={Download}
+                    label={t('Download Markdown')}
+                    title={t('Download chat history as Markdown')}
+                  />
+                </>
+              ) : null}
+              {state.messages.length || capabilityNeedsConfig ? (
+                <HeaderActionButton
+                  onClick={toggleViewerPanel}
+                  active={viewerPanelOpen}
+                  icon={PanelRight}
+                  label={t('Activity')}
+                  title={t('Session activity, attachments & previews')}
+                />
+              ) : null}
             </div>
           </div>
           <div className="flex w-full flex-1 min-h-0 flex-col">
@@ -2361,7 +2368,11 @@ export default function UnifiedChatPage({
           />
           <SessionViewerPanel
             ref={viewerPanelRef}
-            open={viewerPanelOpen && previewSource === null}
+            open={
+              viewerPanelOpen &&
+              (state.messages.length > 0 || capabilityNeedsConfig) &&
+              previewSource === null
+            }
             sessionId={state.sessionId}
             activity={sessionActivity}
             configSection={capabilityConfigSection}

@@ -85,7 +85,10 @@ test("CourseShell contains the mobile navigation and focus-visibility contract",
 
 test("General Study keeps its label without the Course-only selector bar", () => {
   const source = readFileSync(
-    path.join(process.cwd(), "app/(workspace)/home/[[...sessionId]]/page.tsx"),
+    path.join(
+      process.cwd(),
+      "components/chat/home/GeneralStudyWorkspace.tsx",
+    ),
     "utf8",
   );
 

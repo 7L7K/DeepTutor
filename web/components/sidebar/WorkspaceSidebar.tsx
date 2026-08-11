@@ -79,11 +79,10 @@ export default function WorkspaceSidebar() {
   const courseChatCourseId = courseChatMatch
     ? decodeURIComponent(courseChatMatch[1])
     : null;
-  const isGeneralStudyRoute = pathname === "/home" || pathname.startsWith("/home/");
   const visibleSessions = courseChatCourseId
     ? orderedSessions.filter((session) => session.course_id === courseChatCourseId)
     : orderedSessions.filter((session) => !session.course_id);
-  const showSessions = Boolean(courseChatCourseId || isGeneralStudyRoute);
+  const showSessions = Boolean(courseChatCourseId);
   const sessionHeading = courseChatCourseId
     ? "Course chat history"
     : "General Study history";

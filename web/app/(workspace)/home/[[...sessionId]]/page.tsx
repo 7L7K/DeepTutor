@@ -1,11 +1,10 @@
-import UnifiedChatPage from "@/components/chat/home/UnifiedChatPage";
+import { Suspense } from "react";
+import GeneralStudyWorkspace from "@/components/chat/home/GeneralStudyWorkspace";
 
 export default function ChatPage() {
   return (
-    <UnifiedChatPage
-      hideCourseBar
-      hideCourseScope
-      surfaceLabel="General Study"
-    />
+    <Suspense fallback={null}>
+      <GeneralStudyWorkspace />
+    </Suspense>
   );
 }
