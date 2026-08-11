@@ -1,7 +1,8 @@
 # TEEECHR Historical Learner-Data Migration Plan
 
 Date: 2026-08-01
-Status: design approved by roadmap; no learner data inspected or mutated
+Status: zero-write classifier and authenticated review UI implemented; reviewed
+apply remains locked
 Historical source authority: `DeepTutor` branch
 `safety/teeechr-pre-v152-20260720` at `3c2d5a47`
 Target authority: the per-user Course database and learning store on
@@ -199,8 +200,32 @@ decision.
 6. Review the manifest with the user.
 7. Only then implement and authorize reviewed apply and archive rollback.
 
+## Zero-write implementation receipt
+
+The first five slices are implemented on
+`feature/teeechr-historical-migration-dry-run`:
+
+- server-owned source discovery with no browser-supplied filesystem path;
+- SQLite `mode=ro`, `query_only`, `trusted_schema=OFF`, integrity checking, and
+  before/after source hashing;
+- opaque historical-owner selection and authenticated destination validation;
+- deterministic `importable`, `ambiguous`, `orphaned`, `duplicate`, and
+  `rejected` counts with campaign and manifest hashes;
+- an authenticated Settings > Historical Data review screen; and
+- fixture, API, client-contract, build, and real-source zero-write proof.
+
+The real preserved local source was recognized as compatible and exposed seven
+opaque owner profiles. The most active profile's no-destination report counted
+82 session/message records as importable and 84 Practice/Flashcard records as
+ambiguous because the learner has not yet selected target workspaces. It found
+no orphaned, duplicate, or rejected records in that profile. No legacy text,
+raw ID, username, title, path, credential, Course database, mastery state, or
+historical source bytes were returned or changed.
+
 ## Current decision
 
-Historical migration is designed but not executed. The next authorized action
-is implementation and validation of the zero-write classifier. No historical
-learner database, Course database, or mastery store was modified for this plan.
+The learner may now review the zero-write report. Actual copy/apply, receipt
+persistence, idempotent retry, archive rollback, and post-apply comparison are
+still unavailable. Implementing those mutation surfaces requires a separate
+explicit approval of the reviewed manifest and destinations. Until then, this
+phase makes no historical, Course, Flashcard, Practice, or mastery writes.

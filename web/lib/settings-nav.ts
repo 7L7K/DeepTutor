@@ -10,6 +10,7 @@ import {
   Cable,
   Database,
   FileScan,
+  History,
   Image as ImageIcon,
   Library,
   MessagesSquare,
@@ -274,6 +275,16 @@ const AGENT_CHILDREN: SettingsLeaf[] = [
 
 export const SETTINGS_CATEGORIES: SettingsCategory[] = [
   {
+    key: "historical-data",
+    label: { zh: "历史学习数据", en: "Historical Data" },
+    blurb: {
+      zh: "只读检查旧版对话、练习与闪卡",
+      en: "Safely inspect older conversations, Practice, and Flashcards",
+    },
+    icon: History,
+    href: "/settings/historical-data",
+  },
+  {
     key: "blueway",
     label: { zh: "BlueWay 连接", en: "BlueWay" },
     blurb: {
@@ -359,6 +370,7 @@ const HUB_LABEL: Lang = { zh: "设置", en: "Settings" };
 const NAV_ONLY_ROUTES = new Set<string>([
   SETTINGS_HUB_HREF,
   "/settings/blueway",
+  "/settings/historical-data",
   ...SETTINGS_CATEGORIES.filter((c) => c.children).map((c) => c.href),
 ]);
 

@@ -393,6 +393,7 @@ from deeptutor.api.routers import (
     co_writer,
     courses,
     dashboard,
+    historical_migration,
     imports,
     knowledge,
     mastery_path,
@@ -461,6 +462,12 @@ app.include_router(
     knowledge.router, prefix="/api/v1/knowledge", tags=["knowledge"], dependencies=_auth
 )
 app.include_router(imports.router, prefix="/api/v1/imports", tags=["imports"], dependencies=_auth)
+app.include_router(
+    historical_migration.router,
+    prefix="/api/v1/historical-migration",
+    tags=["historical-migration"],
+    dependencies=_auth,
+)
 app.include_router(
     dashboard.router, prefix="/api/v1/dashboard", tags=["dashboard"], dependencies=_auth
 )

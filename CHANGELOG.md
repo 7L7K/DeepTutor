@@ -4,6 +4,16 @@
 
 ### Added
 
+- Added the first, zero-write Historical Learner Data migration surface under
+  Settings. The authenticated server discovers only approved local SQLite
+  sources, opens them read-only, validates integrity and ownership, freezes
+  schema/database fingerprints, and classifies sessions, messages, Practice,
+  and Flashcard lineage without returning legacy text, raw identifiers,
+  usernames, titles, credentials, or filesystem paths. Learners can choose an
+  opaque historical profile plus owned Course/General Study destinations and
+  create a deterministic review manifest. Actual import, mastery promotion,
+  rollback, and all target writes remain intentionally unavailable until the
+  exact manifest receives separate approval.
 - Centralized TEEECHR text-generation model, capability, reasoning, pricing,
   long-context, and per-feature policy in the deployment-owned model catalog.
   GPT-5.6 Luna is now the sole active model: General Chat and Course Chat use
