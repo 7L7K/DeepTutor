@@ -34,6 +34,7 @@ export interface FlashcardStudySessionProps {
   onDone?: () => void;
   onKeepStudying?: () => void;
   onNavigate?: (index: number) => void;
+  reviewMode?: boolean;
 }
 
 /**
@@ -60,6 +61,7 @@ export function FlashcardStudySession({
   onDone,
   onKeepStudying,
   onNavigate,
+  reviewMode = false,
 }: FlashcardStudySessionProps) {
   const { t } = useTranslation();
   const completed = new Set(completedIndexes);
@@ -67,14 +69,16 @@ export function FlashcardStudySession({
   if (complete) {
     return (
       <section
-        aria-label={t("Study complete")}
+        aria-label={t(reviewMode ? "Review complete" : "Study complete")}
         className="space-y-4 rounded-xl border border-[var(--border)] bg-[var(--card)] p-5"
       >
         <div>
           <p className="text-sm text-[var(--muted-foreground)]">
             {t(cardsLeftLabel(cardsLeft))}
           </p>
-          <h2 className="mt-1 text-xl font-semibold">{t("Study complete")}</h2>
+          <h2 className="mt-1 text-xl font-semibold">
+            {t(reviewMode ? "Review complete" : "Study complete")}
+          </h2>
           <p className="mt-2 text-sm text-[var(--muted-foreground)]">
             {t(completedCardsLabel(reviewedCards))}
           </p>
@@ -97,7 +101,7 @@ export function FlashcardStudySession({
               onClick={onKeepStudying}
               className="rounded-lg border border-[var(--border)] px-3 py-2 text-sm disabled:opacity-50"
             >
-              {t("Keep studying")}
+              {t(reviewMode ? "Keep reviewing" : "Keep studying")}
             </button>
           ) : null}
         </div>

@@ -1230,7 +1230,7 @@ export default function FlashcardsWorkspace() {
             <h1 className="text-2xl font-semibold">{courseShell ? t("Review") : t("Flashcards")}</h1>
             <p className="text-sm text-[var(--muted-foreground)]">
               {courseShell
-                ? t("Review approved cards from this Course.")
+                ? t("Review what needs your attention in this Course.")
                 : activeCourse?.workspace_kind === "general_study"
                 ? t("Study private Flashcards created from your conversations.")
                 : t("Study and create private Flashcards for this Course.")}
@@ -1268,7 +1268,13 @@ export default function FlashcardsWorkspace() {
                       : "text-[var(--muted-foreground)] hover:bg-[var(--secondary)]"
                   } disabled:opacity-50`}
                 >
-                  {t(FLASHCARDS_VIEW_PRESENTATION[item].label)}
+                  {t(
+                    courseShell && item === "study"
+                      ? "Review"
+                      : courseShell && item === "activity"
+                        ? "History"
+                        : FLASHCARDS_VIEW_PRESENTATION[item].label,
+                  )}
                 </button>
               ))}
             </nav>
@@ -1277,7 +1283,9 @@ export default function FlashcardsWorkspace() {
               <section className="space-y-4 rounded-xl border border-[var(--border)] bg-[var(--card)] p-5">
                 <div>
                   <h2 className="text-xl font-semibold">
-                    {courseShell ? t("Create review cards") : t("Create flashcards")}
+                    {courseShell
+                      ? t("Create review material")
+                      : t("Create flashcards")}
                   </h2>
                   <p className="mt-1 text-sm text-[var(--muted-foreground)]">
                     {t("Choose how you want to build this deck.")}
@@ -2542,7 +2550,9 @@ export default function FlashcardsWorkspace() {
                   <section className="rounded-xl border border-[var(--border)] bg-[var(--card)] p-4">
                     <h2 className="mb-3 font-medium">
                       {pageView === "study"
-                        ? t("Your decks")
+                        ? courseShell
+                          ? t("Your review")
+                          : t("Your decks")
                         : t("Manual decks")}
                     </h2>
                     {pageView === "create" ? (
@@ -2602,7 +2612,7 @@ export default function FlashcardsWorkspace() {
                       {!activeDecks.length ? (
                         <p className="px-2 py-3 text-sm text-[var(--muted-foreground)]">
                           {courseShell
-                            ? t("No review decks yet.")
+                            ? t("Nothing is ready to review yet.")
                             : t("No Flashcard decks yet.")}
                         </p>
                       ) : null}
@@ -2632,8 +2642,19 @@ export default function FlashcardsWorkspace() {
                       <div className="flex flex-wrap items-start justify-between gap-3">
                         <div>
                           <h2 className="text-xl font-semibold">
-                            {selectedDeck.title}
+                            {courseShell &&
+                            selectedDeck.state === "ready" &&
+                            view.review_summary.due_cards > 0
+                              ? t("Ready to review")
+                              : selectedDeck.title}
                           </h2>
+                          {courseShell &&
+                          selectedDeck.state === "ready" &&
+                          view.review_summary.due_cards > 0 ? (
+                            <p className="text-sm font-medium text-[var(--muted-foreground)]">
+                              {selectedDeck.title}
+                            </p>
+                          ) : null}
                           <p className="text-sm text-[var(--muted-foreground)]">
                             {view.review_summary.due_cards > 0
                               ? `${view.review_summary.due_cards} ${t("cards ready")}`
@@ -2671,7 +2692,9 @@ export default function FlashcardsWorkspace() {
                               >
                                 <Play size={15} />{" "}
                                 {view.review_summary.due_cards > 0
-                                  ? t("Start studying")
+                                  ? courseShell
+                                    ? t("Start review")
+                                    : t("Start studying")
                                   : t("Check for cards")}
                               </button>
                             ) : null}
@@ -2704,7 +2727,7 @@ export default function FlashcardsWorkspace() {
                             }}
                             className="text-sm text-[var(--muted-foreground)] underline underline-offset-4"
                           >
-                            {t("Exit study")}
+                            {courseShell ? t("Exit review") : t("Exit study")}
                           </button>
                         )}
                       </div>
@@ -2798,6 +2821,7 @@ export default function FlashcardsWorkspace() {
                           setCompletedReviewIndexes([]);
                         }}
                         onKeepStudying={() => void beginReview()}
+                        reviewMode={Boolean(courseShell)}
                       />
 
                       {!studySessionActive ? (
@@ -2837,7 +2861,9 @@ export default function FlashcardsWorkspace() {
                         }}
                         className="rounded-lg bg-[var(--primary)] px-3 py-2 text-sm text-[var(--primary-foreground)]"
                       >
-                        {courseShell ? t("Create review cards") : t("Create flashcards")}
+                        {courseShell
+                          ? t("Create review material")
+                          : t("Create flashcards")}
                       </button>
                     </div>
                   )}
@@ -2889,11 +2915,13 @@ export default function FlashcardsWorkspace() {
                 <div className="flex flex-wrap items-start justify-between gap-3">
                   <div>
                     <h2 className="text-xl font-semibold">
-                      {t("Card creation activity")}
+                      {courseShell ? t("Review history") : t("Card creation activity")}
                     </h2>
                     <p className="mt-1 text-sm text-[var(--muted-foreground)]">
                       {t(
-                        "Track active requests and review card drafts before publishing.",
+                        courseShell
+                          ? "Review completed work and card creation history."
+                          : "Track active requests and review card drafts before publishing.",
                       )}
                     </p>
                   </div>
