@@ -27,7 +27,7 @@ test("canonical academic term keeps identity while rendering a human label", asy
 
   assert.equal(academicTermLabel("fall-2026"), "Fall 2026");
   assert.equal(academicTermLabel("spring-2027"), "Spring 2027");
-  assert.equal(academicTermLabel(null), "Term not linked yet");
+  assert.equal(academicTermLabel(null), "No term set");
 });
 
 test("Course Chat hides internal managed knowledge references", async () => {

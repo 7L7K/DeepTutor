@@ -15,6 +15,7 @@ import {
 import { useTranslation } from "react-i18next";
 import Link from "next/link";
 import { CourseBar } from "@/components/courses/CourseBar";
+import { useCourseShell } from "@/components/courses/CourseShell";
 import { useCourses } from "@/context/CourseContext";
 import { fetchAuthStatus } from "@/lib/auth";
 import { requestGeneralStudyFlashcards } from "@/lib/course-actions-api";
@@ -94,6 +95,7 @@ function errorText(cause: unknown): string {
 
 export default function FlashcardsWorkspace() {
   const { t } = useTranslation();
+  const courseShell = useCourseShell();
   const {
     activeCourse,
     courses,
@@ -1221,13 +1223,15 @@ export default function FlashcardsWorkspace() {
       data-testid="flashcards-scroll-container"
       className="h-full overflow-y-auto bg-[var(--background)] text-[var(--foreground)] [scrollbar-gutter:stable]"
     >
-      <CourseBar />
+      {courseShell ? null : <CourseBar />}
       <div className="mx-auto max-w-6xl space-y-5 px-5 py-6">
         <div>
           <div>
-            <h1 className="text-2xl font-semibold">{t("Flashcards")}</h1>
+            <h1 className="text-2xl font-semibold">{courseShell ? t("Review") : t("Flashcards")}</h1>
             <p className="text-sm text-[var(--muted-foreground)]">
-              {activeCourse?.workspace_kind === "general_study"
+              {courseShell
+                ? t("Review approved cards from this Course.")
+                : activeCourse?.workspace_kind === "general_study"
                 ? t("Study private Flashcards created from your conversations.")
                 : t("Study and create private Flashcards for this Course.")}
             </p>
@@ -1246,7 +1250,7 @@ export default function FlashcardsWorkspace() {
         {activeCourse && scopeReady && courseLoaded ? (
           <>
             <nav
-              aria-label={t("Flashcards views")}
+              aria-label={courseShell ? t("Review views") : t("Flashcards views")}
               className="flex gap-1 rounded-xl border border-[var(--border)] bg-[var(--card)] p-1"
             >
               {(
@@ -1273,7 +1277,7 @@ export default function FlashcardsWorkspace() {
               <section className="space-y-4 rounded-xl border border-[var(--border)] bg-[var(--card)] p-5">
                 <div>
                   <h2 className="text-xl font-semibold">
-                    {t("Create flashcards")}
+                    {courseShell ? t("Create review cards") : t("Create flashcards")}
                   </h2>
                   <p className="mt-1 text-sm text-[var(--muted-foreground)]">
                     {t("Choose how you want to build this deck.")}
@@ -2597,7 +2601,9 @@ export default function FlashcardsWorkspace() {
                       ))}
                       {!activeDecks.length ? (
                         <p className="px-2 py-3 text-sm text-[var(--muted-foreground)]">
-                          {t("No Flashcard decks yet.")}
+                          {courseShell
+                            ? t("No review decks yet.")
+                            : t("No Flashcard decks yet.")}
                         </p>
                       ) : null}
                       {decksHaveMore ? (
@@ -2831,7 +2837,7 @@ export default function FlashcardsWorkspace() {
                         }}
                         className="rounded-lg bg-[var(--primary)] px-3 py-2 text-sm text-[var(--primary-foreground)]"
                       >
-                        {t("Create flashcards")}
+                        {courseShell ? t("Create review cards") : t("Create flashcards")}
                       </button>
                     </div>
                   )}

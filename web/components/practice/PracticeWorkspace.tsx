@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Archive, CheckCircle2, ClipboardCheck, Loader2, Play, RotateCcw, Save, Send, Sparkles, XCircle } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { CourseBar } from "@/components/courses/CourseBar";
+import { useCourseShell } from "@/components/courses/CourseShell";
 import { useCourses } from "@/context/CourseContext";
 import { fetchAuthStatus } from "@/lib/auth";
 import {
@@ -130,6 +131,7 @@ export default function PracticeWorkspace({
 }) {
   const router = useRouter();
   const { activeCourse, refresh: refreshCourses } = useCourses();
+  const courseShell = useCourseShell();
   const [identity, setIdentity] = useState<string | null>(null);
   const [sets, setSets] = useState<PracticeSet[]>([]);
   const [selectedSetId, setSelectedSetId] = useState<string | null>(null);
@@ -983,14 +985,14 @@ export default function PracticeWorkspace({
 
   return (
     <div className="flex h-full min-h-0 min-w-0 flex-col overflow-x-hidden overflow-y-auto">
-      <CourseBar />
+      {courseShell ? null : <CourseBar />}
       <main className="mx-auto min-w-0 w-full max-w-6xl px-4 py-6 sm:px-6">
         <div className="mb-5 flex flex-wrap items-start justify-between gap-3">
           <div>
             <h1 className="text-2xl font-semibold">Practice</h1>
             <p className="mt-1 text-sm text-[var(--muted-foreground)]">Create, take, and review private quizzes grounded in this Course.</p>
           </div>
-          {activeCourse ? <div className="rounded-lg border border-[var(--border)] bg-[var(--card)] px-3 py-2 text-sm"><span className="text-[var(--muted-foreground)]">Active Course: </span><strong>{activeCourse.title}</strong></div> : null}
+          {activeCourse && !courseShell ? <div className="rounded-lg border border-[var(--border)] bg-[var(--card)] px-3 py-2 text-sm"><span className="text-[var(--muted-foreground)]">Active Course: </span><strong>{activeCourse.title}</strong></div> : null}
         </div>
 
         {!identity ? <p className="rounded-lg border border-[var(--border)] p-4 text-sm text-[var(--muted-foreground)]">Sign in to use private Course Practice.</p> : null}

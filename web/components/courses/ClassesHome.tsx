@@ -33,12 +33,14 @@ function CourseCard({
             {academicTermLabel(course.term)}
           </p>
         </div>
-        <span className="rounded-full border border-[var(--border)] px-2 py-1 text-[11px] text-[var(--muted-foreground)]">
-          {course.state === "active" ? "Active" : "Archived"}
-        </span>
+        {course.state === "archived" ? (
+          <span className="rounded-full border border-[var(--border)] px-2 py-1 text-[11px] text-[var(--muted-foreground)]">
+            Archived
+          </span>
+        ) : null}
       </div>
       <span className="mt-6 inline-flex items-center gap-1.5 text-sm font-medium text-[var(--foreground)]">
-        Open Course Hub
+        {course.state === "active" ? "Continue" : "Open course"}
         <ArrowRight
           size={15}
           className="transition-transform group-hover:translate-x-0.5"
@@ -95,7 +97,7 @@ export default function ClassesHome() {
             </h1>
             <p className="mt-2 max-w-xl text-sm leading-6 text-[var(--muted-foreground)]">
               Your private academic Courses, with one stable place to open each
-              Course Hub.
+              Course.
             </p>
           </div>
           <button
@@ -175,8 +177,7 @@ export default function ClassesHome() {
                 Add a Course
               </h2>
               <p className="mt-1 text-sm text-[var(--muted-foreground)]">
-                Start with the title. Term metadata remains explicitly unlinked
-                until a real provider mapping exists.
+                Add a title now. You can set the academic term when it is known.
               </p>
               <form onSubmit={(event) => void submitCourse(event)} className="mt-4 flex flex-wrap gap-2">
                 <label htmlFor="new-course-title" className="sr-only">

@@ -54,41 +54,13 @@ const PRIMARY_NAV: NavEntry[] = [
   },
   {
     href: "/home",
-    label: "Chat",
+    label: "General Study",
     icon: MessageSquare,
-    tooltipKey: "Chat",
+    tooltipKey: "General Study",
   },
-  {
-    href: "/partners",
-    label: "Partners",
-    icon: HeartHandshake,
-    tooltipKey: "Partners tooltip",
-    requires: "llm",
-  },
-  {
-    // My Agents is its own top-level feature (pulled out of the Learning
-    // Space): connect a live local Claude Code / Codex to consult in chat,
-    // and manage imported agent conversations. Ungated — managing connections
-    // and imports needs no per-user model grant.
-    href: "/agents",
-    label: "My Agents",
-    icon: Bot,
-    tooltipKey: "Agents tooltip",
-  },
-  {
-    href: "/co-writer",
-    label: "Co-Writer",
-    icon: PenLine,
-    tooltipKey: "Co-Writer tooltip",
-    requires: "llm",
-  },
-  {
-    href: "/book",
-    label: "Book",
-    icon: Library,
-    tooltipKey: "Book tooltip",
-    requires: "llm",
-  },
+];
+
+const MORE_NAV: NavEntry[] = [
   {
     href: "/space",
     label: "Learning Space",
@@ -107,27 +79,48 @@ const PRIMARY_NAV: NavEntry[] = [
     icon: GalleryVerticalEnd,
     tooltipKey: "Flashcards",
   },
-];
-
-const SECONDARY_NAV: NavEntry[] = [
   {
-    // Memory is its own top-level console (pulled out of the Learning Space):
-    // a place to inspect and curate the tutor's long-term memory, not a daily
-    // workspace. Never gated — memory has no per-user model requirement.
+    href: "/agents",
+    label: "My Agents",
+    icon: Bot,
+    tooltipKey: "Agents tooltip",
+  },
+  {
+    href: "/partners",
+    label: "Partners",
+    icon: HeartHandshake,
+    tooltipKey: "Partners tooltip",
+    requires: "llm",
+  },
+  {
+    href: "/co-writer",
+    label: "Co-Writer",
+    icon: PenLine,
+    tooltipKey: "Co-Writer tooltip",
+    requires: "llm",
+  },
+  {
+    href: "/book",
+    label: "Book",
+    icon: Library,
+    tooltipKey: "Book tooltip",
+    requires: "llm",
+  },
+  {
     href: "/memory",
     label: "Memory",
     icon: Brain,
     tooltipKey: "Memory tooltip",
   },
   {
-    // Knowledge Center sits just above Settings: it's a console for managing
-    // KBs and retrieval engines, not a daily workspace. Never gated — embedding
-    // / search are shared admin infrastructure, no per-user model grant needed.
     href: "/knowledge",
     label: "Knowledge Center",
     icon: BookOpen,
     tooltipKey: "Knowledge tooltip",
   },
+];
+
+const SECONDARY_NAV: NavEntry[] = [
   { href: "/settings", label: "Settings", icon: Settings },
 ];
 const GITHUB_REPO_URL = "https://github.com/HKUDS/DeepTutor";
@@ -139,6 +132,7 @@ interface SidebarShellProps {
   activeSessionId?: string | null;
   loadingSessions?: boolean;
   showSessions?: boolean;
+  sessionHeading?: string;
   /** Clicking the Chat nav item resets to a fresh session via this handler. */
   onNewChat?: () => void;
   onSelectSession?: (sessionId: string) => void | Promise<void>;
@@ -157,6 +151,7 @@ export function SidebarShell({
   activeSessionId = null,
   loadingSessions = false,
   showSessions = false,
+  sessionHeading = "Recents",
   onNewChat,
   onSelectSession,
   onRenameSession,
@@ -175,17 +170,23 @@ export function SidebarShell({
   // already hidden when you don't want it, so it always opens fully expanded
   // regardless of the persisted desktop preference.
   const collapsed = sidebarCollapsed && !isMobile;
+  const [moreOpen, setMoreOpen] = useState(
+    MORE_NAV.some((item) => pathname.startsWith(item.href)),
+  );
 
   /** Dismiss the drawer on nav clicks that actually navigate in-place. */
   const closeDrawerOnNav = (event: React.MouseEvent) => {
     if (event.metaKey || event.ctrlKey || event.shiftKey || event.button === 1)
       return;
+    setMoreOpen(false);
     drawer?.close();
   };
 
   const navLocked = (item: NavEntry) =>
     item.requires ? !has(item.requires) : false;
   const lockedTooltip = t("Locked — contact your administrator to get access.");
+  const visibleMoreNav = MORE_NAV.filter((item) => !navLocked(item));
+  const isMoreActive = MORE_NAV.some((item) => pathname.startsWith(item.href));
   const renderedFooter =
     typeof footerSlot === "function" ? footerSlot(collapsed) : footerSlot;
   const [recentsCollapsed, setRecentsCollapsed] = useState(false);
@@ -221,6 +222,50 @@ export function SidebarShell({
     router.push("/home");
   };
 
+  const renderMoreControl = (compact: boolean) => (
+    <div className={compact ? "relative" : ""}>
+      <button
+        type="button"
+        aria-expanded={moreOpen}
+        aria-controls="sidebar-more-menu"
+        aria-haspopup="menu"
+        aria-label={t("More")}
+        title={compact ? (t("More") as string) : undefined}
+        onClick={() => setMoreOpen((open) => !open)}
+        className={(compact
+          ? `relative flex h-9 w-9 items-center justify-center rounded-xl transition-all duration-150 ${isMoreActive || moreOpen ? "bg-[var(--accent)] text-[var(--foreground)] shadow-sm" : "text-[var(--foreground)]/85 hover:bg-[var(--background)]/60 hover:text-[var(--foreground)]"}`
+          : `flex w-full items-center gap-2.5 rounded-lg px-3 py-2 text-[13.5px] transition-colors ${isMoreActive || moreOpen ? "bg-[var(--accent)] font-medium text-[var(--foreground)]" : "text-[var(--foreground)]/85 hover:bg-[var(--background)]/60 hover:text-[var(--foreground)]"}`) + " focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ring)]"}
+      >
+        <LayoutGrid size={compact ? 18 : 16} strokeWidth={isMoreActive ? 2 : 1.6} />
+        {!compact ? <span>{t("More")}</span> : null}
+        {!compact ? <ChevronDown size={14} className={`ml-auto transition-transform ${moreOpen ? "rotate-180" : ""}`} /> : null}
+      </button>
+      {moreOpen ? (
+        <div
+          id="sidebar-more-menu"
+          role="menu"
+          aria-label={t("More destinations")}
+          className={compact
+            ? "absolute left-full top-0 z-50 ml-2 w-56 rounded-xl border border-[var(--border)] bg-[var(--card)] p-1.5 shadow-xl"
+            : "mt-1 space-y-px rounded-lg border border-[var(--border)]/60 bg-[var(--background)]/30 p-1"}
+        >
+          {visibleMoreNav.map((item) => (
+            <Link
+              key={item.href}
+              href={item.href}
+              role="menuitem"
+              onClick={closeDrawerOnNav}
+              className={`flex items-center gap-2.5 rounded-lg px-3 py-2 text-[13px] transition-colors ${pathname.startsWith(item.href) ? "bg-[var(--accent)] font-medium text-[var(--foreground)]" : "text-[var(--foreground)]/80 hover:bg-[var(--muted)] hover:text-[var(--foreground)]"}`}
+            >
+              <item.icon size={15} strokeWidth={1.6} />
+              <span>{t(item.label)}</span>
+            </Link>
+          ))}
+        </div>
+      ) : null}
+    </div>
+  );
+
   /* ---- Collapsed state ---- */
   if (collapsed) {
     return (
@@ -229,12 +274,12 @@ export function SidebarShell({
         <div className="relative mb-2 flex h-9 w-9 items-center justify-center">
           <Link
             href="/"
-            aria-label="DeepTutor"
+            aria-label="TEEECHR"
             className="flex items-center justify-center transition-opacity duration-150 group-hover/sb:opacity-0"
           >
             <Image
               src="/logo.png"
-              alt="DeepTutor"
+              alt="TEEECHR"
               width={22}
               height={22}
               className="h-[22px] w-[22px] rounded-md"
@@ -304,6 +349,7 @@ export function SidebarShell({
               </Tooltip>
             );
           })}
+          {renderMoreControl(true)}
         </nav>
 
         <div className="flex-1" />
@@ -363,14 +409,14 @@ export function SidebarShell({
         <Link href="/" className="group flex items-center gap-1.5">
           <Image
             src="/logo.png"
-            alt="DeepTutor"
+            alt="TEEECHR"
             width={22}
             height={22}
             className="h-[22px] w-[22px] transition-transform duration-200 group-hover:scale-105"
           />
           <Image
             src="/banner.png"
-            alt="DeepTutor"
+            alt="TEEECHR"
             width={897}
             height={236}
             priority
@@ -432,6 +478,7 @@ export function SidebarShell({
               </Link>
             );
           })}
+          {renderMoreControl(false)}
         </div>
       </nav>
 
@@ -453,7 +500,7 @@ export function SidebarShell({
                 : (t("Hide recents") as string)
             }
           >
-            <span>{t("Recents")}</span>
+            <span>{t(sessionHeading)}</span>
             <ChevronDown
               size={13}
               strokeWidth={1.7}

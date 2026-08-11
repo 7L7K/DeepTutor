@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { useRouter } from "next/navigation";
+import { usePathname, useRouter } from "next/navigation";
 import { useTranslation } from "react-i18next";
 import { SidebarShell } from "@/components/sidebar/SidebarShell";
 import { LogoutButton } from "@/components/auth/LogoutButton";
@@ -18,6 +18,7 @@ import {
 export default function UtilitySidebar() {
   const { t } = useTranslation();
   const router = useRouter();
+  const pathname = usePathname();
   const { activeSessionId, setActiveSessionId } = useAppShell();
   const [sessions, setSessions] = useState<SessionSummary[]>([]);
   const [loadingSessions, setLoadingSessions] = useState(false);
@@ -83,7 +84,8 @@ export default function UtilitySidebar() {
 
   return (
     <SidebarShell
-      showSessions
+      showSessions={pathname === "/home" || pathname.startsWith("/home/")}
+      sessionHeading="General Study history"
       sessions={sessions}
       activeSessionId={activeSessionId}
       loadingSessions={loadingSessions}

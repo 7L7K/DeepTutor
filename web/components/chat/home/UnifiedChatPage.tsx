@@ -312,6 +312,7 @@ export interface UnifiedChatPageProps {
   courseRouteBase?: string
   courseReadiness?: import('@/lib/course-api').CourseChatReadiness | null
   hideCourseBar?: boolean
+  surfaceLabel?: string
   disableCourseLearnerActions?: boolean
 }
 
@@ -321,6 +322,7 @@ export default function UnifiedChatPage({
   courseRouteBase,
   courseReadiness = null,
   hideCourseBar = false,
+  surfaceLabel,
   disableCourseLearnerActions = false,
 }: UnifiedChatPageProps = {}) {
   const params = useParams<{ sessionId?: string[] }>()
@@ -1547,7 +1549,7 @@ export default function UnifiedChatPage({
     () => state.knowledgeBases.find(name => agentNameSet.has(name)) ?? null,
     [state.knowledgeBases, agentNameSet]
   )
-  // How many times DeepTutor may consult the selected agent this turn. Seeded
+  // How many times TEEECHR may consult the selected agent this turn. Seeded
   // from the configured default; the composer's stepper overrides it per turn.
   const [subagentBudget, setSubagentBudget] = useState<number | null>(null)
   useEffect(() => {
@@ -1600,7 +1602,7 @@ export default function UnifiedChatPage({
         config = buildResearchWSConfig(researchConfig)
       }
       // When a connected agent is selected, carry the per-turn consult budget
-      // (how many times DeepTutor may ask it) so the subagent capability uses it.
+      // (how many times TEEECHR may ask it) so the subagent capability uses it.
       if (selectedAgent && subagentBudget) {
         config = { ...(config ?? {}), subagent_consult_budget: subagentBudget }
       }
@@ -2004,6 +2006,11 @@ export default function UnifiedChatPage({
           className="chat-preview-shell flex h-full flex-col overflow-hidden bg-[var(--background)]"
         >
           {hideCourseBar ? null : <CourseBar onCourseChange={handleCourseChange} />}
+          {surfaceLabel && !courseMode ? (
+            <div className="mx-auto w-full max-w-[960px] px-6 pt-3 text-xs font-medium uppercase tracking-[0.14em] text-[var(--muted-foreground)]">
+              {surfaceLabel}
+            </div>
+          ) : null}
           <div className="mx-auto flex w-full max-w-[960px] flex-wrap items-center justify-between gap-x-3 gap-y-1.5 px-6 pt-3 pb-0">
             <div className="group/title min-w-0 flex flex-1 items-center gap-2">
               {sessionTitleEditing ? (
@@ -2082,7 +2089,7 @@ export default function UnifiedChatPage({
                 <div className="w-full max-w-[960px] flex items-center justify-center gap-4">
                   <img
                     src="/logo_black.png"
-                    alt="DeepTutor"
+                    alt="TEEECHR"
                     width={40}
                     height={40}
                     className="h-10 w-10 select-none"
@@ -2421,7 +2428,7 @@ function SubagentTabWatcher({
   viewerPanelRef: React.MutableRefObject<SessionViewerPanelHandle | null>
 }) {
   useEffect(() => {
-    // Group by turn so all of one turn's consults (DeepTutor may ask the agent
+    // Group by turn so all of one turn's consults (TEEECHR may ask the agent
     // several questions in a row, each its own tool call) land in one tab as a
     // single running dialogue; fall back to the call id when no turn is set.
     const groups = new Map<string, { label: string; events: StreamEvent[] }>()

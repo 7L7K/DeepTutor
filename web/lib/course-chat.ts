@@ -27,7 +27,7 @@ export function courseChatRouteMatchesSession(
 
 export function academicTermLabel(term: string | null | undefined): string {
   const normalized = String(term || "").trim();
-  if (!normalized) return "Term not linked yet";
+  if (!normalized) return "No term set";
   return normalized
     .split("-")
     .filter(Boolean)

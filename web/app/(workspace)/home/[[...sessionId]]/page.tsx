@@ -1,5 +1,5 @@
 import UnifiedChatPage from "@/components/chat/home/UnifiedChatPage";
 
 export default function ChatPage() {
-  return <UnifiedChatPage />;
+  return <UnifiedChatPage surfaceLabel="General Study" />;
 }

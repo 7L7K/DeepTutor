@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { useRouter } from "next/navigation";
+import { usePathname, useRouter } from "next/navigation";
 import { useTranslation } from "react-i18next";
 import { SidebarShell } from "@/components/sidebar/SidebarShell";
 import { LogoutButton } from "@/components/auth/LogoutButton";
@@ -18,6 +18,7 @@ import {
 export default function WorkspaceSidebar() {
   const { t } = useTranslation();
   const router = useRouter();
+  const pathname = usePathname();
   const {
     newSession,
     cancelStreamingTurn,
@@ -74,6 +75,19 @@ export default function WorkspaceSidebar() {
     })
     .map(({ session }) => session);
 
+  const courseChatMatch = pathname.match(/^\/classes\/([^/]+)\/chat(?:\/|$)/);
+  const courseChatCourseId = courseChatMatch
+    ? decodeURIComponent(courseChatMatch[1])
+    : null;
+  const isGeneralStudyRoute = pathname === "/home" || pathname.startsWith("/home/");
+  const visibleSessions = courseChatCourseId
+    ? orderedSessions.filter((session) => session.course_id === courseChatCourseId)
+    : orderedSessions.filter((session) => !session.course_id);
+  const showSessions = Boolean(courseChatCourseId || isGeneralStudyRoute);
+  const sessionHeading = courseChatCourseId
+    ? "Course chat history"
+    : "General Study history";
+
   // Cancel any in-flight streaming turn before starting a fresh session, so a
   // new chat never inherits a still-running turn (mirrors handleDeleteSession).
   const handleNewChat = useCallback(() => {
@@ -84,9 +98,15 @@ export default function WorkspaceSidebar() {
 
   const handleSelectSession = useCallback(
     async (sessionId: string) => {
+      if (courseChatCourseId) {
+        router.push(
+          `/classes/${encodeURIComponent(courseChatCourseId)}/chat/${encodeURIComponent(sessionId)}`,
+        );
+        return;
+      }
       router.push(`/home/${sessionId}`);
     },
-    [router],
+    [courseChatCourseId, router],
   );
 
   const handleRenameSession = useCallback(
@@ -125,8 +145,9 @@ export default function WorkspaceSidebar() {
 
   return (
     <SidebarShell
-      showSessions
-      sessions={orderedSessions}
+      showSessions={showSessions}
+      sessionHeading={sessionHeading}
+      sessions={visibleSessions}
       activeSessionId={selectedSessionId}
       loadingSessions={loadingSessions}
       onNewChat={handleNewChat}

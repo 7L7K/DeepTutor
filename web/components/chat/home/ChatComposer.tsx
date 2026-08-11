@@ -269,7 +269,7 @@ export default memo(function ChatComposer({
   /** The connected agent selected for this turn, if any (single-select). */
   selectedAgent?: string | null;
   onSelectAgent?: (name: string | null) => void;
-  /** Max times DeepTutor may consult the selected agent this turn. */
+  /** Max times TEEECHR may consult the selected agent this turn. */
   subagentBudget?: number | null;
   onSubagentBudgetChange?: (budget: number) => void;
   llmOptions: LLMOption[];
