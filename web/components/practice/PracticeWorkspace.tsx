@@ -82,7 +82,7 @@ type QuestionDraft = {
   objectiveIds: string;
 };
 
-type PracticeTab = "study" | "create" | "activity";
+type PracticeTab = "take" | "create" | "history";
 
 type PlanDraft = {
   title: string;
@@ -146,7 +146,7 @@ export default function PracticeWorkspace({
   const [busy, setBusy] = useState(false);
   const [status, setStatus] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [activeTab, setActiveTab] = useState<PracticeTab>("study");
+  const [activeTab, setActiveTab] = useState<PracticeTab>("take");
   const [courseSources, setCourseSources] = useState<CourseSource[]>([]);
   const [generationEnabled, setGenerationEnabled] = useState(false);
   const [courseLoading, setCourseLoading] = useState(false);
@@ -219,7 +219,7 @@ export default function PracticeWorkspace({
     setBusy(false);
     setStatus(null);
     setError(null);
-    setActiveTab("study");
+    setActiveTab("take");
     setCourseSources([]);
     setGenerationEnabled(false);
     setCourseLoading(false);
@@ -319,7 +319,7 @@ export default function PracticeWorkspace({
     if (
       activeOperation
     ) {
-      setActiveTab("activity");
+      setActiveTab("history");
     }
     setPlanDraft((previous) => ({
       ...previous,
@@ -548,7 +548,7 @@ export default function PracticeWorkspace({
         ...previous.filter((item) => item.id !== confirmation.request.operation.id),
       ]);
       setPlanOpen(false);
-      setActiveTab("activity");
+      setActiveTab("history");
       setStatus("Creating your quiz from the selected Course materials.");
     } catch (cause) {
       if (current(scope)) setError(errorText(cause));
@@ -604,7 +604,7 @@ export default function PracticeWorkspace({
           operation,
           ...previous.filter((item) => item.id !== operation.id),
         ]);
-        setActiveTab("study");
+        setActiveTab("take");
         setStatus("Your quiz is ready.");
         router.replace(
           `/classes/${encodeURIComponent(activeCourse.id)}/practice/${encodeURIComponent(generatedSet.id)}/attempts/${encodeURIComponent(view.attempt.id)}`,
@@ -670,7 +670,7 @@ export default function PracticeWorkspace({
           setError(
             "Quiz generation did not finish. No quiz was published and your existing Practice was not changed.",
           );
-          setActiveTab("activity");
+          setActiveTab("history");
         }
       } catch (cause) {
         if (!cancelled) setError(errorText(cause));
@@ -999,13 +999,17 @@ export default function PracticeWorkspace({
         {identity && !activeCourse ? <p className="rounded-lg border border-[var(--border)] p-4 text-sm text-[var(--muted-foreground)]">Select or create a Course above to create private Practice sets.</p> : null}
         {identity && activeCourse && (courseLoading || !courseReady) ? <div role="status" aria-live="polite" className="mb-5 flex items-center gap-2 rounded-xl border border-[var(--border)] bg-[var(--card)] p-4 text-sm text-[var(--muted-foreground)]"><Loader2 className="animate-spin" size={18} />Loading {activeCourse.title} Practice…</div> : null}
         {identity && activeCourse && courseReady ? <nav aria-label="Practice sections" role="tablist" className="mb-5 grid grid-cols-3 rounded-xl border border-[var(--border)] bg-[var(--card)] p-1">
-          {(["study", "create", "activity"] as PracticeTab[]).map((tab) => <button key={tab} type="button" role="tab" aria-selected={activeTab === tab} onClick={() => setActiveTab(tab)} className={`rounded-lg px-4 py-2.5 text-sm font-medium capitalize ${activeTab === tab ? "bg-[var(--primary)] text-[var(--primary-foreground)]" : "text-[var(--muted-foreground)] hover:bg-[var(--muted)]"}`}>{tab}</button>)}
+          {(["take", "create", "history"] as PracticeTab[]).map((tab) => <button key={tab} type="button" role="tab" aria-selected={activeTab === tab} onClick={() => setActiveTab(tab)} className={`rounded-lg px-4 py-2.5 text-sm font-medium capitalize ${activeTab === tab ? "bg-[var(--primary)] text-[var(--primary-foreground)]" : "text-[var(--muted-foreground)] hover:bg-[var(--muted)]"}`}>{tab === "take" ? "Take" : tab === "create" ? "Create" : "History"}</button>)}
         </nav> : null}
 
         {activeCourse && courseReady && activeTab === "create" ? <section className="rounded-xl border border-[var(--border)] bg-[var(--card)] p-5">
           <div className="mb-5">
-            <h2 className="text-lg font-semibold">Create a quiz</h2>
-            <p className="mt-1 text-sm text-[var(--muted-foreground)]">Choose what you want to practice. You will review the plan before any questions are generated.</p>
+            <h2 className="text-lg font-semibold">Create Practice</h2>
+            <p className="mt-1 text-sm text-[var(--muted-foreground)]">Create a manual or AI-assisted Practice set. It will appear in Take when it is ready.</p>
+          </div>
+          <div className="mb-5 flex max-w-xl gap-2">
+            <input aria-label="New Practice title" value={setTitle} onChange={(event) => setSetTitle(event.target.value)} disabled={!courseWritable || busy} placeholder="New Practice title" className="min-w-0 flex-1 rounded-lg border border-[var(--border)] bg-[var(--background)] px-3 py-2 text-sm" />
+            <button disabled={!setTitle.trim() || !courseWritable || busy} onClick={() => void createSet()} className="rounded-lg bg-[var(--primary)] px-4 text-sm text-[var(--primary-foreground)] disabled:opacity-50">Create manual</button>
           </div>
           {generationEnabled ? <div className="grid gap-4">
             <p className="rounded-lg bg-[var(--muted)] p-3 text-sm">AI-created quiz — no questions are generated until you review and confirm the plan.</p>
@@ -1016,28 +1020,26 @@ export default function PracticeWorkspace({
               <label className="grid gap-1 text-sm"><span>Difficulty</span><select aria-label="Quiz difficulty" value={planDraft.difficulty} onChange={(event) => setPlanDraft((value) => ({ ...value, difficulty: event.target.value as PlanDraft["difficulty"] }))} className="rounded-lg border border-[var(--border)] bg-[var(--background)] px-3 py-2"><option value="foundation">Foundation</option><option value="mixed">Mixed</option><option value="challenge">Challenge</option></select></label>
               <label className="grid gap-1 text-sm"><span>Timing</span><select aria-label="Quiz timing" value={planDraft.timingMode} onChange={(event) => setPlanDraft((value) => ({ ...value, timingMode: event.target.value as PlanDraft["timingMode"] }))} className="rounded-lg border border-[var(--border)] bg-[var(--background)] px-3 py-2"><option value="untimed">Untimed</option><option value="practice_timer">Show practice timer</option></select></label>
             </div>
-            {courseSources.length > 1 ? <fieldset className="rounded-lg border border-[var(--border)] p-3"><legend className="px-1 text-sm font-medium">Course materials</legend><div className="grid gap-2 sm:grid-cols-2">{courseSources.map((source) => <label key={source.id} className="flex items-center gap-2 text-sm"><input type="checkbox" checked={planDraft.sourceIds.includes(source.id)} onChange={(event) => setPlanDraft((value) => ({ ...value, sourceIds: event.target.checked ? [...value.sourceIds, source.id] : value.sourceIds.filter((item) => item !== source.id) }))} />{source.display_name}</label>)}</div></fieldset> : courseSources.length === 1 ? <p className="text-sm text-[var(--muted-foreground)]">Using {courseSources[0]?.display_name}</p> : <div className="rounded-lg border border-[var(--border)] p-4"><p className="text-sm text-[var(--muted-foreground)]">Attach a ready Course source before generating a quiz.</p><button type="button" onClick={() => setActiveTab("study")} className="mt-3 rounded-lg border border-[var(--border)] px-3 py-2 text-sm">Create manually</button></div>}
+            {courseSources.length > 1 ? <fieldset className="rounded-lg border border-[var(--border)] p-3"><legend className="px-1 text-sm font-medium">Course materials</legend><div className="grid gap-2 sm:grid-cols-2">{courseSources.map((source) => <label key={source.id} className="flex items-center gap-2 text-sm"><input type="checkbox" checked={planDraft.sourceIds.includes(source.id)} onChange={(event) => setPlanDraft((value) => ({ ...value, sourceIds: event.target.checked ? [...value.sourceIds, source.id] : value.sourceIds.filter((item) => item !== source.id) }))} />{source.display_name}</label>)}</div></fieldset> : courseSources.length === 1 ? <p className="text-sm text-[var(--muted-foreground)]">Using {courseSources[0]?.display_name}</p> : <div className="rounded-lg border border-[var(--border)] p-4"><p className="text-sm text-[var(--muted-foreground)]">Attach a ready Course source before generating a quiz.</p><button type="button" onClick={() => setActiveTab("create")} className="mt-3 rounded-lg border border-[var(--border)] px-3 py-2 text-sm">Create manually</button></div>}
             <button ref={reviewPlanButtonRef} type="button" disabled={busy || !courseWritable || !planDraft.title.trim() || !planDraft.focus.trim() || !planDraft.sourceIds.length} onClick={() => void openPlanReview()} className="inline-flex w-fit items-center gap-2 rounded-lg bg-[var(--primary)] px-4 py-2 text-sm text-[var(--primary-foreground)] disabled:opacity-50"><Sparkles size={16} />Review quiz plan</button>
-          </div> : <div className="rounded-lg border border-[var(--border)] p-4"><h3 className="font-medium">AI quiz creation is unavailable right now</h3><p className="mt-1 text-sm text-[var(--muted-foreground)]">Manual Practice remains available in Study. No provider call was attempted.</p><button type="button" onClick={() => setActiveTab("study")} className="mt-3 rounded-lg border border-[var(--border)] px-3 py-2 text-sm">Create manually</button></div>}
+          </div> : <div className="rounded-lg border border-[var(--border)] p-4"><h3 className="font-medium">AI quiz creation is unavailable right now</h3><p className="mt-1 text-sm text-[var(--muted-foreground)]">Manual Practice remains available in Create. No provider call was attempted.</p></div>}
         </section> : null}
 
-        {activeCourse && courseReady && activeTab === "activity" ? <section className="rounded-xl border border-[var(--border)] bg-[var(--card)] p-5">
-          <h2 className="text-lg font-semibold">Quiz activity</h2>
+        {activeCourse && courseReady && activeTab === "history" ? <section className="rounded-xl border border-[var(--border)] bg-[var(--card)] p-5">
+          <h2 className="text-lg font-semibold">Practice history</h2>
+          <p className="mt-1 text-sm text-[var(--muted-foreground)]">Review graded, abandoned, archived, and in-progress work.</p>
           {generationOperations.length ? <div className="mt-4 space-y-3">{generationOperations.map((operation) => <div key={operation.id} className="rounded-lg border border-[var(--border)] p-4">
             <div className="flex items-center gap-2">{["queued", "running"].includes(operation.state) ? <Loader2 className="animate-spin" size={18} /> : operation.state === "completed" ? <CheckCircle2 size={18} /> : <XCircle size={18} />}<strong>{operation.state === "queued" ? "Waiting to start" : operation.state === "running" ? "Creating your quiz" : operation.state === "completed" ? "Quiz ready" : "Quiz generation did not finish"}</strong></div>
             <p className="mt-2 text-sm text-[var(--muted-foreground)]">{operation.cancelled_at ? "Quiz creation was stopped. No quiz was published." : operation.state === "failed" ? "No quiz was published. The unfinished draft is kept here for recovery and does not clutter your Practice library." : "The selected Course source versions are frozen for this quiz."}</p>
             {operation.id === generationOperation?.id && ["queued", "running"].includes(operation.state) && !operation.cancel_requested_at ? <button type="button" disabled={busy} onClick={() => void cancelGeneration()} className="mt-3 rounded-lg border border-[var(--border)] px-3 py-2 text-sm disabled:opacity-50">Stop creating</button> : null}
-            {operation.state === "failed" || operation.cancelled_at ? <div className="mt-3 flex flex-wrap gap-2"><button type="button" onClick={() => setActiveTab("create")} className="rounded-lg bg-[var(--primary)] px-3 py-2 text-sm text-[var(--primary-foreground)]">Review and try again</button><button type="button" onClick={() => setActiveTab("study")} className="rounded-lg border border-[var(--border)] px-3 py-2 text-sm">Create manually</button></div> : null}
+            {operation.state === "failed" || operation.cancelled_at ? <div className="mt-3 flex flex-wrap gap-2"><button type="button" onClick={() => setActiveTab("create")} className="rounded-lg bg-[var(--primary)] px-3 py-2 text-sm text-[var(--primary-foreground)]">Review and try again</button><button type="button" onClick={() => setActiveTab("create")} className="rounded-lg border border-[var(--border)] px-3 py-2 text-sm">Create manually</button></div> : null}
           </div>)}</div> : <p className="mt-4 text-sm text-[var(--muted-foreground)]">No quiz generation activity yet.</p>}
+          {selectedSet ? <div className="mt-6 border-t border-[var(--border)] pt-5"><h3 className="mb-2 font-medium">{selectedSet.title}</h3><AttemptHistory attempts={attempts} onOpen={(item) => { setActiveTab("take"); void openAttempt(item); }} busy={busy} hasMore={attemptsHaveMore} onLoadMore={() => void loadMoreAttempts()} /></div> : null}
         </section> : null}
 
-        {activeCourse && courseReady && activeTab === "study" ? <div className={`grid gap-5 ${attemptView ? "" : "lg:grid-cols-[260px_minmax(0,1fr)]"}`}>
+        {activeCourse && courseReady && (activeTab === "take" || activeTab === "create") ? <div className={`grid gap-5 ${attemptView ? "" : "lg:grid-cols-[260px_minmax(0,1fr)]"}`}>
           {!attemptView ? <aside className="rounded-xl border border-[var(--border)] bg-[var(--card)] p-3">
             <h2 className="mb-3 font-medium">Practice library</h2>
-            <div className="mb-3 flex gap-2">
-              <input aria-label="New Practice title" value={setTitle} onChange={(event) => setSetTitle(event.target.value)} disabled={!courseWritable || busy} placeholder="New Practice title" className="min-w-0 flex-1 rounded-lg border border-[var(--border)] bg-[var(--background)] px-2 py-1.5 text-sm" />
-              <button disabled={!setTitle.trim() || !courseWritable || busy} onClick={() => void createSet()} className="rounded-lg bg-[var(--primary)] px-3 text-sm text-[var(--primary-foreground)] disabled:opacity-50">Create</button>
-            </div>
             <div className="space-y-1">
               {activeLibrarySets.map((item) => <button key={item.id} onClick={() => void selectSet(item)} className={`w-full rounded-lg px-3 py-2 text-left text-sm ${item.id === selectedSetId ? "bg-[var(--accent)]" : "hover:bg-[var(--muted)]"}`}>
                 <span className="block truncate font-medium">{item.title}</span><span className="text-xs text-[var(--muted-foreground)]">{item.state === "archived" ? "Archived" : item.current_revision_id ? "Ready" : "Draft"}</span>
@@ -1050,10 +1052,10 @@ export default function PracticeWorkspace({
           <section className="min-w-0 rounded-xl border border-[var(--border)] bg-[var(--card)] p-4 sm:p-5">
             {selectedSet ? <>
               <div className="mb-5 flex flex-wrap items-center justify-between gap-3 border-b border-[var(--border)] pb-4">
-                <div><h2 className="text-lg font-semibold">{selectedSet.title}</h2><p className="text-sm text-[var(--muted-foreground)]">{selectedSet.state === "archived" ? "Archived — read-only history" : revision?.state === "ready" ? revisionAvailability.status : "Draft revision"}</p></div>
+                <div><p className="mb-1 text-xs font-medium uppercase tracking-wide text-[var(--muted-foreground)]">{activeCourse.title} / Practice{resultView ? " / Results" : ""}</p><h2 className="text-lg font-semibold">{selectedSet.title}</h2><p className="text-sm text-[var(--muted-foreground)]">{selectedSet.state === "archived" ? "Archived — read-only history" : revision?.state === "ready" ? revisionAvailability.status : "Draft revision"}</p></div>
                 {!attemptView ? <button disabled={busy || !activeCourse} onClick={() => void archiveOrRestore()} className="inline-flex items-center gap-1 rounded-lg border border-[var(--border)] px-3 py-2 text-sm disabled:opacity-50">{selectedSet.state === "archived" ? <RotateCcw size={15} /> : <Archive size={15} />}{selectedSet.state === "archived" ? "Restore" : "Archive"}</button> : null}
               </div>
-              {!attemptView && revision?.state === "draft" && !readOnly ? <div className="mb-6 rounded-lg border border-[var(--border)] p-4">
+              {activeTab === "create" && !attemptView && revision?.state === "draft" && !readOnly ? <div className="mb-6 rounded-lg border border-[var(--border)] p-4">
                 <h3 className="mb-3 font-medium">Add exact-answer question</h3>
                 <div className="grid gap-3">
                   <label className="grid gap-1 text-sm">
@@ -1075,10 +1077,10 @@ export default function PracticeWorkspace({
                 </div>
                 <div className="mt-3 flex flex-wrap gap-2"><button disabled={busy || !draft.prompt.trim() || !draft.answer.trim()} onClick={() => void addQuestion()} className="inline-flex items-center gap-1 rounded-lg bg-[var(--primary)] px-3 py-2 text-sm text-[var(--primary-foreground)] disabled:opacity-50"><Save size={15} />Add question</button><button disabled={busy || !questions.length} onClick={() => void markReady()} className="inline-flex items-center gap-1 rounded-lg border border-[var(--border)] px-3 py-2 text-sm disabled:opacity-50"><CheckCircle2 size={15} />Mark ready</button></div>
               </div> : null}
-              {!attemptView && revision?.state === "ready" && !readOnly ? <div className="mb-5 flex flex-wrap items-center gap-2">{revision.id === selectedSet.current_revision_id ? revisionAvailability.canStart ? <button disabled={busy} onClick={() => void startOrResume()} className="inline-flex items-center gap-1 rounded-lg bg-[var(--primary)] px-3 py-2 text-sm text-[var(--primary-foreground)]"><Play size={15} />Start or resume quiz</button> : <span className="text-sm text-[var(--muted-foreground)]">{ALL_QUESTIONS_WITHDRAWN_MESSAGE}</span> : <span className="self-center text-sm text-[var(--muted-foreground)]">Historical revision — attempts are read-only.</span>}<button disabled={busy} onClick={() => void createSuccessor()} className="rounded-lg border border-[var(--border)] px-3 py-2 text-sm">Create successor revision</button></div> : null}
+              {!attemptView && revision?.state === "ready" && !readOnly ? <div className="mb-5 flex flex-wrap items-center gap-2">{activeTab === "take" ? revision.id === selectedSet.current_revision_id ? revisionAvailability.canStart ? <button disabled={busy} onClick={() => void startOrResume()} className="inline-flex items-center gap-1 rounded-lg bg-[var(--primary)] px-3 py-2 text-sm text-[var(--primary-foreground)]"><Play size={15} />Start or resume quiz</button> : <span className="text-sm text-[var(--muted-foreground)]">{ALL_QUESTIONS_WITHDRAWN_MESSAGE}</span> : <span className="self-center text-sm text-[var(--muted-foreground)]">Historical revision — attempts are read-only.</span> : <span className="text-sm text-[var(--muted-foreground)]">Ready to take from the Take tab.</span>}{activeTab === "create" ? <button disabled={busy} onClick={() => void createSuccessor()} className="rounded-lg border border-[var(--border)] px-3 py-2 text-sm">Create successor revision</button> : null}</div> : null}
               {!attemptView && questions.length ? <ol className="mb-6 space-y-3">{questions.map((question) => <li key={question.id} className="rounded-lg border border-[var(--border)] p-3"><span className="mr-2 text-xs text-[var(--muted-foreground)]">{question.ordinal}.</span>{question.prompt}{question.content_quality === "invalidated" ? <p className="mt-2 text-xs font-medium text-amber-600">{QUESTION_WITHDRAWN_LABEL}</p> : revision?.state === "ready" ? null : <p className="mt-2 text-xs text-[var(--muted-foreground)]">Answer: {practiceCorrectAnswer(question)}</p>}</li>)}</ol> : null}
               {attemptView ? <AttemptRunner key={attemptView.attempt.id} view={attemptView} questions={questions} sourceNames={sourceNames} readOnly={readOnly || busy} withdrawn={Boolean(attemptView.content_quality?.invalidated_question_ids?.length)} onSave={saveAnswer} onTransition={(action) => void transitionAttempt(action)} onReviewMisses={() => void reviewMissesAsFlashcards()} onStartAgain={() => void startOrResume()} onClose={() => { setAttemptView(null); setResultView(null); router.replace(`/classes/${encodeURIComponent(activeCourse.id)}/practice`); }} onReportQuestion={reportQuestion} resultView={resultView} /> : null}
-              {!attemptView ? <AttemptHistory attempts={attempts} onOpen={(item) => void openAttempt(item)} busy={busy} hasMore={attemptsHaveMore} onLoadMore={() => void loadMoreAttempts()} /> : null}
+              {activeTab === "take" && !attemptView ? <p className="text-sm text-[var(--muted-foreground)]">Choose a ready Practice to start. Previous work is in History.</p> : null}
             </> : <p className="text-sm text-[var(--muted-foreground)]">Choose a Practice set or create one.</p>}
           </section>
         </div> : null}
@@ -1250,7 +1252,7 @@ function AttemptRunner({ view, questions, sourceNames, readOnly, withdrawn, onSa
   };
 
   return <div className="mx-auto mb-6 min-w-0 w-full max-w-3xl">
-    <div className="mb-5 flex flex-wrap items-center justify-between gap-3"><div><h3 className="text-xl font-semibold">{resultView ? "Quiz results" : "Quiz in progress"}</h3>{view.attempt.timing_mode === "practice_timer" && active ? <AdvisoryPracticeTimer startedAt={view.attempt.started_at} /> : null}</div>{active ? <span className="text-sm font-medium">Question {currentIndex + 1} of {view.items.length}</span> : null}</div>
+    <div className="mb-5 flex flex-wrap items-center justify-between gap-3"><div><h3 className="text-xl font-semibold">{resultView ? "Results" : "Practice in progress"}</h3>{view.attempt.timing_mode === "practice_timer" && active ? <AdvisoryPracticeTimer startedAt={view.attempt.started_at} /> : null}</div>{active ? <span className="text-sm font-medium">Question {currentIndex + 1} of {view.items.length}</span> : null}</div>
     {active && withdrawn ? <p role="alert" className="mb-4 rounded-xl border border-amber-500/50 bg-amber-500/10 p-4 text-sm">{WITHDRAWN_ATTEMPT_MESSAGE}</p> : null}
     {active && currentItem ? <>
       <div aria-label="Question navigation" className="mb-4 flex flex-wrap gap-2">{view.items.map((item, index) => { const saved = Boolean(practiceResponseValue(answerById.get(item.id)?.response ?? null).trim()); return <button key={item.id} type="button" aria-label={`Go to question ${index + 1}${saved ? ", answered" : ", unanswered"}`} aria-current={index === currentIndex ? "step" : undefined} onClick={() => void navigateTo(index)} className={`h-9 w-9 rounded-full border text-sm ${index === currentIndex ? "border-[var(--primary)] bg-[var(--primary)] text-[var(--primary-foreground)]" : "border-[var(--border)]"}`}>{index + 1}</button>; })}</div>
@@ -1292,7 +1294,7 @@ function AttemptRunner({ view, questions, sourceNames, readOnly, withdrawn, onSa
         </>}
         <button type="button" disabled={readOnly || reported || invalidated || !question} onClick={() => { if (question) { void onReportQuestion(question.id).then(() => setReportedQuestionIds((previous) => new Set(previous).add(question.id))); } }} className="mt-3 rounded-lg border border-[var(--border)] px-3 py-2 text-xs disabled:opacity-50">{invalidated ? REPORTED_AND_WITHDRAWN_LABEL : reported ? "Reported for review" : "Report a problem with this question"}</button>
       </article>;
-    })}</div><div className="flex flex-wrap gap-2">{canStartAgain ? <button type="button" disabled={readOnly} onClick={onStartAgain} className="rounded-lg bg-[var(--primary)] px-4 py-2 text-sm text-[var(--primary-foreground)] disabled:opacity-50">Try quiz again</button> : null}{resultsPresentation.hasMisses ? <button type="button" disabled={readOnly} onClick={onReviewMisses} className="rounded-lg border border-[var(--border)] px-4 py-2 text-sm disabled:opacity-50">Make Flashcards from misses</button> : null}<button type="button" onClick={onClose} className="rounded-lg border border-[var(--border)] px-4 py-2 text-sm">Back to Practice library</button></div></div> : null}
+    })}</div><div className="flex flex-wrap gap-2">{canStartAgain ? <button type="button" disabled={readOnly} onClick={onStartAgain} className="rounded-lg bg-[var(--primary)] px-4 py-2 text-sm text-[var(--primary-foreground)] disabled:opacity-50">Try another Practice</button> : null}{resultsPresentation.hasMisses ? <button type="button" disabled={readOnly} onClick={onReviewMisses} className="rounded-lg border border-[var(--border)] px-4 py-2 text-sm disabled:opacity-50">Review mistakes</button> : null}<button type="button" onClick={onClose} className="rounded-lg border border-[var(--border)] px-4 py-2 text-sm">Back to Practice</button></div></div> : null}
   </div>;
 }
 
