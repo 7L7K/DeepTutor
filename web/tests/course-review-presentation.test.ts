@@ -27,7 +27,7 @@ test("Course Review keeps the existing engine while presenting Review/Create/His
   assert.match(workspaceSource, /t\("Start review"\)/);
   assert.match(workspaceSource, /t\("Create review material"\)/);
   assert.match(workspaceSource, /t\("Review history"\)/);
-  assert.match(workspaceSource, /reviewMode=\{courseShell\}/);
+  assert.match(workspaceSource, /reviewMode=\{Boolean\(courseShell\)\}/);
 });
 
 test("Review completion copy is presentation-only and keeps study compatibility", () => {
