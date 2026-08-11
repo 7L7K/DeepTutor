@@ -312,16 +312,18 @@ export default function ClassesHome() {
           </section>
         ) : null}
 
-        <p className="mt-10 text-sm text-[var(--muted-foreground)]">
-          Need general learning instead?{" "}
-          <Link
-            href="/space/learning"
-            className="font-medium text-[var(--foreground)] underline underline-offset-4 hover:no-underline"
-          >
-            Open General Study
-          </Link>
-          .
-        </p>
+        {academicCourses.length ? (
+          <p className="mt-10 text-sm text-[var(--muted-foreground)]">
+            Need general learning instead?{" "}
+            <Link
+              href="/space/learning"
+              className="font-medium text-[var(--foreground)] underline underline-offset-4 hover:no-underline"
+            >
+              Open General Study
+            </Link>
+            .
+          </p>
+        ) : null}
       </div>
       {createOpen ? (
         <AddClassModal

@@ -37,3 +37,10 @@ test("The empty state offers class creation and General Study", () => {
   assert.match(source, /href="\/space\/learning"/);
   assert.match(source, /Open General Study/);
 });
+
+test("The lower General Study prompt only appears when classes exist", () => {
+  assert.match(
+    source,
+    /\{academicCourses\.length \? \(\s*<p className="mt-10 text-sm text-\[var\(--muted-foreground\)\]">\s*Need general learning instead\?/,
+  );
+});
