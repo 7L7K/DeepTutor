@@ -249,6 +249,7 @@ export default memo(function ChatComposer({
   prefillInputRef,
   inputPlaceholder,
   courseMode = false,
+  hideCourseScope = false,
 }: {
   composerRef: RefObject<HTMLDivElement | null>;
   capMenuRef: RefObject<HTMLDivElement | null>;
@@ -364,6 +365,8 @@ export default memo(function ChatComposer({
   inputPlaceholder?: string;
   /** Private Course mode permits text plus server-resolved Course sources only. */
   courseMode?: boolean;
+  /** Suppress Course-only scope copy on the General Study shell. */
+  hideCourseScope?: boolean;
 }) {
   const { t } = useTranslation();
   const CapIcon = activeCap.icon;
@@ -1006,7 +1009,7 @@ export default memo(function ChatComposer({
                     </span>
                   )}
                 </button>
-                ) : (
+                ) : hideCourseScope ? null : (
                   <span className="px-2 text-[11px] text-[var(--muted-foreground)]">
                     {t("Course sources only")}
                   </span>

@@ -312,6 +312,7 @@ export interface UnifiedChatPageProps {
   courseRouteBase?: string
   courseReadiness?: import('@/lib/course-api').CourseChatReadiness | null
   hideCourseBar?: boolean
+  hideCourseScope?: boolean
   surfaceLabel?: string
   disableCourseLearnerActions?: boolean
 }
@@ -322,6 +323,7 @@ export default function UnifiedChatPage({
   courseRouteBase,
   courseReadiness = null,
   hideCourseBar = false,
+  hideCourseScope = false,
   surfaceLabel,
   disableCourseLearnerActions = false,
 }: UnifiedChatPageProps = {}) {
@@ -2302,6 +2304,7 @@ export default function UnifiedChatPage({
                 onCancelStreaming={cancelStreamingTurn}
                 prefillInputRef={prefillInputRef}
                 courseMode={courseMode}
+                hideCourseScope={hideCourseScope}
               />
             )}
             <div

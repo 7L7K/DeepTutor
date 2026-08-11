@@ -96,12 +96,6 @@ export default function CourseOverview() {
               </div>
             </div>
           </Link>
-          <div className="rounded-2xl border border-dashed border-[var(--border)] px-5 py-5">
-            <h3 className="font-semibold text-[var(--foreground)]">Progress and recommendations</h3>
-            <p className="mt-1 text-sm leading-6 text-[var(--muted-foreground)]">
-              Not available in this slice. No progress or recommendation state is inferred here.
-            </p>
-          </div>
         </section>
       </div>
     </main>

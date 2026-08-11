@@ -90,7 +90,29 @@ test("General Study keeps its label without the Course-only selector bar", () =>
   );
 
   assert.match(source, /hideCourseBar/);
+  assert.match(source, /hideCourseScope/);
   assert.match(source, /surfaceLabel="General Study"/);
+});
+
+test("learner shells do not expose unqualified Progress or Course scope copy", () => {
+  const overview = readFileSync(
+    path.join(process.cwd(), "components/courses/CourseOverview.tsx"),
+    "utf8",
+  );
+  const composer = readFileSync(
+    path.join(process.cwd(), "components/chat/home/ChatComposer.tsx"),
+    "utf8",
+  );
+  const courseChat = readFileSync(
+    path.join(process.cwd(), "components/courses/CourseChatRoute.tsx"),
+    "utf8",
+  );
+
+  assert.doesNotMatch(overview, /Progress and recommendations/);
+  assert.doesNotMatch(overview, /Not available in this slice/);
+  assert.match(composer, /Course sources only/);
+  assert.match(courseChat, /hideCourseBar/);
+  assert.doesNotMatch(courseChat, /hideCourseScope/);
 });
 
 test("Course Chat hides internal managed knowledge references", async () => {
