@@ -2,6 +2,25 @@
 
 ## Future Due
 
+- [ ] Revisit the superseded question-agent, solve-agent, EnvStore, MemoryService, and text-quiz parser experiments
+  - Captured: 2026-08-11 America/Detroit
+  - Status: deferred; orphan tests removed from canonical active suite
+  - Area: advanced tools, assessment generation, credential settings, memory, future architecture
+  - Source context: Canonical-main consistency pass after the TEEECHR/UI-1 consolidation. The checkpoint contained tests from older or unfinished architectures whose implementation counterparts are not present in the current product tree.
+  - Deferred files: `tests/agents/question/test_coordinator.py`, `tests/agents/question/test_generator.py`, `tests/agents/question/test_model_routing.py`, `tests/agents/question/test_quiz_submission_agent.py`, `tests/agents/question/test_structured_responses.py`, `tests/agents/solve/test_tool_runtime.py`, `tests/agents/solve/utils/test_json_utils.py`, `tests/services/config/test_env_store_send_dimensions.py`, `tests/services/memory/test_memory_service.py`, `web/tests/quiz-types.test.ts`, `web/components/practice/FlashcardsWorkspace.tsx`, and `web/components/math-animator/MathAnimatorConfigPanel.tsx`.
+  - Decision: Do not restore removed subsystems merely to satisfy these tests. Their prior source/test state remains recoverable in checkpoint commit `beacb3fc`; any future implementation must be intentionally scoped, reconnected to current APIs, and tested as a new lane.
+  - Current proof: The removed tests no longer participate in the active canonical gates. The current memory, provider-settings, question, and Course quiz contracts remain represented by their current source and focused tests.
+  - Next smallest step: If one of these advanced features is intentionally restarted, begin with a new contract and implementation inventory rather than reactivating the stale tests.
+
+- [ ] Revisit the superseded native parallel-tool chat experiment
+  - Captured: 2026-08-11 America/Detroit
+  - Status: deferred; orphan test removed from canonical active suite
+  - Area: advanced chat tooling and agentic orchestration
+  - Source context: `tests/agents/chat/test_agentic_parallel_tools.py` targeted private pipeline methods (`_run_native_tool_loop`, `_should_use_simple_chat_reply`, and `_build_messages`) that no longer exist on the current `AgenticChatPipeline`. Current chat coverage follows the replacement loop/message/dispatch contracts.
+  - Decision: Do not restore the removed private-method contract merely to satisfy this stale test. Re-open only as a new feature with an explicit current pipeline contract and bounded tool-loop tests.
+  - Current proof: The orphan file was removed from the canonical active suite; current chat tests remain in `tests/agents/chat/test_agent_loop.py`, `test_message_build.py`, and the adjacent current-contract files.
+  - Next smallest step: If parallel native tool calls become a supported product contract again, define the public loop behavior first and add tests against the current pipeline entrypoints.
+
 - [ ] Add learner reminders to revisit unfinished Course work and quiz from it later
   - Captured: 2026-08-11 America/Detroit
   - Status: parked

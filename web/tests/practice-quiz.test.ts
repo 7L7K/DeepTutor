@@ -26,14 +26,14 @@ test("applyPracticeQuizIntent seeds exam simulation settings", () => {
       topic: "NCE helping relationships",
       num_questions: 5,
       difficulty: "easy",
-      question_type: "written",
+      question_types: ["written"],
     },
     "exam_simulation",
   );
 
   assert.equal(next.quizConfig.num_questions, 25);
   assert.equal(next.quizConfig.difficulty, "medium");
-  assert.equal(next.quizConfig.question_type, "choice");
+  assert.deepEqual(next.quizConfig.question_types, ["choice"]);
   assert.equal(next.examMode, true);
   assert.equal(next.timerMinutes, 30);
 });

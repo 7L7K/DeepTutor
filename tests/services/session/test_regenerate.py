@@ -439,3 +439,4 @@ def _use_legacy_llm_config_for_generic_turn_tests(monkeypatch):
         "deeptutor.services.model_selection.runtime.set_text_generation_feature",
         lambda _feature: None,
     )
+    monkeypatch.setattr("deeptutor.services.auth.AUTH_ENABLED", False)

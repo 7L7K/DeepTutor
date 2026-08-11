@@ -1,4 +1,5 @@
 import type { DeepQuestionFormConfig } from "./quiz-types";
+import type { NormalizedQuizQuestionType } from "./quiz-question-type";
 
 interface PracticeDomainBreakdownLike {
   domain: string;
@@ -23,7 +24,7 @@ export interface PracticeQuizIntentDefinition {
   description: string;
   numQuestions: number;
   difficulty: string;
-  questionType: string;
+  questionType: NormalizedQuizQuestionType;
   examMode: boolean;
   timerMinutes: number;
   topicSeed?: string;
@@ -129,7 +130,7 @@ export function applyPracticeQuizIntent(
       topic: intent.topicSeed ?? nextTopic,
       num_questions: intent.numQuestions,
       difficulty: intent.difficulty,
-      question_type: intent.questionType,
+      question_types: [intent.questionType],
     },
     examMode: intent.examMode,
     timerMinutes: intent.timerMinutes,
@@ -137,7 +138,7 @@ export function applyPracticeQuizIntent(
 }
 
 export function buildPracticeQuizPreference(
-  config: DeepQuestionFormConfig,
+  config: DeepQuestionFormConfig & { preference?: string },
   intentId: PracticeQuizIntentId,
 ): string {
   const intent = getPracticeQuizIntent(intentId);
@@ -147,8 +148,9 @@ export function buildPracticeQuizPreference(
     ...intent.qualityNotes,
   ];
 
-  if (config.preference.trim()) {
-    lines.unshift(`User preference: ${config.preference.trim()}`);
+  const preference = config.preference?.trim();
+  if (preference) {
+    lines.unshift(`User preference: ${preference}`);
   }
 
   return lines.join("\n");

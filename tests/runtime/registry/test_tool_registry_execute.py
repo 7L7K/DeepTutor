@@ -18,6 +18,12 @@ from deeptutor.multi_user.models import CurrentUser, UserScope
 from deeptutor.runtime.registry.tool_registry import ToolRegistry
 
 
+@pytest.fixture(autouse=True)
+def _disable_local_auth_for_registry_unit_tests(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Keep ordinary dispatch tests independent of local auth settings."""
+    monkeypatch.setattr("deeptutor.services.auth.AUTH_ENABLED", False)
+
+
 class _NameParamTool(BaseTool):
     """A tool whose own argument is literally called ``name``."""
 
