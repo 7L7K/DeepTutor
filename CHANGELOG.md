@@ -1,6 +1,7 @@
 ## [Unreleased]
 
 ### Fixed
+- configuration security: keep provider API keys in `.env` at runtime and redact them from persisted `model_catalog.json` profiles.
 - practice quiz: allow runtime-only `quiz_submission_context` through deep-question validation and route interactive quiz submissions to the quiz grading agent instead of rejecting them as invalid generation config.
 - deploy: preserve remote `data/` and `outputs/` during rsync deploys so tester sessions, knowledge bases, and generated artifacts are not overwritten by the local checkout.
 - knowledge ui: explain why the Create action is blocked when a tester has not provided both a KB name and at least one file, avoiding the appearance that adding a KB did nothing.

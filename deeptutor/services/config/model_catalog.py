@@ -115,9 +115,11 @@ class ModelCatalogService:
         return normalized
 
     def apply(self, catalog: dict[str, Any] | None = None) -> dict[str, str]:
-        current = self.save(catalog or self.load())
-        rendered = get_env_store().render_from_catalog(current)
-        get_env_store().write(rendered)
+        current = deepcopy(catalog or self.load())
+        env_store = get_env_store()
+        rendered = env_store.render_from_catalog(current)
+        self.save(current)
+        env_store.write(rendered)
         return rendered
 
     def _build_from_env(self) -> dict[str, Any]:
@@ -144,7 +146,7 @@ class ModelCatalogService:
                         "name": "Default LLM Endpoint",
                         "binding": summary.llm["binding"] or "openai",
                         "base_url": summary.llm["host"],
-                        "api_key": summary.llm["api_key"],
+                        "api_key": "",
                         "api_version": summary.llm["api_version"],
                         "extra_headers": {},
                         "models": [
@@ -174,7 +176,7 @@ class ModelCatalogService:
                         "name": "Default Embedding Endpoint",
                         "binding": summary.embedding["binding"] or "openai",
                         "base_url": summary.embedding["host"],
-                        "api_key": summary.embedding["api_key"],
+                        "api_key": "",
                         "api_version": summary.embedding["api_version"],
                         "extra_headers": {},
                         "models": [
@@ -207,7 +209,7 @@ class ModelCatalogService:
                         "name": "Default Search Provider",
                         "provider": summary.search["provider"] or "brave",
                         "base_url": summary.search["base_url"],
-                        "api_key": summary.search["api_key"],
+                        "api_key": "",
                         "api_version": "",
                         "proxy": "",
                         "models": [],
@@ -324,9 +326,6 @@ class ModelCatalogService:
             if "LLM_BINDING" in env_values and profile.get("binding") != summary.llm["binding"]:
                 profile["binding"] = summary.llm["binding"]
                 changed = True
-            if "LLM_API_KEY" in env_values and profile.get("api_key") != summary.llm["api_key"]:
-                profile["api_key"] = summary.llm["api_key"]
-                changed = True
             if "LLM_HOST" in env_values and profile.get("base_url") != summary.llm["host"]:
                 profile["base_url"] = summary.llm["host"]
                 changed = True
@@ -360,12 +359,6 @@ class ModelCatalogService:
                 and profile.get("binding") != summary.embedding["binding"]
             ):
                 profile["binding"] = summary.embedding["binding"]
-                changed = True
-            if (
-                "EMBEDDING_API_KEY" in env_values
-                and profile.get("api_key") != summary.embedding["api_key"]
-            ):
-                profile["api_key"] = summary.embedding["api_key"]
                 changed = True
             if (
                 "EMBEDDING_HOST" in env_values
@@ -416,12 +409,6 @@ class ModelCatalogService:
                 profile["provider"] = summary.search["provider"]
                 changed = True
             if (
-                "SEARCH_API_KEY" in env_values
-                and profile.get("api_key") != summary.search["api_key"]
-            ):
-                profile["api_key"] = summary.search["api_key"]
-                changed = True
-            if (
                 "SEARCH_BASE_URL" in env_values
                 and profile.get("base_url") != summary.search["base_url"]
             ):
@@ -447,7 +434,11 @@ class ModelCatalogService:
                 profile.setdefault("name", "Untitled Profile")
                 profile.setdefault("api_version", "")
                 profile.setdefault("base_url", "")
-                profile.setdefault("api_key", "")
+                if profile.get("api_key"):
+                    profile["api_key"] = ""
+                    changed = True
+                else:
+                    profile.setdefault("api_key", "")
                 if service_name == "search":
                     profile.setdefault("provider", "brave")
                     profile.setdefault("proxy", "")

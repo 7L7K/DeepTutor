@@ -1,3 +1,4 @@
+import json
 from pathlib import Path
 
 from deeptutor.services.config import model_catalog as model_catalog_module
@@ -54,6 +55,12 @@ def test_load_hydrates_empty_catalog_from_env(tmp_path: Path, monkeypatch):
     assert catalog["services"]["embedding"]["profiles"][0]["models"][0]["dimension"] == "3072"
     assert catalog["services"]["search"]["profiles"][0]["provider"] == "perplexity"
     assert catalog["services"]["search"]["profiles"][0]["proxy"] == ""
+    assert catalog["services"]["llm"]["profiles"][0]["api_key"] == ""
+    assert catalog["services"]["embedding"]["profiles"][0]["api_key"] == ""
+    assert catalog["services"]["search"]["profiles"][0]["api_key"] == ""
+    assert "test-llm-key" not in catalog_path.read_text(encoding="utf-8")
+    assert "test-emb-key" not in catalog_path.read_text(encoding="utf-8")
+    assert "test-search-key" not in catalog_path.read_text(encoding="utf-8")
 
 
 def test_load_syncs_existing_active_profiles_from_env(tmp_path: Path, monkeypatch):
@@ -141,12 +148,199 @@ def test_load_syncs_existing_active_profiles_from_env(tmp_path: Path, monkeypatc
 
     assert llm_profile["binding"] == "dashscope"
     assert llm_profile["base_url"] == "https://dashscope.aliyuncs.com/compatible-mode/v1"
-    assert llm_profile["api_key"] == "new-llm-key"
+    assert llm_profile["api_key"] == ""
     assert llm_model["model"] == "qwen3.5-plus"
     assert llm_model["name"] == "qwen3.5-plus"
     assert emb_profile["binding"] == "dashscope"
     assert emb_profile["base_url"] == "https://dashscope.aliyuncs.com/compatible-mode/v1"
-    assert emb_profile["api_key"] == "new-emb-key"
+    assert emb_profile["api_key"] == ""
     assert emb_model["model"] == "text-embedding-v4"
     assert emb_model["name"] == "text-embedding-v4"
     assert emb_model["dimension"] == "2048"
+
+
+def test_save_strips_provider_credentials_from_catalog(tmp_path: Path) -> None:
+    catalog_path = tmp_path / "model_catalog.json"
+    service = ModelCatalogService(path=catalog_path)
+    catalog = {
+        "version": 1,
+        "services": {
+            "llm": {
+                "active_profile_id": "llm-profile",
+                "active_model_id": "llm-model",
+                "profiles": [
+                    {
+                        "id": "llm-profile",
+                        "name": "LLM",
+                        "binding": "openai",
+                        "base_url": "https://api.openai.com/v1",
+                        "api_key": "llm-secret",
+                        "models": [
+                            {"id": "llm-model", "name": "GPT", "model": "gpt-test"}
+                        ],
+                    }
+                ],
+            },
+            "embedding": {
+                "active_profile_id": "embedding-profile",
+                "active_model_id": "embedding-model",
+                "profiles": [
+                    {
+                        "id": "embedding-profile",
+                        "name": "Embedding",
+                        "binding": "openai",
+                        "base_url": "https://api.openai.com/v1/embeddings",
+                        "api_key": "embedding-secret",
+                        "models": [
+                            {
+                                "id": "embedding-model",
+                                "name": "Embedding",
+                                "model": "embedding-test",
+                            }
+                        ],
+                    }
+                ],
+            },
+            "search": {
+                "active_profile_id": "search-profile",
+                "profiles": [
+                    {
+                        "id": "search-profile",
+                        "name": "Search",
+                        "provider": "brave",
+                        "api_key": "search-secret",
+                        "models": [],
+                    }
+                ],
+            },
+        },
+    }
+
+    saved = service.save(catalog)
+    persisted = json.loads(catalog_path.read_text(encoding="utf-8"))
+
+    for result in (saved, persisted):
+        assert result["services"]["llm"]["profiles"][0]["api_key"] == ""
+        assert result["services"]["embedding"]["profiles"][0]["api_key"] == ""
+        assert result["services"]["search"]["profiles"][0]["api_key"] == ""
+
+
+def test_apply_writes_secret_to_env_but_not_catalog(tmp_path: Path, monkeypatch) -> None:
+    env_path = tmp_path / ".env"
+    env_path.write_text("LLM_API_KEY=existing-key\n", encoding="utf-8")
+    env_store = EnvStore(path=env_path)
+    monkeypatch.setattr(model_catalog_module, "get_env_store", lambda: env_store)
+    catalog_path = tmp_path / "model_catalog.json"
+    service = ModelCatalogService(path=catalog_path)
+    catalog = {
+        "version": 1,
+        "services": {
+            "llm": {
+                "active_profile_id": "llm-profile",
+                "active_model_id": "llm-model",
+                "profiles": [
+                    {
+                        "id": "llm-profile",
+                        "name": "LLM",
+                        "binding": "openai",
+                        "base_url": "https://api.openai.com/v1",
+                        "api_key": "replacement-key",
+                        "models": [
+                            {"id": "llm-model", "name": "GPT", "model": "gpt-test"}
+                        ],
+                    }
+                ],
+            },
+            "embedding": {"active_profile_id": None, "profiles": []},
+            "search": {"active_profile_id": None, "profiles": []},
+        },
+    }
+
+    rendered = service.apply(catalog)
+    persisted = json.loads(catalog_path.read_text(encoding="utf-8"))
+
+    assert rendered["LLM_API_KEY"] == "replacement-key"
+    assert "LLM_API_KEY=replacement-key" in env_path.read_text(encoding="utf-8")
+    assert persisted["services"]["llm"]["profiles"][0]["api_key"] == ""
+    assert "replacement-key" not in catalog_path.read_text(encoding="utf-8")
+
+
+def test_apply_preserves_existing_env_secret_when_catalog_is_redacted(
+    tmp_path: Path, monkeypatch
+) -> None:
+    env_path = tmp_path / ".env"
+    env_path.write_text("LLM_API_KEY=existing-key\n", encoding="utf-8")
+    env_store = EnvStore(path=env_path)
+    monkeypatch.setattr(model_catalog_module, "get_env_store", lambda: env_store)
+    catalog_path = tmp_path / "model_catalog.json"
+    service = ModelCatalogService(path=catalog_path)
+    catalog = {
+        "version": 1,
+        "services": {
+            "llm": {
+                "active_profile_id": "llm-profile",
+                "active_model_id": "llm-model",
+                "profiles": [
+                    {
+                        "id": "llm-profile",
+                        "name": "LLM",
+                        "binding": "openai",
+                        "base_url": "https://api.openai.com/v1",
+                        "api_key": "",
+                        "models": [
+                            {"id": "llm-model", "name": "GPT", "model": "gpt-test"}
+                        ],
+                    }
+                ],
+            },
+            "embedding": {"active_profile_id": None, "profiles": []},
+            "search": {"active_profile_id": None, "profiles": []},
+        },
+    }
+
+    rendered = service.apply(catalog)
+
+    assert rendered["LLM_API_KEY"] == "existing-key"
+    assert "LLM_API_KEY=existing-key" in env_path.read_text(encoding="utf-8")
+    assert "existing-key" not in catalog_path.read_text(encoding="utf-8")
+
+
+def test_apply_does_not_restore_stale_process_secret_over_explicit_blank_env(
+    tmp_path: Path, monkeypatch
+) -> None:
+    env_path = tmp_path / ".env"
+    env_path.write_text("LLM_API_KEY=\n", encoding="utf-8")
+    monkeypatch.setenv("LLM_API_KEY", "stale-process-key")
+    env_store = EnvStore(path=env_path)
+    monkeypatch.setattr(model_catalog_module, "get_env_store", lambda: env_store)
+    catalog_path = tmp_path / "model_catalog.json"
+    service = ModelCatalogService(path=catalog_path)
+    catalog = {
+        "version": 1,
+        "services": {
+            "llm": {
+                "active_profile_id": "llm-profile",
+                "active_model_id": "llm-model",
+                "profiles": [
+                    {
+                        "id": "llm-profile",
+                        "name": "LLM",
+                        "binding": "openai",
+                        "base_url": "https://api.openai.com/v1",
+                        "api_key": "",
+                        "models": [
+                            {"id": "llm-model", "name": "GPT", "model": "gpt-test"}
+                        ],
+                    }
+                ],
+            },
+            "embedding": {"active_profile_id": None, "profiles": []},
+            "search": {"active_profile_id": None, "profiles": []},
+        },
+    }
+
+    rendered = service.apply(catalog)
+
+    assert rendered["LLM_API_KEY"] == ""
+    assert "LLM_API_KEY=\n" in env_path.read_text(encoding="utf-8")
+    assert "stale-process-key" not in catalog_path.read_text(encoding="utf-8")

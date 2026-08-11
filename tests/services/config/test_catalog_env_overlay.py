@@ -64,8 +64,8 @@ def test_user_added_second_profile_survives_reload(
         ],
     )
 
-    # Simulate user state after Save Draft on a 2-profile catalog where the
-    # user added "aliyun" with a DashScope URL.
+    # Simulate legacy user state after Save Draft on a 2-profile catalog where
+    # the user added "aliyun" with a DashScope URL and plaintext credential.
     user_catalog: dict[str, Any] = {
         "services": {
             "llm": {
@@ -140,7 +140,8 @@ def test_user_added_second_profile_survives_reload(
     )
     # The bug: env's openrouter URL was overlaying aliyun's DashScope URL.
     assert aliyun["base_url"].startswith("https://dashscope.aliyuncs.com/")
-    assert aliyun["api_key"] == "sk-dashscope"
+    assert aliyun["api_key"] == ""
+    assert "sk-dashscope" not in catalog_path.read_text(encoding="utf-8")
     assert aliyun["binding"] == "aliyun"
     # And the second profile is still there (not collapsed into a single one).
     assert len(embedding_service["profiles"]) == 2
@@ -198,9 +199,11 @@ def test_env_still_seeds_pristine_single_default_profile(
     loaded = service.load()
 
     profile = loaded["services"]["embedding"]["profiles"][0]
-    # Pristine catalog → env wins (legacy expected behavior preserved).
+    # Pristine catalog → non-secret env settings win, while credentials remain
+    # available only through the env store and are redacted from persistence.
     assert profile["base_url"] == "https://api.openai.com/v1/embeddings"
-    assert profile["api_key"] == "sk-newkey"
+    assert profile["api_key"] == ""
+    assert "sk-newkey" not in catalog_path.read_text(encoding="utf-8")
     assert profile["models"][0]["model"] == "text-embedding-3-small"
 
 

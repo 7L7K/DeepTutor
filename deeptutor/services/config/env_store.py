@@ -220,12 +220,18 @@ class EnvStore:
             "FRONTEND_PORT": current.get("FRONTEND_PORT", os.getenv("FRONTEND_PORT", "3782")),
             "LLM_BINDING": str((llm_profile or {}).get("binding") or "openai"),
             "LLM_MODEL": str((llm_model or {}).get("model") or ""),
-            "LLM_API_KEY": str((llm_profile or {}).get("api_key") or ""),
+            "LLM_API_KEY": str(
+                (llm_profile or {}).get("api_key")
+                or current.get("LLM_API_KEY", os.getenv("LLM_API_KEY", ""))
+            ),
             "LLM_HOST": str((llm_profile or {}).get("base_url") or ""),
             "LLM_API_VERSION": str((llm_profile or {}).get("api_version") or ""),
             "EMBEDDING_BINDING": str((embedding_profile or {}).get("binding") or "openai"),
             "EMBEDDING_MODEL": str((embedding_model or {}).get("model") or ""),
-            "EMBEDDING_API_KEY": str((embedding_profile or {}).get("api_key") or ""),
+            "EMBEDDING_API_KEY": str(
+                (embedding_profile or {}).get("api_key")
+                or current.get("EMBEDDING_API_KEY", os.getenv("EMBEDDING_API_KEY", ""))
+            ),
             "EMBEDDING_HOST": str((embedding_profile or {}).get("base_url") or ""),
             "EMBEDDING_DIMENSION": str((embedding_model or {}).get("dimension") or ""),
             "EMBEDDING_SEND_DIMENSIONS": _render_optional_bool(
@@ -233,7 +239,10 @@ class EnvStore:
             ),
             "EMBEDDING_API_VERSION": str((embedding_profile or {}).get("api_version") or ""),
             "SEARCH_PROVIDER": str((search_profile or {}).get("provider") or ""),
-            "SEARCH_API_KEY": str((search_profile or {}).get("api_key") or ""),
+            "SEARCH_API_KEY": str(
+                (search_profile or {}).get("api_key")
+                or current.get("SEARCH_API_KEY", os.getenv("SEARCH_API_KEY", ""))
+            ),
             "SEARCH_BASE_URL": str((search_profile or {}).get("base_url") or ""),
             "SEARCH_PROXY": str((search_profile or {}).get("proxy") or ""),
         }
