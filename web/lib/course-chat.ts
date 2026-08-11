@@ -18,6 +18,34 @@ export function courseChatPath(courseId: string, sessionId?: string): string {
   return sessionId ? `${base}/${encodeURIComponent(sessionId)}` : base;
 }
 
+export const COURSE_NAVIGATION_DESTINATIONS = [
+  { key: "overview", label: "Overview", suffix: "" },
+  { key: "chat", label: "Chat", suffix: "/chat" },
+  { key: "practice", label: "Practice", suffix: "/practice" },
+  { key: "review", label: "Review", suffix: "/review" },
+  { key: "materials", label: "Materials", suffix: "/materials" },
+] as const;
+
+export type CourseNavigationSuffix =
+  (typeof COURSE_NAVIGATION_DESTINATIONS)[number]["suffix"];
+
+export function courseDestinationPath(
+  courseId: string,
+  suffix: CourseNavigationSuffix,
+): string {
+  return `/classes/${encodeURIComponent(courseId)}${suffix}`;
+}
+
+export function courseDestinationIsActive(
+  pathname: string,
+  courseId: string,
+  suffix: CourseNavigationSuffix,
+): boolean {
+  const destinationPath = courseDestinationPath(courseId, suffix);
+  if (!suffix) return pathname === destinationPath;
+  return pathname === destinationPath || pathname.startsWith(`${destinationPath}/`);
+}
+
 export function courseChatRouteMatchesSession(
   routeCourseId: string,
   persistedCourseId: string | null | undefined,
@@ -37,6 +65,14 @@ export function academicTermLabel(term: string | null | undefined): string {
         : `${part.charAt(0).toUpperCase()}${part.slice(1).toLowerCase()}`,
     )
     .join(" ");
+}
+
+/** Everyday learner surfaces omit a missing term instead of showing setup copy. */
+export function learnerCourseTermLabel(
+  term: string | null | undefined,
+): string | null {
+  const normalized = String(term || "").trim();
+  return normalized ? academicTermLabel(normalized) : null;
 }
 
 export function visibleChatKnowledgeReferences(

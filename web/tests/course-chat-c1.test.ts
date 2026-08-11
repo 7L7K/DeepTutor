@@ -1,5 +1,7 @@
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import test from "node:test";
+import path from "node:path";
 
 const READY_SOURCE = {
   source_id: "src_bio",
@@ -23,11 +25,72 @@ test("Course Chat routes preserve exact Course and optional session identity", a
 });
 
 test("canonical academic term keeps identity while rendering a human label", async () => {
-  const { academicTermLabel } = await import("../lib/course-chat");
+  const { academicTermLabel, learnerCourseTermLabel } = await import(
+    "../lib/course-chat"
+  );
 
   assert.equal(academicTermLabel("fall-2026"), "Fall 2026");
   assert.equal(academicTermLabel("spring-2027"), "Spring 2027");
   assert.equal(academicTermLabel(null), "No term set");
+  assert.equal(learnerCourseTermLabel(null), null);
+  assert.equal(learnerCourseTermLabel("  fall-2026 "), "Fall 2026");
+});
+
+test("Course navigation preserves the Course ID and marks the active destination", async () => {
+  const {
+    COURSE_NAVIGATION_DESTINATIONS,
+    courseDestinationIsActive,
+    courseDestinationPath,
+  } = await import("../lib/course-chat");
+
+  assert.deepEqual(
+    COURSE_NAVIGATION_DESTINATIONS.map((destination) => destination.label),
+    ["Overview", "Chat", "Practice", "Review", "Materials"],
+  );
+  assert.equal(
+    courseDestinationPath("crs/bio", "/materials"),
+    "/classes/crs%2Fbio/materials",
+  );
+  assert.equal(
+    courseDestinationIsActive(
+      "/classes/crs%2Fbio/materials",
+      "crs/bio",
+      "/materials",
+    ),
+    true,
+  );
+  assert.equal(
+    courseDestinationIsActive(
+      "/classes/crs%2Fbio/materials",
+      "crs/other",
+      "/materials",
+    ),
+    false,
+  );
+});
+
+test("CourseShell contains the mobile navigation and focus-visibility contract", () => {
+  const source = readFileSync(
+    path.join(process.cwd(), "components/courses/CourseShell.tsx"),
+    "utf8",
+  );
+
+  assert.match(source, /overflow-x-auto/);
+  assert.match(source, /shrink-0 whitespace-nowrap/);
+  assert.match(source, /aria-current=\{active \? "page" : undefined\}/);
+  assert.match(source, /scrollIntoView/);
+  assert.match(source, /onFocus=\{revealActiveDestination\}/);
+  assert.match(source, /overflow-x-hidden/);
+});
+
+test("General Study keeps its label without the Course-only selector bar", () => {
+  const source = readFileSync(
+    path.join(process.cwd(), "app/(workspace)/home/[[...sessionId]]/page.tsx"),
+    "utf8",
+  );
+
+  assert.match(source, /hideCourseBar/);
+  assert.match(source, /surfaceLabel="General Study"/);
 });
 
 test("Course Chat hides internal managed knowledge references", async () => {

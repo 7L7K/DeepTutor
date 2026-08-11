@@ -5,7 +5,7 @@ import { ArrowRight, BookOpen, Plus, RefreshCw } from "lucide-react";
 import { useState } from "react";
 import { useCourses } from "@/context/CourseContext";
 import type { Course } from "@/lib/course-api";
-import { academicTermLabel } from "@/lib/course-chat";
+import { learnerCourseTermLabel } from "@/lib/course-chat";
 
 function CourseCard({
   course,
@@ -29,9 +29,11 @@ function CourseCard({
           <h2 className="mt-2 text-lg font-semibold text-[var(--foreground)]">
             {course.title}
           </h2>
-          <p className="mt-1 text-sm text-[var(--muted-foreground)]">
-            {academicTermLabel(course.term)}
-          </p>
+          {learnerCourseTermLabel(course.term) ? (
+            <p className="mt-1 text-sm text-[var(--muted-foreground)]">
+              {learnerCourseTermLabel(course.term)}
+            </p>
+          ) : null}
         </div>
         {course.state === "archived" ? (
           <span className="rounded-full border border-[var(--border)] px-2 py-1 text-[11px] text-[var(--muted-foreground)]">

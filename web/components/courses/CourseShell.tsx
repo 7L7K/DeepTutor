@@ -9,11 +9,17 @@ import {
   useContext,
   useEffect,
   useMemo,
+  useRef,
   useState,
 } from "react";
 import { useCourses } from "@/context/CourseContext";
 import { getCourse, type Course } from "@/lib/course-api";
-import { academicTermLabel } from "@/lib/course-chat";
+import {
+  COURSE_NAVIGATION_DESTINATIONS,
+  courseDestinationIsActive,
+  courseDestinationPath,
+  learnerCourseTermLabel,
+} from "@/lib/course-chat";
 
 interface CourseShellContextValue {
   course: Course;
@@ -27,41 +33,42 @@ export function useCourseShell(): CourseShellContextValue | null {
   return useContext(CourseShellContext);
 }
 
-const DESTINATIONS = [
-  { key: "overview", label: "Overview", suffix: "" },
-  { key: "chat", label: "Chat", suffix: "/chat" },
-  { key: "practice", label: "Practice", suffix: "/practice" },
-  { key: "review", label: "Review", suffix: "/review" },
-  { key: "materials", label: "Materials", suffix: "/materials" },
-] as const;
-
-function destinationIsActive(
-  pathname: string,
-  basePath: string,
-  suffix: (typeof DESTINATIONS)[number]["suffix"],
-): boolean {
-  const destinationPath = `${basePath}${suffix}`;
-  if (!suffix) return pathname === basePath;
-  return pathname === destinationPath || pathname.startsWith(`${destinationPath}/`);
-}
-
 function CourseNavigation({ courseId }: { courseId: string }) {
   const pathname = usePathname();
-  const basePath = `/classes/${encodeURIComponent(courseId)}`;
+  const activeLinkRef = useRef<HTMLAnchorElement | null>(null);
+  const activeDestinationKey = COURSE_NAVIGATION_DESTINATIONS.find((destination) =>
+    courseDestinationIsActive(pathname, courseId, destination.suffix),
+  )?.key;
+
+  const revealActiveDestination = () => {
+    activeLinkRef.current?.scrollIntoView({
+      block: "nearest",
+      inline: "nearest",
+    });
+  };
+
+  useEffect(() => {
+    const frame = window.requestAnimationFrame(revealActiveDestination);
+    return () => window.cancelAnimationFrame(frame);
+  }, [activeDestinationKey, pathname]);
 
   return (
     <nav
       aria-label="Course navigation"
-      className="-mx-1 flex min-w-0 gap-1 overflow-x-auto border-t border-[var(--border)]/70 pb-0 pt-2.5 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden sm:pt-3"
+      data-testid="course-navigation"
+      className="-mx-1 flex w-full min-w-0 max-w-full gap-1 overflow-x-auto overscroll-x-contain border-t border-[var(--border)]/70 pb-0 pt-2.5 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden sm:pt-3"
     >
-      {DESTINATIONS.map((destination) => {
-        const active = destinationIsActive(pathname, basePath, destination.suffix);
+      {COURSE_NAVIGATION_DESTINATIONS.map((destination) => {
+        const active = courseDestinationIsActive(pathname, courseId, destination.suffix);
         return (
           <Link
             key={destination.key}
-            href={`${basePath}${destination.suffix}`}
+            href={courseDestinationPath(courseId, destination.suffix)}
             aria-current={active ? "page" : undefined}
-            className={`shrink-0 rounded-md px-2.5 py-1.5 text-sm transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ring)] sm:px-3 sm:py-1.5 ${
+            data-testid={`course-nav-${destination.key}`}
+            ref={active ? activeLinkRef : undefined}
+            onFocus={revealActiveDestination}
+            className={`shrink-0 whitespace-nowrap rounded-md px-2.5 py-1.5 text-sm transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ring)] sm:px-3 sm:py-1.5 ${
               active
                 ? "bg-[var(--foreground)] font-medium text-[var(--background)]"
                 : "text-[var(--muted-foreground)] hover:bg-[var(--muted)] hover:text-[var(--foreground)]"
@@ -148,6 +155,7 @@ export default function CourseShell({
     () => (course ? { course, courseId: course.id } : null),
     [course],
   );
+  const termLabel = learnerCourseTermLabel(course?.term);
 
   // The direct Course read is the authorization boundary for a deep link.
   // The owner-scoped Course list is shared navigation state and may briefly
@@ -186,8 +194,8 @@ export default function CourseShell({
 
   return (
     <CourseShellContext.Provider value={contextValue}>
-      <div className="flex min-h-full min-w-0 flex-col">
-        <header className="shrink-0 border-b border-[var(--border)] bg-[var(--background)] px-5 py-3.5 sm:px-8 sm:py-4">
+      <div className="flex min-h-full min-w-0 flex-col overflow-x-hidden">
+        <header className="shrink-0 overflow-x-hidden border-b border-[var(--border)] bg-[var(--background)] px-5 py-3.5 sm:px-8 sm:py-4">
           <div className="mx-auto w-full max-w-6xl">
             <div className="flex min-w-0 flex-col gap-2.5 sm:flex-row sm:items-center sm:gap-5">
               <Link
@@ -200,9 +208,9 @@ export default function CourseShell({
                 <h1 className="min-w-0 truncate text-2xl font-semibold tracking-tight text-[var(--foreground)]">
                   {course.title}
                 </h1>
-                {course.term ? (
+                {termLabel ? (
                   <span className="shrink-0 text-sm text-[var(--muted-foreground)]">
-                    {academicTermLabel(course.term)}
+                    {termLabel}
                   </span>
                 ) : null}
               </div>
