@@ -345,6 +345,8 @@ def test_practice_provider_is_strict_grounded_tool_free_and_accounted(
     assert captured["tools"] == []
     assert captured["reasoning"] == {"effort": "minimal"}
     assert captured["text"]["format"]["strict"] is True
+    question_schema = captured["text"]["format"]["schema"]["properties"]["questions"]["items"]
+    assert "accepted_answers" not in question_schema["properties"]
     assert captured["client"]["max_retries"] == 0
     assert captured["client"]["timeout"] == 25.0
     assert captured["safety_identifier"] == (

@@ -13,6 +13,11 @@
 
 ### Fixed
 
+- Generated the bounded exact-text Practice shard during normal Course source
+  ingestion, so production-ready RAG sources are also usable by paid grounded
+  Practice generation instead of relying on a test-only provider artifact.
+- Kept the baseline Practice Responses API schema strict by excluding the
+  C3-only `accepted_answers` property outside the C3 quality profile.
 - Replaced the legacy DeepTutor sidebar wordmark with the learner-facing
   TEEECHR name while retaining the existing product mark and layout.
 - Kept BlueWay course mappings backward-compatible for exports without terms

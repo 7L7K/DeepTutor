@@ -351,24 +351,39 @@ async def run_source_operation(task: dict[str, Any]) -> None:
                 [str(item) for item in task["uploaded_paths"]],
                 source_content_sha256=str(task["source_content_sha256"]),
             )
-        elif bool(task["initialize"]):
-            initializer = KnowledgeBaseInitializer(
-                kb_name=str(task["kb_name"]),
-                base_dir=str(task["base_dir"]),
-                rag_provider=str(task["rag_provider"]),
-            )
-            provider_succeeded = await run_initialization_task(
-                initializer, operation_id, finalize_task=False
-            )
         else:
-            provider_succeeded = await run_upload_processing_task(
-                kb_name=str(task["kb_name"]),
-                base_dir=str(task["base_dir"]),
-                uploaded_file_paths=[str(item) for item in task["uploaded_paths"]],
-                task_id=operation_id,
-                rag_provider=str(task["rag_provider"]),
-                finalize_task=False,
-            )
+            if bool(task["initialize"]):
+                initializer = KnowledgeBaseInitializer(
+                    kb_name=str(task["kb_name"]),
+                    base_dir=str(task["base_dir"]),
+                    rag_provider=str(task["rag_provider"]),
+                )
+                provider_succeeded = await run_initialization_task(
+                    initializer, operation_id, finalize_task=False
+                )
+            else:
+                provider_succeeded = await run_upload_processing_task(
+                    kb_name=str(task["kb_name"]),
+                    base_dir=str(task["base_dir"]),
+                    uploaded_file_paths=[str(item) for item in task["uploaded_paths"]],
+                    task_id=operation_id,
+                    rag_provider=str(task["rag_provider"]),
+                    finalize_task=False,
+                )
+
+            # Course Practice generation reads a small deterministic, exact-text
+            # shard in addition to the provider-specific RAG index. Keep that
+            # derived artifact in sync for normal ingestion too; previously it
+            # was created only by the explicit deterministic test provider,
+            # leaving ready Course sources unusable for grounded Practice.
+            uploaded_paths = task.get("uploaded_paths")
+            source_content_sha256 = str(task.get("source_content_sha256") or "")
+            if isinstance(uploaded_paths, list) and source_content_sha256:
+                build_deterministic_index(
+                    Path(str(task["base_dir"])) / str(task["kb_name"]),
+                    [str(item) for item in uploaded_paths],
+                    source_content_sha256=source_content_sha256,
+                )
 
         # Providers create index shards and metadata through several legacy
         # adapters. Repair the owned shard before any database state can grant

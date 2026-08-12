@@ -481,16 +481,6 @@ class OpenAIPracticeGenerationProvider:
                 },
                 "prompt": {"type": "string", "minLength": 1, "maxLength": 12000},
                 "answer": {"type": "string", "minLength": 1, "maxLength": 4000},
-                "accepted_answers": {
-                    "type": "array",
-                    "minItems": 0,
-                    "maxItems": 8,
-                    "items": {
-                        "type": "string",
-                        "minLength": 1,
-                        "maxLength": 4000,
-                    },
-                },
                 "explanation": {
                     "type": "string",
                     "minLength": 1,
@@ -505,6 +495,17 @@ class OpenAIPracticeGenerationProvider:
                 **citation_property,
             },
         }
+        if c3:
+            question_schema["properties"]["accepted_answers"] = {
+                "type": "array",
+                "minItems": 0,
+                "maxItems": 8,
+                "items": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 4000,
+                },
+            }
         if not c3:
             return {
                 "type": "object",

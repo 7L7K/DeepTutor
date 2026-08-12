@@ -145,6 +145,11 @@ async def test_success_is_published_only_after_course_source_commit(
         events.append("provider")
         return True
 
+    def build_exact_text_index(_kb_dir, _uploaded_paths, *, source_content_sha256):
+        assert source_content_sha256 == "b" * 64
+        events.append("exact-text-index")
+        return True
+
     class Repository:
         def __init__(self, *_args, **_kwargs):
             pass
@@ -170,6 +175,10 @@ async def test_success_is_published_only_after_course_source_commit(
     monkeypatch.setattr(
         "deeptutor.api.routers.knowledge.run_initialization_task", provider
     )
+    monkeypatch.setattr(
+        "deeptutor.courses.deterministic_provider.build_index",
+        build_exact_text_index,
+    )
     monkeypatch.setattr("deeptutor.courses.ingestion.CourseRepository", Repository)
     monkeypatch.setattr(
         "deeptutor.courses.ingestion.get_personal_path_service",
@@ -194,12 +203,19 @@ async def test_success_is_published_only_after_course_source_commit(
             "kb_name": "course_crs_one_src_one",
             "base_dir": str(tmp_path),
             "uploaded_paths": [],
+            "source_content_sha256": "b" * 64,
             "rag_provider": "local-test",
             "initialize": True,
         }
     )
 
-    assert events == ["provider", "db:ready", "status:completed", "event:complete"]
+    assert events == [
+        "provider",
+        "exact-text-index",
+        "db:ready",
+        "status:completed",
+        "event:complete",
+    ]
 
 
 @pytest.mark.asyncio
