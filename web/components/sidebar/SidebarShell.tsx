@@ -120,6 +120,7 @@ const MORE_NAV: NavEntry[] = [
 const SECONDARY_NAV: NavEntry[] = [
   { href: "/settings", label: "Settings", icon: Settings },
 ];
+const PRODUCT_NAME = "TEEECHR";
 const RECENTS_COLLAPSED_KEY = "deeptutor.sidebar.recentsCollapsed";
 
 interface SidebarShellProps {
@@ -269,12 +270,12 @@ export function SidebarShell({
         <div className="relative mb-2 flex h-9 w-9 items-center justify-center">
           <Link
             href="/"
-            aria-label="TEEECHR"
+            aria-label={PRODUCT_NAME}
             className="flex items-center justify-center transition-opacity duration-150 group-hover/sb:opacity-0"
           >
             <Image
               src="/logo.png"
-              alt="TEEECHR"
+              alt={PRODUCT_NAME}
               width={22}
               height={22}
               className="h-[22px] w-[22px] rounded-md"
@@ -380,22 +381,24 @@ export function SidebarShell({
     <aside className="flex w-[220px] h-dvh shrink-0 flex-col bg-[var(--secondary)] transition-all duration-200">
       {/* Header: logo + collapse toggle */}
       <div className="flex h-14 items-center justify-between px-4">
-        <Link href="/" className="group flex items-center gap-1.5">
+        <Link
+          href="/"
+          aria-label={PRODUCT_NAME}
+          className="group flex items-center gap-2"
+        >
           <Image
             src="/logo.png"
-            alt="TEEECHR"
+            alt=""
             width={22}
             height={22}
             className="h-[22px] w-[22px] transition-transform duration-200 group-hover:scale-105"
           />
-          <Image
-            src="/banner.png"
-            alt="TEEECHR"
-            width={897}
-            height={236}
-            priority
-            className="h-[22px] w-auto transition-transform duration-200 group-hover:scale-105"
-          />
+          <span
+            aria-hidden="true"
+            className="text-[15px] font-semibold tracking-[0.16em] text-[var(--foreground)] transition-transform duration-200 group-hover:scale-105"
+          >
+            {PRODUCT_NAME}
+          </span>
         </Link>
         {/* The rail is a desktop affordance; in the drawer the scrim and the
             top-bar toggle already own "make this go away". */}
