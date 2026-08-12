@@ -337,6 +337,30 @@ def test_existing_finalized_identity_permanently_latches_v1_migration(
     assert migrated["bootstrap_completed_at"]
 
 
+def test_startup_reconciliation_seals_bootstrap_before_public_status(
+    mu_isolated_root, monkeypatch
+) -> None:
+    import json
+
+    from deeptutor.multi_user import enrollment
+    from deeptutor.multi_user.identity import save_user
+    from deeptutor.services.config import runtime_settings
+
+    settings_dir = mu_isolated_root / "startup-migration-settings"
+    settings_dir.mkdir()
+    (settings_dir / "auth.json").write_text(
+        json.dumps({"version": 1, "enabled": True}), encoding="utf-8"
+    )
+    settings = runtime_settings.RuntimeSettingsService(settings_dir, process_env={})
+    save_user("existing_admin", "$2b$12$placeholder", role="admin")
+    monkeypatch.setattr(runtime_settings, "get_runtime_settings_service", lambda: settings)
+
+    result = enrollment.reconcile_enrollment_journals()
+
+    assert result.recovery_required is False
+    assert settings.load_auth(include_process_overrides=False)["bootstrap_completed_at"]
+
+
 def test_disable_racing_signup_never_leaves_half_provisioned_state(
     enrollment_client,
 ) -> None:

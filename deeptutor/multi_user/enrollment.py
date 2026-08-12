@@ -362,6 +362,10 @@ def reconcile_enrollment_journals() -> ReconciliationResult:
     from .identity import identity_write_lock
 
     with _ENROLLMENT_POLICY_LOCK, identity_write_lock():
+        # Startup reconciliation is also the irreversible migration boundary:
+        # an existing finalized identity seals bootstrap before the server can
+        # answer any public registration request.
+        _load_policy_settings()
         return _reconcile_enrollment_journals_locked()
 
 
