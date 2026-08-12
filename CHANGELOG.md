@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+- Added the TEEECHR hosted VPS operating map and 2026-08-12 beta receipt,
+  documenting the DigitalOcean/Caddy/Docker topology, persistent data boundary,
+  deployment-owned provider model, source-to-release workflow, security posture,
+  qualification evidence, and remaining remote source-control closeout.
+- Added the ELI5 TEEECHR change workflow defining local edits, commits, GitHub
+  pushes, pull requests, `main`, exact-SHA deployment, hosted verification, and
+  the rules that keep those boundaries separate.
+- Documented the existing pre-commit recipe, current local-hook/CI coverage,
+  and the explicit manual production gates; future hook and deployment-workflow
+  automation remains a separate implementation lane.
 - Added the C4 provider-free materialization path for the exact C3-H3
   model-qualified Biology Practice and Review artifacts. Single-choice option
   identities and four-source-citation remediation provenance are now persisted
