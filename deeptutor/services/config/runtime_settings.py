@@ -49,12 +49,20 @@ CHAT_ATTACHMENT_MAX_TOTAL_MB_RANGE = (1, 2048)
 CHAT_ATTACHMENT_CHARS_RANGE = (10_000, 5_000_000)
 
 DEFAULT_AUTH_SETTINGS: dict[str, Any] = {
-    "version": 1,
+    "version": 2,
     "enabled": False,
     "username": "admin",
     "password_hash": "",
     "token_expire_hours": 24,
     "cookie_secure": False,
+    "bootstrap_completed_at": None,
+    "registration": {
+        "revision": 0,
+        "invite_enabled": False,
+        "invite_code_hash": None,
+        "rotated_at": None,
+        "trusted_proxy_cidrs": ["172.18.0.0/16"],
+    },
 }
 
 DEFAULT_INTEGRATIONS_SETTINGS: dict[str, Any] = {
@@ -363,11 +371,35 @@ class RuntimeSettingsService:
         return payload
 
     def load_auth(self, *, include_process_overrides: bool = True) -> dict[str, Any]:
-        payload = self._load_or_create(
-            "auth",
-            DEFAULT_AUTH_SETTINGS,
-            self._normalize_auth,
-        )
+        path = self.path_for("auth")
+        loaded = _json_object(path)
+        if not loaded:
+            payload = self._normalize_auth(_deepcopy_default(DEFAULT_AUTH_SETTINGS))
+            _atomic_write_json(path, payload)
+        else:
+            version = loaded.get("version", 1)
+            if version not in (1, 2):
+                # Authentication fields remain readable for login, but an
+                # unknown authority contract must never be rewritten or open
+                # public registration.
+                payload = self._normalize_auth_login_fields(loaded)
+                payload["version"] = version
+                payload["registration_valid"] = False
+            elif version == 2 and not self._auth_registration_shape_valid(loaded):
+                # Preserve the operator's file byte-for-byte for recovery.
+                # Only the registration surface fails closed; existing login
+                # behavior continues from the known auth fields.
+                payload = self._normalize_auth_login_fields(loaded)
+                payload["version"] = 2
+                payload["bootstrap_completed_at"] = loaded.get(
+                    "bootstrap_completed_at"
+                )
+                payload["registration"] = deepcopy(loaded.get("registration") or {})
+                payload["registration_valid"] = False
+            else:
+                payload = self._normalize_auth({**DEFAULT_AUTH_SETTINGS, **loaded})
+                if version == 1 or payload != loaded:
+                    _atomic_write_json(path, payload)
         if include_process_overrides:
             payload = self._apply_auth_process_overrides(payload)
         return payload
@@ -907,14 +939,78 @@ class RuntimeSettingsService:
         }
 
     def _normalize_auth(self, settings: dict[str, Any]) -> dict[str, Any]:
+        login = self._normalize_auth_login_fields(settings)
+        registration = settings.get("registration")
+        if not isinstance(registration, dict):
+            registration = {}
+        invite_hash = registration.get("invite_code_hash")
+        payload = {
+            **login,
+            "version": 2,
+            "bootstrap_completed_at": (
+                _string(settings.get("bootstrap_completed_at")) or None
+            ),
+            "registration": {
+                "revision": max(0, _coerce_int(registration.get("revision"), 0)),
+                "invite_enabled": _coerce_bool(
+                    registration.get("invite_enabled"), False
+                ),
+                "invite_code_hash": _string(invite_hash) or None,
+                "rotated_at": _string(registration.get("rotated_at")) or None,
+                "trusted_proxy_cidrs": [
+                    str(item).strip()
+                    for item in (
+                        registration.get("trusted_proxy_cidrs")
+                        if isinstance(registration.get("trusted_proxy_cidrs"), list)
+                        else ["172.18.0.0/16"]
+                    )
+                    if str(item).strip()
+                ],
+            },
+        }
+        return payload
+
+    def _normalize_auth_login_fields(self, settings: dict[str, Any]) -> dict[str, Any]:
         return {
-            "version": 1,
             "enabled": _coerce_bool(settings.get("enabled"), False),
             "username": _string(settings.get("username")) or "admin",
             "password_hash": _string(settings.get("password_hash")),
             "token_expire_hours": max(1, _coerce_int(settings.get("token_expire_hours"), 24)),
             "cookie_secure": _coerce_bool(settings.get("cookie_secure"), False),
         }
+
+    @staticmethod
+    def _auth_registration_shape_valid(settings: dict[str, Any]) -> bool:
+        latch = settings.get("bootstrap_completed_at")
+        if latch is not None and (not isinstance(latch, str) or not latch.strip()):
+            return False
+        registration = settings.get("registration")
+        if not isinstance(registration, dict):
+            return False
+        revision = registration.get("revision")
+        if isinstance(revision, bool) or not isinstance(revision, int) or revision < 0:
+            return False
+        if not isinstance(registration.get("invite_enabled"), bool):
+            return False
+        invite_hash = registration.get("invite_code_hash")
+        if invite_hash is not None:
+            if not isinstance(invite_hash, str):
+                return False
+            # bcrypt modular crypt format: 60 ASCII chars, known prefix and
+            # two-digit cost. bcrypt.checkpw performs the final verification.
+            import re
+
+            if re.fullmatch(r"\$2[aby]\$\d{2}\$[./A-Za-z0-9]{53}", invite_hash) is None:
+                return False
+        cidrs = registration.get("trusted_proxy_cidrs", [])
+        if not isinstance(cidrs, list) or not all(isinstance(item, str) for item in cidrs):
+            return False
+        rotated_at = registration.get("rotated_at")
+        if rotated_at is not None and (
+            not isinstance(rotated_at, str) or not rotated_at.strip()
+        ):
+            return False
+        return True
 
     def _normalize_integrations(self, settings: dict[str, Any]) -> dict[str, Any]:
         return {

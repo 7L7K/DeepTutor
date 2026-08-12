@@ -218,7 +218,12 @@ class ProviderUsageLedger:
         return self._policy(row)
 
     def configure(self, policy: ProviderUsagePolicy) -> ProviderUsagePolicy:
-        with self._lock, self._connect() as connection:
+        # Enrollment eligibility depends on this policy. Keep the same global
+        # lock order as catalog mutations so a policy disable/pricing change
+        # cannot race learner identity publication.
+        from deeptutor.multi_user.enrollment import enrollment_policy_lock
+
+        with enrollment_policy_lock(), self._lock, self._connect() as connection:
             connection.execute("BEGIN IMMEDIATE")
             connection.execute(
                 """UPDATE provider_usage_policy SET

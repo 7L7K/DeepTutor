@@ -12,10 +12,10 @@ from __future__ import annotations
 from pydantic import ValidationError
 import pytest
 
-from deeptutor.api.routers.auth import LoginRequest, RegisterRequest
+from deeptutor.api.routers.auth import AdminCreateUserRequest, LoginRequest
 
 # ---------------------------------------------------------------------------
-# RegisterRequest.username — the real validator
+# AdminCreateUserRequest.username — administrator-created identity validation
 # ---------------------------------------------------------------------------
 
 
@@ -33,7 +33,7 @@ from deeptutor.api.routers.auth import LoginRequest, RegisterRequest
     ],
 )
 def test_register_accepts_email_or_plain_username(username: str) -> None:
-    assert RegisterRequest(username=username, password="password1234").username == username
+    assert AdminCreateUserRequest(username=username, password="password1234").username == username
 
 
 @pytest.mark.parametrize(
@@ -51,21 +51,21 @@ def test_register_accepts_email_or_plain_username(username: str) -> None:
 )
 def test_register_rejects_invalid_username(username: str) -> None:
     with pytest.raises(ValidationError):
-        RegisterRequest(username=username, password="password1234")
+        AdminCreateUserRequest(username=username, password="password1234")
 
 
 def test_register_username_is_trimmed() -> None:
-    assert RegisterRequest(username="  admin  ", password="password1234").username == "admin"
+    assert AdminCreateUserRequest(username="  admin  ", password="password1234").username == "admin"
 
 
 @pytest.mark.parametrize("password", ["", "short", "1234567"])  # all < 8 chars
 def test_register_rejects_short_password(password: str) -> None:
     with pytest.raises(ValidationError):
-        RegisterRequest(username="admin", password=password)
+        AdminCreateUserRequest(username="admin", password=password)
 
 
 def test_register_accepts_eight_char_password() -> None:
-    assert RegisterRequest(username="admin", password="12345678").password == "12345678"
+    assert AdminCreateUserRequest(username="admin", password="12345678").password == "12345678"
 
 
 # ---------------------------------------------------------------------------

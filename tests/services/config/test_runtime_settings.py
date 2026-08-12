@@ -3,6 +3,8 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+import pytest
+
 from deeptutor.services.config.runtime_settings import (
     RuntimeSettingsService,
     ensure_runtime_settings_files,
@@ -55,6 +57,115 @@ def test_runtime_settings_creates_defaults_without_reading_dotenv(tmp_path: Path
 
     assert _read_json(service.path_for("system"))["backend_port"] == 8001
     assert _read_json(service.path_for("auth"))["enabled"] is False
+
+
+def test_auth_v1_migrates_atomically_to_v2_without_changing_enablement(tmp_path: Path) -> None:
+    settings_dir = tmp_path / "settings"
+    settings_dir.mkdir()
+    auth_path = settings_dir / "auth.json"
+    auth_path.write_text(
+        json.dumps(
+            {
+                "version": 1,
+                "enabled": True,
+                "username": "admin",
+                "password_hash": "",
+                "token_expire_hours": 48,
+                "cookie_secure": True,
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    loaded = RuntimeSettingsService(settings_dir, process_env={}).load_auth(
+        include_process_overrides=False
+    )
+
+    persisted = _read_json(auth_path)
+    assert loaded == persisted
+    assert persisted["version"] == 2
+    assert persisted["enabled"] is True
+    assert persisted["bootstrap_completed_at"] is None
+    assert persisted["registration"] == {
+        "revision": 0,
+        "invite_enabled": False,
+        "invite_code_hash": None,
+        "rotated_at": None,
+        "trusted_proxy_cidrs": ["172.18.0.0/16"],
+    }
+
+
+def test_unknown_auth_version_preserves_file_and_forces_registration_closed(tmp_path: Path) -> None:
+    settings_dir = tmp_path / "settings"
+    settings_dir.mkdir()
+    auth_path = settings_dir / "auth.json"
+    original = '{"version":99,"enabled":true,"future":"authority"}\n'
+    auth_path.write_text(original, encoding="utf-8")
+
+    loaded = RuntimeSettingsService(settings_dir, process_env={}).load_auth(
+        include_process_overrides=False
+    )
+
+    assert auth_path.read_text(encoding="utf-8") == original
+    assert loaded["enabled"] is True
+    assert loaded["registration_valid"] is False
+
+
+def test_malformed_invite_hash_preserves_login_and_forces_registration_closed(
+    tmp_path: Path,
+) -> None:
+    settings_dir = tmp_path / "settings"
+    settings_dir.mkdir()
+    auth_path = settings_dir / "auth.json"
+    original = {
+        "version": 2,
+        "enabled": True,
+        "bootstrap_completed_at": "2026-08-12T00:00:00+00:00",
+        "registration": {
+            "revision": 4,
+            "invite_enabled": True,
+            "invite_code_hash": "plaintext-is-not-a-bcrypt-hash",
+            "rotated_at": "2026-08-12T00:00:00+00:00",
+            "trusted_proxy_cidrs": ["172.18.0.0/16"],
+        },
+    }
+    auth_path.write_text(json.dumps(original), encoding="utf-8")
+
+    loaded = RuntimeSettingsService(settings_dir, process_env={}).load_auth(
+        include_process_overrides=False
+    )
+
+    assert loaded["enabled"] is True
+    assert loaded["registration_valid"] is False
+    assert _read_json(auth_path) == original
+
+
+def test_interrupted_atomic_auth_write_preserves_prior_valid_settings(
+    tmp_path: Path, monkeypatch
+) -> None:
+    settings_dir = tmp_path / "settings"
+    service = RuntimeSettingsService(settings_dir, process_env={})
+    prior = service.save_auth(
+        {
+            "enabled": True,
+            "bootstrap_completed_at": "2026-08-12T00:00:00+00:00",
+        }
+    )
+    auth_path = service.path_for("auth")
+    original_bytes = auth_path.read_bytes()
+    real_replace = Path.replace
+
+    def interrupted_replace(path: Path, target: Path) -> Path:
+        if Path(target) == auth_path:
+            raise OSError("simulated interruption before atomic replacement")
+        return real_replace(path, target)
+
+    monkeypatch.setattr(Path, "replace", interrupted_replace)
+    with pytest.raises(OSError, match="simulated interruption"):
+        service.save_auth({**prior, "enabled": False})
+
+    assert auth_path.read_bytes() == original_bytes
+    assert _read_json(auth_path)["enabled"] is True
 
 
 def test_runtime_process_env_is_explicit_override(tmp_path: Path) -> None:

@@ -4,30 +4,30 @@ import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { useTranslation } from "react-i18next";
-import { register, checkIsFirstUser, fetchAuthStatus } from "@/lib/auth";
+import { register, fetchAuthStatus } from "@/lib/auth";
 
 export default function RegisterPage() {
   const { t } = useTranslation();
   const router = useRouter();
 
   const [username, setUsername] = useState("");
+  const [inviteCode, setInviteCode] = useState("");
   const [password, setPassword] = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
-  const [isFirst, setIsFirst] = useState(false);
-  const [checkingFirst, setCheckingFirst] = useState(true);
+  const [registrationMode, setRegistrationMode] = useState<
+    "loading" | "bootstrap" | "invite" | "closed"
+  >("loading");
 
   useEffect(() => {
     // Redirect if already logged in
     fetchAuthStatus().then((status) => {
-      if (status?.authenticated) router.replace("/");
-    });
-
-    // Check if this will be the first (admin) user
-    checkIsFirstUser().then((first) => {
-      setIsFirst(first);
-      setCheckingFirst(false);
+      if (status?.authenticated) {
+        router.replace("/classes");
+        return;
+      }
+      setRegistrationMode(status?.registration_mode ?? "closed");
     });
   }, [router]);
 
@@ -41,10 +41,14 @@ export default function RegisterPage() {
     }
 
     setLoading(true);
-    const result = await register(username, password);
+    const result = await register(
+      username,
+      password,
+      registrationMode === "invite" ? inviteCode : undefined,
+    );
 
     if (result.ok) {
-      router.replace("/login?registered=1");
+      router.replace("/classes");
     } else {
       setError(result.error ?? t("Registration failed"));
       setLoading(false);
@@ -64,7 +68,7 @@ export default function RegisterPage() {
       </div>
 
       {/* First-user notice */}
-      {!checkingFirst && isFirst && (
+      {registrationMode === "bootstrap" && (
         <div className="mb-4 rounded-lg border border-blue-500/30 bg-blue-500/10 px-4 py-3 text-sm text-blue-600 dark:text-blue-400">
           <strong>{t("First user:")}</strong>{" "}
           {t(
@@ -73,9 +77,46 @@ export default function RegisterPage() {
         </div>
       )}
 
-      {/* Card */}
+      {registrationMode === "closed" ? (
+        <div className="bg-[var(--card)] border border-[var(--border)] rounded-2xl shadow-sm px-8 py-8 text-center">
+          <p className="text-sm font-medium text-[var(--foreground)]">
+            {t("Registration is closed")}
+          </p>
+          <p className="mt-2 text-sm text-[var(--muted-foreground)]">
+            {t("Sign in with your existing username and password.")}
+          </p>
+        </div>
+      ) : registrationMode === "loading" ? (
+        <div className="py-12 text-center text-sm text-[var(--muted-foreground)]">
+          {t("Checking registration…")}
+        </div>
+      ) : (
       <div className="bg-[var(--card)] border border-[var(--border)] rounded-2xl shadow-sm px-8 py-8">
         <form onSubmit={handleSubmit} className="space-y-5">
+          {registrationMode === "invite" && (
+            <div>
+              <label
+                htmlFor="inviteCode"
+                className="block text-sm font-medium text-[var(--foreground)] mb-1.5"
+              >
+                {t("Invite code")}
+              </label>
+              <input
+                id="inviteCode"
+                type="text"
+                autoComplete="one-time-code"
+                required
+                value={inviteCode}
+                onChange={(e) => setInviteCode(e.target.value)}
+                className="w-full px-3.5 py-2.5 rounded-lg border border-[var(--border)]
+                           bg-[var(--background)] text-[var(--foreground)] uppercase tracking-wide
+                           placeholder:text-[var(--muted-foreground)]
+                           focus:outline-none focus:ring-2 focus:ring-[var(--primary)] focus:border-transparent
+                           transition-shadow text-sm"
+                placeholder="TEEECHR-XXXX-XXXX-XXXX-XXXX"
+              />
+            </div>
+          )}
           {/* Email or username */}
           <div>
             <label
@@ -172,6 +213,7 @@ export default function RegisterPage() {
           </button>
         </form>
       </div>
+      )}
 
       <p className="mt-6 text-center text-sm text-[var(--muted-foreground)]">
         {t("Already have an account?")}{" "}

@@ -144,6 +144,25 @@ async def lifespan(app: FastAPI):
         SYSTEM_ROOT / "course-single-process.lock"
     )
     course_process_lock.acquire()
+    # Reconcile only enrollment artifacts with exact journal/grant fingerprint
+    # authority. Ambiguous state deletes nothing and keeps public enrollment
+    # closed for operator review.
+    try:
+        from deeptutor.multi_user.enrollment import reconcile_enrollment_journals
+
+        enrollment_recovery = reconcile_enrollment_journals()
+        if enrollment_recovery.recovery_required:
+            logger.error("Enrollment recovery required; invite registration is closed")
+        elif enrollment_recovery.orphan_grants_removed or enrollment_recovery.cleared:
+            logger.info(
+                "Enrollment startup reconciliation: removed_orphans=%d cleared=%d",
+                enrollment_recovery.orphan_grants_removed,
+                enrollment_recovery.cleared,
+            )
+    except Exception as exc:
+        # Authentication and existing sessions remain available. Registration
+        # mode independently fails closed if recovery cannot be inspected.
+        logger.error("Enrollment startup reconciliation failed: %s", exc)
     # Persistent secret authority is resolved only after the single-process
     # Course lock. A missing/locked authority disables BlueWay safely without
     # taking generic TEEECHR offline; unsafe structural configuration remains

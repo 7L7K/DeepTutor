@@ -238,6 +238,39 @@ def save_user(username: str, hashed_password: str, role: Role = "user") -> dict[
     return record
 
 
+def create_user_only(
+    username: str,
+    hashed_password: str,
+    *,
+    user_id: str,
+    role: Role = "user",
+) -> dict[str, Any]:
+    """Publish one new finalized identity without update semantics.
+
+    Enrollment reserves ``user_id`` before this call. Neither a duplicate
+    username nor a duplicate immutable id may update an existing account.
+    """
+    if role not in {"admin", "user"}:
+        raise ValueError("role must be 'admin' or 'user'")
+    with _USERS_WRITE_LOCK:
+        users = load_users()
+        if username in users:
+            raise FileExistsError("Username already exists")
+        if any(str(record.get("id") or "") == user_id for record in users.values()):
+            raise FileExistsError("User id already exists")
+        record = {
+            "id": user_id,
+            "hash": hashed_password,
+            "role": role,
+            "created_at": utc_now(),
+            "disabled": False,
+            "avatar": "",
+        }
+        users[username] = record
+        _write_users(users)
+        return record
+
+
 def list_user_info(  # nosec B107 - empty defaults mean "no env fallback supplied".
     env_username: str = "",
     env_password_hash: str = "",

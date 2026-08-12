@@ -14,6 +14,7 @@ import {
 import { GrantEditor } from "@/features/multi-user/components/GrantEditor";
 import { UserAvatar } from "@/components/UserAvatar";
 import { ConfirmDialog } from "@/components/ui/ConfirmDialog";
+import { EnrollmentPanel } from "@/components/auth/EnrollmentPanel";
 import { filterUsersByQuery } from "@/lib/admin-users";
 import {
   Search,
@@ -235,6 +236,8 @@ export default function AdminUsersPage() {
             {actionError}
           </div>
         )}
+
+        {currentUser && <EnrollmentPanel />}
 
         {!loading && !error && users.length > 0 && (
           <div className="mb-4 flex items-center gap-3">

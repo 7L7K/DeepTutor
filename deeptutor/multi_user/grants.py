@@ -7,6 +7,8 @@ import json
 from pathlib import Path
 from typing import Any
 
+from deeptutor.services.file_io import atomic_write_json
+
 from .identity import get_user_by_id
 from .paths import SYSTEM_ROOT, ensure_system_dirs
 
@@ -97,18 +99,31 @@ def load_grant(user_id: str) -> dict[str, Any]:
         return empty_grant(user_id)
 
 
-def save_grant(user_id: str, payload: dict[str, Any]) -> dict[str, Any]:
+def save_grant(
+    user_id: str,
+    payload: dict[str, Any],
+    *,
+    enrollment_id: str | None = None,
+) -> dict[str, Any]:
     user_record = get_user_by_id(user_id)
-    if user_record is None:
-        raise ValueError(f"Unknown user id: {user_id}")
-    _username, record = user_record
-    if str(record.get("role") or "user") == "admin":
-        raise ValueError("Admin users use the main workspace and cannot receive assignments.")
     grant = normalize_grant(user_id, payload)
     validate_grant(grant)
+    if user_record is None:
+        if not enrollment_id:
+            raise ValueError(f"Unknown user id: {user_id}")
+        from .enrollment import authorize_grant_write
+
+        if not authorize_grant_write(enrollment_id, user_id, grant):
+            raise ValueError("Enrollment journal does not authorize this grant")
+    else:
+        _username, record = user_record
+        if str(record.get("role") or "user") == "admin":
+            raise ValueError("Admin users use the main workspace and cannot receive assignments.")
     path = grant_path(user_id)
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(grant, indent=2, ensure_ascii=False), encoding="utf-8")
+    path.parent.chmod(0o700)
+    atomic_write_json(path, grant)
+    path.chmod(0o600)
     return grant
 
 
@@ -117,7 +132,18 @@ def validate_grant(grant: dict[str, Any]) -> None:
 
     Grants carry logical ids only. Runtime resolution happens server-side.
     """
-    forbidden = {"api_key", "secret", "password", "token", "path", "base_url"}
+    forbidden = {
+        "api_key",
+        "secret",
+        "password",
+        "token",
+        "path",
+        "base_url",
+        "endpoint",
+        "credential_ref",
+        "enrollment_id",
+        "model_id",
+    }
 
     def walk(value: Any, trail: str = "grant") -> None:
         if isinstance(value, dict):

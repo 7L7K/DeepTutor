@@ -4,7 +4,7 @@ import { Suspense, useState, useEffect } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import Link from "next/link";
 import { useTranslation } from "react-i18next";
-import { login, fetchAuthStatus, checkIsFirstUser } from "@/lib/auth";
+import { login, fetchAuthStatus } from "@/lib/auth";
 import { normalizeAuthNext } from "@/lib/auth-redirect";
 
 function LoginPageContent() {
@@ -19,6 +19,9 @@ function LoginPageContent() {
   const [password, setPassword] = useState("");
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
+  const [registrationMode, setRegistrationMode] = useState<
+    "bootstrap" | "invite" | "closed"
+  >("closed");
 
   useEffect(() => {
     // If already authenticated, skip login
@@ -27,10 +30,9 @@ function LoginPageContent() {
         router.replace(next);
         return;
       }
-      // No users registered yet — send straight to the registration page
-      checkIsFirstUser().then((first) => {
-        if (first) router.replace("/register");
-      });
+      const mode = status?.registration_mode ?? "closed";
+      setRegistrationMode(mode);
+      if (mode === "bootstrap") router.replace("/register");
     });
   }, [router, next]);
 
@@ -141,15 +143,17 @@ function LoginPageContent() {
         </form>
       </div>
 
-      <p className="mt-6 text-center text-sm text-[var(--muted-foreground)]">
-        {t("Don't have an account?")}{" "}
-        <Link
-          href="/register"
-          className="text-[var(--primary)] hover:underline font-medium"
-        >
-          {t("Create one")}
-        </Link>
-      </p>
+      {registrationMode !== "closed" && (
+        <p className="mt-6 text-center text-sm text-[var(--muted-foreground)]">
+          {t("Don't have an account?")}{" "}
+          <Link
+            href="/register"
+            className="text-[var(--primary)] hover:underline font-medium"
+          >
+            {t("Create one")}
+          </Link>
+        </p>
+      )}
 
       <p className="mt-3 text-center text-xs text-[var(--muted-foreground)]">
         TEEECHR · Agent-Native Learning

@@ -117,7 +117,13 @@ class ModelCatalogService:
         return loaded if isinstance(loaded, dict) else {}
 
     def save(self, catalog: dict[str, Any]) -> dict[str, Any]:
-        with self._lock:
+        # Catalog eligibility participates in invite enrollment authority.
+        # Acquire the enrollment-policy lock first so rotation/signup cannot
+        # race a target-model mutation, and no path establishes the reverse
+        # lock order.
+        from deeptutor.multi_user.enrollment import enrollment_policy_lock
+
+        with enrollment_policy_lock(), self._lock:
             normalized = deepcopy(catalog)
             self._normalize(normalized)
             existing = self._read_existing_catalog()
@@ -142,7 +148,9 @@ class ModelCatalogService:
             return self._hydrate_credentials(normalized)
 
     def update(self, mutator: Callable[[dict[str, Any]], None]) -> dict[str, Any]:
-        with self._lock:
+        from deeptutor.multi_user.enrollment import enrollment_policy_lock
+
+        with enrollment_policy_lock(), self._lock:
             catalog = self.load()
             mutator(catalog)
             return self.save(catalog)

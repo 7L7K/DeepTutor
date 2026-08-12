@@ -8,8 +8,9 @@ import { apiFetch, apiUrl, setRuntimeAuthEnabled } from "@/lib/api";
 // is driven by `setRuntimeAuthEnabled`, which `fetchAuthStatus` calls below.
 
 export interface AuthStatus {
-  enabled: boolean;
+  enabled?: boolean;
   authenticated: boolean;
+  registration_mode?: "bootstrap" | "invite" | "closed";
   user_id?: string;
   username?: string;
   role?: string;
@@ -29,7 +30,10 @@ export async function fetchAuthStatus(): Promise<AuthStatus | null> {
     const status: AuthStatus = await res.json();
     // Record the real auth state so apiFetch's in-session 401 → /login redirect
     // fires only when auth is actually enabled.
-    setRuntimeAuthEnabled(Boolean(status.enabled));
+    // Anonymous auth-enabled responses intentionally expose only
+    // authenticated + registration_mode. Auth-disabled local mode retains
+    // enabled=false in its authenticated administrator response.
+    setRuntimeAuthEnabled(status.enabled ?? !status.authenticated);
     return status;
   } catch {
     return null;
@@ -86,6 +90,7 @@ function extractDetail(detail: unknown): string {
 export async function register(
   username: string,
   password: string,
+  inviteCode?: string,
 ): Promise<{
   ok: boolean;
   role?: string;
@@ -96,7 +101,11 @@ export async function register(
     const res = await apiFetch(apiUrl("/api/v1/auth/register"), {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ username, password }),
+      body: JSON.stringify({
+        username,
+        password,
+        ...(inviteCode ? { invite_code: inviteCode } : {}),
+      }),
       // Registration validation failures (e.g. 400/401) should surface inline
       // rather than bounce the user through the global login redirect.
       skipAuthRedirect: true,
@@ -113,19 +122,6 @@ export async function register(
   }
 }
 
-/**
- * Check whether the user store is empty (first user will become admin).
- */
-export async function checkIsFirstUser(): Promise<boolean> {
-  try {
-    const res = await apiFetch(apiUrl("/api/v1/auth/is_first_user"));
-    if (!res.ok) return false;
-    const data = await res.json();
-    return Boolean(data.is_first_user);
-  } catch {
-    return false;
-  }
-}
 
 /**
  * POST to the logout endpoint to clear the session cookie.

@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+- Added shared-code, invite-only learner enrollment with a permanent bootstrap
+  latch, exactly 80-bit Crockford/Base32 codes stored only as bcrypt hashes,
+  CAS-protected administrator rotation and enablement, trusted-proxy-aware
+  invalid-code throttling, and immediate authenticated entry to Classes.
+  Learner publication is grant-first and identity-last through a private,
+  fingerprint-bound enrollment journal; ambiguous crash recovery fails closed
+  without deleting grants. Each successful signup receives the sole qualified
+  global Luna assignment, while unavailable or ambiguous model authority keeps
+  registration closed. Enrollment ships disabled.
 - Added the C4 provider-free materialization path for the exact C3-H3
   model-qualified Biology Practice and Review artifacts. Single-choice option
   identities and four-source-citation remediation provenance are now persisted

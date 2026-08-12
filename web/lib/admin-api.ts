@@ -54,6 +54,58 @@ export interface CreatedUser {
   is_admin: boolean;
 }
 
+export interface EnrollmentStatus {
+  state: "active" | "disabled" | "not_configured" | "recovery_required";
+  enabled: boolean;
+  configured: boolean;
+  revision: number;
+  rotated_at: string | null;
+  assigned_model: "Luna";
+  model_available: boolean;
+  recovery_required: boolean;
+}
+
+export interface EnrollmentCodeResult {
+  code: string;
+  enrollment: EnrollmentStatus;
+}
+
+async function enrollmentResponse<T>(res: Response, fallback: string): Promise<T> {
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    throw new Error(typeof data?.detail === "string" ? data.detail : fallback);
+  }
+  return data as T;
+}
+
+export async function fetchEnrollment(): Promise<EnrollmentStatus> {
+  const res = await apiFetch(apiUrl("/api/v1/auth/enrollment"));
+  return enrollmentResponse<EnrollmentStatus>(res, "Failed to load enrollment");
+}
+
+export async function rotateEnrollmentCode(
+  expectedRevision: number,
+): Promise<EnrollmentCodeResult> {
+  const res = await apiFetch(apiUrl("/api/v1/auth/enrollment/code"), {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ expected_revision: expectedRevision }),
+  });
+  return enrollmentResponse<EnrollmentCodeResult>(res, "Failed to rotate invite code");
+}
+
+export async function setEnrollmentEnabled(
+  enabled: boolean,
+  expectedRevision: number,
+): Promise<EnrollmentStatus> {
+  const res = await apiFetch(apiUrl("/api/v1/auth/enrollment/enabled"), {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ enabled, expected_revision: expectedRevision }),
+  });
+  return enrollmentResponse<EnrollmentStatus>(res, "Failed to update enrollment");
+}
+
 export async function createUser(
   username: string,
   password: string,

@@ -37,14 +37,13 @@ from deeptutor.services.auth import (
     POCKETBASE_ENABLED,
     TOKEN_EXPIRE_HOURS,
     TokenPayload,
-    add_user,
     authenticate,
     authenticate_pb,
     create_token,
     decode_token,
     delete_user,
     get_user_info,
-    is_first_user,
+    hash_password,
     list_users,
     register_pb,
     set_avatar,
@@ -117,33 +116,15 @@ class LoginRequest(BaseModel):
 
 
 class RegisterRequest(BaseModel):
-    """Payload for the POST /register endpoint."""
+    """Raw public registration payload.
+
+    Invited identity syntax is deliberately validated in the enrollment
+    authority only after the caller proves the shared code.
+    """
 
     username: str
     password: str
-
-    @field_validator("username")
-    @classmethod
-    def username_valid(cls, v: str) -> str:
-        import re
-
-        v = v.strip()
-        if not v:
-            raise ValueError("Email cannot be empty")
-        # Accept standard email addresses (used by PocketBase mode) or plain
-        # usernames (used by the built-in SQLite/JSON auth mode).
-        email_re = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
-        plain_re = re.compile(r"^[A-Za-z0-9_\-.]{3,64}$")
-        if not email_re.match(v) and not plain_re.match(v):
-            raise ValueError("Enter a valid email address")
-        return v
-
-    @field_validator("password")
-    @classmethod
-    def password_valid(cls, v: str) -> str:
-        if len(v) < 8:
-            raise ValueError("Password must be at least 8 characters")
-        return v
+    invite_code: str | None = None
 
 
 class SetRoleRequest(BaseModel):
@@ -159,16 +140,36 @@ class SetRoleRequest(BaseModel):
         return v
 
 
-class AuthStatusResponse(BaseModel):
-    """Response body for the GET /status endpoint."""
+class AdminCreateUserRequest(BaseModel):
+    """Administrator-created users never consume public invite policy."""
 
+    username: str
+    password: str
+
+    @field_validator("username")
+    @classmethod
+    def username_valid(cls, value: str) -> str:
+        value = value.strip()
+        email_re = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
+        plain_re = re.compile(r"^[A-Za-z0-9_\-.]{3,64}$")
+        if not value or (not email_re.match(value) and not plain_re.match(value)):
+            raise ValueError("Enter a valid email address or username")
+        return value
+
+    @field_validator("password")
+    @classmethod
+    def password_valid(cls, value: str) -> str:
+        if len(value) < 8:
+            raise ValueError("Password must be at least 8 characters")
+        return value
+
+
+class EnrollmentRevisionRequest(BaseModel):
+    expected_revision: int
+
+
+class EnrollmentEnabledRequest(EnrollmentRevisionRequest):
     enabled: bool
-    authenticated: bool
-    user_id: str | None = None
-    username: str | None = None
-    role: str | None = None
-    is_admin: bool = False
-    avatar: str = ""
 
 
 class UserInfo(BaseModel):
@@ -443,38 +444,54 @@ async def receive_codex_oauth_callback(
     )
 
 
-@router.get("/status", response_model=AuthStatusResponse)
+def _no_store_status_headers(response: Response) -> None:
+    response.headers["Cache-Control"] = "private, no-store"
+    response.headers["Pragma"] = "no-cache"
+
+
+@router.get("/status")
 async def auth_status(
+    response: Response,
     authorization: str | None = Header(default=None, alias="Authorization"),
     dt_token: str | None = Cookie(default=None),
-) -> AuthStatusResponse:
+) -> dict:
     """Return whether auth is enabled and whether the current request is authenticated."""
+    _no_store_status_headers(response)
     if not AUTH_ENABLED:
-        return AuthStatusResponse(
-            enabled=False,
-            authenticated=True,
-            user_id="local-admin",
-            username="local",
-            role="admin",
-            is_admin=True,
-        )
+        return {
+            "enabled": False,
+            "authenticated": True,
+            "user_id": "local-admin",
+            "username": "local",
+            "role": "admin",
+            "is_admin": True,
+            "avatar": "",
+            "registration_mode": "closed",
+        }
 
     token = _extract_token(authorization, dt_token)
     payload = decode_token(token) if token else None
+    from deeptutor.multi_user.enrollment import registration_mode
+
+    mode = registration_mode()
+    if payload is None:
+        # This is the only public enrollment-policy disclosure. Do not leak
+        # hash/configuration/model identifiers or admin settings.
+        return {"authenticated": False, "registration_mode": mode}
     avatar = ""
-    if payload is not None:
-        info = get_user_info(payload.username)
-        if info:
-            avatar = str(info.get("avatar") or "")
-    return AuthStatusResponse(
-        enabled=True,
-        authenticated=payload is not None,
-        user_id=payload.user_id if payload else None,
-        username=payload.username if payload else None,
-        role=payload.role if payload else None,
-        is_admin=payload.role == "admin" if payload else False,
-        avatar=avatar,
-    )
+    info = get_user_info(payload.username)
+    if info:
+        avatar = str(info.get("avatar") or "")
+    return {
+        "enabled": True,
+        "authenticated": True,
+        "user_id": payload.user_id,
+        "username": payload.username,
+        "role": payload.role,
+        "is_admin": payload.role == "admin",
+        "avatar": avatar,
+        "registration_mode": mode,
+    }
 
 
 @router.post("/login")
@@ -536,13 +553,10 @@ async def logout(response: Response) -> dict:
 
 
 @router.post("/register", status_code=status.HTTP_201_CREATED)
-async def register(body: RegisterRequest) -> dict:
+async def register(body: RegisterRequest, request: Request, response: Response) -> dict:
     """
-    Bootstrap-only registration.
-
-    Public endpoint that creates the *first* admin account when the user store
-    is empty. Once an admin exists, this endpoint is closed; further accounts
-    must be created by an admin via ``POST /api/v1/auth/users``.
+    Bootstrap the first administrator or enroll a learner with the active
+    shared code. Both successful paths issue the normal TEEECHR session.
 
     Only available when AUTH_ENABLED=true.
     """
@@ -553,66 +567,82 @@ async def register(body: RegisterRequest) -> dict:
         )
 
     if POCKETBASE_ENABLED:
-        # PocketBase deployments are documented as single-user. Keep registration
-        # closed and require admins to provision users in the PocketBase admin UI.
-        if not is_first_user():
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail="Self-registration is closed. Ask an administrator to create your account.",
-            )
-        result = register_pb(username=body.username, email=body.username, password=body.password)
-        if not result:
-            raise HTTPException(
-                status_code=status.HTTP_409_CONFLICT,
-                detail="Registration failed — username or email may already be taken.",
-            )
-        logger.info(f"First user registered via PocketBase: '{body.username}'")
-        return {
-            "ok": True,
-            "user_id": result.get("id", ""),
-            "username": body.username,
-            "role": "user",
-            "is_first_user": True,
-            "is_admin": False,
-        }
-
-    # Standard mode — only allowed before the first admin exists.
-    if not is_first_user():
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
-            detail="Self-registration is closed. Ask an administrator to create your account.",
+            detail="Invite registration is unavailable for this authentication provider.",
         )
 
-    existing = {u["username"] for u in list_users()}
-    if body.username in existing:
+    from deeptutor.multi_user.enrollment import (
+        EnrollmentConflict,
+        EnrollmentThrottled,
+        EnrollmentUnavailable,
+        EnrollmentValidationError,
+        InviteCodeError,
+        complete_bootstrap,
+        invited_signup,
+        registration_mode,
+        resolve_client_source,
+        validate_enrollment_credentials,
+    )
+
+    mode = registration_mode()
+    try:
+        if mode == "bootstrap":
+            username, password = validate_enrollment_credentials(
+                body.username, body.password
+            )
+            record = complete_bootstrap(
+                username=username,
+                password_hash=hash_password(password),
+            )
+        elif mode == "invite":
+            auth_settings = load_auth_settings()
+            registration = auth_settings.get("registration") or {}
+            direct_peer = request.client.host if request.client else "unknown"
+            source = resolve_client_source(
+                direct_peer=direct_peer,
+                canonical_forwarded=request.headers.get("x-forwarded-for"),
+                trusted_proxy_cidrs=list(registration.get("trusted_proxy_cidrs") or []),
+            )
+            record = invited_signup(
+                username=body.username,
+                password=body.password,
+                invite_code=body.invite_code,
+                source=source,
+            )
+        else:
+            raise EnrollmentUnavailable("Self-registration is closed")
+    except EnrollmentThrottled as exc:
         raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail="Username already taken",
-        )
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail=str(exc),
+            headers={"Retry-After": str(exc.retry_after)},
+        ) from exc
+    except InviteCodeError as exc:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=str(exc)) from exc
+    except EnrollmentConflict as exc:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
+    except EnrollmentValidationError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)
+        ) from exc
+    except EnrollmentUnavailable as exc:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=str(exc)) from exc
 
-    add_user(body.username, body.password)
-    user_id = ""
-    role = "user"
-    for item in list_users():
-        if item.get("username") == body.username:
-            user_id = str(item.get("id") or "")
-            role = str(item.get("role") or "user")
-            break
-    logger.info(f"First user (admin) registered: '{body.username}'")
+    role = str(record.get("role") or "user")
+    user_id = str(record.get("id") or "")
+    enrolled_username = username if mode == "bootstrap" else body.username.strip()
+    token = create_token(enrolled_username, role, user_id)
+    response.set_cookie(value=token, max_age=_COOKIE_MAX_AGE, **_cookie_attrs())
+    logger.info("Account enrolled: %r (role=%r)", enrolled_username, role)
     return {
         "ok": True,
         "user_id": user_id,
-        "username": body.username,
+        "username": enrolled_username,
         "role": role,
-        "is_first_user": True,
+        "is_first_user": role == "admin",
         "is_admin": role == "admin",
     }
-
-
-@router.get("/is_first_user")
-async def check_is_first_user() -> dict:
-    """Return whether the user store is empty (used by the register UI)."""
-    return {"is_first_user": is_first_user() if AUTH_ENABLED else False}
 
 
 # ---------------------------------------------------------------------------
@@ -801,7 +831,7 @@ async def get_users(_: TokenPayload = Depends(require_admin)) -> list[UserInfo]:
 
 @router.post("/users", status_code=status.HTTP_201_CREATED)
 async def admin_create_user(
-    body: RegisterRequest,
+    body: AdminCreateUserRequest,
     current: TokenPayload = Depends(require_admin),
 ) -> dict:
     """Admin-only: create a new user account.
@@ -835,21 +865,22 @@ async def admin_create_user(
             "is_admin": False,
         }
 
-    existing = {u["username"] for u in list_users()}
-    if body.username in existing:
+    from deeptutor.multi_user.identity import create_user_only, new_user_id
+
+    try:
+        record = create_user_only(
+            body.username,
+            hash_password(body.password),
+            user_id=new_user_id(),
+            role="user",
+        )
+    except FileExistsError as exc:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
             detail="Username already taken",
-        )
-
-    add_user(body.username, body.password)
-    user_id = ""
+        ) from exc
+    user_id = str(record.get("id") or "")
     role = "user"
-    for item in list_users():
-        if item.get("username") == body.username:
-            user_id = str(item.get("id") or "")
-            role = str(item.get("role") or "user")
-            break
     logger.info(
         f"Admin '{current.username if current else 'local'}' created user '{body.username}' "
         f"(role={role!r})"
@@ -861,6 +892,64 @@ async def admin_create_user(
         "role": role,
         "is_admin": role == "admin",
     }
+
+
+@router.get("/enrollment")
+async def get_enrollment(
+    response: Response,
+    _: TokenPayload = Depends(require_admin),
+) -> dict:
+    from deeptutor.multi_user.enrollment import enrollment_status
+
+    _no_store_status_headers(response)
+    return enrollment_status()
+
+
+@router.post("/enrollment/code")
+async def create_enrollment_code(
+    body: EnrollmentRevisionRequest,
+    response: Response,
+    _: TokenPayload = Depends(require_admin),
+) -> dict:
+    from deeptutor.multi_user.enrollment import (
+        EnrollmentConflict,
+        EnrollmentUnavailable,
+        rotate_invite_code,
+    )
+
+    response.headers["Cache-Control"] = "no-store"
+    response.headers["Pragma"] = "no-cache"
+    try:
+        code, enrollment = rotate_invite_code(expected_revision=body.expected_revision)
+    except EnrollmentConflict as exc:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
+    except EnrollmentUnavailable as exc:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
+    return {"code": code, "enrollment": enrollment}
+
+
+@router.put("/enrollment/enabled")
+async def update_enrollment_enabled(
+    body: EnrollmentEnabledRequest,
+    response: Response,
+    _: TokenPayload = Depends(require_admin),
+) -> dict:
+    from deeptutor.multi_user.enrollment import (
+        EnrollmentConflict,
+        EnrollmentUnavailable,
+        set_invite_enabled,
+    )
+
+    _no_store_status_headers(response)
+    try:
+        return set_invite_enabled(
+            enabled=body.enabled,
+            expected_revision=body.expected_revision,
+        )
+    except EnrollmentConflict as exc:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
+    except EnrollmentUnavailable as exc:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
 
 
 @router.delete("/users/{username}", status_code=status.HTTP_200_OK)

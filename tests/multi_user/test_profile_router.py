@@ -266,6 +266,9 @@ def test_auth_status_exposes_avatar_marker(profile_client):
     assert body["authenticated"] is True
     assert body["avatar"] == "icon:star:rose"
 
-    anonymous = client.get("/api/v1/auth/status").json()
+    anonymous_response = client.get("/api/v1/auth/status")
+    anonymous = anonymous_response.json()
+    assert set(anonymous) == {"authenticated", "registration_mode"}
     assert anonymous["authenticated"] is False
-    assert anonymous["avatar"] == ""
+    assert anonymous_response.headers["cache-control"] == "private, no-store"
+    assert anonymous_response.headers["pragma"] == "no-cache"
