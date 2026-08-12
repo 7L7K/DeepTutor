@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Added explicit accepted-answer variants to manual Practice authoring. Variants
+  are persisted in the existing deterministic exact contract and are available
+  only to successor or newly created Practice content; historical attempts and
+  their immutable grading evidence are unchanged.
 - Added shared-code, invite-only learner enrollment with a permanent bootstrap
   latch, exactly 80-bit Crockford/Base32 codes stored only as bcrypt hashes,
   CAS-protected administrator rotation and enablement, trusted-proxy-aware

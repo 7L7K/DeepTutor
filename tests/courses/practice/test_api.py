@@ -332,15 +332,27 @@ def test_draft_questions_show_author_contract_but_ready_questions_are_learner_sa
         json={
             "question_type": "short_answer",
             "prompt": "Secret answer",
-            "answer_contract": {"kind": "exact", "answer": "reveal-me"},
+            "answer_contract": {
+                "kind": "exact",
+                "answer": "reveal-me.",
+                "accepted_answers": ["reveal-me"],
+            },
             "expected_course_write_epoch": course["write_epoch"],
         },
     )
     assert added.status_code == 200
-    assert added.json()["answer_contract"]["answer"] == "reveal-me"
+    assert added.json()["answer_contract"] == {
+        "kind": "exact",
+        "answer": "reveal-me.",
+        "accepted_answers": ["reveal-me"],
+    }
     draft_questions = practice_client.get(questions_endpoint, headers=_auth("alice"))
     assert draft_questions.status_code == 200
-    assert draft_questions.json()["questions"][0]["answer_contract"]["answer"] == "reveal-me"
+    assert draft_questions.json()["questions"][0]["answer_contract"] == {
+        "kind": "exact",
+        "answer": "reveal-me.",
+        "accepted_answers": ["reveal-me"],
+    }
     assert practice_client.post(
         f"/api/v1/courses/{course_id}/practice/{practice_set['id']}/revisions/{revision['id']}/ready",
         headers=_auth("alice"),

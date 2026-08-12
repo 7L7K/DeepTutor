@@ -78,6 +78,7 @@ function errorText(cause: unknown): string {
 type QuestionDraft = {
   prompt: string;
   answer: string;
+  acceptedAnswers: string;
   explanation: string;
   objectiveIds: string;
 };
@@ -107,6 +108,7 @@ const emptyPlanDraft: PlanDraft = {
 const emptyQuestion: QuestionDraft = {
   prompt: "",
   answer: "",
+  acceptedAnswers: "",
   explanation: "",
   objectiveIds: "",
 };
@@ -744,13 +746,21 @@ export default function PracticeWorkspace({
   const addQuestion = useCallback(async () => {
     if (!activeCourse || !selectedSet || !revision || revision.state !== "draft" || readOnly) return;
     if (!draft.prompt.trim() || !draft.answer.trim()) return;
+    const acceptedAnswers = draft.acceptedAnswers
+      .split(/\r?\n/)
+      .map((value) => value.trim())
+      .filter(Boolean);
     const scope = scopeRef.current;
     setBusy(true); setError(null);
     try {
       const question = await addPracticeQuestion(activeCourse.id, selectedSet.id, revision.id, {
         question_type: "short_answer",
         prompt: draft.prompt.trim(),
-        answer_contract: { kind: "exact", answer: draft.answer.trim() },
+        answer_contract: {
+          kind: "exact",
+          answer: draft.answer.trim(),
+          ...(acceptedAnswers.length ? { accepted_answers: acceptedAnswers } : {}),
+        },
         explanation: draft.explanation.trim(),
         objective_ids: draft.objectiveIds.split(",").map((value) => value.trim()).filter(Boolean),
         expected_course_write_epoch: activeCourse.write_epoch,
@@ -1065,6 +1075,10 @@ export default function PracticeWorkspace({
                   <label className="grid gap-1 text-sm">
                     <span>Correct answer</span>
                     <input value={draft.answer} onChange={(event) => setDraft((value) => ({ ...value, answer: event.target.value }))} placeholder="Exact accepted answer" className="rounded-lg border border-[var(--border)] bg-[var(--background)] px-2 py-2 text-sm" />
+                  </label>
+                  <label className="grid gap-1 text-sm">
+                    <span>Accepted answer variants <span className="text-[var(--muted-foreground)]">(optional, one per line)</span></span>
+                    <textarea value={draft.acceptedAnswers} onChange={(event) => setDraft((value) => ({ ...value, acceptedAnswers: event.target.value }))} placeholder="Only add explicitly equivalent answers" className="min-h-16 rounded-lg border border-[var(--border)] bg-[var(--background)] p-2 text-sm" />
                   </label>
                   <label className="grid gap-1 text-sm">
                     <span>Explanation <span className="text-[var(--muted-foreground)]">(optional)</span></span>

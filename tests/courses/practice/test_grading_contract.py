@@ -180,6 +180,40 @@ def test_exact_grading_accepts_only_explicit_bounded_variants(tmp_path: Path) ->
 
 
 @pytest.mark.parametrize(
+    ("canonical", "accepted_variant", "learner_answer"),
+    [
+        (
+            "Oxygen, ATP, and NADPH.",
+            "Oxygen, ATP, and NADPH",
+            "oxygen, ATP, and NADPH",
+        ),
+        (
+            "In the chloroplast stroma.",
+            "chloroplast stroma",
+            "chloroplast stroma",
+        ),
+        ("Carbon dioxide.", "Carbon dioxide", "carbon dioxide"),
+    ],
+)
+def test_hosted_false_negative_pairs_are_accepted_only_when_persisted_as_variants(
+    canonical: str, accepted_variant: str, learner_answer: str,
+) -> None:
+    contract = ExactAnswerContract(
+        kind="exact",
+        answer=canonical,
+        accepted_answers=[accepted_variant],
+    )
+
+    accepted = grade_assessment_response({"answer": learner_answer}, contract, [])
+    rejected = grade_assessment_response(
+        {"answer": f"{learner_answer} with extra wording"}, contract, []
+    )
+
+    assert accepted.is_correct is True
+    assert rejected.is_correct is False
+
+
+@pytest.mark.parametrize(
     ("response", "accepted"),
     [
         ("ACETYL-COA", True),

@@ -170,7 +170,7 @@ export interface SingleChoiceOption {
 }
 
 export type PracticeAnswerContract =
-  | { kind: "exact"; answer: string }
+  | { kind: "exact"; answer: string; accepted_answers?: string[] }
   | {
       kind: "bounded_short_answer_v1";
       canonical_answer: string;

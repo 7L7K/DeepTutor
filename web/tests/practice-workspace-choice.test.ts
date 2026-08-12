@@ -63,6 +63,13 @@ test("Practice results label the learner answer, correct answer, explanation, an
   assert.match(workspaceSource, />Citations:<\/p>/);
 });
 
+test("Practice authoring can publish explicit deterministic accepted-answer variants", () => {
+  assert.match(workspaceSource, /acceptedAnswers: string/);
+  assert.match(workspaceSource, />Accepted answer variants/);
+  assert.match(workspaceSource, /accepted_answers: acceptedAnswers/);
+  assert.match(workspaceSource, /split\(\/\\r\?\\n\/\)/);
+});
+
 test("Practice deep links resolve the exact attempt and never select it from the first history page", () => {
   assert.match(
     workspaceSource,
