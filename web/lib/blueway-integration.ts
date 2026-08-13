@@ -119,6 +119,16 @@ export function safeBlueWayVerificationUri(value: string): string | null {
   }
 }
 
+/** Build the same-phone handoff without accepting a caller-controlled scheme or destination. */
+export function safeBlueWayNativeApprovalUri(input: {
+  attempt_id: string;
+  user_code: string;
+}): string | null {
+  if (!/^[A-Za-z0-9-]{16,128}$/.test(input.attempt_id)) return null;
+  if (!/^[A-Za-z0-9_-]{8,64}$/.test(input.user_code)) return null;
+  return `blueway://teeechr-connect?request_id=${encodeURIComponent(input.attempt_id)}&user_code=${encodeURIComponent(input.user_code)}`;
+}
+
 /**
  * Reject accidental browser-facing credential fields. The backend contract is
  * deliberately metadata-only; this guard makes regressions visible before a

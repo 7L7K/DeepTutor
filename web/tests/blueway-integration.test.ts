@@ -9,6 +9,7 @@ import {
   blueWayResponseIsCurrent,
   blueWaySyncIsRunning,
   safeBlueWayVerificationUri,
+  safeBlueWayNativeApprovalUri,
 } from "../lib/blueway-integration";
 
 test("BlueWay status keeps connection and indexing readiness separate", () => {
@@ -116,4 +117,22 @@ test("browser integration payloads reject credential material recursively", () =
       /credential material/,
     );
   }
+});
+
+test("verification URIs cannot become arbitrary browser redirects", () => {
+  assert.equal(safeBlueWayVerificationUri("https://teeechr.gesahni.com/connect/blueway"), "https://teeechr.gesahni.com/connect/blueway");
+  assert.equal(safeBlueWayVerificationUri("https://user:pass@teeechr.gesahni.com/connect/blueway"), null);
+  assert.equal(safeBlueWayVerificationUri("file:///tmp/approval"), null);
+});
+
+test("same-phone approval links are bounded to the BlueWay deep-link contract", () => {
+  assert.equal(
+    safeBlueWayNativeApprovalUri({
+      attempt_id: "a1b2c3d4-1111-4111-8111-111111111111",
+      user_code: "user-code_123",
+    }),
+    "blueway://teeechr-connect?request_id=a1b2c3d4-1111-4111-8111-111111111111&user_code=user-code_123",
+  );
+  assert.equal(safeBlueWayNativeApprovalUri({ attempt_id: "short", user_code: "user-code_123" }), null);
+  assert.equal(safeBlueWayNativeApprovalUri({ attempt_id: "a1b2c3d4-1111-4111-8111-111111111111", user_code: "bad code" }), null);
 });

@@ -1,6 +1,7 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { Suspense, useCallback, useEffect, useRef, useState } from "react";
+import { useSearchParams } from "next/navigation";
 import { CheckCircle2, Loader2, RefreshCw, Unplug } from "lucide-react";
 
 import { SettingsPageHeader } from "@/components/settings/shared";
@@ -20,6 +21,7 @@ import {
   blueWayResponseIsCurrent,
   blueWaySyncIsRunning,
   safeBlueWayVerificationUri,
+  safeBlueWayNativeApprovalUri,
   type BlueWayConnectAttempt,
   type BlueWayIntegrationStatus,
   type BlueWayUnlinkedRecord,
@@ -31,23 +33,48 @@ const EMPTY_STATUS: BlueWayIntegrationStatus = {
   active_run: null,
 };
 
-export default function BlueWaySettingsPage() {
+export default function BlueWaySettingsPage(props: {
+  mode?: "settings" | "connect" | "complete";
+}) {
+  return (
+    <Suspense fallback={<div className="p-5 text-sm text-[var(--muted-foreground)]">Checking connection…</div>}>
+      <BlueWaySettingsPageContent {...props} />
+    </Suspense>
+  );
+}
+
+function BlueWaySettingsPageContent({
+  mode = "settings",
+}: {
+  mode?: "settings" | "connect" | "complete";
+}) {
+  const searchParams = useSearchParams();
+  const completionAttemptId = safeAttemptId(searchParams.get("request_id"));
   const [status, setStatus] = useState<BlueWayIntegrationStatus | null>(null);
   const [attempt, setAttempt] = useState<BlueWayConnectAttempt | null>(null);
   const [unlinked, setUnlinked] = useState<BlueWayUnlinkedRecord[]>([]);
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState("");
+  const [completionFinished, setCompletionFinished] = useState(false);
   const identityEpochRef = useRef(0);
   const requestSequenceRef = useRef(0);
 
   const refresh = useCallback(async () => {
     const identityEpoch = identityEpochRef.current;
     const requestSequence = ++requestSequenceRef.current;
+    if (mode === "complete" && !completionAttemptId) {
+      setStatus(null);
+      setAttempt(null);
+      setUnlinked([]);
+      setMessage("This completion link is incomplete. Start a new connection from TEEECHR.");
+      return;
+    }
     try {
-      const next = attempt
-        ? attempt.mode === "recovery"
-          ? await pollBlueWayRecovery(attempt.attempt_id)
-          : await pollBlueWayConnection(attempt.attempt_id)
+      const pollAttemptId = attempt?.attempt_id ?? (mode === "complete" && !completionFinished ? completionAttemptId : null);
+      const next = pollAttemptId
+        ? attempt?.mode === "recovery"
+          ? await pollBlueWayRecovery(pollAttemptId)
+          : await pollBlueWayConnection(pollAttemptId)
         : await getBlueWayStatus();
       const nextUnlinked = next.connection?.state === "active"
         ? await listBlueWayUnlinked()
@@ -61,6 +88,7 @@ export default function BlueWaySettingsPage() {
       setStatus(next);
       if (next.connection?.state === "active") {
         setAttempt(null);
+        if (mode === "complete") setCompletionFinished(true);
       }
       setUnlinked(nextUnlinked);
       setMessage("");
@@ -73,17 +101,17 @@ export default function BlueWaySettingsPage() {
       )) return;
       setMessage(error instanceof Error ? error.message : String(error));
     }
-  }, [attempt]);
+  }, [attempt, completionAttemptId, completionFinished, mode]);
 
   useEffect(() => {
     void refresh();
   }, [refresh]);
 
   useEffect(() => {
-    if (!attempt) return;
+    if (!attempt && !(mode === "complete" && completionAttemptId && !completionFinished)) return;
     const timer = window.setInterval(() => void refresh(), 3000);
     return () => window.clearInterval(timer);
-  }, [attempt, refresh]);
+  }, [attempt, completionAttemptId, completionFinished, mode, refresh]);
 
   useEffect(() => {
     const clearForIdentityChange = () => {
@@ -137,12 +165,33 @@ export default function BlueWaySettingsPage() {
   const verificationUri = attempt
     ? safeBlueWayVerificationUri(attempt.verification_uri)
     : null;
+  const nativeApprovalUri = attempt
+    ? safeBlueWayNativeApprovalUri(attempt)
+    : null;
+
+  if (mode === "complete" && !completionAttemptId) {
+    return (
+      <div>
+        <SettingsPageHeader
+          title="Connection link unavailable"
+          description="The approval result cannot be confirmed without a valid pairing request."
+        />
+        <section className="rounded-2xl border border-red-500/25 bg-red-500/5 p-5">
+          <p role="alert" className="text-sm text-red-700 dark:text-red-300">
+            This completion link is incomplete. Start a new connection from TEEECHR.
+          </p>
+        </section>
+      </div>
+    );
+  }
 
   return (
     <div>
       <SettingsPageHeader
-        title="BlueWay connection"
-        description="Privately bring your classes, assignments, notes, course material, and ready lecture transcripts into TEEECHR."
+        title={mode === "complete" ? "Connection approved" : mode === "connect" ? "Connect BlueWay to TEEECHR" : "BlueWay connection"}
+        description={mode === "complete"
+          ? "Your approval was received. TEEECHR is checking the connection and preparing your classes."
+          : "Privately bring your classes, assignments, notes, course material, and ready lecture transcripts into TEEECHR."}
       />
 
       <section className="rounded-2xl border border-[var(--border)]/70 bg-[var(--card)] p-5">
@@ -288,20 +337,30 @@ export default function BlueWaySettingsPage() {
               Open this BlueWay approval page, sign in to {attempt.mode === "recovery" ? "the same BlueWay account" : "BlueWay"}, review the academic-data consent, and enter the one-time code:
             </p>
             <div className="mt-3 flex flex-wrap items-center gap-3">
+              {nativeApprovalUri ? (
+                <a
+                  href={nativeApprovalUri}
+                  target="_blank"
+                  rel="noreferrer noopener"
+                  className="text-sm font-medium text-blue-600 underline dark:text-blue-400"
+                >
+                  Open in BlueWay app
+                </a>
+              ) : null}
               {verificationUri ? (
                 <a
                   href={verificationUri}
                   target="_blank"
                   rel="noreferrer noopener"
-                  className="text-sm font-medium text-blue-600 underline dark:text-blue-400"
+                  className="text-sm font-medium text-[var(--muted-foreground)] underline"
                 >
-                  Open BlueWay
+                  Use another device
                 </a>
-              ) : (
+              ) : !nativeApprovalUri ? (
                 <span className="text-xs font-medium text-red-600 dark:text-red-400">
                   The server returned an unsafe approval address.
                 </span>
-              )}
+              ) : null}
               <code className="rounded-lg bg-[var(--background)] px-4 py-2 text-lg font-semibold tracking-[0.18em]">
                 {attempt.user_code}
               </code>
@@ -337,6 +396,10 @@ export default function BlueWaySettingsPage() {
       )}
     </div>
   );
+}
+
+function safeAttemptId(value: string | null): string | null {
+  return value && /^[A-Za-z0-9-]{16,128}$/.test(value) ? value : null;
 }
 
 function Readiness({ label, value }: { label: string; value: string }) {

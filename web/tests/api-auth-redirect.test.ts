@@ -177,3 +177,14 @@ test("launch continuation rejects malformed or ambiguous query state", () => {
   assert.equal(normalizeAuthNext("/launch/blueway?external_course_id=a&external_course_id=b"), "/");
   assert.equal(normalizeAuthNext("/launch/blueway?external_course_id=biology&unexpected=value"), "/");
 });
+
+test("connection continuation preserves only the request id on the fixed route", () => {
+  assert.equal(
+    normalizeAuthNext("/connect/blueway/complete?request_id=a1b2c3d4-1111-4111-8111-111111111111"),
+    "/connect/blueway/complete?request_id=a1b2c3d4-1111-4111-8111-111111111111",
+  );
+  assert.equal(normalizeAuthNext("/connect/blueway/complete"), "/");
+  assert.equal(normalizeAuthNext("/connect/blueway/complete?request_id=a&return_to=https://attacker.example"), "/");
+  assert.equal(normalizeAuthNext("/connect/blueway?return_to=https://attacker.example"), "/");
+  assert.equal(normalizeAuthNext("/connect/blueway?request_id=a"), "/");
+});

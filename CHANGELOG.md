@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- Added dedicated `/connect/blueway` and `/connect/blueway/complete` routes for
+  same-phone BlueWay pairing. The TEEECHR page now makes the native app handoff
+  primary, keeps QR behind an explicit cross-device disclosure, validates the
+  completion request server-side, and fails closed for malformed links.
+
 - Fixed BlueWay workspace reactivation to require a current exact active
   Course/term mapping, and atomically consume each verified assertion `jti` so
   replayed reads cannot refresh the local launch lease. Direct launch authority

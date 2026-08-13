@@ -28,6 +28,18 @@ export function normalizeAuthNext(raw: string | null | undefined): string {
     return "/";
   }
 
+  if (parsed.pathname === "/connect/blueway" || parsed.pathname === "/connect/blueway/complete") {
+    const requestIds = parsed.searchParams.getAll("request_id");
+    const hasOnlyConnectionKeys = [...parsed.searchParams.keys()].every((key) => key === "request_id");
+    const requestId = requestIds[0]?.trim() ?? "";
+    if (!hasOnlyConnectionKeys || requestIds.length > 1 || (requestId && !/^[A-Za-z0-9-]{16,128}$/.test(requestId)) || (parsed.pathname.endsWith("/complete") && !requestId)) {
+      return "/";
+    }
+    return requestId
+      ? `${parsed.pathname}?${new URLSearchParams({ request_id: requestId }).toString()}`
+      : parsed.pathname;
+  }
+
   if (parsed.pathname !== "/launch/blueway") {
     return `${parsed.pathname}${parsed.search}`;
   }

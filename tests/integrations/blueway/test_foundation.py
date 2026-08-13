@@ -496,6 +496,27 @@ def test_durable_sync_mirrors_exact_courses_and_unlinked_records(tmp_path: Path,
     assert all(len(str(sources[0].idempotency_key)) <= 160 for sources in generated)
 
 
+def test_queue_sync_deduplicates_an_active_connection_run(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    service, courses = _service(tmp_path, monkeypatch)
+    attempt = service.start_connection()
+    connection = service.complete_connection_for_transport(
+        attempt_id=attempt.id,
+        exchange=TokenExchange("grant-a", "subject-a", "access", "2026-07-23T00:00:00Z", "refresh-secret"),
+    )
+
+    first = service.queue_sync()
+    second = service.queue_sync()
+
+    assert second.id == first.id
+    assert second.state == "queued"
+    with courses._connect() as conn:  # noqa: SLF001 - assert durable de-duplication.
+        active = conn.execute(
+            "SELECT COUNT(*) AS count FROM blueway_sync_runs WHERE connection_id = ? AND state IN ('queued','fetching','validating','staging','indexing')",
+            (connection.id,),
+        ).fetchone()
+    assert active is not None and active["count"] == 1
+
+
 def test_snapshot_is_offline_bounded_and_rejects_raw_audio() -> None:
     snapshot = _snapshot()
     assert validate_snapshot(snapshot)["datasets"]["courses"][1]["id"] == "course-same-title-b"
