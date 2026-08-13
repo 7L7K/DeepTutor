@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 import json
+import os
 from typing import Any
 from urllib.parse import urlparse
 
@@ -666,6 +667,16 @@ def resolve_llm_runtime_config(
     binding_hint = canonical_provider_name(binding_hint_raw)
 
     active_api_key = _as_str((profile or {}).get("api_key"))
+    # Keep local legacy deployments usable when the persisted catalog has an
+    # empty OpenAI-compatible profile but the operator supplied credentials in
+    # the process environment. The environment value is used at runtime only;
+    # it is never written back to model_catalog.json or exposed by the public
+    # catalog response.
+    if not active_api_key and binding_hint in {"openai", "azure_openai"}:
+        active_api_key = (
+            os.environ.get("LLM_API_KEY", "").strip()
+            or os.environ.get("OPENAI_API_KEY", "").strip()
+        )
     active_api_base = _as_str((profile or {}).get("base_url"))
     active_api_version = _as_str((profile or {}).get("api_version"))
     reasoning_effort = (

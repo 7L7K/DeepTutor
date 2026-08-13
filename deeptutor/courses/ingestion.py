@@ -370,6 +370,17 @@ async def run_source_operation(task: dict[str, Any]) -> None:
                 finalize_task=False,
             )
 
+            # Course Practice generation reads a small deterministic, exact-text
+            # shard in addition to the provider-specific RAG index. Keep that
+            # derived artifact in sync for normal ingestion too; previously it
+            # was created only by the explicit deterministic test provider,
+            # leaving ready Course sources unusable for grounded Practice.
+            build_deterministic_index(
+                Path(str(task["base_dir"])) / str(task["kb_name"]),
+                [str(item) for item in task["uploaded_paths"]],
+                source_content_sha256=str(task["source_content_sha256"]),
+            )
+
         # Providers create index shards and metadata through several legacy
         # adapters. Repair the owned shard before any database state can grant
         # retrieval authority, independent of the host process umask.
