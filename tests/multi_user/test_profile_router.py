@@ -225,11 +225,20 @@ def test_avatar_serving_headers_and_visibility(profile_client):
     assert "private" in response.headers["cache-control"]
 
 
-def test_admin_user_removal_disables_account_and_preserves_recoverable_data(profile_client):
-    """Removal revokes access without purging identity-owned data."""
+def test_admin_user_removal_deletes_identity_and_revokes_artifacts(profile_client):
+    """The admin Delete action removes the account, grant, and avatar.
+
+    The private workspace remains outside this account-management operation;
+    without an identity or grant it has no authority and can be reviewed or
+    purged by a separate retention workflow.
+    """
+    from deeptutor.multi_user.grants import grant_path
     from deeptutor.multi_user.identity import get_avatar_file, load_users
 
     client, users = profile_client
+    grant = grant_path(users["bob"]["id"])
+    grant.parent.mkdir(parents=True, exist_ok=True)
+    grant.write_text('{"version": 2}', encoding="utf-8")
     client.put(
         "/api/v1/auth/profile/avatar",
         headers=_auth("user-token"),
@@ -239,9 +248,14 @@ def test_admin_user_removal_disables_account_and_preserves_recoverable_data(prof
 
     response = client.delete("/api/v1/auth/users/bob", headers=_auth("admin-token"))
     assert response.status_code == 200
-    assert response.json()["disabled"] is True
-    assert load_users()["bob"]["disabled"] is True
-    assert get_avatar_file(users["bob"]["id"]) is not None
+    assert response.json() == {
+        "ok": True,
+        "deleted": True,
+        "workspace_retained": True,
+    }
+    assert "bob" not in load_users()
+    assert not grant.exists()
+    assert get_avatar_file(users["bob"]["id"]) is None
 
 
 def test_avatar_serving_rejects_missing_and_malformed_ids(profile_client):

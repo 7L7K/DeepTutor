@@ -484,7 +484,7 @@ app.include_router(
 app.include_router(
     knowledge.router, prefix="/api/v1/knowledge", tags=["knowledge"], dependencies=_auth
 )
-app.include_router(imports.router, prefix="/api/v1/imports", tags=["imports"], dependencies=_auth)
+app.include_router(imports.router, prefix="/api/v1/imports", tags=["imports"], dependencies=_admin)
 app.include_router(
     dashboard.router, prefix="/api/v1/dashboard", tags=["dashboard"], dependencies=_auth
 )
@@ -495,18 +495,16 @@ app.include_router(
     dependencies=_auth,
 )
 app.include_router(
-    co_writer.router, prefix="/api/v1/co_writer", tags=["co_writer"], dependencies=_auth
+    co_writer.router, prefix="/api/v1/co_writer", tags=["co_writer"], dependencies=_admin
 )
 app.include_router(
     notebook.router, prefix="/api/v1/notebook", tags=["notebook"], dependencies=_auth
 )
-app.include_router(book.router, prefix="/api/v1/book", tags=["book"], dependencies=_auth)
-app.include_router(memory.router, prefix="/api/v1/memory", tags=["memory"], dependencies=_auth)
+app.include_router(book.router, prefix="/api/v1/book", tags=["book"], dependencies=_admin)
+app.include_router(memory.router, prefix="/api/v1/memory", tags=["memory"], dependencies=_admin)
 app.include_router(
     capabilities_settings.router,
-    prefix="/api/v1/capabilities",
-    tags=["capabilities"],
-    dependencies=_auth,
+    prefix="/api/v1/capabilities", tags=["capabilities"], dependencies=_admin,
 )
 app.include_router(
     sessions.router, prefix="/api/v1/sessions", tags=["sessions"], dependencies=_auth
@@ -548,7 +546,7 @@ app.include_router(
 )
 app.include_router(skills.router, prefix="/api/v1/skills", tags=["skills"], dependencies=_auth)
 app.include_router(
-    subagents.router, prefix="/api/v1/subagents", tags=["subagents"], dependencies=_auth
+    subagents.router, prefix="/api/v1/subagents", tags=["subagents"], dependencies=_admin
 )
 app.include_router(
     personas.router, prefix="/api/v1/personas", tags=["personas"], dependencies=_auth
@@ -560,7 +558,10 @@ app.include_router(
     plugins_api.router, prefix="/api/v1/plugins", tags=["plugins"], dependencies=_auth
 )
 app.include_router(
-    agent_config.router, prefix="/api/v1/agent-config", tags=["agent-config"], dependencies=_auth
+    agent_config.router,
+    prefix="/api/v1/agent-config",
+    tags=["agent-config"],
+    dependencies=_admin,
 )
 app.include_router(
     partners.router, prefix="/api/v1/partners", tags=["partners"], dependencies=_admin

@@ -317,6 +317,31 @@ def delete_user(username: str) -> bool:
     return True
 
 
+def purge_user(username: str) -> dict[str, Any] | None:
+    """Remove an account identity from the canonical user store.
+
+    This is the hard-removal operation used by the administrator's Delete
+    action.  It deliberately does not remove the user's private workspace:
+    the workspace has no authority without a finalized identity or grant, and
+    retaining it avoids turning an account-management action into an
+    irreversible data purge.  Callers are responsible for revoking grants and
+    other identity-keyed artifacts after this identity publication is removed.
+
+    The identity write is serialized and atomic.  If a later cleanup step is
+    interrupted, the remaining artifact is orphaned and cannot authenticate or
+    authorize the removed account.
+    """
+    if not USERS_FILE.exists():
+        return None
+    with _USERS_WRITE_LOCK:
+        users = load_users()
+        record = users.pop(username, None)
+        if record is None:
+            return None
+        _write_users(users)
+        return dict(record)
+
+
 def set_avatar(username: str, avatar: str) -> bool:
     """Update the avatar marker for an existing user. Returns True on success."""
     if not USERS_FILE.exists():

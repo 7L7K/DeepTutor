@@ -48,11 +48,15 @@ def test_grants_reject_admin_users(tmp_path, monkeypatch):
         save_grant("u_admin", {"knowledge_bases": [{"resource_id": "admin:kb:demo"}]})
 
 
-def test_non_admin_settings_catalog_is_forbidden(tmp_path):
+@pytest.mark.asyncio
+async def test_non_admin_settings_catalog_is_forbidden(tmp_path):
     token = set_current_user(make_user(tmp_path, role="user"))
     try:
         with pytest.raises(HTTPException) as exc:
             settings_router._require_settings_admin()
+        assert exc.value.status_code == 403
+        with pytest.raises(HTTPException) as exc:
+            await settings_router.get_settings()
         assert exc.value.status_code == 403
     finally:
         reset_current_user(token)

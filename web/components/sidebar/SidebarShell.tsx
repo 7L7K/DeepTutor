@@ -32,6 +32,7 @@ import type { SessionSummary } from "@/lib/session-api";
 import { Tooltip } from "@/components/ui/Tooltip";
 import { useCapabilityAccess } from "@/components/access/CapabilityAccessContext";
 import type { Capability } from "@/lib/capability-routes";
+import { useAuthStatus } from "@/hooks/useAuthStatus";
 
 interface NavEntry {
   href: string;
@@ -40,6 +41,8 @@ interface NavEntry {
   tooltipKey?: string;
   /** Model capability this feature needs; locked when the user lacks it. */
   requires?: Capability;
+  /** Deployment-wide surface that only administrators may access. */
+  adminOnly?: boolean;
 }
 
 const PRIMARY_NAV: NavEntry[] = [
@@ -81,6 +84,7 @@ const MORE_NAV: NavEntry[] = [
     label: "My Agents",
     icon: Bot,
     tooltipKey: "Agents tooltip",
+    adminOnly: true,
   },
   {
     href: "/partners",
@@ -95,6 +99,7 @@ const MORE_NAV: NavEntry[] = [
     icon: PenLine,
     tooltipKey: "Co-Writer tooltip",
     requires: "llm",
+    adminOnly: true,
   },
   {
     href: "/book",
@@ -102,12 +107,14 @@ const MORE_NAV: NavEntry[] = [
     icon: Library,
     tooltipKey: "Book tooltip",
     requires: "llm",
+    adminOnly: true,
   },
   {
     href: "/memory",
     label: "Memory",
     icon: Brain,
     tooltipKey: "Memory tooltip",
+    adminOnly: true,
   },
   {
     href: "/knowledge",
@@ -118,7 +125,7 @@ const MORE_NAV: NavEntry[] = [
 ];
 
 const SECONDARY_NAV: NavEntry[] = [
-  { href: "/settings", label: "Settings", icon: Settings },
+  { href: "/settings", label: "Settings", icon: Settings, adminOnly: true },
 ];
 const PRODUCT_NAME = "TEEECHR";
 const RECENTS_COLLAPSED_KEY = "deeptutor.sidebar.recentsCollapsed";
@@ -158,6 +165,7 @@ export function SidebarShell({
   const router = useRouter();
   const { t } = useTranslation();
   const { has } = useCapabilityAccess();
+  const { enabled: authEnabled, isAdmin, loading: authLoading } = useAuthStatus();
   const { sidebarCollapsed, setSidebarCollapsed: setCollapsed } = useAppShell();
   const { isMobile } = useDevice();
   const drawer = useSidebarDrawer();
@@ -180,8 +188,13 @@ export function SidebarShell({
 
   const navLocked = (item: NavEntry) =>
     item.requires ? !has(item.requires) : false;
+  const navHidden = (item: NavEntry) =>
+    Boolean(item.adminOnly && (authLoading || (authEnabled && !isAdmin)));
   const lockedTooltip = t("Locked — contact your administrator to get access.");
-  const visibleMoreNav = MORE_NAV.filter((item) => !navLocked(item));
+  const visibleMoreNav = MORE_NAV.filter(
+    (item) => !navLocked(item) && !navHidden(item),
+  );
+  const visibleSecondaryNav = SECONDARY_NAV.filter((item) => !navHidden(item));
   const isMoreActive = MORE_NAV.some((item) => pathname.startsWith(item.href));
   const renderedFooter =
     typeof footerSlot === "function" ? footerSlot(collapsed) : footerSlot;
@@ -353,7 +366,7 @@ export function SidebarShell({
         {/* Secondary nav + footer */}
         <div className="flex w-full flex-col items-center gap-1 px-1.5">
           <div className="my-1 h-px w-7 bg-[var(--border)]/40" />
-          {SECONDARY_NAV.map((item) => {
+          {visibleSecondaryNav.map((item) => {
             const active = pathname.startsWith(item.href);
             return (
               <Link
@@ -516,7 +529,7 @@ export function SidebarShell({
 
       {/* Secondary nav + footer */}
       <div className="border-t border-[var(--border)]/40 px-2 py-2">
-        {SECONDARY_NAV.map((item) => {
+        {visibleSecondaryNav.map((item) => {
           const active = pathname.startsWith(item.href);
           return (
             <Link

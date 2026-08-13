@@ -127,6 +127,23 @@ def save_grant(
     return grant
 
 
+def delete_grant(user_id: str) -> bool:
+    """Remove the grant for an account that has been deleted.
+
+    Grant cleanup is intentionally separate from identity publication.  A
+    crash between the two leaves an orphan with no identity authority, which
+    is safer than deleting an identity while retaining usable access.
+    """
+    path = grant_path(user_id)
+    if path.is_symlink():
+        raise RuntimeError(f"Refusing to delete symlinked grant: {path}")
+    try:
+        path.unlink()
+    except FileNotFoundError:
+        return False
+    return True
+
+
 def validate_grant(grant: dict[str, Any]) -> None:
     """Reject accidental secret/path material in grants.
 

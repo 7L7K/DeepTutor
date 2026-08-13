@@ -10,8 +10,8 @@ import {
 } from "react";
 
 import type { Capability } from "@/lib/capability-routes";
-import { apiFetch, apiUrl } from "@/lib/api";
 import { listLLMOptions } from "@/lib/llm-options";
+import { fetchAuthStatus } from "@/lib/auth";
 
 type CapabilityAccessValue = {
   /** True until the first access probe resolves. */
@@ -57,12 +57,9 @@ export function CapabilityAccessProvider({
 
   const refresh = useCallback(async () => {
     try {
-      // The settings payload only exposes the catalog to admins, so its
-      // presence is our admin signal — admins are never gated.
-      const res = await apiFetch(apiUrl("/api/v1/settings"));
-      if (!res.ok) return;
-      const payload = (await res.json()) as { catalog?: unknown };
-      if (payload.catalog) {
+      const auth = await fetchAuthStatus();
+      if (!auth) return;
+      if (!auth.enabled || auth.role === "admin") {
         setIsAdmin(true);
         setHasLlm(true);
         return;

@@ -527,11 +527,12 @@ def _network_settings_payload() -> dict[str, Any]:
 
 @router.get("")
 async def get_settings():
+    # The Settings form is an administrator surface. Learner-safe model and
+    # attachment reads remain on their dedicated endpoints below; exposing the
+    # aggregate settings payload here would let a direct request bypass the UI
+    # boundary.
+    _require_settings_admin()
     user = get_current_user()
-    if not user.is_admin:
-        # Non-admins never see the catalog (provider URLs/keys); their model
-        # choices come from /settings/llm-options (grant-filtered).
-        return {"ui": load_ui_settings()}
     return {
         "ui": load_ui_settings(),
         "catalog": get_model_catalog_service().load_public(),
@@ -1144,6 +1145,7 @@ async def fetch_models_from_provider(payload: FetchModelsPayload):
 
 @router.put("/theme")
 async def update_theme(update: ThemeUpdate):
+    _require_settings_admin()
     current_ui = load_ui_settings()
     current_ui["theme"] = update.theme
     save_ui_settings(current_ui)
@@ -1152,6 +1154,7 @@ async def update_theme(update: ThemeUpdate):
 
 @router.put("/language")
 async def update_language(update: LanguageUpdate):
+    _require_settings_admin()
     current_ui = load_ui_settings()
     current_ui["language"] = update.language
     save_ui_settings(current_ui)
@@ -1165,6 +1168,7 @@ async def update_voice_autoplay(update: VoiceAutoplayUpdate):
     A personal UI preference (any authenticated user); the chat surface layers
     a per-session override on top of this value.
     """
+    _require_settings_admin()
     current_ui = load_ui_settings()
     current_ui["voice_autoplay"] = update.voice_autoplay
     save_ui_settings(current_ui)
@@ -1179,6 +1183,7 @@ async def update_chat_response_timeout(update: ChatResponseTimeoutUpdate):
     video generation can take longer than the old 60s default, so this is
     user-adjustable; the chat surface reads it client-side.
     """
+    _require_settings_admin()
     current_ui = load_ui_settings()
     current_ui["chat_response_timeout"] = update.chat_response_timeout
     save_ui_settings(current_ui)
@@ -1193,6 +1198,7 @@ async def update_ui_settings(update: UISettingsUpdate):
     by the frontend override saved values. Fields not in the frontend payload
     (even if they equal the model defaults) are omitted from the merge.
     """
+    _require_settings_admin()
     current_ui = load_ui_settings()
     dump = update.model_dump(exclude_unset=True)  # Only merge explicitly provided fields
     current_ui.update(dump)
@@ -1202,12 +1208,14 @@ async def update_ui_settings(update: UISettingsUpdate):
 
 @router.post("/reset")
 async def reset_settings():
+    _require_settings_admin()
     save_ui_settings(DEFAULT_UI_SETTINGS)
     return DEFAULT_UI_SETTINGS
 
 
 @router.get("/themes")
 async def get_themes():
+    _require_settings_admin()
     return {
         "themes": [
             {"id": "snow", "name": "Default"},
@@ -1220,6 +1228,7 @@ async def get_themes():
 
 @router.get("/sidebar")
 async def get_sidebar_settings():
+    _require_settings_admin()
     current_ui = load_ui_settings()
     return {
         "description": current_ui.get(
@@ -1231,6 +1240,7 @@ async def get_sidebar_settings():
 
 @router.put("/sidebar/description")
 async def update_sidebar_description(update: SidebarDescriptionUpdate):
+    _require_settings_admin()
     current_ui = load_ui_settings()
     current_ui["sidebar_description"] = update.description
     save_ui_settings(current_ui)
@@ -1239,6 +1249,7 @@ async def update_sidebar_description(update: SidebarDescriptionUpdate):
 
 @router.put("/sidebar/nav-order")
 async def update_sidebar_nav_order(update: SidebarNavOrderUpdate):
+    _require_settings_admin()
     current_ui = load_ui_settings()
     current_ui["sidebar_nav_order"] = update.nav_order.model_dump()
     save_ui_settings(current_ui)
@@ -1247,6 +1258,7 @@ async def update_sidebar_nav_order(update: SidebarNavOrderUpdate):
 
 @router.put("/enabled-tools")
 async def update_enabled_tools(update: EnabledToolsUpdate):
+    _require_settings_admin()
     sanitized = _sanitize_enabled_tools(update.enabled_tools)
     current_ui = load_ui_settings()
     current_ui["enabled_optional_tools"] = sanitized
@@ -1295,6 +1307,7 @@ async def cancel_service_test(service: str, run_id: str):
 
 @router.get("/tour/status")
 async def tour_status():
+    _require_settings_admin()
     tour_cache = _tour_cache_file()
     if tour_cache.exists():
         try:
@@ -1349,6 +1362,7 @@ async def complete_tour(payload: TourCompletePayload | None = None):
 
 @router.post("/tour/reopen")
 async def reopen_tour():
+    _require_settings_admin()
     return {
         "message": "Run the terminal setup guide from the project root to re-open the guided setup.",
         "command": "deeptutor init",

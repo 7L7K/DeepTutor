@@ -957,7 +957,12 @@ async def remove_user(
     username: str,
     current: TokenPayload = Depends(require_admin),
 ) -> dict:
-    """Disable a user. Admins cannot disable their own account."""
+    """Remove a user identity. Admins cannot remove their own account.
+
+    The identity, model grant, and avatar are removed. The private workspace
+    is retained without an identity or grant so this action cannot silently
+    destroy learner-created course material.
+    """
     if current and username == current.username:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -968,8 +973,8 @@ async def remove_user(
     if not removed:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
 
-    logger.info(f"Admin '{current.username if current else 'local'}' disabled user '{username}'")
-    return {"ok": True, "disabled": True}
+    logger.info(f"Admin '{current.username if current else 'local'}' removed user '{username}'")
+    return {"ok": True, "deleted": True, "workspace_retained": True}
 
 
 @router.put("/users/{username}/role", status_code=status.HTTP_200_OK)

@@ -33,6 +33,7 @@ import {
   type LucideIcon,
 } from "lucide-react";
 import { useTranslation } from "react-i18next";
+import { useAuthStatus } from "@/hooks/useAuthStatus";
 import { docIconFor, formatBytes, isSvgFilename } from "@/lib/doc-attachments";
 import type { MessageAttachment } from "@/context/UnifiedChatContext";
 import { listSessions, type SessionSummary } from "@/lib/session-api";
@@ -198,6 +199,8 @@ export function ActivityBody({
   configSection?: ReactNode;
 }) {
   const { t } = useTranslation();
+  const { enabled: authEnabled, isAdmin, loading: authLoading } = useAuthStatus();
+  const adminSurfacesAvailable = !authLoading && (!authEnabled || isAdmin);
   const { tools, knowledgeBases, space, attachments, artifacts } = activity;
   const { sessions, notebooks, books } = useResolvedTitles(activity, open);
 
@@ -219,7 +222,7 @@ export function ActivityBody({
       </SpaceSubsection>,
     );
   }
-  if (space.bookIds.length > 0) {
+  if (adminSurfacesAvailable && space.bookIds.length > 0) {
     spaceSubsections.push(
       <SpaceSubsection
         key="books"
@@ -278,7 +281,7 @@ export function ActivityBody({
       </SpaceSubsection>,
     );
   }
-  if (space.memoryKinds.length > 0) {
+  if (adminSurfacesAvailable && space.memoryKinds.length > 0) {
     spaceSubsections.push(
       <SpaceSubsection
         key="memory"

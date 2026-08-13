@@ -25,6 +25,7 @@ import {
 import { buildQuizFollowupConfig } from "@/lib/quiz-types";
 import { classifyFile, isSvgFilename } from "@/lib/doc-attachments";
 import { useAttachmentLimits } from "@/lib/attachment-limits";
+import { useAuthStatus } from "@/hooks/useAuthStatus";
 import {
   extractBase64FromDataUrl,
   readFileAsDataUrl,
@@ -94,6 +95,8 @@ interface FollowupChatComposerProps {
 
 function FollowupChatComposerImpl({ context }: FollowupChatComposerProps) {
   const { t } = useTranslation();
+  const { enabled: authEnabled, isAdmin, loading: authLoading } = useAuthStatus();
+  const adminSurfacesAvailable = !authLoading && (!authEnabled || isAdmin);
   const controller = useQuizFollowupController();
   const thread = useFollowupThread(context.questionKey);
 
@@ -650,6 +653,8 @@ function FollowupChatComposerImpl({ context }: FollowupChatComposerProps) {
         onSelectBookPicker={handleSelectBookPicker}
         onSelectHistoryPicker={handleSelectHistoryPicker}
         agentsAvailable={false}
+        booksAvailable={adminSurfacesAvailable}
+        memoryAvailable={adminSurfacesAvailable}
         onSelectAgentsPicker={() => {}}
         onSelectQuestionBankPicker={handleSelectQuestionBankPicker}
         onSelectPersonaPicker={handleSelectPersonaPicker}

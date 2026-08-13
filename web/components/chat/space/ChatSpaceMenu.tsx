@@ -50,6 +50,9 @@ interface ChatSpaceMenuProps {
   personaAvailable?: boolean;
   /** Hide the My Agents entry (e.g. the quiz follow-up surface). */
   agentsAvailable?: boolean;
+  /** Hide administrator-only Books and Memory references. */
+  booksAvailable?: boolean;
+  memoryAvailable?: boolean;
   onSelectItem: (key: SelectableSpaceKey) => void;
 }
 
@@ -99,6 +102,8 @@ export default memo(function ChatSpaceMenu({
   knowledgeAvailable = true,
   personaAvailable = true,
   agentsAvailable = true,
+  booksAvailable = true,
+  memoryAvailable = true,
   onSelectItem,
 }: ChatSpaceMenuProps) {
   const { t } = useTranslation();
@@ -111,6 +116,8 @@ export default memo(function ChatSpaceMenu({
     if (key === "knowledge") return knowledgeAvailable;
     if (key === "persona") return personaAvailable;
     if (key === "my_agents") return agentsAvailable;
+    if (key === "books") return booksAvailable;
+    if (key === "memory") return memoryAvailable;
     return true;
   })
     .map((key) => {

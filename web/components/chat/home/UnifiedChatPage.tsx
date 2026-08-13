@@ -69,6 +69,7 @@ import type { LLMSelection, StreamEvent } from '@/lib/unified-ws'
 import { extractBase64FromDataUrl, readFileAsDataUrl } from '@/lib/file-attachments'
 import { classifyFile, isSvgFilename } from '@/lib/doc-attachments'
 import { useAttachmentLimits } from '@/lib/attachment-limits'
+import { useAuthStatus } from '@/hooks/useAuthStatus'
 import { useChatAutoScroll } from '@/hooks/useChatAutoScroll'
 import { useMeasuredHeight } from '@/hooks/useMeasuredHeight'
 import {
@@ -335,6 +336,11 @@ export default function UnifiedChatPage({
   const router = useRouter()
   const { t } = useTranslation()
   const { hasLlm } = useCapabilityAccess()
+  const { enabled: authEnabled, isAdmin, loading: authLoading } = useAuthStatus()
+  // Agents, Books, and Memory are deployment-wide administrator surfaces.
+  // Hide their chat reference entries once auth resolves; the API remains the
+  // final enforcement boundary for direct or stale-client requests.
+  const adminSurfacesAvailable = !authLoading && (!authEnabled || isAdmin)
   const sessionIdParam =
     routeSessionId !== undefined ? routeSessionId : params.sessionId?.[0] ?? null
   const { setActiveSessionId, language: appLanguage } = useAppShell()
@@ -1561,10 +1567,14 @@ export default function UnifiedChatPage({
   // from the configured default; the composer's stepper overrides it per turn.
   const [subagentBudget, setSubagentBudget] = useState<number | null>(null)
   useEffect(() => {
+    if (!adminSurfacesAvailable) {
+      setSubagentBudget(null)
+      return
+    }
     void getSubagentSettings()
       .then(settings => setSubagentBudget(settings.consult_budget))
       .catch(() => undefined)
-  }, [])
+  }, [adminSurfacesAvailable])
 
   const handleSend = useCallback(
     async (content: string) => {
@@ -2254,9 +2264,12 @@ export default function UnifiedChatPage({
                 attachmentError={attachmentError}
                 activeCap={activeCap}
                 knowledgeBases={kbOptions}
-                connectedAgents={agentOptions}
-                selectedAgent={selectedAgent}
-                onSelectAgent={handleSelectAgent}
+                connectedAgents={adminSurfacesAvailable ? agentOptions : []}
+                agentsAvailable={adminSurfacesAvailable}
+                booksAvailable={adminSurfacesAvailable}
+                memoryAvailable={adminSurfacesAvailable}
+                selectedAgent={adminSurfacesAvailable ? selectedAgent : null}
+                onSelectAgent={adminSurfacesAvailable ? handleSelectAgent : undefined}
                 subagentBudget={subagentBudget}
                 onSubagentBudgetChange={setSubagentBudget}
                 llmOptions={llmOptions}

@@ -161,14 +161,23 @@ def list_users() -> list[dict]:
 
 def delete_user(username: str) -> bool:
     """
-    Disable a user in the store. Returns True if the user existed.
+    Permanently remove a user identity from the store. Returns True if the
+    user existed.
 
-    The identity/workspace are retained for reversible account quarantine;
-    existing tokens stop validating on their next operation.
+    The private workspace is retained by the API layer for conservative data
+    retention, while the identity, grant, and avatar are revoked/removed.
     """
-    from deeptutor.multi_user.identity import delete_user as _delete_user
+    from deeptutor.multi_user.grants import delete_grant
+    from deeptutor.multi_user.identity import delete_avatar_file, get_user, purge_user
 
-    if not _delete_user(username):
+    record = get_user(username)
+    if record is None:
+        return False
+    user_id = str(record.get("id") or "")
+    if user_id:
+        delete_grant(user_id)
+        delete_avatar_file(user_id)
+    if purge_user(username) is None:
         return False
     logger.info("User '%s' deleted", username)
     return True

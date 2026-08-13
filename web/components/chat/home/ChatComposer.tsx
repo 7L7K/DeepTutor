@@ -229,6 +229,8 @@ export default memo(function ChatComposer({
   personaSelectorOpen,
   onPersonaSelectorOpenChange,
   agentsAvailable = true,
+  booksAvailable = true,
+  memoryAvailable = true,
   onToggleMemoryFile,
   onSend,
   onRemoveAttachment,
@@ -337,6 +339,9 @@ export default memo(function ChatComposer({
   onPersonaSelectorOpenChange?: (open: boolean) => void;
   /** Hide the My Agents reference entry (e.g. the quiz follow-up surface). */
   agentsAvailable?: boolean;
+  /** Hide administrator-only Books and Memory references. */
+  booksAvailable?: boolean;
+  memoryAvailable?: boolean;
   onToggleMemoryFile: (file: SpaceMemoryFile) => void;
   onSend: (content: string) => void;
   onRemoveAttachment: (index: number) => void;
@@ -739,6 +744,8 @@ export default memo(function ChatComposer({
             selectedCounts={spaceSelectionCounts}
             knowledgeAvailable={false}
             personaAvailable={!onPersonaSelectionChange}
+            booksAvailable={booksAvailable}
+            memoryAvailable={memoryAvailable}
             onSelectAttach={courseMode ? () => undefined : handlePickFiles}
             agentsAvailable={agentsAvailable}
             onSelectNotebookPicker={onSelectNotebookPicker}
@@ -1031,6 +1038,8 @@ export default memo(function ChatComposer({
                         knowledgeAvailable={false}
                         personaAvailable={!onPersonaSelectionChange}
                         agentsAvailable={agentsAvailable}
+                        booksAvailable={booksAvailable}
+                        memoryAvailable={memoryAvailable}
                         onSelectItem={(key) => {
                           onSetSpaceMenuOpen(false);
                           if (key === "attach") handlePickFiles();

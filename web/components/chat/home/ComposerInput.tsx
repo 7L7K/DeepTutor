@@ -57,6 +57,9 @@ interface ComposerInputProps {
   onSelectAgentsPicker?: () => void;
   /** Hide the My Agents entry (e.g. the quiz follow-up surface). */
   agentsAvailable?: boolean;
+  /** Hide administrator-only Books and Memory references. */
+  booksAvailable?: boolean;
+  memoryAvailable?: boolean;
   onSelectQuestionBankPicker: () => void;
   onSelectPersonaPicker: () => void;
   onSelectMemoryPicker: () => void;
@@ -147,6 +150,8 @@ export const ComposerInput = memo(
       onSelectHistoryPicker,
       onSelectAgentsPicker,
       agentsAvailable = true,
+      booksAvailable = true,
+      memoryAvailable = true,
       onSelectQuestionBankPicker,
       onSelectPersonaPicker,
       onSelectMemoryPicker,
@@ -460,6 +465,8 @@ export const ComposerInput = memo(
               knowledgeAvailable={knowledgeAvailable}
               personaAvailable={personaAvailable}
               agentsAvailable={agentsAvailable}
+              booksAvailable={booksAvailable}
+              memoryAvailable={memoryAvailable}
               onSelectItem={handleSelectSpaceItem}
             />
           </div>

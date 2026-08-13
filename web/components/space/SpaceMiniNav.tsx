@@ -5,10 +5,17 @@ import { usePathname } from "next/navigation";
 import { useTranslation } from "react-i18next";
 import { LayoutGrid } from "lucide-react";
 import { SPACE_ITEMS } from "@/lib/space-items";
+import { useAuthStatus } from "@/hooks/useAuthStatus";
 
 export default function SpaceMiniNav() {
   const pathname = usePathname();
   const { t } = useTranslation();
+  const { enabled: authEnabled, isAdmin, loading: authLoading } = useAuthStatus();
+  const visibleItems = SPACE_ITEMS.filter(
+    (item) =>
+      item.key !== "agents" ||
+      (!authLoading && (!authEnabled || isAdmin)),
+  );
 
   return (
     <aside className="flex h-full w-[224px] shrink-0 flex-col border-r border-[var(--border)] bg-[var(--card)]">
@@ -30,7 +37,7 @@ export default function SpaceMiniNav() {
       </div>
 
       <nav className="flex-1 space-y-0.5 px-2 py-3">
-        {SPACE_ITEMS.map(({ href, label, description, icon: Icon }) => {
+        {visibleItems.map(({ href, label, description, icon: Icon }) => {
           const active = pathname.startsWith(href);
           return (
             <Link
