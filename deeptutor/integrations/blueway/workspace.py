@@ -11,21 +11,22 @@ Course/map state is ``not_ready``, not ``stale``.
 
 from __future__ import annotations
 
+from datetime import UTC, datetime
 import hashlib
 import logging
-import time
-from datetime import UTC, datetime
 from pathlib import Path
+import time
 from typing import Any
 
-from deeptutor.courses.repository import CourseRepository
 from deeptutor.courses.migrations.runner import open_course_connection
+from deeptutor.courses.repository import CourseRepository
 from deeptutor.multi_user import paths
 
-from .repository import BlueWayRepository, WorkspaceAuthorization
+from .repository import BlueWayNotFoundError, BlueWayRepository, WorkspaceAuthorization
 
 SCHEMA_VERSION = "teeechr.workspace.v1"
 WORKSPACE_FRESHNESS_SECONDS = 24 * 60 * 60
+WORKSPACE_LEASE_SECONDS = 5 * 60
 logger = logging.getLogger(__name__)
 
 
@@ -53,7 +54,7 @@ def _candidate_databases() -> list[Path]:
 
 
 def resolve_authorization(claims: dict[str, Any]) -> tuple[WorkspaceAuthorization, BlueWayRepository]:
-    """Resolve authorization ownership without accepting an owner from input."""
+    """Resolve or provision exact authorization from fresh signed authority."""
     authorization_id = str(claims["authorization_id"])
     subject_hash = str(claims["subject_hash"])
     candidates = _candidate_databases()
@@ -61,16 +62,39 @@ def resolve_authorization(claims: dict[str, Any]) -> tuple[WorkspaceAuthorizatio
     for database in candidates:
         scanned_candidates += 1
         try:
-            # The owner is read from the authorization row, not the assertion.
+            # Existing rows are only a database locator. The assertion is still
+            # revalidated against the active connection and exact Course map.
             with open_course_connection(database) as conn:
                 row = conn.execute("""SELECT owner_user_id FROM blueway_workspace_authorizations
                     WHERE authorization_id = ? AND external_subject_hash = ?""", (authorization_id, subject_hash)).fetchone()
-            if row is None:
+                if row is None:
+                    connection_row = conn.execute(
+                        """SELECT owner_user_id, id FROM blueway_connections
+                           WHERE external_subject = ?""",
+                        (claims["sub"],),
+                    ).fetchone()
+                else:
+                    connection_row = conn.execute(
+                        """SELECT owner_user_id, id FROM blueway_connections
+                           WHERE owner_user_id = ? AND external_subject = ?""",
+                        (row["owner_user_id"], claims["sub"]),
+                    ).fetchone()
+            if connection_row is None:
                 continue
-            owner = str(row["owner_user_id"])
+            owner = str(connection_row["owner_user_id"])
             course_repo = CourseRepository(database, owner)
             blueway = BlueWayRepository(course_repo)
-            authorization = blueway.get_workspace_authorization(authorization_id)
+            authorization = blueway.ensure_workspace_authorization(
+                authorization_id=authorization_id,
+                client_id=str(claims["client_id"]),
+                external_subject=str(claims["sub"]),
+                external_subject_hash=subject_hash,
+                scope=str(claims["scope"]),
+                external_course_id=str(claims["external_course_id"]),
+                external_term_id=claims.get("external_term_id"),
+                connection_id=str(connection_row["id"]),
+                lease_seconds=WORKSPACE_LEASE_SECONDS,
+            )
             logger.info(
                 "blueway_workspace_authorization_resolved",
                 extra={
@@ -79,7 +103,7 @@ def resolve_authorization(claims: dict[str, Any]) -> tuple[WorkspaceAuthorizatio
                 },
             )
             return authorization, blueway
-        except (OSError, RuntimeError, ValueError):
+        except (BlueWayNotFoundError, OSError, RuntimeError, ValueError):
             logger.warning(
                 "blueway_workspace_candidate_unreadable",
                 extra={"candidate_databases_scanned": scanned_candidates},
@@ -102,6 +126,8 @@ def project_workspace(claims: dict[str, Any], *, now: float | None = None) -> di
         or claims.get("authorization_id") != authorization.authorization_id
         or claims.get("scope") != authorization.scope
         or hashlib.sha256(claims["sub"].encode()).hexdigest() != authorization.external_subject_hash
+        or authorization.external_course_id != claims.get("external_course_id")
+        or authorization.external_term_id != claims.get("external_term_id")
     ):
         raise LookupError("Workspace subject does not match authorization")
     connection = blueway.get_connection(authorization.connection_id)

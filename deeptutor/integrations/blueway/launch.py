@@ -69,10 +69,16 @@ def resolve_course_launch(
             """SELECT m.connection_id, m.external_course_id, m.external_term_id,
                       m.course_id, m.remote_state, c.state AS course_state,
                       b.state AS connection_state, b.credential_status,
-                      b.last_sync_at
+                      b.last_sync_at, wa.status AS workspace_status,
+                      wa.lease_expires_at
                  FROM blueway_course_maps AS m
                  JOIN courses AS c ON c.id = m.course_id
                  JOIN blueway_connections AS b ON b.id = m.connection_id
+                 LEFT JOIN blueway_workspace_authorizations AS wa
+                   ON wa.connection_id = b.id
+                  AND wa.external_course_id = m.external_course_id
+                  AND wa.external_term_id IS m.external_term_id
+                  AND wa.status = 'active'
                 WHERE b.owner_user_id = ? AND c.owner_user_id = ?
                   AND m.external_course_id = ?
                 ORDER BY m.updated_at DESC, m.course_id""",
@@ -124,6 +130,14 @@ def resolve_course_launch(
             return CourseLaunchResolution("course_not_ready")
 
         if row["course_state"] != "active" or row["remote_state"] != "active":
+            return CourseLaunchResolution("course_not_ready")
+
+        # Direct launch is allowed only after a recent signed workspace read
+        # refreshed the exact Course authorization lease. A historical local
+        # row, or a row for another Course/term, cannot authorize launch.
+        if row["workspace_status"] != "active" or row["lease_expires_at"] is None:
+            return CourseLaunchResolution("course_not_ready")
+        if float(row["lease_expires_at"]) <= (now if now is not None else time.time()):
             return CourseLaunchResolution("course_not_ready")
 
         source_states = {
