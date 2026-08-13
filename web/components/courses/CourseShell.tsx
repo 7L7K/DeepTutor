@@ -194,7 +194,7 @@ export default function CourseShell({
 
   return (
     <CourseShellContext.Provider value={contextValue}>
-      <div className="flex min-h-full min-w-0 flex-col overflow-x-hidden">
+      <div className="flex h-full min-h-0 min-w-0 flex-col overflow-x-hidden">
         <header className="shrink-0 overflow-x-hidden border-b border-[var(--border)] bg-[var(--background)] px-5 py-3.5 sm:px-8 sm:py-4">
           <div className="mx-auto w-full max-w-6xl">
             <div className="flex min-w-0 flex-col gap-2.5 sm:flex-row sm:items-center sm:gap-5">
