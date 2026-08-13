@@ -72,3 +72,11 @@ def test_unsigned_and_wrong_algorithm_fail(keys):
     header = base64.urlsafe_b64encode(json.dumps({"alg": "none", "kid": "test-key"}).encode()).rstrip(b"=").decode()
     with pytest.raises(assertion.AssertionError):
         assertion.verify_assertion(f"{header}.{token[1]}.{token[2]}")
+
+
+def test_read_and_revocation_scopes_are_not_interchangeable(keys):
+    token = _token(keys, scope=assertion.REVOCATION_SCOPE)
+    with pytest.raises(assertion.AssertionError):
+        assertion.verify_assertion(token)
+    claims = assertion.verify_assertion(token, expected_scope=assertion.REVOCATION_SCOPE)
+    assert claims["scope"] == assertion.REVOCATION_SCOPE

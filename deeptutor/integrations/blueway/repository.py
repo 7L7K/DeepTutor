@@ -17,6 +17,10 @@ class BlueWayNotFoundError(LookupError):
     pass
 
 
+class WorkspaceAssertionReplayError(LookupError):
+    """A valid workspace assertion was already consumed."""
+
+
 def _id(prefix: str) -> str:
     return f"{prefix}_{uuid4().hex}"
 
@@ -195,7 +199,8 @@ class BlueWayRepository:
         self, *, authorization_id: str, client_id: str, external_subject: str,
         external_subject_hash: str, scope: str, external_course_id: str,
         external_term_id: str | None, connection_id: str,
-        lease_seconds: int,
+        lease_seconds: int, assertion_jti: str | None = None,
+        assertion_expires_at: float | None = None,
     ) -> WorkspaceAuthorization:
         """Provision exact workspace metadata after a freshly verified assertion.
 
@@ -213,6 +218,10 @@ class BlueWayRepository:
             raise ValueError("Exact workspace Course identity is required")
         if lease_seconds < 1:
             raise ValueError("Workspace lease must be positive")
+        if (assertion_jti is None) != (assertion_expires_at is None):
+            raise ValueError("Workspace assertion replay metadata is incomplete")
+        if assertion_jti is not None and (not assertion_jti.strip() or assertion_expires_at is None):
+            raise ValueError("Workspace assertion replay metadata is invalid")
 
         now = time.time()
         with self.courses._write_lock, self.courses._connect() as conn:
@@ -240,9 +249,26 @@ class BlueWayRepository:
                     AND c.owner_user_id = ? AND c.state = 'active'""",
                 (connection_id, external_course_id, external_term_id, self.owner_user_id),
             ).fetchone()
-            if mapping is None and existing is None:
+            if mapping is None:
                 raise BlueWayNotFoundError("Integration resource not found")
+            if assertion_jti is not None:
+                conn.execute(
+                    "DELETE FROM blueway_workspace_assertion_replays WHERE expires_at <= ?",
+                    (now,),
+                )
+                try:
+                    conn.execute(
+                        """INSERT INTO blueway_workspace_assertion_replays
+                           (jti, expires_at, created_at) VALUES (?, ?, ?)""",
+                        (assertion_jti, float(assertion_expires_at), now),
+                    )
+                except sqlite3.IntegrityError as exc:
+                    raise WorkspaceAssertionReplayError(
+                        "Workspace assertion has already been consumed"
+                    ) from exc
             lease_expires_at = now + lease_seconds
+            if assertion_expires_at is not None:
+                lease_expires_at = min(lease_expires_at, float(assertion_expires_at))
             if existing is not None:
                 if existing["status"] == "revoked":
                     raise BlueWayNotFoundError("Workspace authorization is revoked")
@@ -300,6 +326,75 @@ class BlueWayRepository:
         if row is None:
             raise BlueWayNotFoundError("Integration resource not found")
         return WorkspaceAuthorization.from_row(row)
+
+    def revoke_workspace_authorization_from_assertion(
+        self, *, authorization_id: str, client_id: str, external_subject: str,
+        external_subject_hash: str, external_course_id: str,
+        external_term_id: str | None, assertion_jti: str,
+        assertion_expires_at: float,
+    ) -> WorkspaceAuthorization:
+        """Consume a revocation assertion and fence one exact workspace row.
+
+        The revocation assertion is authorized by the same Ed25519 key as the
+        read contract but carries a distinct scope. This method repeats the
+        authorization identity fence inside one SQLite transaction and clears
+        the launch lease, so a delivered revocation takes effect immediately.
+        """
+        if not all((authorization_id, client_id, external_subject, external_subject_hash, assertion_jti)):
+            raise ValueError("Workspace revocation identity is required")
+        if not external_course_id.strip() or assertion_expires_at <= 0:
+            raise ValueError("Workspace revocation identity is invalid")
+
+        now = time.time()
+        with self.courses._write_lock, self.courses._connect() as conn:
+            conn.execute("BEGIN IMMEDIATE")
+            row = conn.execute(
+                """SELECT * FROM blueway_workspace_authorizations
+                   WHERE authorization_id = ? AND owner_user_id = ?
+                     AND client_id = ? AND external_subject_hash = ?
+                     AND external_course_id = ? AND external_term_id IS ?""",
+                (
+                    authorization_id, self.owner_user_id, client_id,
+                    external_subject_hash, external_course_id, external_term_id,
+                ),
+            ).fetchone()
+            if row is None:
+                raise BlueWayNotFoundError("Integration resource not found")
+            connection = conn.execute(
+                """SELECT 1 FROM blueway_connections
+                   WHERE id = ? AND owner_user_id = ? AND external_subject = ?""",
+                (row["connection_id"], self.owner_user_id, external_subject),
+            ).fetchone()
+            if connection is None:
+                raise BlueWayNotFoundError("Integration resource not found")
+            conn.execute(
+                "DELETE FROM blueway_workspace_assertion_replays WHERE expires_at <= ?",
+                (now,),
+            )
+            try:
+                conn.execute(
+                    """INSERT INTO blueway_workspace_assertion_replays
+                       (jti, expires_at, created_at) VALUES (?, ?, ?)""",
+                    (assertion_jti, float(assertion_expires_at), now),
+                )
+            except sqlite3.IntegrityError as exc:
+                raise WorkspaceAssertionReplayError(
+                    "Workspace revocation assertion has already been consumed"
+                ) from exc
+            conn.execute(
+                """UPDATE blueway_workspace_authorizations
+                   SET status = 'revoked', revoked_at = coalesce(revoked_at, ?),
+                       updated_at = ?, lease_expires_at = NULL, version = version + 1
+                   WHERE authorization_id = ? AND owner_user_id = ?""",
+                (now, now, authorization_id, self.owner_user_id),
+            )
+            updated = conn.execute(
+                """SELECT * FROM blueway_workspace_authorizations
+                   WHERE authorization_id = ? AND owner_user_id = ?""",
+                (authorization_id, self.owner_user_id),
+            ).fetchone()
+        assert updated is not None
+        return WorkspaceAuthorization.from_row(updated)
 
     def visible_connection(self) -> Connection | None:
         """Return the active or locally-fenced revocation state for its owner."""

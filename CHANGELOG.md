@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+- Fixed BlueWay workspace reactivation to require a current exact active
+  Course/term mapping, and atomically consume each verified assertion `jti` so
+  replayed reads cannot refresh the local launch lease. Direct launch authority
+  is now explicitly bounded to the 60-second assertion lifetime. Added a
+  distinct replay-protected revocation assertion that clears the exact local
+  launch lease immediately when delivered, plus a dry-run-by-default command
+  for upgrading every supported user Course database.
+
 - Added the C4 provider-free materialization path for the exact C3-H3
   model-qualified Biology Practice and Review artifacts. Single-choice option
   identities and four-source-citation remediation provenance are now persisted

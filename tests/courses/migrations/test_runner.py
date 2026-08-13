@@ -95,7 +95,8 @@ def test_receipt_uses_exact_artifact_bytes_and_tamper_blocks_before_writes(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     path = tmp_path / "courses.db"
-    assert ensure_course_schema(path) == tuple(range(16))
+    expected_versions = tuple(item.version for item in discover_migrations())
+    assert ensure_course_schema(path) == expected_versions
     artifacts = discover_migrations()
     artifact = artifacts[0]
     with open_course_connection(path) as conn:
@@ -235,7 +236,8 @@ def test_concurrent_startup_applies_once_and_other_wrapper_observes_receipt(
 
     assert not first.is_alive() and not second.is_alive()
     assert errors == []
-    assert sorted(results) == [(), tuple(range(16))]
+    expected_versions = tuple(item.version for item in discover_migrations())
+    assert sorted(results) == [(), expected_versions]
     with open_course_connection(path) as conn:
         assert (
             conn.execute("SELECT COUNT(*) FROM schema_migrations").fetchone()[0]
@@ -266,7 +268,7 @@ def test_spawned_processes_first_start_apply_once_and_converge_on_one_receipt(
     results = [outcomes.get(timeout=5) for _ in processes]
     assert sorted(results) == [
         ("ok", ()),
-        ("ok", tuple(range(16))),
+        ("ok", tuple(item.version for item in discover_migrations())),
     ]
     with open_course_connection(path) as conn:
         assert (

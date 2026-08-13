@@ -9,7 +9,18 @@ from fastapi import APIRouter, Header, HTTPException, Query
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, ConfigDict, Field
 
-from .repository import BlueWayNotFoundError, BlueWayRepository, Connection, SyncRun
+from deeptutor.courses.service import CourseUnavailableError, get_current_course_service
+
+from .assertion import REVOCATION_SCOPE, verify_assertion
+from .assertion import AssertionError as WorkspaceAssertionError
+from .launch import resolve_course_launch
+from .repository import (
+    BlueWayNotFoundError,
+    BlueWayRepository,
+    Connection,
+    SyncRun,
+    WorkspaceAssertionReplayError,
+)
 from .service import (
     BlueWayCredentialRecoveryRequired,
     BlueWayService,
@@ -17,10 +28,7 @@ from .service import (
     build_blueway_service,
 )
 from .transport import BlueWayTransportError
-from .assertion import AssertionError as WorkspaceAssertionError, verify_assertion
-from .workspace import ConsentRequiredError, project_workspace
-from .launch import resolve_course_launch
-from deeptutor.courses.service import CourseUnavailableError, get_current_course_service
+from .workspace import ConsentRequiredError, project_workspace, revoke_workspace_authorization
 
 router = APIRouter()
 workspace_router = APIRouter()
@@ -36,6 +44,10 @@ class WorkspaceReadRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
     course_id: str = Field(min_length=1, max_length=256)
     term_id: str | None = Field(default=None, min_length=1, max_length=256)
+
+
+class WorkspaceRevokeRequest(WorkspaceReadRequest):
+    pass
 
 
 @router.get("/launch")
@@ -234,10 +246,34 @@ def workspace_read(
         claims = verify_assertion(authorization[7:].strip())
         if claims["external_course_id"] != body.course_id or claims.get("external_term_id") != body.term_id:
             raise HTTPException(status_code=400, detail="Workspace request identity does not match assertion")
-        return project_workspace(claims)
+        return project_workspace(claims, consume_replay=True)
     except WorkspaceAssertionError as exc:
         raise HTTPException(status_code=401, detail="Invalid workspace assertion") from exc
+    except WorkspaceAssertionReplayError as exc:
+        raise HTTPException(status_code=401, detail="Workspace assertion has already been used") from exc
     except ConsentRequiredError as exc:
         return JSONResponse(status_code=403, content={"schema_version": "teeechr.workspace.v1", "status": "consent_required"})
     except LookupError as exc:
         raise HTTPException(status_code=403, detail="Workspace consent is unavailable") from exc
+
+
+@workspace_router.post("/workspace/revoke", status_code=204)
+def workspace_revoke(
+    body: WorkspaceRevokeRequest,
+    authorization: str | None = Header(default=None),
+):
+    """Immediately fence one exact local authorization from BlueWay."""
+    if not authorization or not authorization.startswith("Bearer ") or not authorization[7:].strip():
+        raise HTTPException(status_code=401, detail="Workspace assertion required")
+    try:
+        claims = verify_assertion(authorization[7:].strip(), expected_scope=REVOCATION_SCOPE)
+        if claims["external_course_id"] != body.course_id or claims.get("external_term_id") != body.term_id:
+            raise HTTPException(status_code=400, detail="Workspace request identity does not match assertion")
+        revoke_workspace_authorization(claims)
+    except WorkspaceAssertionError as exc:
+        raise HTTPException(status_code=401, detail="Invalid workspace revocation assertion") from exc
+    except WorkspaceAssertionReplayError as exc:
+        raise HTTPException(status_code=401, detail="Workspace revocation assertion has already been used") from exc
+    except ConsentRequiredError as exc:
+        raise HTTPException(status_code=404, detail="Workspace authorization is unavailable") from exc
+    return None

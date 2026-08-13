@@ -11,11 +11,16 @@ from pathlib import Path
 import pytest
 
 from deeptutor.courses.repository import CourseRepository
-from deeptutor.integrations.blueway.repository import BlueWayRepository
+from deeptutor.integrations.blueway.launch import resolve_course_launch
+from deeptutor.integrations.blueway.repository import (
+    BlueWayRepository,
+    WorkspaceAssertionReplayError,
+)
 from deeptutor.integrations.blueway.workspace import (
     WORKSPACE_FRESHNESS_SECONDS,
     ConsentRequiredError,
     project_workspace,
+    revoke_workspace_authorization,
 )
 
 
@@ -26,6 +31,7 @@ def _claims(term: str) -> dict[str, object]:
         "client_id": "blueway-client", "authorization_id": "auth-1",
         "scope": "teeechr.workspace.read.v1", "external_course_id": "course-1",
         "external_term_id": term,
+        "jti": f"jti-{term}", "exp": 1_800_000_060,
     }
 
 
@@ -102,7 +108,8 @@ def test_projection_is_allowlisted_and_term_qualified(tmp_path: Path, monkeypatc
             "UPDATE blueway_course_maps SET remote_state = 'archived' WHERE course_id = ?",
             (fall.id,),
         )
-    assert project_workspace(_claims("fall"), now=1704067200.0 + 3600.0)["status"] == "not_ready"
+    with pytest.raises(ConsentRequiredError):
+        project_workspace(_claims("fall"), now=1704067200.0 + 3600.0)
     with courses._connect() as conn:  # noqa: SLF001
         assert conn.execute("SELECT COUNT(*) FROM courses WHERE owner_user_id = ?", ("owner-one",)).fetchone()[0] == 2
 
@@ -135,6 +142,38 @@ def test_first_valid_assertion_provisions_exact_authorization_and_repeated_reads
         assert conn.execute("SELECT COUNT(*) FROM blueway_workspace_authorizations").fetchone()[0] == 1
         row = conn.execute("SELECT status, external_course_id, external_term_id FROM blueway_workspace_authorizations").fetchone()
     assert tuple(row) == ("active", "course-1", "fall")
+
+    claims = _claims("fall")
+    project_workspace(claims, consume_replay=True)
+    with courses._connect() as conn:
+        lease = conn.execute(
+            "SELECT lease_expires_at FROM blueway_workspace_authorizations WHERE authorization_id = ?",
+            ("auth-1",),
+        ).fetchone()[0]
+    assert float(lease) <= float(claims["exp"])
+    with pytest.raises(WorkspaceAssertionReplayError):
+        project_workspace(claims, consume_replay=True)
+
+    revocation_claims = {
+        **claims,
+        "scope": "teeechr.workspace.revoke.v1",
+        "jti": "revoke-jti-fall",
+    }
+    revoked = revoke_workspace_authorization(revocation_claims)
+    assert revoked.status == "revoked"
+    with courses._connect() as conn:
+        assert conn.execute(
+            "SELECT lease_expires_at FROM blueway_workspace_authorizations WHERE authorization_id = ?",
+            ("auth-1",),
+        ).fetchone()[0] is None
+    with pytest.raises(WorkspaceAssertionReplayError):
+        revoke_workspace_authorization(revocation_claims)
+    assert resolve_course_launch(
+        blueway,
+        external_course_id="course-1",
+        external_term_id="fall",
+        now=1704067200.0 + 3600.0,
+    ).status == "course_not_ready"
 
 
 def test_missing_or_altered_authorization_binding_fails_closed(tmp_path: Path, monkeypatch) -> None:

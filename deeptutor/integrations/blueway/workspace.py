@@ -22,11 +22,18 @@ from deeptutor.courses.migrations.runner import open_course_connection
 from deeptutor.courses.repository import CourseRepository
 from deeptutor.multi_user import paths
 
-from .repository import BlueWayNotFoundError, BlueWayRepository, WorkspaceAuthorization
+from .repository import (
+    BlueWayNotFoundError,
+    BlueWayRepository,
+    WorkspaceAuthorization,
+)
 
 SCHEMA_VERSION = "teeechr.workspace.v1"
 WORKSPACE_FRESHNESS_SECONDS = 24 * 60 * 60
-WORKSPACE_LEASE_SECONDS = 5 * 60
+# Direct launch is intentionally bounded to the same lifetime as a BlueWay
+# assertion. BlueWay revocation is therefore enforced within at most this
+# interval even if the local TEEECHR row has not received a revocation notice.
+WORKSPACE_LEASE_SECONDS = 60
 logger = logging.getLogger(__name__)
 
 
@@ -53,7 +60,9 @@ def _candidate_databases() -> list[Path]:
     return [candidate for candidate in candidates if candidate.is_file() and not candidate.is_symlink()]
 
 
-def resolve_authorization(claims: dict[str, Any]) -> tuple[WorkspaceAuthorization, BlueWayRepository]:
+def resolve_authorization(
+    claims: dict[str, Any], *, consume_replay: bool = False,
+) -> tuple[WorkspaceAuthorization, BlueWayRepository]:
     """Resolve or provision exact authorization from fresh signed authority."""
     authorization_id = str(claims["authorization_id"])
     subject_hash = str(claims["subject_hash"])
@@ -94,6 +103,8 @@ def resolve_authorization(claims: dict[str, Any]) -> tuple[WorkspaceAuthorizatio
                 external_term_id=claims.get("external_term_id"),
                 connection_id=str(connection_row["id"]),
                 lease_seconds=WORKSPACE_LEASE_SECONDS,
+                assertion_jti=(str(claims["jti"]) if consume_replay else None),
+                assertion_expires_at=(float(claims["exp"]) if consume_replay else None),
             )
             logger.info(
                 "blueway_workspace_authorization_resolved",
@@ -119,8 +130,47 @@ def resolve_authorization(claims: dict[str, Any]) -> tuple[WorkspaceAuthorizatio
     raise ConsentRequiredError("Workspace authorization not found")
 
 
-def project_workspace(claims: dict[str, Any], *, now: float | None = None) -> dict[str, Any]:
-    authorization, blueway = resolve_authorization(claims)
+def revoke_workspace_authorization(
+    claims: dict[str, Any], *, now: float | None = None,
+) -> WorkspaceAuthorization:
+    """Consume a signed revocation and fence the exact local authorization."""
+    del now  # Kept symmetric with projection helpers; assertion time is verified upstream.
+    authorization_id = str(claims["authorization_id"])
+    subject_hash = str(claims["subject_hash"])
+    candidates = _candidate_databases()
+    for database in candidates:
+        try:
+            with open_course_connection(database) as conn:
+                row = conn.execute(
+                    """SELECT owner_user_id FROM blueway_workspace_authorizations
+                       WHERE authorization_id = ? AND external_subject_hash = ?""",
+                    (authorization_id, subject_hash),
+                ).fetchone()
+            if row is None:
+                continue
+            blueway = BlueWayRepository(
+                CourseRepository(database, str(row["owner_user_id"])),
+            )
+            return blueway.revoke_workspace_authorization_from_assertion(
+                authorization_id=authorization_id,
+                client_id=str(claims["client_id"]),
+                external_subject=str(claims["sub"]),
+                external_subject_hash=subject_hash,
+                external_course_id=str(claims["external_course_id"]),
+                external_term_id=claims.get("external_term_id"),
+                assertion_jti=str(claims["jti"]),
+                assertion_expires_at=float(claims["exp"]),
+            )
+        except (BlueWayNotFoundError, OSError, RuntimeError, ValueError):
+            continue
+    raise ConsentRequiredError("Workspace authorization not found")
+
+
+def project_workspace(
+    claims: dict[str, Any], *, now: float | None = None,
+    consume_replay: bool = False,
+) -> dict[str, Any]:
+    authorization, blueway = resolve_authorization(claims, consume_replay=consume_replay)
     if (
         claims.get("client_id") != authorization.client_id
         or claims.get("authorization_id") != authorization.authorization_id
