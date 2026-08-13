@@ -230,7 +230,16 @@ def test_regeneration_preserves_exact_owned_source_revision_set(monkeypatch) -> 
     assert payload["knowledge_bases"] == [
         "personal:kb:course_crs_one_src_original"
     ]
-    assert payload["course_context"] == preserved
+    assert payload["course_context"]["schema_version"] == 2
+    assert payload["course_context"]["answer_mode"] == "class_materials"
+    assert payload["course_context"]["course_title"] == "Biology"
+    assert payload["course_context"]["course_write_epoch"] == 2
+    assert payload["course_context"]["source_ids"] == [original.id]
+    assert payload["course_context"]["source_revisions"] == {original.id: 2}
+    assert payload["course_context"]["source_fingerprints"] == {
+        original.id: original.content_sha256
+    }
+    assert payload["course_context"]["source_titles"] == {}
 
 
 @pytest.mark.parametrize(

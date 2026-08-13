@@ -14,6 +14,8 @@ from .models import CourseSource
 COURSE_CHAT_UNSUPPORTED_MESSAGE = (
     "I could not find support for that answer in the available Course materials."
 )
+COURSE_CHAT_CONTEXT_SCHEMA_VERSION = 2
+CourseChatAnswerMode = Literal["general_knowledge", "class_materials"]
 
 CourseChatReadinessState = Literal[
     "no_materials",
@@ -43,6 +45,14 @@ class CourseChatReadiness(BaseModel):
     state: CourseChatReadinessState
     counts: dict[str, int]
     ready_sources: list[CourseChatReadySource]
+
+
+def course_chat_answer_mode(course_context: Mapping[str, Any]) -> CourseChatAnswerMode:
+    """Resolve the explicit mode, keeping legacy persisted turns grounded."""
+
+    if course_context.get("answer_mode") == "general_knowledge":
+        return "general_knowledge"
+    return "class_materials"
 
 
 def classify_course_chat_sources(
@@ -186,6 +196,9 @@ def build_validated_course_citations(
 ) -> list[dict[str, Any]]:
     """Reduce provider provenance to the frozen, authorized Course snapshot."""
 
+    if course_chat_answer_mode(course_context) != "class_materials":
+        return []
+
     course_id = _bounded_scalar(course_context.get("course_id")) or ""
     source_ids = {
         str(source_id)
@@ -251,6 +264,17 @@ def finalize_course_chat_events(
             for event in event_list
             if event.type not in {StreamEventType.CONTENT, StreamEventType.SOURCES}
         ]
+
+    if course_chat_answer_mode(course_context) == "general_knowledge":
+        retained = [event for event in event_list if event.type != StreamEventType.SOURCES]
+        for event in retained:
+            if event.type == StreamEventType.CONTENT:
+                event.metadata = {
+                    key: value
+                    for key, value in (event.metadata or {}).items()
+                    if key not in {"citations", "course_citations", "sources"}
+                } | {"course_grounding": "general_knowledge"}
+        return retained
 
     proposed_sources: list[Mapping[str, Any]] = []
     for event in event_list:
@@ -346,14 +370,17 @@ def citation_version_available(
 
 
 __all__ = [
+    "CourseChatAnswerMode",
     "CourseChatReadiness",
     "CourseChatReadinessState",
     "CourseChatReadySource",
     "COURSE_CHAT_UNSUPPORTED_MESSAGE",
+    "COURSE_CHAT_CONTEXT_SCHEMA_VERSION",
     "assert_course_session_binding",
     "build_validated_course_citations",
     "citation_version_available",
     "classify_course_chat_sources",
+    "course_chat_answer_mode",
     "finalize_course_chat_events",
     "finalize_course_chat_stream",
     "readiness_error_message",

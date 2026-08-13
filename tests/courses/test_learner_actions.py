@@ -191,6 +191,23 @@ def _assistant_binding(
                 "metadata": {"status": "completed"},
             },
         ]
+    elif state == "general_knowledge":
+        events = [
+            {
+                "type": "content",
+                "source": "course_grounding",
+                "content": "ATP transfers energy for cellular work.",
+                "metadata": {
+                    "course_grounding": "general_knowledge",
+                    "call_kind": "llm_final_response",
+                },
+            },
+            {
+                "type": "done",
+                "source": "course_grounding",
+                "metadata": {"status": "completed"},
+            },
+        ]
     else:
         events = [
             {
@@ -301,7 +318,7 @@ def test_quiz_action_is_server_grounded_bounded_and_replays(
     assert worker_calls == []
 
 
-@pytest.mark.parametrize("state", ["unsupported", "provider_failed"])
+@pytest.mark.parametrize("state", ["unsupported", "provider_failed", "general_knowledge"])
 def test_quiz_action_requires_a_supported_citation_bearing_turn(
     learner_action_client: TestClient,
     state: str,

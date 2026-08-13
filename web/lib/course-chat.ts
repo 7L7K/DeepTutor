@@ -13,17 +13,34 @@ export interface CourseCitation {
   retrieval_fragment_id: string | null;
 }
 
+export type CourseAnswerMode = "general_knowledge" | "class_materials";
+
+/** Read the immutable answer authority persisted on one assistant turn. */
+export function courseAnswerMode(
+  events: StreamEvent[] | undefined,
+): CourseAnswerMode | null {
+  for (const event of events || []) {
+    if (event.type !== "content") continue;
+    if (event.metadata?.course_grounding === "general_knowledge") {
+      return "general_knowledge";
+    }
+    if (event.metadata?.course_grounding === "supported") {
+      return "class_materials";
+    }
+  }
+  return null;
+}
+
 export function courseChatPath(courseId: string, sessionId?: string): string {
   const base = `/classes/${encodeURIComponent(courseId)}/chat`;
   return sessionId ? `${base}/${encodeURIComponent(sessionId)}` : base;
 }
 
 export const COURSE_NAVIGATION_DESTINATIONS = [
-  { key: "overview", label: "Overview", suffix: "" },
-  { key: "chat", label: "Chat", suffix: "/chat" },
+  { key: "chat", label: "Chat", suffix: "" },
+  { key: "materials", label: "Materials", suffix: "/materials" },
   { key: "practice", label: "Practice", suffix: "/practice" },
   { key: "review", label: "Review", suffix: "/review" },
-  { key: "materials", label: "Materials", suffix: "/materials" },
 ] as const;
 
 export type CourseNavigationSuffix =
@@ -42,7 +59,13 @@ export function courseDestinationIsActive(
   suffix: CourseNavigationSuffix,
 ): boolean {
   const destinationPath = courseDestinationPath(courseId, suffix);
-  if (!suffix) return pathname === destinationPath;
+  if (!suffix) {
+    return (
+      pathname === destinationPath ||
+      pathname === `${destinationPath}/chat` ||
+      pathname.startsWith(`${destinationPath}/chat/`)
+    );
+  }
   return pathname === destinationPath || pathname.startsWith(`${destinationPath}/`);
 }
 
@@ -95,25 +118,25 @@ export function courseChatReadinessPresentation(readiness: CourseChatReadiness):
   const unavailable = readiness.counts.unavailable;
   if (readiness.state === "no_materials") {
     return {
-      allowChat: false,
-      title: "This Course does not have any materials yet.",
-      body: "Add a Course material before asking grounded questions.",
+      allowChat: true,
+      title: "No Class materials yet.",
+      body: "Answers use general knowledge and are not based on Class materials.",
       action: "Add materials",
     };
   }
   if (readiness.state === "processing") {
     return {
-      allowChat: false,
-      title: "Course materials are still processing.",
-      body: "Chat will become available when at least one material is ready.",
+      allowChat: true,
+      title: "Class materials are processing.",
+      body: "Answers use general knowledge and are not based on Class materials.",
       action: "View materials",
     };
   }
   if (readiness.state === "failed") {
     return {
-      allowChat: false,
-      title: "Course materials could not be prepared for Chat.",
-      body: "Review the failed material before asking grounded questions.",
+      allowChat: true,
+      title: "Class materials need review.",
+      body: "Answers use general knowledge and are not based on Class materials.",
       action: "Review materials",
     };
   }
@@ -124,16 +147,16 @@ export function courseChatReadinessPresentation(readiness: CourseChatReadiness):
         : `${unavailable === 2 ? "Two" : unavailable} other materials are not currently available.`;
     return {
       allowChat: true,
-      title: "Course Chat is using the ready materials.",
-      body: `This answer uses ${ready} ready Course ${ready === 1 ? "material" : "materials"}. ${unavailableSentence}`,
+      title: "Using ready Class materials.",
+      body: `Answers use ${ready} ready Class ${ready === 1 ? "material" : "materials"}. ${unavailableSentence}`,
       action: "View materials",
     };
   }
   return {
     allowChat: true,
-    title: "Course materials are ready.",
-    body: `${ready} Course ${ready === 1 ? "material is" : "materials are"} available for grounded answers.`,
-    action: null,
+    title: "Class materials are ready.",
+    body: `Answers use ready Class materials. ${ready} ${ready === 1 ? "material is" : "materials are"} available.`,
+    action: "View materials",
   };
 }
 

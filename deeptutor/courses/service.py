@@ -260,50 +260,79 @@ def resolve_course_turn_payload(
             raise CourseUnavailableError(f"{field} is not available in private course mode")
 
     all_sources = service.list_sources(course_id)
-    from .chat_contract import classify_course_chat_sources, readiness_error_message
+    from .chat_contract import (
+        COURSE_CHAT_CONTEXT_SCHEMA_VERSION,
+        classify_course_chat_sources,
+        course_chat_answer_mode,
+        readiness_error_message,
+    )
 
     readiness = classify_course_chat_sources(all_sources, course_id=course.id)
     if preserved_context is not None:
         if str(preserved_context.get("course_id") or "") != course.id:
             raise CourseUnavailableError("Regeneration Course provenance is invalid")
-        by_id = {
-            source.id: source
-            for source in all_sources
-            if source.course_id == course.id
-        }
-        source_ids = [str(item) for item in preserved_context.get("source_ids") or []]
-        revisions = dict(preserved_context.get("source_revisions") or {})
-        fingerprints = dict(preserved_context.get("source_fingerprints") or {})
+        answer_mode = course_chat_answer_mode(preserved_context)
         sources = []
-        for source_id in source_ids:
-            source = by_id.get(source_id)
-            expected_revision = int(revisions.get(source_id) or 0)
-            revision_matches = source is not None and (
-                source.revision == expected_revision
-                or (
-                    source.state == "archived"
-                    and source.revision == expected_revision + 1
+        if answer_mode == "general_knowledge":
+            if any(
+                preserved_context.get(field)
+                for field in (
+                    "source_ids",
+                    "source_revisions",
+                    "source_fingerprints",
+                    "source_titles",
                 )
-            )
-            if (
-                source is None
-                or source.state not in {"ready", "archived"}
-                or not revision_matches
-                or source.content_sha256 != str(fingerprints.get(source_id) or "")
             ):
+                raise CourseUnavailableError("Regeneration Course provenance is invalid")
+        else:
+            by_id = {
+                source.id: source
+                for source in all_sources
+                if source.course_id == course.id
+            }
+            source_ids = [str(item) for item in preserved_context.get("source_ids") or []]
+            if not source_ids:
                 raise CourseUnavailableError(
                     "Regeneration Course source provenance is unavailable"
                 )
-            sources.append(source)
-    else:
-        if not readiness.ready_sources:
+            revisions = dict(preserved_context.get("source_revisions") or {})
+            fingerprints = dict(preserved_context.get("source_fingerprints") or {})
+            for source_id in source_ids:
+                source = by_id.get(source_id)
+                expected_revision = int(revisions.get(source_id) or 0)
+                revision_matches = source is not None and (
+                    source.revision == expected_revision
+                    or (
+                        source.state == "archived"
+                        and source.revision == expected_revision + 1
+                    )
+                )
+                if (
+                    source is None
+                    or source.state not in {"ready", "archived"}
+                    or not revision_matches
+                    or source.content_sha256 != str(fingerprints.get(source_id) or "")
+                ):
+                    raise CourseUnavailableError(
+                        "Regeneration Course source provenance is unavailable"
+                )
+                sources.append(source)
+        if capability == "mastery_path" and answer_mode == "general_knowledge":
             raise CourseUnavailableError(readiness_error_message(readiness))
-        ready_ids = {source.source_id for source in readiness.ready_sources}
-        sources = [
-            source
-            for source in all_sources
-            if source.course_id == course.id and source.id in ready_ids
-        ]
+    else:
+        if readiness.ready_sources:
+            answer_mode = "class_materials"
+            ready_ids = {source.source_id for source in readiness.ready_sources}
+            sources = [
+                source
+                for source in all_sources
+                if source.course_id == course.id and source.id in ready_ids
+            ]
+        elif capability == "chat":
+            answer_mode = "general_knowledge"
+            sources = []
+        else:
+            raise CourseUnavailableError(readiness_error_message(readiness))
     # ``managed_kb_ref`` is the one logical Course Knowledge authority.  Each
     # immutable source is indexed into an opaque physical shard so archived,
     # failed, stale, and superseded sources can never remain searchable through
@@ -320,10 +349,25 @@ def resolve_course_turn_payload(
     )
 
     course_context = (
-        dict(preserved_context)
+        {
+            **dict(preserved_context),
+            "schema_version": int(
+                preserved_context.get("schema_version")
+                or COURSE_CHAT_CONTEXT_SCHEMA_VERSION
+            ),
+            "answer_mode": answer_mode,
+            "course_title": str(preserved_context.get("course_title") or course.title),
+            "course_write_epoch": int(
+                preserved_context.get("course_write_epoch") or course.write_epoch
+            ),
+            "source_titles": dict(preserved_context.get("source_titles") or {}),
+        }
         if preserved_context is not None
         else {
+            "schema_version": COURSE_CHAT_CONTEXT_SCHEMA_VERSION,
+            "answer_mode": answer_mode,
             "course_id": course.id,
+            "course_title": course.title,
             "course_revision": course.revision,
             "course_write_epoch": course.write_epoch,
             "source_ids": [source.id for source in sources],
@@ -348,9 +392,13 @@ def resolve_course_turn_payload(
         # mastery additionally needs the interactive answer handoff; it is
         # server-authorized rather than inherited from generic chat.
         "allowed_builtin_tools": (
-            ["rag", "ask_user"]
-            if str(payload.get("capability") or "") == "mastery_path"
-            else ["rag"]
+            []
+            if answer_mode == "general_knowledge"
+            else (
+                ["rag", "ask_user"]
+                if str(payload.get("capability") or "") == "mastery_path"
+                else ["rag"]
+            )
         ),
         "tools": [],
         "attachments": [],

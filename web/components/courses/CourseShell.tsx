@@ -68,7 +68,7 @@ function CourseNavigation({ courseId }: { courseId: string }) {
             data-testid={`course-nav-${destination.key}`}
             ref={active ? activeLinkRef : undefined}
             onFocus={revealActiveDestination}
-            className={`shrink-0 whitespace-nowrap rounded-md px-2.5 py-1.5 text-sm transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ring)] sm:px-3 sm:py-1.5 ${
+            className={`inline-flex min-h-11 shrink-0 items-center whitespace-nowrap rounded-md px-2.5 py-1.5 text-sm transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ring)] sm:px-3 sm:py-1.5 ${
               active
                 ? "bg-[var(--foreground)] font-medium text-[var(--background)]"
                 : "text-[var(--muted-foreground)] hover:bg-[var(--muted)] hover:text-[var(--foreground)]"

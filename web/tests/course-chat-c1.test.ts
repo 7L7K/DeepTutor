@@ -45,11 +45,19 @@ test("Course navigation preserves the Course ID and marks the active destination
 
   assert.deepEqual(
     COURSE_NAVIGATION_DESTINATIONS.map((destination) => destination.label),
-    ["Overview", "Chat", "Practice", "Review", "Materials"],
+    ["Chat", "Materials", "Practice", "Review"],
   );
   assert.equal(
     courseDestinationPath("crs/bio", "/materials"),
     "/classes/crs%2Fbio/materials",
+  );
+  assert.equal(
+    courseDestinationIsActive(
+      "/classes/crs%2Fbio/chat/session-1",
+      "crs/bio",
+      "",
+    ),
+    true,
   );
   assert.equal(
     courseDestinationIsActive(
@@ -76,11 +84,22 @@ test("CourseShell contains the mobile navigation and focus-visibility contract",
   );
 
   assert.match(source, /overflow-x-auto/);
-  assert.match(source, /shrink-0 whitespace-nowrap/);
+  assert.match(source, /min-h-11 shrink-0 items-center whitespace-nowrap/);
   assert.match(source, /aria-current=\{active \? "page" : undefined\}/);
   assert.match(source, /scrollIntoView/);
   assert.match(source, /onFocus=\{revealActiveDestination\}/);
   assert.match(source, /overflow-x-hidden/);
+});
+
+test("the mobile app shell renders the learner-facing TEEECHR wordmark", () => {
+  const source = readFileSync(
+    path.join(process.cwd(), "components/layout/AppShell.tsx"),
+    "utf8",
+  );
+
+  assert.match(source, /const PRODUCT_NAME = "TEEECHR"/);
+  assert.match(source, /\{PRODUCT_NAME\}/);
+  assert.doesNotMatch(source, /banner\.png/);
 });
 
 test("General Study keeps its label without the Course-only selector bar", () => {
@@ -131,7 +150,31 @@ test("Course Chat hides internal managed knowledge references", async () => {
   assert.deepEqual(visibleChatKnowledgeReferences(references, false), references);
 });
 
-test("readiness presentation blocks zero, processing, and failed source states", async () => {
+test("Course answers expose their immutable general or grounded authority", async () => {
+  const { courseAnswerMode } = await import("../lib/course-chat");
+  const event = (course_grounding: string) => ({
+    type: "content" as const,
+    source: "course_grounding",
+    stage: "",
+    content: "Answer",
+    metadata: { course_grounding },
+    timestamp: 1,
+  });
+
+  assert.equal(courseAnswerMode([event("general_knowledge")]), "general_knowledge");
+  assert.equal(courseAnswerMode([event("supported")]), "class_materials");
+  assert.equal(courseAnswerMode([event("unsupported")]), null);
+
+  const messages = readFileSync(
+    path.join(process.cwd(), "components/chat/home/ChatMessages.tsx"),
+    "utf8",
+  );
+  assert.match(messages, /General knowledge/);
+  assert.match(messages, /Not based on Class materials/);
+  assert.match(messages, /Based on Class materials/);
+});
+
+test("readiness presentation keeps active Class Chat available with truthful material mode", async () => {
   const { courseChatReadinessPresentation } = await import("../lib/course-chat");
 
   assert.deepEqual(
@@ -141,27 +184,37 @@ test("readiness presentation blocks zero, processing, and failed source states",
       ready_sources: [],
     }),
     {
-      allowChat: false,
-      title: "This Course does not have any materials yet.",
-      body: "Add a Course material before asking grounded questions.",
+      allowChat: true,
+      title: "No Class materials yet.",
+      body: "Answers use general knowledge and are not based on Class materials.",
       action: "Add materials",
     },
   );
-  assert.equal(
+  assert.deepEqual(
     courseChatReadinessPresentation({
       state: "processing",
       counts: { ready: 0, processing: 1, failed: 0, unavailable: 1, total: 1 },
       ready_sources: [],
-    }).allowChat,
-    false,
+    }),
+    {
+      allowChat: true,
+      title: "Class materials are processing.",
+      body: "Answers use general knowledge and are not based on Class materials.",
+      action: "View materials",
+    },
   );
-  assert.equal(
+  assert.deepEqual(
     courseChatReadinessPresentation({
       state: "failed",
       counts: { ready: 0, processing: 0, failed: 2, unavailable: 2, total: 2 },
       ready_sources: [],
-    }).allowChat,
-    false,
+    }),
+    {
+      allowChat: true,
+      title: "Class materials need review.",
+      body: "Answers use general knowledge and are not based on Class materials.",
+      action: "Review materials",
+    },
   );
 });
 
@@ -177,8 +230,42 @@ test("mixed readiness allows Chat and discloses unavailable materials", async ()
   assert.equal(presentation.allowChat, true);
   assert.equal(
     presentation.body,
-    "This answer uses 2 ready Course materials. Two other materials are not currently available.",
+    "Answers use 2 ready Class materials. Two other materials are not currently available.",
   );
+});
+
+test("Class Chat source keeps active composers available and gives them Class context", () => {
+  const courseChat = readFileSync(
+    path.join(process.cwd(), "components/courses/CourseChatRoute.tsx"),
+    "utf8",
+  );
+  const chatPage = readFileSync(
+    path.join(
+      process.cwd(),
+      "app/(workspace)/classes/[courseId]/page.tsx",
+    ),
+    "utf8",
+  );
+  const compatibilityPage = readFileSync(
+    path.join(
+      process.cwd(),
+      "app/(workspace)/classes/[courseId]/chat/page.tsx",
+    ),
+    "utf8",
+  );
+  const unifiedChat = readFileSync(
+    path.join(process.cwd(), "components/chat/home/UnifiedChatPage.tsx"),
+    "utf8",
+  );
+
+  assert.match(courseChat, /role="status"/);
+  assert.match(courseChat, /aria-live="polite"/);
+  assert.match(courseChat, /courseTitle=\{course.title\}/);
+  assert.doesNotMatch(courseChat, /!presentation\.allowChat/);
+  assert.match(chatPage, /<CourseChatRoute/);
+  assert.match(compatibilityPage, /redirect\(/);
+  assert.match(unifiedChat, /Ask a question about \$\{courseTitle\}/);
+  assert.match(unifiedChat, /inputPlaceholder=\{courseInputPlaceholder\}/);
 });
 
 test("persisted Course citations survive reload and become unavailable safely", async () => {

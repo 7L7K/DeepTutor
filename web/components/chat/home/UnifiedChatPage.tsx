@@ -310,6 +310,7 @@ export interface UnifiedChatPageProps {
   routeCourseId?: string
   routeSessionId?: string | null
   courseRouteBase?: string
+  courseTitle?: string
   courseReadiness?: import('@/lib/course-api').CourseChatReadiness | null
   hideCourseBar?: boolean
   hideCourseScope?: boolean
@@ -322,6 +323,7 @@ export default function UnifiedChatPage({
   routeCourseId,
   routeSessionId,
   courseRouteBase,
+  courseTitle,
   courseReadiness = null,
   hideCourseBar = false,
   hideCourseScope = false,
@@ -378,6 +380,8 @@ export default function UnifiedChatPage({
       (activeCourse?.workspace_kind === 'academic_course' ? activeCourse.id : null)
   )
   const courseMode = Boolean(effectiveCourseId)
+  const courseInputPlaceholder =
+    courseMode && courseTitle ? `Ask a question about ${courseTitle}` : undefined
   const courseSessionReadOnly = sessionCourseView.readOnly
   const actionCourse = useMemo(
     () => courses.find(course => course.id === effectiveCourseId) ?? null,
@@ -2310,6 +2314,7 @@ export default function UnifiedChatPage({
                 onSelectCapability={handleSelectCapability}
                 onCancelStreaming={cancelStreamingTurn}
                 prefillInputRef={prefillInputRef}
+                inputPlaceholder={courseInputPlaceholder}
                 courseMode={courseMode}
                 hideCourseScope={hideCourseScope}
               />

@@ -15,6 +15,8 @@ import { useTranslation } from "react-i18next";
 import { useDevice } from "@/hooks/useDevice";
 import type { ReactNode } from "react";
 
+const PRODUCT_NAME = "TEEECHR";
+
 /* Lets the sidebar dismiss the drawer after a nav click without every layout
    threading a callback down through WorkspaceSidebar/UtilitySidebar. Null on
    desktop and anywhere outside AppShell, so `drawer?.close()` is a no-op there
@@ -113,18 +115,14 @@ export default function AppShell({ sidebar, children }: AppShellProps) {
             <Link href="/" className="flex items-center gap-1.5">
               <Image
                 src="/logo.png"
-                alt="TEEECHR"
+                alt=""
                 width={20}
                 height={20}
                 className="h-5 w-5"
               />
-              <Image
-                src="/banner.png"
-                alt="TEEECHR"
-                width={897}
-                height={236}
-                className="h-[18px] w-auto"
-              />
+              <span className="text-[14px] font-semibold tracking-[0.16em] text-[var(--foreground)]">
+                {PRODUCT_NAME}
+              </span>
             </Link>
           </div>
 

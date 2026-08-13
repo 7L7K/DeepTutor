@@ -51,6 +51,7 @@ import { extractVisualizeResult } from "@/lib/visualize-types";
 import type { StreamEvent } from "@/lib/unified-ws";
 import type { CourseChatReadiness } from "@/lib/course-api";
 import {
+  courseAnswerMode,
   courseCitationIsAvailable,
   extractCourseCitations,
   visibleChatKnowledgeReferences,
@@ -162,6 +163,29 @@ function CourseCitationList({
         })}
       </ul>
     </section>
+  );
+}
+
+function CourseAnswerModeLabel({
+  events,
+}: {
+  events: StreamEvent[] | undefined;
+}) {
+  const mode = courseAnswerMode(events);
+  if (!mode) return null;
+
+  const grounded = mode === "class_materials";
+  return (
+    <p
+      data-testid={`course-answer-mode-${mode}`}
+      className="mt-2 flex items-center gap-1.5 text-xs text-[var(--muted-foreground)]"
+    >
+      <BookOpen aria-hidden="true" className="h-3.5 w-3.5 shrink-0" />
+      <span className="font-medium text-[var(--foreground)]">
+        {grounded ? "Based on Class materials" : "General knowledge"}
+      </span>
+      {grounded ? null : <span>· Not based on Class materials</span>}
+    </p>
   );
 }
 
@@ -1529,6 +1553,9 @@ export const ChatMessageList = memo(function ChatMessageList({
                 }
               />
             </InlineFileCardProvider>
+            {courseReadiness !== null ? (
+              <CourseAnswerModeLabel events={msg.events} />
+            ) : null}
             <CourseCitationList
               events={msg.events}
               readiness={courseReadiness}

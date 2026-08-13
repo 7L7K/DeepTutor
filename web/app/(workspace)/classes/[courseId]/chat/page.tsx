@@ -1,10 +1,10 @@
-import CourseChatRoute from "@/components/courses/CourseChatRoute";
-import CourseScopedWorkspace from "@/components/courses/CourseScopedWorkspace";
+import { redirect } from "next/navigation";
 
-export default function CourseChatPage() {
-  return (
-    <CourseScopedWorkspace>
-      <CourseChatRoute />
-    </CourseScopedWorkspace>
-  );
+export default async function CourseChatCompatibilityPage({
+  params,
+}: {
+  params: Promise<{ courseId: string }>;
+}) {
+  const { courseId } = await params;
+  redirect(`/classes/${encodeURIComponent(courseId)}`);
 }

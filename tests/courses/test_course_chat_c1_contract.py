@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import asyncio
 from types import SimpleNamespace
 
 import pytest
@@ -67,7 +66,10 @@ def _readiness(sources: list[CourseSource]):
 
 def _course_context() -> dict:
     return {
+        "schema_version": 2,
+        "answer_mode": "class_materials",
         "course_id": "crs_biology",
+        "course_title": "Biology 101",
         "course_revision": 3,
         "course_write_epoch": 2,
         "source_ids": ["src_bio"],
@@ -139,47 +141,78 @@ def test_course_chat_readiness_mixed_state_uses_only_current_ready_sources() -> 
     }
 
 
-@pytest.mark.asyncio
-async def test_zero_ready_sources_prevent_session_creation_and_provider_call(
+@pytest.mark.parametrize(
+    ("sources", "expected_state"),
+    [
+        ([], "no_materials"),
+        ([_source("src_processing", state="processing")], "processing"),
+        ([_source("src_failed", state="failed")], "failed"),
+    ],
+)
+def test_active_course_chat_uses_general_knowledge_without_ready_sources(
     monkeypatch: pytest.MonkeyPatch,
-    tmp_path,
+    sources: list[CourseSource],
+    expected_state: str,
 ) -> None:
     service = SimpleNamespace(
         get=lambda _course_id: _course(),
-        list_sources=lambda _course_id: [],
+        list_sources=lambda _course_id: sources,
     )
     monkeypatch.setattr("deeptutor.courses.service.get_current_course_service", lambda: service)
-    monkeypatch.setattr(
-        "deeptutor.multi_user.tool_access.allowed_optional_tools", lambda: None
+
+    payload = resolve_course_turn_payload(
+        "crs_biology", {"content": "What produces ATP?", "knowledge_bases": []}
     )
-    provider_calls = 0
 
-    async def provider_probe(_execution) -> None:
-        nonlocal provider_calls
-        provider_calls += 1
+    assert payload["knowledge_bases"] == []
+    assert payload["allowed_builtin_tools"] == []
+    assert payload["tools"] == []
+    for field in (
+        "attachments",
+        "notebook_references",
+        "history_references",
+        "question_notebook_references",
+        "book_references",
+        "memory_references",
+    ):
+        assert payload[field] == []
+    assert payload["course_context"] == {
+        "schema_version": 2,
+        "answer_mode": "general_knowledge",
+        "course_id": "crs_biology",
+        "course_title": "Biology 101",
+        "course_revision": 3,
+        "course_write_epoch": 2,
+        "source_ids": [],
+        "source_revisions": {},
+        "source_fingerprints": {},
+        "source_titles": {},
+    }
+    assert payload["course_readiness"]["state"] == expected_state
 
-    store = SQLiteSessionStore(tmp_path / "chat_history.db")
-    runtime = TurnRuntimeManager(store)
-    monkeypatch.setattr(runtime, "_run_turn", provider_probe)
 
-    error: Exception | None = None
-    try:
-        await runtime.start_turn(
-            {
-                "course_id": "crs_biology",
-                "content": "What produces ATP?",
-                "tools": [],
-                "knowledge_bases": [],
-            }
+@pytest.mark.parametrize(
+    "sources",
+    [
+        [],
+        [_source("src_processing", state="processing")],
+        [_source("src_failed", state="failed")],
+    ],
+)
+def test_mastery_path_stays_blocked_without_ready_course_sources(
+    monkeypatch: pytest.MonkeyPatch,
+    sources: list[CourseSource],
+) -> None:
+    service = SimpleNamespace(
+        get=lambda _course_id: _course(),
+        list_sources=lambda _course_id: sources,
+    )
+    monkeypatch.setattr("deeptutor.courses.service.get_current_course_service", lambda: service)
+
+    with pytest.raises(CourseUnavailableError):
+        resolve_course_turn_payload(
+            "crs_biology", {"capability": "mastery_path", "knowledge_bases": []}
         )
-    except Exception as exc:  # expected C1 preflight rejection
-        error = exc
-    await asyncio.sleep(0)
-
-    assert isinstance(error, CourseUnavailableError)
-    assert "materials" in str(error).lower()
-    assert provider_calls == 0
-    assert await store.list_sessions() == []
 
 
 def test_mixed_course_turn_resolves_only_biology_ready_sources(monkeypatch) -> None:
@@ -281,7 +314,82 @@ def test_foreign_course_source_cannot_become_a_citation() -> None:
     assert citations == []
 
 
-def test_unsupported_course_answer_is_replaced_with_bounded_abstention() -> None:
+def test_general_knowledge_course_answer_preserves_provider_content_without_citations() -> None:
+    from deeptutor.courses.chat_contract import finalize_course_chat_events
+
+    provider_content = "ATP stores and transfers energy for many cellular processes."
+    finalized = finalize_course_chat_events(
+        {
+            "schema_version": 2,
+            "answer_mode": "general_knowledge",
+            "course_id": "crs_biology",
+            "course_title": "Biology 101",
+            "course_revision": 3,
+            "course_write_epoch": 2,
+            "source_ids": [],
+            "source_revisions": {},
+            "source_fingerprints": {},
+            "source_titles": {},
+        },
+        [
+            StreamEvent(
+                type=StreamEventType.SOURCES,
+                source="provider",
+                metadata={"sources": [{"source_id": "not-authorized"}]},
+            ),
+            StreamEvent(
+                type=StreamEventType.CONTENT,
+                source="provider",
+                content=provider_content,
+                metadata={
+                    "call_kind": "llm_final_response",
+                    "citations": [{"pretend": "citation"}],
+                    "course_citations": [{"pretend": "citation"}],
+                },
+            ),
+            StreamEvent(type=StreamEventType.DONE, source="provider"),
+        ],
+    )
+
+    content = [event for event in finalized if event.type == StreamEventType.CONTENT]
+    assert [event.content for event in content] == [provider_content]
+    assert content[0].metadata["course_grounding"] == "general_knowledge"
+    assert "citations" not in content[0].metadata
+    assert "course_citations" not in content[0].metadata
+    assert all(event.type != StreamEventType.SOURCES for event in finalized)
+    assert "course_citations" not in repr(finalized)
+
+
+def test_general_knowledge_provider_error_never_publishes_partial_content() -> None:
+    from deeptutor.courses.chat_contract import finalize_course_chat_events
+
+    finalized = finalize_course_chat_events(
+        {
+            "schema_version": 2,
+            "answer_mode": "general_knowledge",
+            "course_id": "crs_biology",
+            "source_ids": [],
+        },
+        [
+            StreamEvent(
+                type=StreamEventType.CONTENT,
+                source="provider",
+                content="Partial answer that must not publish",
+            ),
+            StreamEvent(
+                type=StreamEventType.ERROR,
+                source="provider",
+                content="Provider failed",
+                metadata={"turn_terminal": True},
+            ),
+        ],
+    )
+
+    assert [event.type for event in finalized] == [StreamEventType.ERROR]
+    assert "Partial answer" not in repr(finalized)
+
+
+def test_grounded_course_answer_without_citations_is_replaced_with_bounded_abstention() -> None:
     from deeptutor.courses.chat_contract import (
         COURSE_CHAT_UNSUPPORTED_MESSAGE,
         finalize_course_chat_events,
@@ -304,6 +412,72 @@ def test_unsupported_course_answer_is_replaced_with_bounded_abstention() -> None
     assert [event.content for event in content] == [COURSE_CHAT_UNSUPPORTED_MESSAGE]
     assert content[0].metadata["course_grounding"] == "unsupported"
     assert "Unsupported general-knowledge answer" not in repr(finalized)
+
+
+@pytest.mark.asyncio
+async def test_general_knowledge_regeneration_preserves_its_immutable_snapshot(
+    tmp_path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    store = SQLiteSessionStore(tmp_path / "chat_history.db")
+    session = await store.create_session(course_id="crs_biology")
+    await store.add_message(
+        session["id"],
+        "user",
+        "What produces ATP?",
+        metadata={
+            "request_snapshot": {
+                "courseId": "crs_biology",
+                "courseTitle": "Biology 101",
+                "courseRevision": 3,
+                "courseWriteEpoch": 2,
+                "courseAnswerMode": "general_knowledge",
+                "courseContextVersion": 2,
+                "sourceIds": [],
+                "sourceRevisions": {},
+                "sourceFingerprints": {},
+                "sourceTitles": {},
+            }
+        },
+    )
+    runtime = TurnRuntimeManager(store)
+    captured: dict[str, object] = {}
+
+    async def record_start_turn(payload, **kwargs):
+        captured["payload"] = payload
+        captured["preserved_course_context"] = kwargs["preserved_course_context"]
+        return session, {"id": "trn_regenerated"}
+
+    runtime.start_turn = record_start_turn  # type: ignore[method-assign]
+    await runtime.regenerate_last_turn(session["id"])
+
+    expected_context = {
+        "schema_version": 2,
+        "answer_mode": "general_knowledge",
+        "course_id": "crs_biology",
+        "course_title": "Biology 101",
+        "course_revision": 3,
+        "course_write_epoch": 2,
+        "source_ids": [],
+        "source_revisions": {},
+        "source_fingerprints": {},
+        "source_titles": {},
+    }
+    assert captured["preserved_course_context"] == expected_context
+
+    service = SimpleNamespace(
+        get=lambda _course_id: _course(),
+        list_sources=lambda _course_id: [_source("src_added_later")],
+    )
+    monkeypatch.setattr("deeptutor.courses.service.get_current_course_service", lambda: service)
+    replay = resolve_course_turn_payload(
+        "crs_biology",
+        {"content": "What produces ATP?", "knowledge_bases": []},
+        preserved_context=expected_context,
+    )
+    assert replay["course_context"]["answer_mode"] == "general_knowledge"
+    assert replay["knowledge_bases"] == []
+    assert replay["allowed_builtin_tools"] == []
 
 
 @pytest.mark.asyncio

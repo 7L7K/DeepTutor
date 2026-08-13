@@ -34,6 +34,9 @@ interface C1BrowserState {
   psychologySessionId: string;
   psychologySessionUrl: string;
   providerUnavailableSessionId?: string;
+  generalSessionId?: string;
+  processingGeneralSessionId?: string;
+  failedGeneralSessionId?: string;
   classesLandingCourseListCalls: number;
   totalCourseListCalls: number;
 }
@@ -78,6 +81,27 @@ async function tabTo(page: Page, locator: Locator, attempts = 100) {
   throw new Error(`Keyboard focus did not reach ${await locator.getAttribute("data-testid")}`);
 }
 
+async function sendGeneralKnowledgeTurn(page: Page, question: string) {
+  const composer = page.locator("textarea").last();
+  await composer.fill(question);
+  await composer.press("Enter");
+  await expect(
+    page.getByText(
+      "Deterministic course answer: no authorized Course source was found.",
+      { exact: true },
+    ),
+  ).toBeVisible({ timeout: 30_000 });
+  await expect(
+    page.getByTestId("course-answer-mode-general_knowledge"),
+  ).toContainText("Not based on Class materials");
+  await expect(page.getByTestId("course-citations")).toHaveCount(0);
+  const sessionId = decodeURIComponent(
+    new URL(page.url()).pathname.split("/").at(-1) || "",
+  );
+  expect(sessionId).not.toBe("");
+  return sessionId;
+}
+
 test("Alice opens exact Course Chat, persists its citation, and reopens it", async ({
   page,
 }) => {
@@ -110,19 +134,17 @@ test("Alice opens exact Course Chat, persists its citation, and reopens it", asy
 
   await page.goto(`/classes/${encodeURIComponent(proof.alice_course_id)}`);
   await expect(page.getByRole("heading", { name: "Biology 101" })).toBeVisible();
-  await expect(page.getByText("Term: Fall 2026", { exact: true })).toBeVisible();
+  await expect(page.getByText("Fall 2026", { exact: true })).toBeVisible();
   await page.screenshot({
-    path: join(evidenceDir!, "screenshots", "course-overview-desktop.png"),
+    path: join(evidenceDir!, "screenshots", "course-chat-home-desktop.png"),
     fullPage: true,
   });
 
-  const chatLink = page.getByTestId("course-chat-link");
+  const chatLink = page.getByTestId("course-nav-chat");
   await tabTo(page, chatLink);
   await expect(chatLink).toBeFocused();
   await page.keyboard.press("Enter");
-  await expect(page).toHaveURL(
-    new RegExp(`/classes/${proof.alice_course_id}/chat$`),
-  );
+  await expect(page).toHaveURL(new RegExp(`/classes/${proof.alice_course_id}$`));
   await expect(page.getByTestId("course-chat-route")).toBeVisible();
   await expect(page.getByRole("heading", { name: "Biology 101" })).toBeVisible();
   await expect(page.getByText("Fall 2026", { exact: true })).toBeVisible();
@@ -176,7 +198,7 @@ test("Alice opens exact Course Chat, persists its citation, and reopens it", asy
     page.getByTestId(`course-citation-${proof.alice_ready_source_id}`),
   ).toBeVisible();
 
-  await page.getByRole("link", { name: "Back to Course" }).click();
+  await page.getByTestId("course-nav-chat").click();
   await expect(page).toHaveURL(
     new RegExp(`/classes/${proof.alice_course_id}$`),
   );
@@ -370,10 +392,7 @@ test("Bob cannot open Alice Course or Course session URLs", async ({ page }) => 
   await signIn(page, "c1_bob", bobPassword!);
 
   await page.goto(`/classes/${encodeURIComponent(proof.alice_course_id)}/chat`);
-  const denial = page.getByText(
-    "Course Chat was not found or is not available to this account.",
-    { exact: true },
-  );
+  const denial = page.getByText("Course resource not found", { exact: true });
   await expect(denial).toBeVisible();
   await expect(page.getByText(proof.alice_ready_source_title)).toHaveCount(0);
 
@@ -396,7 +415,7 @@ test("Bob cannot open Alice Course or Course session URLs", async ({ page }) => 
   await expect(page.getByRole("heading", { name: "Bob Private Chemistry" })).toBeVisible();
 });
 
-test("zero-ready and zero-Course states stay truthful without a Chat session", async ({
+test("zero-ready, processing, and failed Classes keep Chat available truthfully", async ({
   page,
 }) => {
   test.skip(
@@ -405,20 +424,22 @@ test("zero-ready and zero-Course states stay truthful without a Chat session", a
   );
   const proof = fixture();
   await signIn(page, "c1_alice", alicePassword!);
-  await page.goto(
-    `/classes/${encodeURIComponent(proof.alice_no_ready_course_id)}/chat`,
+  await page.goto(`/classes/${encodeURIComponent(proof.alice_no_ready_course_id)}`);
+  await expect(page.getByTestId("course-chat-status")).toContainText(
+    "Answers use general knowledge and are not based on Class materials.",
   );
-  await expect(
-    page.getByRole("heading", {
-      name: "This Course does not have any materials yet.",
-    }),
-  ).toBeVisible();
   await expect(page.getByRole("link", { name: "Add materials" })).toBeVisible();
-  await expect(page.getByTestId("course-chat-route")).toHaveCount(0);
+  await expect(page.getByTestId("course-chat-route")).toBeVisible();
+  await expect(page.locator("textarea").last()).toBeVisible();
   await page.screenshot({
     path: join(evidenceDir!, "screenshots", "course-chat-zero-ready.png"),
     fullPage: true,
   });
+
+  const generalSessionId = await sendGeneralKnowledgeTurn(
+    page,
+    "What is cellular energy?",
+  );
 
   const processingUpload = await page.evaluate(async (courseId) => {
     const body = new FormData();
@@ -443,31 +464,57 @@ test("zero-ready and zero-Course states stay truthful without a Chat session", a
   expect(processingUpload.status).toBe(202);
   expect(processingUpload.body.state).toBe("processing");
 
-  await page.goto(
-    `/classes/${encodeURIComponent(proof.processing_only_course_id)}/chat`,
-  );
+  await page.goto(`/classes/${encodeURIComponent(proof.processing_only_course_id)}`);
   await expect(
-    page.getByRole("heading", { name: "Course materials are still processing." }),
+    page.getByText("Class materials are processing.", { exact: true }),
   ).toBeVisible();
-  await expect(page.getByTestId("course-chat-route")).toHaveCount(0);
+  await expect(page.getByTestId("course-chat-status")).toContainText(
+    "Answers use general knowledge and are not based on Class materials.",
+  );
+  await expect(page.getByRole("link", { name: "View materials" })).toBeVisible();
+  await expect(page.getByTestId("course-chat-route")).toBeVisible();
+  await expect(page.locator("textarea").last()).toBeVisible();
+  const processingGeneralSessionId = await sendGeneralKnowledgeTurn(
+    page,
+    "What does cellular respiration do?",
+  );
   await page.screenshot({
     path: join(evidenceDir!, "screenshots", "course-chat-processing-only.png"),
     fullPage: true,
   });
 
-  await page.goto(
-    `/classes/${encodeURIComponent(proof.failed_only_course_id)}/chat`,
-  );
+  await page.goto(`/classes/${encodeURIComponent(proof.failed_only_course_id)}`);
   await expect(
-    page.getByRole("heading", {
-      name: "Course materials could not be prepared for Chat.",
-    }),
+    page.getByText("Class materials need review.", { exact: true }),
   ).toBeVisible();
-  await expect(page.getByTestId("course-chat-route")).toHaveCount(0);
+  await expect(page.getByTestId("course-chat-status")).toContainText(
+    "Answers use general knowledge and are not based on Class materials.",
+  );
+  await expect(page.getByRole("link", { name: "Review materials" })).toBeVisible();
+  await expect(page.getByTestId("course-chat-route")).toBeVisible();
+  await expect(page.locator("textarea").last()).toBeVisible();
+  const failedGeneralSessionId = await sendGeneralKnowledgeTurn(
+    page,
+    "What is homeostasis?",
+  );
   await page.screenshot({
     path: join(evidenceDir!, "screenshots", "course-chat-failed-only.png"),
     fullPage: true,
   });
+
+  const existingBrowserState = JSON.parse(
+    readFileSync(browserStateFile!, "utf8"),
+  ) as C1BrowserState;
+  writeFileSync(
+    browserStateFile!,
+    JSON.stringify({
+      ...existingBrowserState,
+      generalSessionId,
+      processingGeneralSessionId,
+      failedGeneralSessionId,
+    }),
+    { encoding: "utf8", mode: 0o600 },
+  );
 
   await signOut(page);
   await signIn(page, "c1_carol", carolPassword!);

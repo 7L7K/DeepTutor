@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { BookOpen, MessageSquare } from "lucide-react";
+import { BookOpen } from "lucide-react";
 import { useParams } from "next/navigation";
 import { useEffect, useState } from "react";
 import UnifiedChatPage from "@/components/chat/home/UnifiedChatPage";
@@ -106,35 +106,22 @@ export default function CourseChatRoute() {
     );
   }
 
-  if (course.state !== "active" || !presentation.allowChat) {
+  if (course.state !== "active") {
     return (
-      <main className="px-5 py-7 sm:px-8">
-        <div className="mx-auto max-w-3xl">
-          <section className="rounded-2xl border border-[var(--border)] bg-[var(--card)] p-6">
-            <div className="flex items-start gap-3">
-              <MessageSquare className="mt-0.5 h-5 w-5 text-[var(--muted-foreground)]" />
-              <div>
-                <h2 className="text-xl font-semibold text-[var(--foreground)]">
-                  {course.state === "active"
-                    ? presentation.title
-                    : "This archived Course is read-only."}
-                </h2>
-                <p className="mt-2 text-sm leading-6 text-[var(--muted-foreground)]">
-                  {course.state === "active"
-                    ? presentation.body
-                    : "Restore the Course from Classes before starting a grounded Chat."}
-                </p>
-                {course.state === "active" && presentation.action ? (
-                  <Link
-                    href={materialsPath}
-                    className="mt-5 inline-flex items-center gap-2 rounded-xl bg-[var(--primary)] px-4 py-2 text-sm font-medium text-[var(--primary-foreground)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ring)]"
-                  >
-                    <BookOpen size={16} /> {presentation.action}
-                  </Link>
-                ) : null}
-              </div>
-            </div>
-          </section>
+      <main className="px-5 py-4 sm:px-8">
+        <div
+          role="status"
+          aria-live="polite"
+          aria-atomic="true"
+          className="mx-auto flex max-w-6xl items-start gap-3 border-b border-[var(--border)] px-1 py-3 text-sm"
+        >
+          <BookOpen aria-hidden="true" className="mt-0.5 h-4 w-4 shrink-0 text-[var(--muted-foreground)]" />
+          <div>
+            <p className="font-medium text-[var(--foreground)]">This archived Class is read-only.</p>
+            <p className="mt-0.5 text-[var(--muted-foreground)]">
+              Restore the Class from Classes before starting a chat.
+            </p>
+          </div>
         </div>
       </main>
     );
@@ -152,22 +139,36 @@ export default function CourseChatRoute() {
 
   return (
     <main className="flex min-h-[520px] min-h-0 flex-1 flex-col" data-testid="course-chat-route">
-      {readiness.state === "partial" ? (
-        <div className="shrink-0 border-b border-[var(--border)] bg-[var(--card)] px-5 py-2 text-center text-xs text-[var(--muted-foreground)] sm:px-8">
+      <div
+        role="status"
+        aria-live="polite"
+        aria-atomic="true"
+        data-testid="course-chat-status"
+        className="shrink-0 border-b border-[var(--border)] bg-[var(--card)] px-5 py-2.5 sm:px-8"
+      >
+        <div className="mx-auto flex w-full max-w-[960px] items-center gap-2.5 text-sm">
+          <BookOpen aria-hidden="true" className="h-4 w-4 shrink-0 text-[var(--muted-foreground)]" />
+          <p className="min-w-0 flex-1 text-[var(--muted-foreground)]">
+            <span className="font-medium text-[var(--foreground)]">{presentation.title}</span>{" "}
+            {presentation.body}
+          </p>
+          {presentation.action ? (
           <Link
             href={materialsPath}
-            className="rounded-md px-2 py-1 hover:text-[var(--foreground)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ring)]"
+            className="inline-flex min-h-11 shrink-0 items-center rounded-md px-2.5 text-sm font-medium text-[var(--foreground)] hover:bg-[var(--muted)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ring)]"
           >
-            {presentation.body}
+            {presentation.action}
           </Link>
+          ) : null}
         </div>
-      ) : null}
+      </div>
       <div className="min-h-0 flex-1">
         <UnifiedChatPage
           routeCourseId={course.id}
           routeSessionId={sessionId}
           courseRouteBase={courseChatPath(course.id)}
           courseReadiness={readiness}
+          courseTitle={course.title}
           hideCourseBar
         />
       </div>

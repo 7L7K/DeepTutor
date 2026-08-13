@@ -202,7 +202,11 @@ def _request_snapshot_metadata(
         snapshot.update(
             {
                 "courseId": course_context.get("course_id"),
+                "courseTitle": course_context.get("course_title"),
                 "courseRevision": course_context.get("course_revision"),
+                "courseWriteEpoch": course_context.get("course_write_epoch"),
+                "courseAnswerMode": course_context.get("answer_mode"),
+                "courseContextVersion": course_context.get("schema_version"),
                 "sourceIds": list(course_context.get("source_ids") or []),
                 "sourceRevisions": dict(course_context.get("source_revisions") or {}),
                 "sourceFingerprints": dict(course_context.get("source_fingerprints") or {}),
@@ -1046,14 +1050,16 @@ class TurnRuntimeManager:
         if course_id:
             preserved_course_context = {
                 "course_id": str(snapshot.get("courseId") or ""),
+                "course_title": str(snapshot.get("courseTitle") or ""),
                 "course_revision": int(snapshot.get("courseRevision") or 0),
+                "course_write_epoch": int(snapshot.get("courseWriteEpoch") or 0),
+                "answer_mode": str(snapshot.get("courseAnswerMode") or ""),
+                "schema_version": int(snapshot.get("courseContextVersion") or 0),
                 "source_ids": list(snapshot.get("sourceIds") or []),
                 "source_revisions": dict(snapshot.get("sourceRevisions") or {}),
                 "source_fingerprints": dict(snapshot.get("sourceFingerprints") or {}),
+                "source_titles": dict(snapshot.get("sourceTitles") or {}),
             }
-            source_titles = dict(snapshot.get("sourceTitles") or {})
-            if source_titles:
-                preserved_course_context["source_titles"] = source_titles
         return await self.start_turn(
             payload,
             preserved_course_context=preserved_course_context,

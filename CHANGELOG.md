@@ -26,6 +26,12 @@
 
 ### Fixed
 
+- Made Chat the primary Class workspace while preserving Materials, Practice,
+  and Review as secondary destinations. Active Classes can now answer without
+  ready materials through an explicitly labeled, citation-free general-
+  knowledge mode; ready materials continue through the existing strict
+  grounded-citation path, and each answer retains its original mode across
+  reload and regeneration.
 - Generated the bounded exact-text Practice shard during normal Course source
   ingestion, so production-ready RAG sources are also usable by paid grounded
   Practice generation instead of relying on a test-only provider artifact.
