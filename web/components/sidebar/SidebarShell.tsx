@@ -383,19 +383,17 @@ export function SidebarShell({
         <Link href="/" className="group flex items-center gap-1.5">
           <Image
             src="/logo.png"
-            alt="TEEECHR"
+            alt=""
             width={22}
             height={22}
             className="h-[22px] w-[22px] transition-transform duration-200 group-hover:scale-105"
           />
-          <Image
-            src="/banner.png"
-            alt="TEEECHR"
-            width={897}
-            height={236}
-            priority
-            className="h-[22px] w-auto transition-transform duration-200 group-hover:scale-105"
-          />
+          <span
+            aria-hidden="true"
+            className="text-[15px] font-semibold tracking-[0.16em] text-[var(--foreground)] transition-transform duration-200 group-hover:scale-105"
+          >
+            TEEECHR
+          </span>
         </Link>
         {/* The rail is a desktop affordance; in the drawer the scrim and the
             top-bar toggle already own "make this go away". */}

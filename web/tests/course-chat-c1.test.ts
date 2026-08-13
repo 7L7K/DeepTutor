@@ -118,6 +118,22 @@ test("learner shells do not expose unqualified Progress or Course scope copy", (
   assert.doesNotMatch(courseChat, /hideCourseScope/);
 });
 
+test("opening a Course enters Chat and the expanded sidebar uses TEEECHR branding", () => {
+  const coursePage = readFileSync(
+    path.join(process.cwd(), "app/(workspace)/classes/[courseId]/page.tsx"),
+    "utf8",
+  );
+  const sidebar = readFileSync(
+    path.join(process.cwd(), "components/sidebar/SidebarShell.tsx"),
+    "utf8",
+  );
+
+  assert.match(coursePage, /CourseChatRoute/);
+  assert.doesNotMatch(coursePage, /CourseOverview/);
+  assert.match(sidebar, />\s*TEEECHR\s*</);
+  assert.doesNotMatch(sidebar, /src="\/banner\.png"/);
+});
+
 test("Course Chat hides internal managed knowledge references", async () => {
   const { visibleChatKnowledgeReferences } = await import("../lib/course-chat");
   const references = [
@@ -131,7 +147,7 @@ test("Course Chat hides internal managed knowledge references", async () => {
   assert.deepEqual(visibleChatKnowledgeReferences(references, false), references);
 });
 
-test("readiness presentation blocks zero, processing, and failed source states", async () => {
+test("readiness presentation keeps Chat usable without ready materials", async () => {
   const { courseChatReadinessPresentation } = await import("../lib/course-chat");
 
   assert.deepEqual(
@@ -141,9 +157,9 @@ test("readiness presentation blocks zero, processing, and failed source states",
       ready_sources: [],
     }),
     {
-      allowChat: false,
-      title: "This Course does not have any materials yet.",
-      body: "Add a Course material before asking grounded questions.",
+      allowChat: true,
+      title: "Course Chat is ready for general questions.",
+      body: "This Course has no materials yet. Answers will be general knowledge, not based on Course materials.",
       action: "Add materials",
     },
   );
@@ -153,7 +169,7 @@ test("readiness presentation blocks zero, processing, and failed source states",
       counts: { ready: 0, processing: 1, failed: 0, unavailable: 1, total: 1 },
       ready_sources: [],
     }).allowChat,
-    false,
+    true,
   );
   assert.equal(
     courseChatReadinessPresentation({
@@ -161,7 +177,7 @@ test("readiness presentation blocks zero, processing, and failed source states",
       counts: { ready: 0, processing: 0, failed: 2, unavailable: 2, total: 2 },
       ready_sources: [],
     }).allowChat,
-    false,
+    true,
   );
 });
 

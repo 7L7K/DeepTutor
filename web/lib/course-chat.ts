@@ -95,25 +95,25 @@ export function courseChatReadinessPresentation(readiness: CourseChatReadiness):
   const unavailable = readiness.counts.unavailable;
   if (readiness.state === "no_materials") {
     return {
-      allowChat: false,
-      title: "This Course does not have any materials yet.",
-      body: "Add a Course material before asking grounded questions.",
+      allowChat: true,
+      title: "Course Chat is ready for general questions.",
+      body: "This Course has no materials yet. Answers will be general knowledge, not based on Course materials.",
       action: "Add materials",
     };
   }
   if (readiness.state === "processing") {
     return {
-      allowChat: false,
+      allowChat: true,
       title: "Course materials are still processing.",
-      body: "Chat will become available when at least one material is ready.",
+      body: "You can chat now with general knowledge. Course-material grounding will be available when a material is ready.",
       action: "View materials",
     };
   }
   if (readiness.state === "failed") {
     return {
-      allowChat: false,
+      allowChat: true,
       title: "Course materials could not be prepared for Chat.",
-      body: "Review the failed material before asking grounded questions.",
+      body: "You can chat now with general knowledge. Review the failed material to restore Course-material grounding.",
       action: "Review materials",
     };
   }
