@@ -353,7 +353,6 @@ async def test_index_written_before_stale_commit_never_becomes_course_authority(
     from deeptutor.courses.repository import CourseRepository
     from deeptutor.courses.service import (
         CourseService,
-        CourseUnavailableError,
         resolve_course_turn_payload,
     )
     from deeptutor.multi_user.models import CurrentUser, UserScope
@@ -429,5 +428,6 @@ async def test_index_written_before_stale_commit_never_becomes_course_authority(
         "deeptutor.courses.service.get_current_course_service",
         lambda: CourseService(repo),
     )
-    with pytest.raises(CourseUnavailableError, match="could not be prepared"):
-        resolve_course_turn_payload(course.id, {"knowledge_bases": []})
+    payload = resolve_course_turn_payload(course.id, {"knowledge_bases": []})
+    assert payload["knowledge_bases"] == []
+    assert payload["course_context"]["answer_mode"] == "general_knowledge"
