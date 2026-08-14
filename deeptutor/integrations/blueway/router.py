@@ -125,8 +125,14 @@ def _attempt(attempt) -> dict:
     }
 
 
-def _attempt_for_mode(service: BlueWayService, attempt_id: str, mode: str):
-    attempt = service.get_attempt(attempt_id)
+def _attempt_for_mode(
+    service: BlueWayService,
+    attempt_id: str,
+    mode: str,
+    *,
+    purge_expired: bool = True,
+):
+    attempt = service.get_attempt(attempt_id, purge_expired=purge_expired)
     if attempt.mode != mode:
         raise BlueWayNotFoundError("Integration resource not found")
     return attempt
@@ -212,7 +218,7 @@ def connect_poll(attempt_id: str):
 @router.post("/connect/{attempt_id}/cancel")
 def connect_cancel(attempt_id: str):
     service = _call(_service)
-    _call(lambda: _attempt_for_mode(service, attempt_id, "connect"))
+    _call(lambda: _attempt_for_mode(service, attempt_id, "connect", purge_expired=False))
     attempt = _call(lambda: service.cancel_attempt(attempt_id=attempt_id))
     return {"attempt": _attempt(attempt)}
 
@@ -220,7 +226,7 @@ def connect_cancel(attempt_id: str):
 @router.post("/recovery/{attempt_id}/cancel")
 def recovery_cancel(attempt_id: str):
     service = _call(_service)
-    _call(lambda: _attempt_for_mode(service, attempt_id, "recovery"))
+    _call(lambda: _attempt_for_mode(service, attempt_id, "recovery", purge_expired=False))
     attempt = _call(lambda: service.cancel_attempt(attempt_id=attempt_id))
     return {"attempt": _attempt(attempt)}
 

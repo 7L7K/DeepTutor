@@ -654,6 +654,47 @@ def test_concurrent_recovery_polls_exchange_and_commit_only_once(
     assert transport.exchange_calls == 1
 
 
+def test_recovery_cancel_is_fenced_while_provider_exchange_is_in_flight(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class BlockingFailureTransport(RecoveryTransport):
+        def __init__(self) -> None:
+            super().__init__()
+            self.entered = threading.Event()
+            self.release = threading.Event()
+
+        def exchange(
+            self, *, request_id: str, device_code: str, code_verifier: str,
+        ):
+            self.exchange_calls += 1
+            self.entered.set()
+            assert self.release.wait(5)
+            raise BlueWayTransportError("provider cancelled")
+
+    transport = BlockingFailureTransport()
+    good, _courses, _paths, _transport = _service(
+        tmp_path, monkeypatch, key=b"k" * 32, transport=transport,
+    )
+    _connected(good)
+    bad = BlueWayService(_settings(b"x" * 32), transport)
+    bad.status()
+    attempt = bad.start_recovery()
+
+    with ThreadPoolExecutor(max_workers=1) as executor:
+        poll = executor.submit(bad.poll_recovery, attempt_id=attempt.id)
+        assert transport.entered.wait(5)
+        with pytest.raises(CourseConflictError, match="already being completed"):
+            bad.cancel_attempt(attempt_id=attempt.id)
+        transport.release.set()
+        with pytest.raises(BlueWayTransportError, match="provider cancelled"):
+            poll.result(timeout=5)
+
+    terminal = bad.get_attempt(attempt.id)
+    assert terminal.state == "failed"
+    assert terminal.device_code == ""
+    assert transport.cancellations == []
+
+
 def test_api_reports_only_safe_recovery_metadata(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:

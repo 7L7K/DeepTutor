@@ -389,19 +389,34 @@ class BlueWayService:
                     recovery_revision=current.revision,
                     recovery_generation=current.grant_generation,
                 )
-                self._persist_attempt(attempt)
+                try:
+                    self._persist_attempt(attempt)
+                except Exception:
+                    cancel = getattr(self.transport, "cancel", None)
+                    if callable(cancel):
+                        try:
+                            cancel(
+                                request_id=attempt.request_id,
+                                device_code=attempt.device_code,
+                            )
+                        except Exception:
+                            pass
+                    raise
         finally:
             with self._lock:
                 self._starting_owners.discard(owner)
         return attempt
 
-    def get_attempt(self, attempt_id: str) -> PairingAttempt:
+    def get_attempt(
+        self, attempt_id: str, *, purge_expired: bool = True,
+    ) -> PairingAttempt:
         owner = self._owner()
         with self._lock:
-            try:
-                self._purge_owner_attempts(owner, time.time())
-            except PairingStoreError as exc:
-                raise BlueWayNotFoundError("Integration resource not found") from exc
+            if purge_expired:
+                try:
+                    self._purge_owner_attempts(owner, time.time())
+                except PairingStoreError as exc:
+                    raise BlueWayNotFoundError("Integration resource not found") from exc
             store = self._pairing_store(owner)
             try:
                 record = store.read(owner_user_id=owner, attempt_id=attempt_id)
@@ -637,12 +652,14 @@ class BlueWayService:
             except BlueWayAuthorizationPending:
                 return None, None
             except Exception as exc:
-                expired = time.time() >= attempt.expires_at
-                self._transition_attempt(
-                    attempt,
-                    "expired" if expired else "failed",
-                    error_code="expired" if expired else type(exc).__name__,
-                )
+                current = self.get_attempt(attempt_id)
+                if current.state == "pending":
+                    expired = time.time() >= current.expires_at
+                    self._transition_attempt(
+                        current,
+                        "expired" if expired else "failed",
+                        error_code="expired" if expired else type(exc).__name__,
+                    )
                 raise
             connection = self.complete_recovery_for_transport(
                 attempt_id=attempt_id, exchange=exchange,
@@ -654,11 +671,13 @@ class BlueWayService:
 
     def cancel_attempt(self, *, attempt_id: str) -> PairingAttempt:
         """Invalidate one pending provider request before hiding its browser state."""
-        attempt = self.get_attempt(attempt_id)
+        attempt = self.get_attempt(attempt_id, purge_expired=False)
         if attempt.state != "pending":
             return attempt
-        if attempt.expires_at <= time.time():
-            return self._transition_attempt(attempt, "expired", error_code="expired")
+        key = (attempt.owner_user_id, attempt.id)
+        with self._lock:
+            if key in self._exchanging_attempts:
+                raise CourseConflictError("BlueWay pairing is already being completed")
         cancel = getattr(self.transport, "cancel", None)
         if not callable(cancel):
             raise BlueWayUnavailableError("BlueWay pairing cancellation is unavailable")
