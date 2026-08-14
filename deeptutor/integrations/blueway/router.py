@@ -103,7 +103,33 @@ def _connection(connection: Connection | None) -> dict | None:
 def _run(run: SyncRun | None) -> dict | None:
     if run is None:
         return None
-    return {"id": run.id, "state": run.state, "counts": run.counts, "error_code": run.error_code}
+    return {
+        "id": run.id,
+        "state": run.state,
+        "counts": run.counts,
+        "error_code": run.error_code,
+        "created_at": run.created_at,
+    }
+
+
+def _attempt(attempt) -> dict:
+    """Return pairing metadata only; encrypted provider material stays server-side."""
+    return {
+        "attempt_id": attempt.id,
+        "request_id": attempt.request_id,
+        "user_code": attempt.user_code,
+        "verification_uri": attempt.verification_uri,
+        "expires_at": attempt.expires_at,
+        "mode": attempt.mode,
+        "state": attempt.state,
+    }
+
+
+def _attempt_for_mode(service: BlueWayService, attempt_id: str, mode: str):
+    attempt = service.get_attempt(attempt_id)
+    if attempt.mode != mode:
+        raise BlueWayNotFoundError("Integration resource not found")
+    return attempt
 
 
 def _call(operation):
@@ -139,31 +165,32 @@ def status():
 @router.post("/connect/start")
 def connect_start():
     attempt = _call(lambda: _service().start_connection())
-    return {
-        "attempt_id": attempt.id, "user_code": attempt.user_code,
-        "verification_uri": attempt.verification_uri, "expires_at": attempt.expires_at,
-    }
+    return _attempt(attempt)
+
+
+@router.get("/connect/current")
+def connect_current():
+    attempt = _call(lambda: _service().current_attempt())
+    return {"attempt": _attempt(attempt) if attempt is not None else None}
 
 
 @router.post("/recovery/start")
 def recovery_start():
     attempt = _call(lambda: _service().start_recovery())
-    return {
-        "attempt_id": attempt.id,
-        "user_code": attempt.user_code,
-        "verification_uri": attempt.verification_uri,
-        "expires_at": attempt.expires_at,
-    }
+    return _attempt(attempt)
 
 
 @router.get("/connect/{attempt_id}/status")
 def connect_status(attempt_id: str):
     service = _call(_service)
-    attempt = _call(lambda: service.get_attempt(attempt_id))
+    attempt = _call(lambda: _attempt_for_mode(service, attempt_id, "connect"))
     connection, run = _call(service.status)
     return {
         "enabled": service.settings.enabled, "attempt_id": attempt.id,
-        "state": "pending", "expires_at": attempt.expires_at,
+        "request_id": attempt.request_id, "user_code": attempt.user_code,
+        "verification_uri": attempt.verification_uri, "mode": attempt.mode,
+        "state": attempt.state, "expires_at": attempt.expires_at,
+        "pairing": _attempt(attempt),
         "connection": _connection(connection), "active_run": _run(run),
     }
 
@@ -171,22 +198,38 @@ def connect_status(attempt_id: str):
 @router.post("/connect/{attempt_id}/poll", status_code=202)
 def connect_poll(attempt_id: str):
     """Mutating approval poll; main's cookie-Origin middleware protects it."""
-    connection, run = _call(lambda: _service().poll_connection(attempt_id=attempt_id))
-    return {"enabled": True, "connection": _connection(connection), "active_run": _run(run)}
+    service = _call(_service)
+    connection, run = _call(lambda: service.poll_connection(attempt_id=attempt_id))
+    attempt = _call(lambda: _attempt_for_mode(service, attempt_id, "connect"))
+    return {
+        "enabled": True, "attempt_id": attempt.id, "state": attempt.state,
+        "expires_at": attempt.expires_at, "pairing": _attempt(attempt),
+        "connection": _connection(connection),
+        "active_run": _run(run),
+    }
+
+
+@router.post("/connect/{attempt_id}/cancel")
+def connect_cancel(attempt_id: str):
+    service = _call(_service)
+    _call(lambda: _attempt_for_mode(service, attempt_id, "connect"))
+    attempt = _call(lambda: service.cancel_attempt(attempt_id=attempt_id))
+    return {"attempt": _attempt(attempt)}
 
 
 @router.get("/recovery/{attempt_id}/status")
 def recovery_status(attempt_id: str):
     service = _call(_service)
-    attempt = _call(lambda: service.get_attempt(attempt_id))
-    if attempt.mode != "recovery":
-        raise HTTPException(status_code=404, detail="Integration resource not found")
+    attempt = _call(lambda: _attempt_for_mode(service, attempt_id, "recovery"))
     connection, run = _call(service.status)
     return {
         "enabled": service.settings.enabled,
         "attempt_id": attempt.id,
-        "state": "pending",
+        "request_id": attempt.request_id, "user_code": attempt.user_code,
+        "verification_uri": attempt.verification_uri, "mode": attempt.mode,
+        "state": attempt.state,
         "expires_at": attempt.expires_at,
+        "pairing": _attempt(attempt),
         "connection": _connection(connection),
         "active_run": _run(run),
     }
@@ -194,13 +237,13 @@ def recovery_status(attempt_id: str):
 
 @router.post("/recovery/{attempt_id}/poll", status_code=202)
 def recovery_poll(attempt_id: str):
-    connection, run = _call(
-        lambda: _service().poll_recovery(attempt_id=attempt_id)
-    )
+    service = _call(_service)
+    connection, run = _call(lambda: service.poll_recovery(attempt_id=attempt_id))
     return {
         "enabled": True,
         "connection": _connection(connection),
         "active_run": _run(run),
+        "attempt": _attempt(_call(lambda: _attempt_for_mode(service, attempt_id, "recovery"))),
     }
 
 

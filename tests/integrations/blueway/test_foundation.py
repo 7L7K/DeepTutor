@@ -3,6 +3,7 @@ from __future__ import annotations
 import base64
 from concurrent.futures import ThreadPoolExecutor
 import copy
+from dataclasses import replace
 import json
 import os
 from pathlib import Path
@@ -32,8 +33,9 @@ from deeptutor.integrations.blueway.refresh import (
     RefreshResult,
     RefreshReuseError,
 )
-from deeptutor.integrations.blueway.repository import BlueWayRepository
+from deeptutor.integrations.blueway.repository import BlueWayNotFoundError, BlueWayRepository
 from deeptutor.integrations.blueway.service import BlueWayService, BlueWayUnavailableError
+from deeptutor.integrations.blueway.pairing_store import PairingAttemptStore
 from deeptutor.integrations.blueway.snapshot import (
     MAX_PAGE_BYTES,
     SnapshotValidationError,
@@ -57,6 +59,7 @@ class FakeTransport:
     def __init__(self) -> None:
         self.fail_revoke = False
         self.revocations: list[str] = []
+        self.cancellations: list[tuple[str, str]] = []
 
     def begin_device_authorization(self, *, client_id: str, audience: str, device_code: str, user_code: str, pkce_challenge: str) -> DeviceAuthorization:
         assert client_id == "client-test"
@@ -69,6 +72,9 @@ class FakeTransport:
         if self.fail_revoke:
             raise RuntimeError("offline")
         assert refresh_token in {"refresh-secret", "next-refresh"}
+
+    def cancel(self, *, request_id: str, device_code: str) -> None:
+        self.cancellations.append((request_id, device_code))
 
     def refresh(self, *, refresh_token: str, rotation_request_id: str) -> TokenExchange:
         assert refresh_token in {"refresh-secret", "next-refresh"}
@@ -263,7 +269,7 @@ def test_snapshot_accepts_optional_term_identity_only_on_qualified_datasets() ->
     assert validate_snapshot(snapshot)["datasets"]["courses"][0]["term_id"] == "fall-2026"
 
 
-def test_pairing_refuses_a_second_provider_grant_until_the_local_connection_is_terminal(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_pairing_start_is_idempotent_and_replacement_stays_blocked_until_connection_is_terminal(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     service, _courses = _service(tmp_path, monkeypatch)
     starts = [0]
     original = service.transport.begin_device_authorization
@@ -274,8 +280,8 @@ def test_pairing_refuses_a_second_provider_grant_until_the_local_connection_is_t
 
     service.transport.begin_device_authorization = begin
     first = service.start_connection()
-    with pytest.raises(CourseConflictError, match="pending"):
-        service.start_connection()
+    second = service.start_connection()
+    assert second.id == first.id
     assert starts == [1]
     service.complete_connection_for_transport(
         attempt_id=first.id,
@@ -291,6 +297,139 @@ def test_pairing_refuses_a_second_provider_grant_until_the_local_connection_is_t
     with pytest.raises(CourseConflictError, match="Disconnect"):
         service.start_connection()
     assert starts == [1]
+
+
+def test_pairing_pending_attempt_resumes_after_service_restart_without_provider_restart(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    service, _courses = _service(tmp_path, monkeypatch)
+    first = service.start_connection()
+    replacement_transport = FakeTransport()
+    replacement = BlueWayService(service.settings, replacement_transport)
+
+    resumed = replacement.start_connection()
+
+    assert resumed.id == first.id
+    assert resumed.request_id == first.request_id
+    assert replacement_transport.cancellations == []
+
+
+def test_pairing_expiry_is_server_timestamped_and_clears_provider_secrets(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    service, _courses = _service(tmp_path, monkeypatch)
+    first = service.start_connection()
+    service._persist_attempt(replace(first, expires_at=0.0))  # noqa: SLF001
+
+    expired = service.get_attempt(first.id)
+
+    assert expired.state == "expired"
+    assert expired.device_code == ""
+    assert expired.verifier == ""
+    restarted = BlueWayService(service.settings, FakeTransport())
+    assert restarted.get_attempt(first.id).state == "expired"
+    fresh = restarted.start_connection()
+    assert fresh.id != first.id
+
+
+def test_pairing_cancel_invalidates_provider_request_and_is_idempotent_after_terminal_state(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    service, _courses = _service(tmp_path, monkeypatch)
+    attempt = service.start_connection()
+
+    cancelled = service.cancel_attempt(attempt_id=attempt.id)
+    repeated = service.cancel_attempt(attempt_id=attempt.id)
+
+    assert cancelled.state == "cancelled"
+    assert repeated.state == "cancelled"
+    assert len(service.transport.cancellations) == 1
+    assert service.transport.cancellations[0] == (attempt.request_id, attempt.device_code)
+    assert service.exchange_connection_for_transport(attempt_id=attempt.id) is None
+
+
+def test_pairing_provider_failure_becomes_terminal_and_does_not_poll_forever(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    service, _courses = _service(tmp_path, monkeypatch)
+    attempt = service.start_connection()
+
+    def fail_exchange(**_kwargs):
+        raise BlueWayTransportError("provider unavailable")
+
+    service.transport.exchange = fail_exchange
+    with pytest.raises(BlueWayTransportError):
+        service.poll_connection(attempt_id=attempt.id)
+
+    failed = service.get_attempt(attempt.id)
+    assert failed.state == "failed"
+    assert failed.device_code == ""
+    assert failed.verifier == ""
+
+
+def test_pairing_attempt_is_account_bound_after_restart(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    service, _courses = _service(tmp_path, monkeypatch)
+    attempt = service.start_connection()
+    monkeypatch.setattr(
+        "deeptutor.integrations.blueway.service.get_current_user_or_none",
+        lambda: SimpleNamespace(id="owner-b"),
+    )
+    monkeypatch.setattr(
+        "deeptutor.integrations.blueway.service._current_personal_user",
+        lambda _owner: SimpleNamespace(id="owner-b"),
+    )
+
+    with pytest.raises(BlueWayNotFoundError):
+        service.get_attempt(attempt.id)
+
+
+def test_pairing_completion_lookup_accepts_provider_request_id_only_inside_owner_scope(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    service, _courses = _service(tmp_path, monkeypatch)
+    attempt = service.start_connection()
+
+    assert service.get_attempt(attempt.request_id).id == attempt.id
+
+    monkeypatch.setattr(
+        "deeptutor.integrations.blueway.service.get_current_user_or_none",
+        lambda: SimpleNamespace(id="owner-b"),
+    )
+    monkeypatch.setattr(
+        "deeptutor.integrations.blueway.service._current_personal_user",
+        lambda _owner: SimpleNamespace(id="owner-b"),
+    )
+    with pytest.raises(BlueWayNotFoundError):
+        service.get_attempt(attempt.request_id)
+
+
+def test_pairing_store_encrypts_device_and_pkce_material_with_private_permissions(tmp_path: Path) -> None:
+    store = PairingAttemptStore(tmp_path / "pairing", b"k" * 32)
+    record = {
+        "owner_user_id": "owner-a",
+        "device_code": "device-secret",
+        "verifier": "pkce-secret",
+        "state": "pending",
+    }
+
+    store.write(owner_user_id="owner-a", attempt_id="bwa_" + "a" * 32, record=record)
+    path = tmp_path / "pairing" / ("bwa_" + "a" * 32 + ".enc")
+
+    assert path.stat().st_mode & 0o777 == 0o600
+    assert path.parent.stat().st_mode & 0o777 == 0o700
+    assert b"device-secret" not in path.read_bytes()
+    assert b"pkce-secret" not in path.read_bytes()
+    assert store.read(owner_user_id="owner-a", attempt_id="bwa_" + "a" * 32) == record
+
+
+def test_pairing_api_payload_contains_only_safe_resume_metadata(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    from deeptutor.integrations.blueway import router as blueway_router
+
+    service, _courses = _service(tmp_path, monkeypatch)
+    app = FastAPI()
+    app.include_router(blueway_router.router, prefix="/api/v1/integrations/blueway")
+    blueway_router.set_test_service(service)
+    try:
+        response = TestClient(app).post("/api/v1/integrations/blueway/connect/start")
+    finally:
+        blueway_router.set_test_service(None)
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert set(payload) == {"attempt_id", "request_id", "user_code", "verification_uri", "expires_at", "mode", "state"}
+    assert "device_code" not in payload
+    assert "verifier" not in payload
+    assert "owner_user_id" not in payload
 
 
 def test_approval_url_is_an_explicit_pinned_deployment_url(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
