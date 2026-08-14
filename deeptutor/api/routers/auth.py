@@ -34,11 +34,12 @@ from deeptutor.multi_user.context import set_current_user, user_from_token_paylo
 from deeptutor.multi_user.paths import local_admin_user
 from deeptutor.services.auth import (
     AUTH_ENABLED,
+    AUTH_SECRET,
     POCKETBASE_ENABLED,
     TOKEN_EXPIRE_HOURS,
     TokenPayload,
     add_user,
-    authenticate,
+    authenticate_detailed,
     authenticate_pb,
     create_token,
     decode_token,
@@ -49,6 +50,12 @@ from deeptutor.services.auth import (
     register_pb,
     set_avatar,
     set_role,
+)
+from deeptutor.services.auth_diagnostics import (
+    auth_attempt_headers,
+    emit_auth_attempt,
+    resolve_attempt_id,
+    validated_request_id,
 )
 from deeptutor.services.codex_auth.contracts import CodexAuthError
 from deeptutor.services.codex_auth.service import deliver_codex_oauth_callback
@@ -114,6 +121,15 @@ class LoginRequest(BaseModel):
 
     username: str
     password: str
+
+    @field_validator("username")
+    @classmethod
+    def username_normalized(cls, v: str) -> str:
+        """Make browser/autofill whitespace harmless without changing passwords."""
+        v = v.strip()
+        if not v:
+            raise ValueError("Email or username cannot be empty")
+        return v
 
 
 class RegisterRequest(BaseModel):
@@ -478,9 +494,25 @@ async def auth_status(
 
 
 @router.post("/login")
-async def login(body: LoginRequest, response: Response) -> dict:
+async def login(body: LoginRequest, request: Request, response: Response) -> dict:
     """Validate credentials and set a JWT cookie."""
+    attempt_id = resolve_attempt_id()
+    request_id = validated_request_id(request.headers.get("x-request-id"))
+    attempt_headers = auth_attempt_headers(attempt_id)
     if not AUTH_ENABLED:
+        emit_auth_attempt(
+            attempt_id=attempt_id,
+            request_id=request_id,
+            username=body.username,
+            user_agent=request.headers.get("user-agent"),
+            auth_secret=AUTH_SECRET,
+            lookup="none",
+            account_state="unknown",
+            password_result="not_checked",
+            auth_mode="pocketbase" if POCKETBASE_ENABLED else "standard",
+            outcome="success",
+        )
+        response.headers.update(attempt_headers)
         return {"ok": True, "message": "Auth is disabled — no login required."}
 
     if POCKETBASE_ENABLED:
@@ -488,13 +520,39 @@ async def login(body: LoginRequest, response: Response) -> dict:
         # existing LoginRequest schema; users can pass their email as "username".
         pb_result = authenticate_pb(body.username, body.password)
         if not pb_result:
+            emit_auth_attempt(
+                attempt_id=attempt_id,
+                request_id=request_id,
+                username=body.username,
+                user_agent=request.headers.get("user-agent"),
+                auth_secret=AUTH_SECRET,
+                lookup="none",
+                account_state="unknown",
+                password_result="not_checked",
+                auth_mode="pocketbase",
+                outcome="provider_failure",
+            )
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
-                detail="Incorrect email or password",
+                detail="Incorrect username or password",
+                headers=attempt_headers,
             )
         payload, pb_token = pb_result
+        emit_auth_attempt(
+            attempt_id=attempt_id,
+            request_id=request_id,
+            username=body.username,
+            user_agent=request.headers.get("user-agent"),
+            auth_secret=AUTH_SECRET,
+            lookup="none",
+            account_state="active",
+            password_result="match",
+            auth_mode="pocketbase",
+            outcome="success",
+        )
         response.set_cookie(value=pb_token, max_age=_COOKIE_MAX_AGE, **_cookie_attrs())
-        logger.info(f"User '{payload.username}' logged in via PocketBase (role={payload.role!r})")
+        response.headers.update(attempt_headers)
+        logger.info("User login succeeded via PocketBase (role=%r)", payload.role)
         return {
             "ok": True,
             "user_id": payload.user_id,
@@ -504,23 +562,38 @@ async def login(body: LoginRequest, response: Response) -> dict:
         }
 
     # Standard JWT + bcrypt mode
-    result = authenticate(body.username, body.password)
-    if not result:
+    result = authenticate_detailed(body.username, body.password)
+    outcome = "disabled" if result.account_state == "disabled" else "invalid_credentials"
+    emit_auth_attempt(
+        attempt_id=attempt_id,
+        request_id=request_id,
+        username=body.username,
+        user_agent=request.headers.get("user-agent"),
+        auth_secret=AUTH_SECRET,
+        lookup=result.lookup,
+        account_state=result.account_state,
+        password_result=result.password_result,
+        auth_mode="standard",
+        outcome="success" if result.payload else outcome,
+    )
+    if not result.payload:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Incorrect username or password",
+            headers=attempt_headers,
         )
 
-    token = create_token(result.username, result.role, result.user_id)
+    token = create_token(result.payload.username, result.payload.role, result.payload.user_id)
     response.set_cookie(value=token, max_age=_COOKIE_MAX_AGE, **_cookie_attrs())
+    response.headers.update(attempt_headers)
 
-    logger.info(f"User '{result.username}' logged in (role={result.role!r})")
+    logger.info("User login succeeded (role=%r)", result.payload.role)
     return {
         "ok": True,
-        "user_id": result.user_id,
-        "username": result.username,
-        "role": result.role,
-        "is_admin": result.role == "admin",
+        "user_id": result.payload.user_id,
+        "username": result.payload.username,
+        "role": result.payload.role,
+        "is_admin": result.payload.role == "admin",
     }
 
 

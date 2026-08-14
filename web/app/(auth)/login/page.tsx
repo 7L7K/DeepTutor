@@ -3,6 +3,7 @@
 import { Suspense, useState, useEffect } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import Link from "next/link";
+import { Eye, EyeOff } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import { login, fetchAuthStatus, checkIsFirstUser } from "@/lib/auth";
 import { normalizeAuthNext } from "@/lib/auth-redirect";
@@ -17,6 +18,7 @@ function LoginPageContent() {
 
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
+  const [showPassword, setShowPassword] = useState(false);
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
 
@@ -83,6 +85,10 @@ function LoginPageContent() {
               id="username"
               type="text"
               autoComplete="username"
+              autoCapitalize="none"
+              autoCorrect="off"
+              spellCheck={false}
+              inputMode="email"
               required
               value={username}
               onChange={(e) => setUsername(e.target.value)}
@@ -103,20 +109,30 @@ function LoginPageContent() {
             >
               {t("Password")}
             </label>
-            <input
-              id="password"
-              type="password"
-              autoComplete="current-password"
-              required
-              value={password}
-              onChange={(e) => setPassword(e.target.value)}
-              className="w-full px-3.5 py-2.5 rounded-lg border border-[var(--border)]
-                         bg-[var(--background)] text-[var(--foreground)]
-                         placeholder:text-[var(--muted-foreground)]
-                         focus:outline-none focus:ring-2 focus:ring-[var(--primary)] focus:border-transparent
-                         transition-shadow text-sm"
-              placeholder="••••••••"
-            />
+            <div className="relative">
+              <input
+                id="password"
+                type={showPassword ? "text" : "password"}
+                autoComplete="current-password"
+                required
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+                className="w-full px-3.5 py-2.5 pr-11 rounded-lg border border-[var(--border)]
+                           bg-[var(--background)] text-[var(--foreground)]
+                           placeholder:text-[var(--muted-foreground)]
+                           focus:outline-none focus:ring-2 focus:ring-[var(--primary)] focus:border-transparent
+                           transition-shadow text-sm"
+                placeholder="••••••••"
+              />
+              <button
+                type="button"
+                onClick={() => setShowPassword((visible) => !visible)}
+                aria-label={showPassword ? t("Hide password") : t("Show password")}
+                className="absolute inset-y-0 right-0 flex w-11 items-center justify-center text-[var(--muted-foreground)] hover:text-[var(--foreground)]"
+              >
+                {showPassword ? <EyeOff size={18} aria-hidden="true" /> : <Eye size={18} aria-hidden="true" />}
+              </button>
+            </div>
           </div>
 
           {/* Error message */}

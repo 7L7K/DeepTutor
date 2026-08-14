@@ -26,7 +26,7 @@ Multi-user setup (recommended):
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 import logging
-from typing import Any
+from typing import Any, Literal
 
 from deeptutor.services.config import load_auth_settings, load_integrations_settings
 
@@ -72,6 +72,16 @@ class TokenPayload:
     username: str
     role: str
     user_id: str = ""
+
+
+@dataclass(frozen=True)
+class AuthenticationResult:
+    """Authentication result plus bounded lookup state for server diagnostics."""
+
+    payload: TokenPayload | None
+    lookup: Literal["exact", "casefold", "none"]
+    account_state: Literal["active", "disabled", "unknown"]
+    password_result: Literal["match", "mismatch", "not_checked"]
 
 
 # ---------------------------------------------------------------------------
@@ -368,28 +378,53 @@ def authenticate(username: str, password: str) -> TokenPayload | None:
     When auth is disabled, always returns a dummy admin payload so that
     callers don't need to special-case the disabled state.
     """
-    if not AUTH_ENABLED:
-        return TokenPayload(username=username or "local", role="admin", user_id="local-admin")
+    return authenticate_detailed(username, password).payload
 
+
+def authenticate_detailed(username: str, password: str) -> AuthenticationResult:
+    """Validate credentials and retain only non-secret branch information."""
+    if not AUTH_ENABLED:
+        return AuthenticationResult(
+            payload=TokenPayload(username=username or "local", role="admin", user_id="local-admin"),
+            lookup="none",
+            account_state="active",
+            password_result="not_checked",
+        )
+
+    username = username.strip()
     users = _load_users()
     if not users:
         logger.warning(
             "No users configured — login will always fail. "
             "Navigate to /register to create your first account."
         )
-        return None
+        return AuthenticationResult(None, "none", "unknown", "not_checked")
 
     record = users.get(username)
+    lookup: Literal["exact", "casefold", "none"] = "exact"
+    if record is None and "@" in username:
+        folded = username.casefold()
+        for candidate_username, candidate_record in users.items():
+            if str(candidate_username).casefold() == folded:
+                username = str(candidate_username)
+                record = candidate_record
+                lookup = "casefold"
+                break
     if not record:
-        return None
+        return AuthenticationResult(None, "none", "unknown", "not_checked")
 
     if isinstance(record, dict) and bool(record.get("disabled", False)):
-        return None
+        return AuthenticationResult(None, lookup, "disabled", "not_checked")
 
     hashed = record.get("hash", "") if isinstance(record, dict) else record
     if not verify_password(password, hashed):
-        return None
+        return AuthenticationResult(None, lookup, "active", "mismatch")
 
     role = record.get("role", "user") if isinstance(record, dict) else "user"
     user_id = str(record.get("id") or "") if isinstance(record, dict) else ""
-    return TokenPayload(username=username, role=role, user_id=user_id)
+    return AuthenticationResult(
+        TokenPayload(username=username, role=role, user_id=user_id),
+        lookup,
+        "active",
+        "match",
+    )
