@@ -120,9 +120,7 @@ def test_login_unknown_and_wrong_password_keep_the_same_public_error(auth_users,
 
     assert unknown.status_code == 401
     assert wrong_password.status_code == 401
-    assert unknown.json() == wrong_password.json() == {
-        "detail": "Incorrect username or password"
-    }
+    assert unknown.json() == wrong_password.json() == {"detail": "Incorrect username or password"}
     assert attempt_id_is_valid(unknown.headers["x-auth-attempt-id"])
     events = _event_messages(caplog)
     assert [event["lookup"] for event in events[-2:]] == ["none", "exact"]
@@ -258,9 +256,11 @@ def test_pocketbase_rejected_credentials_and_provider_failure_are_distinct(
         )
 
     assert rejected_response.status_code == provider_response.status_code == 401
-    assert rejected_response.json() == provider_response.json() == {
-        "detail": "Incorrect username or password"
-    }
+    assert (
+        rejected_response.json()
+        == provider_response.json()
+        == {"detail": "Incorrect username or password"}
+    )
     events = _event_messages(caplog)[-2:]
     assert events[0]["outcome"] == "invalid_credentials"
     assert events[0]["password_result"] == "mismatch"

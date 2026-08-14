@@ -8,12 +8,12 @@ from types import SimpleNamespace
 
 import pytest
 
+from deeptutor.courses.practice_repository import CoursePracticeRepository
 from deeptutor.courses.repository import (
     CourseConflictError,
     CourseNotFoundError,
     CourseRepository,
 )
-from deeptutor.courses.practice_repository import CoursePracticeRepository
 from deeptutor.courses.service import CourseService, course_operation_lock
 
 

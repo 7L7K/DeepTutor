@@ -17,7 +17,6 @@ import re
 import secrets
 from typing import Literal
 
-
 logger = logging.getLogger("deeptutor.auth")
 
 _ATTEMPT_ID_RE = re.compile(r"^[A-Za-z0-9._:-]{1,128}$")
@@ -118,7 +117,9 @@ def _diagnostic_key(auth_secret: str | bytes | None) -> bytes:
     return _PROCESS_DIAGNOSTIC_KEY
 
 
-def identifier_details(value: str | None, *, auth_secret: str | bytes | None = None) -> IdentifierDetails:
+def identifier_details(
+    value: str | None, *, auth_secret: str | bytes | None = None
+) -> IdentifierDetails:
     """Classify an identifier and derive only safe diagnostic representations."""
     submitted = value.strip() if isinstance(value, str) else ""
     if _EMAIL_RE.fullmatch(submitted):

@@ -11,14 +11,13 @@ from scripts.run_c3_final_quality_campaign import (
     FINAL_PROVIDER_POLICY_ID,
     _individual_judge_instructions,
     _individual_judge_schema,
-    _objective_contracts,
+    _instructions,
     _normalize_question,
+    _objective_contracts,
     _request,
     _set_failure,
-    _instructions,
 )
 from scripts.run_c3_luna_probe import _material, _objective_evidence
-
 
 REFERENCE_ROOT = Path(__file__).resolve().parents[3] / "evals/reference_course"
 

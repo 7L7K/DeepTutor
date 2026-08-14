@@ -83,19 +83,35 @@ def _receipt_state(path: Path, artifacts: tuple[MigrationArtifact, ...]) -> tupl
         conn.close()
 
 
-def check_database(path: Path, *, apply: bool, artifacts: tuple[MigrationArtifact, ...]) -> DatabaseCheck:
+def check_database(
+    path: Path, *, apply: bool, artifacts: tuple[MigrationArtifact, ...]
+) -> DatabaseCheck:
     if apply:
         applied = ensure_course_schema(path, write_lock=course_database_lock(path))
         status = "ready" if not applied else "migrated"
         return DatabaseCheck(path, status, tuple(applied), "")
     count, detail = _receipt_state(path, artifacts)
-    return DatabaseCheck(path, "ready" if detail == "ready" else "pending", tuple(item.version for item in artifacts[:count]), detail)
+    return DatabaseCheck(
+        path,
+        "ready" if detail == "ready" else "pending",
+        tuple(item.version for item in artifacts[:count]),
+        detail,
+    )
 
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--data-root", type=Path, required=True, help="Explicit TEEECHR data directory containing user/ and users/")
-    parser.add_argument("--apply", action="store_true", help="Apply pending migrations; omitted means read-only verification")
+    parser.add_argument(
+        "--data-root",
+        type=Path,
+        required=True,
+        help="Explicit TEEECHR data directory containing user/ and users/",
+    )
+    parser.add_argument(
+        "--apply",
+        action="store_true",
+        help="Apply pending migrations; omitted means read-only verification",
+    )
     args = parser.parse_args(argv)
     try:
         artifacts = discover_migrations()
@@ -106,7 +122,11 @@ def main(argv: list[str] | None = None) -> int:
             return 2
         for path in databases:
             result = check_database(path, apply=args.apply, artifacts=artifacts)
-            suffix = f" applied={','.join(str(version) for version in result.applied)}" if result.applied else ""
+            suffix = (
+                f" applied={','.join(str(version) for version in result.applied)}"
+                if result.applied
+                else ""
+            )
             detail = f" detail={result.detail}" if result.detail else ""
             print(f"{result.status} {path}{suffix}{detail}")
             if result.status == "pending" and not args.apply:

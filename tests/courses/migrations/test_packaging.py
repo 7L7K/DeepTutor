@@ -7,6 +7,8 @@ import subprocess
 import sys
 import zipfile
 
+import pytest
+
 from deeptutor.courses.migrations.runner import discover_migrations
 
 _MIGRATION_ROOT = "deeptutor/courses/migrations/sql"
@@ -36,6 +38,10 @@ def _build_wheel(project: Path, output: Path) -> Path:
     return wheels[0]
 
 
+@pytest.mark.skipif(
+    sys.version_info >= (3, 14),
+    reason="The package intentionally supports Python versions below 3.14",
+)
 def test_root_and_cli_wheels_ship_every_discovered_migration_sql(tmp_path: Path) -> None:
     root = Path(__file__).resolve().parents[3]
     expected = {

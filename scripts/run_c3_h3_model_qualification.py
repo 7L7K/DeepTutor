@@ -25,11 +25,6 @@ from deeptutor.courses.generation_models import (
     PracticeGenerationInput,
     build_practice_generation_request_contract,
 )
-from deeptutor.courses.generation_provider import (
-    C3_PUBLICATION_MODEL,
-    OpenAIPracticeGenerationProvider,
-    PracticeGenerationProviderError,
-)
 from deeptutor.courses.practice_models import (
     SingleChoiceAnswerContract,
     SingleChoiceOption,
@@ -46,11 +41,9 @@ from deeptutor.services.config.text_generation_registry import (
 )
 from scripts.run_c3_luna_probe import (
     APPROVED_OBJECTIVE_IDS,
-    SOURCE_PACKET_REVISION,
     _material,
     _objective_evidence,
 )
-
 
 MAX_PROVIDER_SPEND_MICROUSD = 500_000
 MAX_CANDIDATES_PER_OBJECTIVE = 3

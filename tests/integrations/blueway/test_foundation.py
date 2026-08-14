@@ -15,11 +15,11 @@ from fastapi.testclient import TestClient
 import httpx
 import pytest
 
-from deeptutor.courses.repository import CourseConflictError, CourseRepository
 from deeptutor.courses.flashcard_generation_models import FlashcardSourceReceipt
 from deeptutor.courses.flashcard_generation_provider import (
     DeterministicIndexFlashcardSourceTextResolver,
 )
+from deeptutor.courses.repository import CourseConflictError, CourseRepository
 from deeptutor.integrations.blueway import config as blueway_config
 from deeptutor.integrations.blueway.bundles import (
     BundleMaterializationError,
@@ -28,6 +28,7 @@ from deeptutor.integrations.blueway.bundles import (
 )
 from deeptutor.integrations.blueway.config import BlueWaySettings, IntegrationConfigurationError
 from deeptutor.integrations.blueway.credentials import CredentialError, CredentialStore
+from deeptutor.integrations.blueway.pairing_store import PairingAttemptStore
 from deeptutor.integrations.blueway.refresh import (
     RefreshReceiptCoordinator,
     RefreshResult,
@@ -35,7 +36,6 @@ from deeptutor.integrations.blueway.refresh import (
 )
 from deeptutor.integrations.blueway.repository import BlueWayNotFoundError, BlueWayRepository
 from deeptutor.integrations.blueway.service import BlueWayService, BlueWayUnavailableError
-from deeptutor.integrations.blueway.pairing_store import PairingAttemptStore
 from deeptutor.integrations.blueway.snapshot import (
     MAX_PAGE_BYTES,
     SnapshotValidationError,

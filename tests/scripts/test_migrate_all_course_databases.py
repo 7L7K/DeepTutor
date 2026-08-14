@@ -49,7 +49,10 @@ def test_verify_then_apply_covers_all_discovered_databases(tmp_path: Path) -> No
     artifacts = discover_migrations()
     results = [module.check_database(path, apply=False, artifacts=artifacts) for path in paths]
     assert [result.status for result in results] == ["pending", "pending"]
-    assert all("pending migrations" in result.detail or "replay fence" in result.detail for result in results)
+    assert all(
+        "pending migrations" in result.detail or "replay fence" in result.detail
+        for result in results
+    )
     for path in paths:
         result = module.check_database(path, apply=True, artifacts=artifacts)
         assert result.status == "migrated"

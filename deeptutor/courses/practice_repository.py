@@ -13,16 +13,16 @@ from pydantic import TypeAdapter, ValidationError
 
 from .models import Course
 from .practice_models import (
-    PracticeAnswerContract,
     ExactAnswerContract,
+    PracticeAnswerContract,
     PracticeCitation,
     PracticeMode,
     PracticeQuestion,
     PracticeSet,
     PracticeSetRevision,
     PracticeSourceReceipt,
-    SingleChoiceOption,
     SingleChoiceAnswerContract,
+    SingleChoiceOption,
 )
 from .repository import CourseConflictError, CourseNotFoundError, CourseRepository
 

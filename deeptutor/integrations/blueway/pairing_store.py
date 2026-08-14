@@ -88,7 +88,9 @@ class PairingAttemptStore:
     def _encode(self, *, owner_user_id: str, attempt_id: str, record: dict[str, Any]) -> bytes:
         plaintext = json.dumps(record, separators=(",", ":"), sort_keys=True).encode("utf-8")
         nonce = secrets.token_bytes(12)
-        ciphertext = AESGCM(self._key).encrypt(nonce, plaintext, self._aad(owner_user_id, attempt_id))
+        ciphertext = AESGCM(self._key).encrypt(
+            nonce, plaintext, self._aad(owner_user_id, attempt_id)
+        )
         return self._VERSION + bytes((self._KEY_VERSION,)) + nonce + ciphertext
 
     def _decode(self, *, owner_user_id: str, attempt_id: str, data: bytes) -> dict[str, Any]:
@@ -124,7 +126,9 @@ class PairingAttemptStore:
         try:
             with os.fdopen(fd, "wb") as handle:
                 fd = -1
-                handle.write(self._encode(owner_user_id=owner_user_id, attempt_id=attempt_id, record=record))
+                handle.write(
+                    self._encode(owner_user_id=owner_user_id, attempt_id=attempt_id, record=record)
+                )
                 handle.flush()
                 os.fsync(handle.fileno())
             os.replace(temporary, target)
@@ -154,7 +158,9 @@ class PairingAttemptStore:
             attempt_id = path.stem
             if not self._ATTEMPT_ID.fullmatch(attempt_id):
                 continue
-            records.append((attempt_id, self.read(owner_user_id=owner_user_id, attempt_id=attempt_id)))
+            records.append(
+                (attempt_id, self.read(owner_user_id=owner_user_id, attempt_id=attempt_id))
+            )
         return records
 
     def remove(self, attempt_id: str) -> None:

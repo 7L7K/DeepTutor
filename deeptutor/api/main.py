@@ -8,8 +8,8 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 
-from deeptutor.logging import configure_logging
 from deeptutor.api.auth_validation import login_validation_exception_handler
+from deeptutor.logging import configure_logging
 from deeptutor.services.config import (
     ensure_runtime_settings_files,
     export_runtime_settings_to_env,

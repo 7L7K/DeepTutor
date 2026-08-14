@@ -3,18 +3,17 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+from scripts.run_c3_final_quality_campaign import _material, _objective_evidence
 from scripts.run_c3_final_set_plan_v2 import (
     ALLOCATION,
     FINAL_CAMPAIGN_ID,
-    FINAL_SET_PLAN_ID,
     FINAL_GENERATION_PROMPT_ID,
+    FINAL_SET_PLAN_ID,
+    _instructions,
     _request,
     _set_failure_v2,
-    _instructions,
     _slot_contracts,
 )
-from scripts.run_c3_final_quality_campaign import _material, _objective_evidence
-
 
 REFERENCE_ROOT = Path(__file__).resolve().parents[3] / "evals/reference_course"
 

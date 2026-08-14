@@ -7,7 +7,6 @@ smaller source-supported composition: one complete question per objective.
 
 from scripts import run_c3_final_set_plan_v2 as base
 
-
 FINAL_SET_PLAN_ID = "c3-final-set-plan-v3"
 FINAL_SET_PLAN_FILENAME = "final_set_plan_v3.json"
 FINAL_CAMPAIGN_ID = "2026-08-10-teeechr-c3-final-learning-loop-v3-1"

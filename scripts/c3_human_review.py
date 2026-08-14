@@ -17,7 +17,6 @@ from pydantic import ValidationError
 
 from deeptutor.courses.practice_models import BoundedShortAnswerContract
 
-
 _IDENTITY_CLAIM = "INTERNAL_PROJECT_REVIEW_NOT_LEGAL_OR_CRYPTOGRAPHIC_IDENTITY"
 _DECISIONS = {
     "PASS",

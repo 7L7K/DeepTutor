@@ -10,6 +10,7 @@ from scripts.run_c3_h3_model_qualification import (
     MAX_PROVIDER_SPEND_MICROUSD,
     MODEL,
     REASONING,
+    CampaignClient,
     _candidate_failure,
     _generation_instructions,
     _judge_result,
@@ -18,9 +19,7 @@ from scripts.run_c3_h3_model_qualification import (
     _objective_evidence,
     _qualified_candidate,
     _request,
-    CampaignClient,
 )
-
 
 REFERENCE_ROOT = Path(__file__).resolve().parents[3] / "evals/reference_course"
 

@@ -18,8 +18,8 @@ from deeptutor.courses.grading_service import CourseGradingService
 from deeptutor.courses.mastery_adapter import CourseMasteryAdapter
 from deeptutor.courses.migrations import runner
 from deeptutor.courses.migrations.runner import CourseMigrationError, ensure_course_schema
-from deeptutor.courses.practice_repository import CoursePracticeRepository
 from deeptutor.courses.practice_models import ExactAnswerContract
+from deeptutor.courses.practice_repository import CoursePracticeRepository
 from deeptutor.courses.practice_service import CoursePracticeService
 from deeptutor.courses.repository import CourseConflictError, CourseNotFoundError, CourseRepository
 from deeptutor.learning.models import KnowledgePoint, KnowledgeType, LearningModule
