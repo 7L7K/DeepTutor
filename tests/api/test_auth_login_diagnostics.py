@@ -175,6 +175,25 @@ def test_validation_failure_diagnostic_is_bounded(caplog) -> None:
     assert event["identifier_kind"] == "invalid"
 
 
+def test_diagnostic_event_survives_warning_level_runtime_config(caplog) -> None:
+    caplog.set_level(logging.WARNING, logger="deeptutor.auth")
+    emit_auth_attempt(
+        attempt_id="warning-level-001",
+        username="alice@example.com",
+        user_agent="Safari",
+        auth_secret="diagnostic-test-secret",
+        lookup="none",
+        account_state="unknown",
+        password_result="not_checked",
+        auth_mode="standard",
+        outcome="invalid_credentials",
+    )
+
+    event = _event_messages(caplog)[-1]
+    assert event["attempt_id"] == "warning-level-001"
+    assert caplog.records[-1].levelno == logging.WARNING
+
+
 def test_direct_diagnostic_event_never_contains_auth_material(caplog) -> None:
     caplog.set_level(logging.INFO, logger="deeptutor.auth")
     password = "correct-password"

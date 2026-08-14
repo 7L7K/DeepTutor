@@ -157,7 +157,10 @@ def emit_auth_attempt(
         "auth_mode": auth_mode,
         "outcome": outcome,
     }
-    logger.info(
+    # Authentication diagnostics are mandatory audit events.  The hosted
+    # runtime intentionally runs the root logger at WARNING, so INFO would
+    # silently suppress the event while leaving the public response unchanged.
+    logger.warning(
         "auth_login_attempt %s",
         json.dumps(event, sort_keys=True, separators=(",", ":")),
     )
