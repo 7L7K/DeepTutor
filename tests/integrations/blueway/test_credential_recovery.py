@@ -30,6 +30,7 @@ from deeptutor.integrations.blueway.service import (
     BlueWayService,
 )
 from deeptutor.integrations.blueway.transport import (
+    BlueWayTransportError,
     DeviceAuthorization,
     TokenExchange,
 )
@@ -43,6 +44,9 @@ class RecoveryTransport:
         self.starts = 0
         self.exchange_calls = 0
         self.exchange_result: TokenExchange | None = None
+        self.exchange_error: Exception | None = None
+        self.cancellations: list[tuple[str, str]] = []
+        self.cancel_result = "cancelled"
 
     def begin_device_authorization(
         self, *, client_id: str, audience: str, device_code: str,
@@ -63,9 +67,15 @@ class RecoveryTransport:
 
     def exchange(self, *, request_id: str, device_code: str, code_verifier: str):
         self.exchange_calls += 1
+        if self.exchange_error is not None:
+            raise self.exchange_error
         if self.exchange_result is None:
             raise AssertionError("tests inject the approved exchange")
         return self.exchange_result
+
+    def cancel(self, *, request_id: str, device_code: str) -> str:
+        self.cancellations.append((request_id, device_code))
+        return self.cancel_result
 
     def fetch_snapshot(self, *, access_token: str, cursor: str | None):
         raise AssertionError("snapshot fetch must not run during credential recovery")
@@ -516,6 +526,85 @@ def test_recovery_poll_replay_returns_one_committed_connection(
     assert first is not None and first.id == connection.id
     assert second is not None and second.id == connection.id
     assert transport.exchange_calls == 1
+
+
+def test_recovery_provider_failure_becomes_terminal_and_clears_secrets(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    good, _courses, _paths, transport = _service(
+        tmp_path, monkeypatch, key=b"k" * 32,
+    )
+    _connected(good)
+    bad = BlueWayService(_settings(b"x" * 32), transport)
+    bad.status()
+    attempt = bad.start_recovery()
+    transport.exchange_error = BlueWayTransportError("provider unavailable")
+
+    with pytest.raises(BlueWayTransportError, match="provider unavailable"):
+        bad.poll_recovery(attempt_id=attempt.id)
+
+    terminal = bad.get_attempt(attempt.id)
+    assert terminal.state == "failed"
+    assert terminal.device_code == ""
+    assert terminal.verifier == ""
+    assert terminal.error_code == "BlueWayTransportError"
+    completed, run = bad.poll_recovery(attempt_id=attempt.id)
+    assert completed is None and run is None
+    assert transport.exchange_calls == 1
+
+
+def test_recovery_cancel_has_its_own_route_and_cannot_use_connect_route(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from deeptutor.integrations.blueway import router as blueway_router
+
+    good, _courses, _paths, transport = _service(
+        tmp_path, monkeypatch, key=b"k" * 32,
+    )
+    _connected(good)
+    bad = BlueWayService(_settings(b"x" * 32), transport)
+    bad.status()
+    attempt = bad.start_recovery()
+    app = FastAPI()
+    app.include_router(
+        blueway_router.router, prefix="/api/v1/integrations/blueway",
+    )
+    blueway_router.set_test_service(bad)
+    try:
+        wrong_route = TestClient(app).post(
+            f"/api/v1/integrations/blueway/connect/{attempt.id}/cancel",
+        )
+        response = TestClient(app).post(
+            f"/api/v1/integrations/blueway/recovery/{attempt.id}/cancel",
+        )
+    finally:
+        blueway_router.set_test_service(None)
+
+    assert wrong_route.status_code == 404
+    assert response.status_code == 200
+    assert response.json()["attempt"]["mode"] == "recovery"
+    assert response.json()["attempt"]["state"] == "cancelled"
+    assert len(transport.cancellations) == 1
+
+
+def test_provider_expiry_is_published_as_expired_when_recovery_is_cancelled(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    good, _courses, _paths, transport = _service(
+        tmp_path, monkeypatch, key=b"k" * 32,
+    )
+    _connected(good)
+    bad = BlueWayService(_settings(b"x" * 32), transport)
+    bad.status()
+    attempt = bad.start_recovery()
+    transport.cancel_result = "expired"
+
+    cancelled = bad.cancel_attempt(attempt_id=attempt.id)
+
+    assert cancelled.state == "expired"
+    assert cancelled.error_code == "expired"
+    assert cancelled.device_code == ""
+    assert cancelled.verifier == ""
 
 
 def test_concurrent_recovery_polls_exchange_and_commit_only_once(

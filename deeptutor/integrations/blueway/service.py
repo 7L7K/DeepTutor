@@ -636,6 +636,14 @@ class BlueWayService:
                 )
             except BlueWayAuthorizationPending:
                 return None, None
+            except Exception as exc:
+                expired = time.time() >= attempt.expires_at
+                self._transition_attempt(
+                    attempt,
+                    "expired" if expired else "failed",
+                    error_code="expired" if expired else type(exc).__name__,
+                )
+                raise
             connection = self.complete_recovery_for_transport(
                 attempt_id=attempt_id, exchange=exchange,
             )
@@ -655,10 +663,15 @@ class BlueWayService:
         if not callable(cancel):
             raise BlueWayUnavailableError("BlueWay pairing cancellation is unavailable")
         try:
-            cancel(request_id=attempt.request_id, device_code=attempt.device_code)
+            provider_state = cancel(
+                request_id=attempt.request_id, device_code=attempt.device_code,
+            )
         except Exception as exc:
             raise BlueWayTransportError("BlueWay pairing cancellation failed") from exc
-        return self._transition_attempt(attempt, "cancelled", error_code="cancelled")
+        terminal_state = "expired" if provider_state == "expired" else "cancelled"
+        return self._transition_attempt(
+            attempt, terminal_state, error_code=terminal_state,
+        )
 
     def status(self) -> tuple[Connection | None, SyncRun | None]:
         if not self.settings.enabled:

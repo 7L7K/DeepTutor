@@ -217,6 +217,14 @@ def connect_cancel(attempt_id: str):
     return {"attempt": _attempt(attempt)}
 
 
+@router.post("/recovery/{attempt_id}/cancel")
+def recovery_cancel(attempt_id: str):
+    service = _call(_service)
+    _call(lambda: _attempt_for_mode(service, attempt_id, "recovery"))
+    attempt = _call(lambda: service.cancel_attempt(attempt_id=attempt_id))
+    return {"attempt": _attempt(attempt)}
+
+
 @router.get("/recovery/{attempt_id}/status")
 def recovery_status(attempt_id: str):
     service = _call(_service)

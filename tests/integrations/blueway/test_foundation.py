@@ -73,8 +73,9 @@ class FakeTransport:
             raise RuntimeError("offline")
         assert refresh_token in {"refresh-secret", "next-refresh"}
 
-    def cancel(self, *, request_id: str, device_code: str) -> None:
+    def cancel(self, *, request_id: str, device_code: str) -> str:
         self.cancellations.append((request_id, device_code))
+        return "cancelled"
 
     def refresh(self, *, refresh_token: str, rotation_request_id: str) -> TokenExchange:
         assert refresh_token in {"refresh-secret", "next-refresh"}
@@ -494,6 +495,36 @@ def test_http_pairing_rejects_chunked_oversize_and_preserves_authorization_pendi
     )
     with pytest.raises(BlueWayAuthorizationPending):
         pending.exchange(request_id="request", device_code="device", code_verifier="verifier")
+
+
+def test_http_pairing_cancel_requires_a_typed_terminal_state() -> None:
+    settings = BlueWaySettings(
+        enabled=True, base_url="https://api.blueway.example", client_id="client-test",
+        api_secret="s" * 32, approval_url="https://consent.blueway.example/approve", master_key=b"k" * 32,
+    )
+    cancelled = HttpBlueWayTransport(
+        settings,
+        client=httpx.Client(transport=httpx.MockTransport(
+            lambda _request: httpx.Response(200, json={"state": "cancelled"}),
+        )),
+    )
+    expired = HttpBlueWayTransport(
+        settings,
+        client=httpx.Client(transport=httpx.MockTransport(
+            lambda _request: httpx.Response(200, json={"state": "expired"}),
+        )),
+    )
+    invalid = HttpBlueWayTransport(
+        settings,
+        client=httpx.Client(transport=httpx.MockTransport(
+            lambda _request: httpx.Response(200, json={"cancelled": True}),
+        )),
+    )
+
+    assert cancelled.cancel(request_id="request", device_code="device") == "cancelled"
+    assert expired.cancel(request_id="request", device_code="device") == "expired"
+    with pytest.raises(BlueWayTransportError, match="cancellation response is invalid"):
+        invalid.cancel(request_id="request", device_code="device")
 
 
 def test_slow_pairing_provider_does_not_hold_identity_lock_or_allow_duplicate_start(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

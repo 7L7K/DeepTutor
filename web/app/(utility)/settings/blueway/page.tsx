@@ -9,6 +9,7 @@ import QRCode from "qrcode";
 import { SettingsPageHeader } from "@/components/settings/shared";
 import {
   cancelBlueWayConnection,
+  cancelBlueWayRecovery,
   disconnectBlueWay,
   getBlueWayConnectStatus,
   getBlueWayCurrentAttempt,
@@ -382,7 +383,9 @@ function BlueWaySettingsPageContent({
               onClick={() =>
                 void run(async () => {
                   if (!attempt) return;
-                  const next = await cancelBlueWayConnection(attempt.attempt_id);
+                  const next = attempt.mode === "recovery"
+                    ? await cancelBlueWayRecovery(attempt.attempt_id)
+                    : await cancelBlueWayConnection(attempt.attempt_id);
                   setAttempt(next);
                   setShowFallback(false);
                   setFallbackQr(null);
@@ -390,7 +393,7 @@ function BlueWaySettingsPageContent({
               }
               className="rounded-lg border border-red-500/30 px-3 py-2 text-xs font-medium text-red-600 disabled:opacity-50 dark:text-red-400"
             >
-              Cancel pairing
+              {attempt?.mode === "recovery" ? "Cancel recovery" : "Cancel pairing"}
             </button>
           ) : state === "credential_recovery_required" ? (
             <button

@@ -54,7 +54,7 @@ class RefreshExchange:
 class BlueWayTransport(Protocol):
     def begin_device_authorization(self, *, client_id: str, audience: str, device_code: str, user_code: str, pkce_challenge: str) -> DeviceAuthorization: ...
     def exchange(self, *, request_id: str, device_code: str, code_verifier: str) -> TokenExchange: ...
-    def cancel(self, *, request_id: str, device_code: str) -> None: ...
+    def cancel(self, *, request_id: str, device_code: str) -> str: ...
     def refresh(self, *, refresh_token: str, rotation_request_id: str) -> RefreshExchange: ...
     def fetch_snapshot(self, *, access_token: str, cursor: str | None) -> dict[str, Any]: ...
     def revoke(self, *, refresh_token: str) -> None: ...
@@ -166,8 +166,14 @@ class HttpBlueWayTransport:
             raise BlueWayAuthorizationPending("BlueWay approval is still pending")
         return self._exchange(payload)
 
-    def cancel(self, *, request_id: str, device_code: str) -> None:
-        self._pairing({"action": "cancel", "request_id": request_id, "device_code": device_code})
+    def cancel(self, *, request_id: str, device_code: str) -> str:
+        payload = self._pairing(
+            {"action": "cancel", "request_id": request_id, "device_code": device_code},
+        )
+        state = payload.get("state")
+        if state not in {"cancelled", "expired"}:
+            raise BlueWayTransportError("BlueWay pairing cancellation response is invalid")
+        return state
 
     def refresh(self, *, refresh_token: str, rotation_request_id: str) -> RefreshExchange:
         payload = self._pairing({"action": "refresh", "refresh_token": refresh_token, "rotation_request_id": rotation_request_id})

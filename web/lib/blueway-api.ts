@@ -95,6 +95,18 @@ export async function cancelBlueWayConnection(
   return payload.attempt;
 }
 
+export async function cancelBlueWayRecovery(
+  attemptId: string,
+): Promise<BlueWayConnectAttempt> {
+  const payload = await integrationJson<{ attempt: BlueWayConnectAttempt }>(
+    await apiFetch(
+      apiUrl(`/api/v1/integrations/blueway/recovery/${encodeURIComponent(attemptId)}/cancel`),
+      { method: "POST" },
+    ),
+  );
+  return payload.attempt;
+}
+
 export async function startBlueWaySync(): Promise<BlueWaySyncRunView> {
   return integrationJson<BlueWaySyncRunView>(
     await apiFetch(apiUrl("/api/v1/integrations/blueway/sync"), {
