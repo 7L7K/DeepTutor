@@ -21,9 +21,11 @@ from typing import Literal
 logger = logging.getLogger("deeptutor.auth")
 
 _ATTEMPT_ID_RE = re.compile(r"^[A-Za-z0-9._:-]{1,128}$")
+_SAFE_REQUEST_ID_RE = re.compile(r"^req_[a-f0-9]{32}$")
 _EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
 _PLAIN_USERNAME_RE = re.compile(r"^[A-Za-z0-9_.-]{3,64}$")
 _HMAC_DOMAIN = b"teeechr-auth-identifier-v1\x00"
+_REQUEST_ID_HMAC_DOMAIN = b"teeechr-auth-request-id-v1\x00"
 _PROCESS_DIAGNOSTIC_KEY = secrets.token_bytes(32)
 
 IdentifierKind = Literal["email", "plain_username", "invalid"]
@@ -60,9 +62,26 @@ def attempt_id_is_valid(value: str) -> bool:
     return bool(_ATTEMPT_ID_RE.fullmatch(value))
 
 
-def validated_request_id(value: str | None) -> str | None:
-    """Keep only a bounded caller request id for server-side correlation."""
-    return value if value and _ATTEMPT_ID_RE.fullmatch(value) else None
+def validated_request_id(
+    value: str | None,
+    *,
+    auth_secret: str | bytes | None = None,
+) -> str | None:
+    """Return a non-reversible server reference for a bounded request id.
+
+    The caller may provide a correlation id, but its raw value must never be
+    copied into an authentication log. HMAC keeps valid references stable for
+    hosted log correlation while preventing token-like or password-like input
+    from crossing the logging boundary.
+    """
+    if not value or not _ATTEMPT_ID_RE.fullmatch(value):
+        return None
+    digest = hmac.new(
+        _diagnostic_key(auth_secret),
+        _REQUEST_ID_HMAC_DOMAIN + value.encode("utf-8"),
+        hashlib.sha256,
+    ).hexdigest()
+    return f"req_{digest[:32]}"
 
 
 def classify_client(user_agent: str | None) -> str:
@@ -143,10 +162,15 @@ def emit_auth_attempt(
 ) -> dict[str, object]:
     """Emit one bounded JSON event and return the exact safe event for tests."""
     details = identifier_details(username, auth_secret=auth_secret)
+    safe_request_id = (
+        request_id
+        if request_id and _SAFE_REQUEST_ID_RE.fullmatch(request_id)
+        else validated_request_id(request_id, auth_secret=auth_secret)
+    )
     event: dict[str, object] = {
         "event": "auth_login_attempt",
         "attempt_id": attempt_id,
-        "request_id": request_id or attempt_id,
+        "request_id": safe_request_id or attempt_id,
         "client": classify_client(user_agent),
         "identifier_kind": details.kind,
         "identifier_masked": details.masked,

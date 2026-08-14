@@ -6,7 +6,8 @@
   mobile input attributes, added server-only privacy-bounded login diagnostics
   with a safe attempt reference header, and added accessible show/hide controls
   to login and registration password fields. Public authentication failures
-  remain generic and credentials, hashes, tokens, and cookies are never logged.
+  remain generic and credentials, hashes, tokens, cookies, and caller-supplied
+  correlation IDs are never logged.
 
 - Added dedicated `/connect/blueway` and `/connect/blueway/complete` routes for
   same-phone BlueWay pairing. The TEEECHR page now makes the native app handoff

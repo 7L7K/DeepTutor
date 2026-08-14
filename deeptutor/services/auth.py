@@ -84,6 +84,15 @@ class AuthenticationResult:
     password_result: Literal["match", "mismatch", "not_checked"]
 
 
+@dataclass(frozen=True)
+class PocketBaseAuthenticationResult:
+    """PocketBase login result with safe credential/provider failure state."""
+
+    payload: TokenPayload | None
+    token: str | None
+    outcome: Literal["success", "invalid_credentials", "provider_failure"]
+
+
 # ---------------------------------------------------------------------------
 # Password hashing — uses bcrypt directly (passlib is unmaintained for bcrypt 4+)
 # ---------------------------------------------------------------------------
@@ -309,13 +318,13 @@ def decode_token(token: str) -> TokenPayload | None:
 # ---------------------------------------------------------------------------
 
 
-def authenticate_pb(username: str, password: str) -> tuple[TokenPayload, str] | None:
+def authenticate_pb(username: str, password: str) -> PocketBaseAuthenticationResult:
     """
-    Authenticate against PocketBase and return (TokenPayload, raw_pb_token).
+    Authenticate against PocketBase and return a bounded result.
 
     Only called when POCKETBASE_ENABLED=True.
-    Returns None on failure.
-    The raw token is the PocketBase JWT string to be stored in the cookie.
+    The raw token is returned only to the caller that stores it in the cookie;
+    it is never included in diagnostics or logs.
 
     PocketBase requires an email address; plain usernames are mapped to
     <username>@deeptutor.local to match the email used at registration.
@@ -336,10 +345,20 @@ def authenticate_pb(username: str, password: str) -> tuple[TokenPayload, str] | 
         # Admins authenticated via PocketBase admin panel use a separate endpoint.
         role = getattr(record, "role", "user") or "user"
         user_id = str(getattr(record, "id", "") or "")
-        return TokenPayload(username=str(username), role=str(role), user_id=user_id), token
+        return PocketBaseAuthenticationResult(
+            payload=TokenPayload(username=str(username), role=str(role), user_id=user_id),
+            token=token,
+            outcome="success",
+        )
     except Exception as exc:
-        logger.warning(f"PocketBase authentication failed: {exc}")
-        return None
+        status_code = getattr(exc, "status", None) or getattr(exc, "status_code", None)
+        outcome = (
+            "invalid_credentials"
+            if isinstance(status_code, int) and status_code in {400, 401, 403}
+            else "provider_failure"
+        )
+        logger.warning("PocketBase authentication failed (outcome=%s)", outcome)
+        return PocketBaseAuthenticationResult(payload=None, token=None, outcome=outcome)
 
 
 def register_pb(username: str, email: str, password: str) -> dict | None:

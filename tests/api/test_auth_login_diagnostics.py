@@ -10,7 +10,9 @@ import pytest
 
 TestClient = pytest.importorskip("fastapi.testclient").TestClient
 from fastapi import FastAPI
+from fastapi.exceptions import RequestValidationError
 
+from deeptutor.api.auth_validation import login_validation_exception_handler
 from deeptutor.api.routers import auth as auth_router
 from deeptutor.services import auth as auth_service
 from deeptutor.services.auth_diagnostics import (
@@ -25,6 +27,13 @@ from deeptutor.services.auth_diagnostics import (
 def _app() -> FastAPI:
     app = FastAPI()
     app.include_router(auth_router.router, prefix="/auth")
+    return app
+
+
+def _validation_app() -> FastAPI:
+    app = FastAPI()
+    app.add_exception_handler(RequestValidationError, login_validation_exception_handler)
+    app.include_router(auth_router.router, prefix="/api/v1/auth")
     return app
 
 
@@ -72,7 +81,11 @@ def test_attempt_id_is_fresh_and_request_ids_are_bounded() -> None:
     assert attempt_id_is_valid(generated)
     assert resolve_attempt_id() != generated
     assert attempt_id_is_valid("phone-login-001")
-    assert validated_request_id("phone-login-001") == "phone-login-001"
+    request_reference = validated_request_id("phone-login-001", auth_secret="secret")
+    assert request_reference is not None
+    assert request_reference.startswith("req_")
+    assert request_reference == validated_request_id("phone-login-001", auth_secret="secret")
+    assert "phone-login-001" not in request_reference
     assert validated_request_id("bad id with spaces") is None
     assert validated_request_id(None) is None
     assert not attempt_id_is_valid("bad id with spaces")
@@ -132,7 +145,9 @@ def test_login_accepts_casefold_email_and_emits_success_diagnostic(auth_users, c
     assert response.status_code == 200
     assert attempt_id_is_valid(response.headers["x-auth-attempt-id"])
     event = _event_messages(caplog)[-1]
-    assert event["request_id"] == "phone-login-002"
+    assert event["request_id"] == validated_request_id(
+        "phone-login-002", auth_secret="diagnostic-test-secret"
+    )
     assert event["lookup"] == "casefold"
     assert event["password_result"] == "match"
     assert event["outcome"] == "success"
@@ -175,6 +190,84 @@ def test_validation_failure_diagnostic_is_bounded(caplog) -> None:
     assert event["identifier_kind"] == "invalid"
 
 
+def test_malformed_login_request_uses_generic_response_and_safe_event(auth_users, caplog) -> None:
+    caplog.set_level(logging.WARNING, logger="deeptutor.auth")
+    submitted_password = "submitted-password-must-not-be-logged"
+    with TestClient(_validation_app()) as client:
+        response = client.post(
+            "/api/v1/auth/login",
+            headers={"X-Request-ID": "eyJhbGciOiJIUzI1NiJ9.password-like-value"},
+            json={"username": 42, "password": submitted_password},
+        )
+
+    assert response.status_code == 422
+    assert response.json() == {"detail": "Invalid login request"}
+    assert attempt_id_is_valid(response.headers["x-auth-attempt-id"])
+    event = _event_messages(caplog)[-1]
+    assert event["outcome"] == "validation_failure"
+    assert event["request_id"].startswith("req_")
+    assert "eyJhbGciOiJIUzI1NiJ9.password-like-value" not in caplog.text
+    assert submitted_password not in caplog.text
+
+
+def test_request_id_material_is_never_logged(auth_users, caplog) -> None:
+    caplog.set_level(logging.WARNING, logger="deeptutor.auth")
+    token_like = "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJ1c2VyIn0.signature"
+    password_like = "Password123456789"
+    with TestClient(_app()) as client:
+        response = client.post(
+            "/auth/login",
+            headers={"X-Request-ID": token_like},
+            json={"username": "unknown@example.com", "password": password_like},
+        )
+
+    assert response.status_code == 401
+    event = _event_messages(caplog)[-1]
+    assert event["request_id"].startswith("req_")
+    assert token_like not in caplog.text
+    assert password_like not in caplog.text
+
+
+def test_pocketbase_rejected_credentials_and_provider_failure_are_distinct(
+    monkeypatch: pytest.MonkeyPatch, caplog
+) -> None:
+    monkeypatch.setattr(auth_router, "AUTH_ENABLED", True)
+    monkeypatch.setattr(auth_router, "POCKETBASE_ENABLED", True)
+    monkeypatch.setattr(auth_router, "AUTH_SECRET", "diagnostic-test-secret")
+    caplog.set_level(logging.WARNING, logger="deeptutor.auth")
+
+    rejected = auth_service.PocketBaseAuthenticationResult(
+        payload=None, token=None, outcome="invalid_credentials"
+    )
+    provider_failure = auth_service.PocketBaseAuthenticationResult(
+        payload=None, token=None, outcome="provider_failure"
+    )
+    results = iter((rejected, provider_failure))
+    monkeypatch.setattr(
+        auth_router,
+        "authenticate_pb",
+        lambda _username, _password: next(results),
+    )
+
+    with TestClient(_app()) as client:
+        rejected_response = client.post(
+            "/auth/login", json={"username": "alice@example.com", "password": "wrong"}
+        )
+        provider_response = client.post(
+            "/auth/login", json={"username": "alice@example.com", "password": "wrong"}
+        )
+
+    assert rejected_response.status_code == provider_response.status_code == 401
+    assert rejected_response.json() == provider_response.json() == {
+        "detail": "Incorrect username or password"
+    }
+    events = _event_messages(caplog)[-2:]
+    assert events[0]["outcome"] == "invalid_credentials"
+    assert events[0]["password_result"] == "mismatch"
+    assert events[1]["outcome"] == "provider_failure"
+    assert events[1]["password_result"] == "not_checked"
+
+
 def test_diagnostic_event_survives_warning_level_runtime_config(caplog) -> None:
     caplog.set_level(logging.WARNING, logger="deeptutor.auth")
     emit_auth_attempt(
@@ -200,6 +293,7 @@ def test_direct_diagnostic_event_never_contains_auth_material(caplog) -> None:
     password_hash = "$2b$12$not-a-real-hash-for-this-test"
     emit_auth_attempt(
         attempt_id="safe-001",
+        request_id="eyJraw-token-like-request-id.signature",
         username="alice@example.com",
         user_agent="Safari",
         auth_secret="diagnostic-test-secret",
@@ -214,4 +308,5 @@ def test_direct_diagnostic_event_never_contains_auth_material(caplog) -> None:
     assert password_hash not in message
     assert "Bearer " not in message
     assert "dt_token" not in message
+    assert "eyJraw-token-like-request-id.signature" not in message
     assert "alice@example.com" not in message

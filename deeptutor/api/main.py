@@ -1,16 +1,15 @@
 from contextlib import asynccontextmanager
-import json
 import logging
 import sys
 
 from fastapi import Depends, FastAPI, HTTPException, Request
-from fastapi.exception_handlers import request_validation_exception_handler
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 
 from deeptutor.logging import configure_logging
+from deeptutor.api.auth_validation import login_validation_exception_handler
 from deeptutor.services.config import (
     ensure_runtime_settings_files,
     export_runtime_settings_to_env,
@@ -283,46 +282,8 @@ app = FastAPI(
 
 
 @app.exception_handler(RequestValidationError)
-async def login_validation_exception_handler(request: Request, exc: RequestValidationError):
-    """Keep malformed login responses generic while recording safe diagnostics."""
-    if request.url.path == "/api/v1/auth/login":
-        from deeptutor.services import auth as auth_service
-        from deeptutor.services.auth_diagnostics import (
-            auth_attempt_headers,
-            emit_auth_attempt,
-            resolve_attempt_id,
-            validated_request_id,
-        )
-
-        username: str | None = None
-        try:
-            payload = json.loads((await request.body()).decode("utf-8"))
-            if isinstance(payload, dict) and isinstance(payload.get("username"), str):
-                username = payload["username"]
-        except (UnicodeDecodeError, json.JSONDecodeError, TypeError):
-            pass
-
-        attempt_id = resolve_attempt_id()
-        request_id = validated_request_id(request.headers.get("x-request-id"))
-        emit_auth_attempt(
-            attempt_id=attempt_id,
-            request_id=request_id,
-            username=username,
-            user_agent=request.headers.get("user-agent"),
-            auth_secret=auth_service.AUTH_SECRET,
-            lookup="none",
-            account_state="unknown",
-            password_result="not_checked",
-            auth_mode="pocketbase" if auth_service.POCKETBASE_ENABLED else "standard",
-            outcome="validation_failure",
-        )
-        return JSONResponse(
-            status_code=422,
-            content={"detail": "Invalid login request"},
-            headers=auth_attempt_headers(attempt_id),
-        )
-
-    return await request_validation_exception_handler(request, exc)
+async def _request_validation_exception_handler(request: Request, exc: RequestValidationError):
+    return await login_validation_exception_handler(request, exc)
 
 # Access logging is funneled through this one middleware. uvicorn's own
 # per-request access log is disabled on every launch path (run_server.py via

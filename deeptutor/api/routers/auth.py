@@ -497,7 +497,10 @@ async def auth_status(
 async def login(body: LoginRequest, request: Request, response: Response) -> dict:
     """Validate credentials and set a JWT cookie."""
     attempt_id = resolve_attempt_id()
-    request_id = validated_request_id(request.headers.get("x-request-id"))
+    request_id = validated_request_id(
+        request.headers.get("x-request-id"),
+        auth_secret=AUTH_SECRET,
+    )
     attempt_headers = auth_attempt_headers(attempt_id)
     if not AUTH_ENABLED:
         emit_auth_attempt(
@@ -519,7 +522,7 @@ async def login(body: LoginRequest, request: Request, response: Response) -> dic
         # PocketBase mode: email = username field for backwards-compat with the
         # existing LoginRequest schema; users can pass their email as "username".
         pb_result = authenticate_pb(body.username, body.password)
-        if not pb_result:
+        if pb_result.payload is None:
             emit_auth_attempt(
                 attempt_id=attempt_id,
                 request_id=request_id,
@@ -528,16 +531,20 @@ async def login(body: LoginRequest, request: Request, response: Response) -> dic
                 auth_secret=AUTH_SECRET,
                 lookup="none",
                 account_state="unknown",
-                password_result="not_checked",
+                password_result=(
+                    "mismatch" if pb_result.outcome == "invalid_credentials" else "not_checked"
+                ),
                 auth_mode="pocketbase",
-                outcome="provider_failure",
+                outcome=pb_result.outcome,
             )
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
                 detail="Incorrect username or password",
                 headers=attempt_headers,
             )
-        payload, pb_token = pb_result
+        payload = pb_result.payload
+        pb_token = pb_result.token
+        assert payload is not None and pb_token is not None
         emit_auth_attempt(
             attempt_id=attempt_id,
             request_id=request_id,
