@@ -5,6 +5,7 @@ import {
   applyBlueWayActionIfCurrent,
   assertCredentialFreePayload,
   blueWayConnectionLabel,
+  blueWayPairingErrorMessage,
   blueWayIdentityIsCurrent,
   blueWayResponseIsCurrent,
   blueWaySyncIsRunning,
@@ -74,6 +75,18 @@ test("BlueWay responses cannot cross an identity or request epoch", () => {
   assert.equal(blueWayResponseIsCurrent(4, 4, 9, 9), true);
   assert.equal(blueWayResponseIsCurrent(3, 4, 9, 9), false);
   assert.equal(blueWayResponseIsCurrent(4, 4, 8, 9), false);
+});
+
+test("pairing completion races become actionable recovery copy", () => {
+  assert.equal(
+    blueWayPairingErrorMessage(new Error("BlueWay pairing is already being completed")),
+    "BlueWay is finishing the previous approval. Wait a moment, then try Stop pairing again.",
+  );
+  assert.equal(
+    blueWayPairingErrorMessage(new Error("BlueWay pairing is already pending")),
+    "A BlueWay pairing is already pending. Stop it before starting over.",
+  );
+  assert.equal(blueWayPairingErrorMessage(new Error("provider unavailable")), "provider unavailable");
 });
 
 test("BlueWay approval links require HTTPS except explicit loopback development", () => {

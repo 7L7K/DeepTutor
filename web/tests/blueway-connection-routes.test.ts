@@ -15,6 +15,10 @@ test("dedicated BlueWay connection routes reuse the authenticated pairing surfac
   assert.match(route, /pollBlueWayConnection/);
   assert.match(route, /cancelBlueWayConnection/);
   assert.match(route, /cancelBlueWayRecovery/);
+  assert.match(route, /refreshInFlightRef/);
+  assert.match(route, /Stop pairing/);
+  assert.match(route, /Redo connection/);
+  assert.match(route, /blueWayPairingErrorMessage/);
   assert.match(route, /Continue in BlueWay/);
   assert.match(route, /Use another device/);
   assert.match(route, /Waiting for BlueWay approval/);
