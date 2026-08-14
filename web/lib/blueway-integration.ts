@@ -94,6 +94,17 @@ export function blueWayResponseIsCurrent(
   );
 }
 
+export function blueWayPairingErrorMessage(error: unknown): string {
+  const message = error instanceof Error ? error.message : String(error);
+  if (message === "BlueWay pairing is already being completed") {
+    return "BlueWay is finishing the previous approval. Wait a moment, then try Stop pairing again.";
+  }
+  if (message === "BlueWay pairing is already pending") {
+    return "A BlueWay pairing is already pending. Stop it before starting over.";
+  }
+  return message;
+}
+
 export function blueWayIdentityIsCurrent(
   requestIdentityEpoch: number,
   currentIdentityEpoch: number,

@@ -24,6 +24,7 @@ import {
 import {
   applyBlueWayActionIfCurrent,
   blueWayConnectionLabel,
+  blueWayPairingErrorMessage,
   blueWayResponseIsCurrent,
   blueWaySyncIsRunning,
   safeBlueWayVerificationUri,
@@ -68,18 +69,21 @@ function BlueWaySettingsPageContent({
   const [clock, setClock] = useState(() => Date.now() / 1000);
   const identityEpochRef = useRef(0);
   const requestSequenceRef = useRef(0);
+  const refreshInFlightRef = useRef(false);
 
   const refresh = useCallback(async () => {
+    if (refreshInFlightRef.current) return;
+    refreshInFlightRef.current = true;
     const identityEpoch = identityEpochRef.current;
     const requestSequence = ++requestSequenceRef.current;
-    if (mode === "complete" && !completionAttemptId) {
-      setStatus(null);
-      setAttempt(null);
-      setUnlinked([]);
-      setMessage("This completion link is incomplete. Start a new connection from TEEECHR.");
-      return;
-    }
     try {
+      if (mode === "complete" && !completionAttemptId) {
+        setStatus(null);
+        setAttempt(null);
+        setUnlinked([]);
+        setMessage("This completion link is incomplete. Start a new connection from TEEECHR.");
+        return;
+      }
       let knownAttempt = attempt;
       if (!knownAttempt && mode !== "complete") {
         knownAttempt = await getBlueWayCurrentAttempt();
@@ -149,7 +153,9 @@ function BlueWaySettingsPageContent({
         requestSequence,
         requestSequenceRef.current,
       )) return;
-      setMessage(error instanceof Error ? error.message : String(error));
+      setMessage(blueWayPairingErrorMessage(error));
+    } finally {
+      refreshInFlightRef.current = false;
     }
   }, [attempt, completionAttemptId, completionFinished, mode]);
 
@@ -215,7 +221,7 @@ function BlueWaySettingsPageContent({
       await action(identityEpoch);
     } catch (error) {
       if (identityEpoch !== identityEpochRef.current) return;
-      setMessage(error instanceof Error ? error.message : String(error));
+      setMessage(blueWayPairingErrorMessage(error));
     } finally {
       if (identityEpoch === identityEpochRef.current) setBusy(false);
     }
@@ -393,7 +399,7 @@ function BlueWaySettingsPageContent({
               }
               className="rounded-lg border border-red-500/30 px-3 py-2 text-xs font-medium text-red-600 disabled:opacity-50 dark:text-red-400"
             >
-              {attempt?.mode === "recovery" ? "Cancel recovery" : "Cancel pairing"}
+              {attempt?.mode === "recovery" ? "Stop recovery" : "Stop pairing"}
             </button>
           ) : state === "credential_recovery_required" ? (
             <button
@@ -461,6 +467,8 @@ function BlueWaySettingsPageContent({
                 ? "Start connection"
                 : displayPairingState === "failed"
                   ? "Retry connection"
+                  : displayPairingState === "cancelled"
+                    ? "Redo connection"
                   : "Start new connection"}
             </button>
           ) : null}

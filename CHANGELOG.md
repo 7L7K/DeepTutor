@@ -14,6 +14,12 @@
   primary, keeps QR behind an explicit cross-device disclosure, validates the
   completion request server-side, and fails closed for malformed links.
 
+- Fixed the pairing recovery path so browser approval polling cannot overlap.
+  Pending requests now expose an explicit Stop pairing action, terminal requests
+  expose Redo connection, and completion-race errors explain when the server is
+  safely finishing the previous approval instead of leaving the page in a
+  misleading pending state.
+
 - Fixed BlueWay workspace reactivation to require a current exact active
   Course/term mapping, and atomically consume each verified assertion `jti` so
   replayed reads cannot refresh the local launch lease. Direct launch authority
