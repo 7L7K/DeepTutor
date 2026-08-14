@@ -24,8 +24,9 @@ from deeptutor.courses.generation_models import (
 )
 from deeptutor.courses.practice_models import normalize_bounded_short_answer
 from scripts.run_c3_final_quality_campaign import (
-    FINAL_INDIVIDUAL_JUDGE_OUTPUT_LIMIT,
     FINAL_PROVIDER_POLICY_ID,
+    CampaignStop,
+    FinalCampaignStop,
     _call_once,
     _deterministic_question_failure,
     _judge_question,
@@ -35,20 +36,16 @@ from scripts.run_c3_final_quality_campaign import (
     _objective_contracts,
     _objective_evidence,
     _write_json,
-    CampaignStop,
-    FinalCampaignStop,
-    ObjectiveContract,
 )
 from scripts.run_c3_h3_model_qualification import (
-    CampaignClient,
     GENERATION_OUTPUT_LIMIT,
     MAX_PROVIDER_SPEND_MICROUSD,
     MODEL,
     REASONING,
     STORE,
+    CampaignClient,
 )
 from scripts.run_c3_luna_probe import APPROVED_OBJECTIVE_IDS
-
 
 FINAL_SET_PLAN_ID = "c3-final-set-plan-v2"
 FINAL_SET_PLAN_FILENAME = "final_set_plan_v2.json"

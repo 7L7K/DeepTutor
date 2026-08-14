@@ -139,47 +139,27 @@ def test_course_chat_readiness_mixed_state_uses_only_current_ready_sources() -> 
     }
 
 
-@pytest.mark.asyncio
-async def test_zero_ready_sources_prevent_session_creation_and_provider_call(
+def test_zero_ready_sources_allow_general_course_chat_without_course_knowledge(
     monkeypatch: pytest.MonkeyPatch,
-    tmp_path,
 ) -> None:
     service = SimpleNamespace(
         get=lambda _course_id: _course(),
         list_sources=lambda _course_id: [],
     )
     monkeypatch.setattr("deeptutor.courses.service.get_current_course_service", lambda: service)
-    monkeypatch.setattr(
-        "deeptutor.multi_user.tool_access.allowed_optional_tools", lambda: None
+    payload = resolve_course_turn_payload(
+        "crs_biology",
+        {
+            "content": "What produces ATP?",
+            "tools": [],
+            "knowledge_bases": [],
+        },
     )
-    provider_calls = 0
 
-    async def provider_probe(_execution) -> None:
-        nonlocal provider_calls
-        provider_calls += 1
-
-    store = SQLiteSessionStore(tmp_path / "chat_history.db")
-    runtime = TurnRuntimeManager(store)
-    monkeypatch.setattr(runtime, "_run_turn", provider_probe)
-
-    error: Exception | None = None
-    try:
-        await runtime.start_turn(
-            {
-                "course_id": "crs_biology",
-                "content": "What produces ATP?",
-                "tools": [],
-                "knowledge_bases": [],
-            }
-        )
-    except Exception as exc:  # expected C1 preflight rejection
-        error = exc
-    await asyncio.sleep(0)
-
-    assert isinstance(error, CourseUnavailableError)
-    assert "materials" in str(error).lower()
-    assert provider_calls == 0
-    assert await store.list_sessions() == []
+    assert payload["knowledge_bases"] == []
+    assert payload["course_context"]["source_ids"] == []
+    assert payload["course_context"]["answer_mode"] == "general_knowledge"
+    assert payload["course_readiness"]["state"] == "no_materials"
 
 
 def test_mixed_course_turn_resolves_only_biology_ready_sources(monkeypatch) -> None:
@@ -200,6 +180,7 @@ def test_mixed_course_turn_resolves_only_biology_ready_sources(monkeypatch) -> N
     assert payload["course_context"]["source_titles"] == {
         "src_bio": "src_bio.pdf"
     }
+    assert payload["course_context"]["answer_mode"] == "course_grounded"
     assert payload["course_readiness"]["counts"] == {
         "ready": 1,
         "processing": 1,
@@ -304,6 +285,43 @@ def test_unsupported_course_answer_is_replaced_with_bounded_abstention() -> None
     assert [event.content for event in content] == [COURSE_CHAT_UNSUPPORTED_MESSAGE]
     assert content[0].metadata["course_grounding"] == "unsupported"
     assert "Unsupported general-knowledge answer" not in repr(finalized)
+
+
+def test_general_course_answer_is_retained_without_fake_citations() -> None:
+    from deeptutor.courses.chat_contract import finalize_course_chat_events
+
+    context = {
+        **_course_context(),
+        "source_ids": [],
+        "source_revisions": {},
+        "source_fingerprints": {},
+        "source_titles": {},
+        "answer_mode": "general_knowledge",
+    }
+    finalized = finalize_course_chat_events(
+        context,
+        [
+            StreamEvent(
+                type=StreamEventType.SOURCES,
+                source="provider",
+                metadata={"sources": [{"kb_name": "not-authorized"}]},
+            ),
+            StreamEvent(
+                type=StreamEventType.CONTENT,
+                source="provider",
+                content="General answer",
+                metadata={"call_kind": "llm_final_response"},
+            ),
+            StreamEvent(type=StreamEventType.DONE, source="provider"),
+        ],
+    )
+
+    assert [event.type for event in finalized] == [
+        StreamEventType.CONTENT,
+        StreamEventType.DONE,
+    ]
+    assert finalized[0].content == "General answer"
+    assert finalized[0].metadata["course_grounding"] == "general_knowledge"
 
 
 @pytest.mark.asyncio

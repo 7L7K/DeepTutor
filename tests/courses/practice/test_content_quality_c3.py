@@ -6,6 +6,8 @@ from pathlib import Path
 
 import pytest
 
+from deeptutor.courses.attempt_repository import CourseAssessmentRepository
+from deeptutor.courses.attempt_service import CourseAssessmentService
 from deeptutor.courses.content_quality import (
     C3_BIOLOGY_PROFILE,
     ContentQualityError,
@@ -13,10 +15,6 @@ from deeptutor.courses.content_quality import (
 )
 from deeptutor.courses.content_quality_repository import CourseContentQualityRepository
 from deeptutor.courses.content_quality_service import CourseContentQualityService
-from deeptutor.courses.attempt_repository import CourseAssessmentRepository
-from deeptutor.courses.attempt_service import CourseAssessmentService
-from deeptutor.courses.grading_repository import CourseGradingRepository
-from deeptutor.courses.grading_service import CourseGradingService
 from deeptutor.courses.flashcard_generation_models import (
     FlashcardCandidatePublication,
     FlashcardCitation,
@@ -39,6 +37,9 @@ from deeptutor.courses.generation_models import (
 from deeptutor.courses.generation_provider import PracticeGenerationProvider
 from deeptutor.courses.generation_repository import CoursePracticeGenerationRepository
 from deeptutor.courses.generation_service import CoursePracticeGenerationService
+from deeptutor.courses.grading_repository import CourseGradingRepository
+from deeptutor.courses.grading_service import CourseGradingService
+from deeptutor.courses.mastery_adapter import CourseMasteryAdapter
 from deeptutor.courses.practice_models import (
     ExactAnswerContract,
     PracticeCitation,
@@ -46,12 +47,9 @@ from deeptutor.courses.practice_models import (
 )
 from deeptutor.courses.practice_repository import CoursePracticeRepository
 from deeptutor.courses.practice_service import CoursePracticeService
-from deeptutor.courses.repository import CourseRepository
-from deeptutor.courses.repository import CourseConflictError
-from deeptutor.courses.mastery_adapter import CourseMasteryAdapter
+from deeptutor.courses.repository import CourseConflictError, CourseRepository
 from deeptutor.learning.models import KnowledgePoint, KnowledgeType, LearningModule
 from deeptutor.learning.storage import LearningStore
-
 
 SOURCE_TEXT = (
     "[00:13:05] Oxygen is the terminal electron acceptor at the end of the "

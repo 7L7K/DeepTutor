@@ -11,12 +11,12 @@ from typing import Any
 from pydantic import ValidationError
 
 from .content_quality import (
+    _OPAQUE_ID,
     C3_BIOLOGY_PROFILE,
     ContentQualityError,
     _answer_supported_by_quote,
     _explanation_supported_by_quote,
     _normalized,
-    _OPAQUE_ID,
     validate_c3_output,
 )
 from .generation_models import (

@@ -134,7 +134,7 @@ export async function requestCodex<T>(
     } catch {
       throw new CodexOAuthApiError(
         "invalid_response",
-        "DeepTutor returned an invalid Codex OAuth response.",
+        "TEEECHR returned an invalid Codex OAuth response.",
       );
     }
   }

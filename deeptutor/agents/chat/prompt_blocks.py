@@ -71,6 +71,10 @@ class ChatPromptAssembler:
             PromptBlock("runtime_policy", self._t("runtime_policy")),
             PromptBlock("loop", self._t("loop.system")),
         ]
+        if (context.metadata or {}).get("course_context"):
+            course_policy = self._t("course_chat_policy")
+            if course_policy:
+                blocks.append(PromptBlock("course_chat_policy", course_policy))
         # Capability playbooks sit high so they frame the whole turn when active;
         # empty blocks are omitted by ``system_prompt``'s join.
         blocks.extend(capability_blocks or [])

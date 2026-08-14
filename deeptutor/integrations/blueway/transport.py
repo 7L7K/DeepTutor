@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 import json
+import re
 from typing import Any, Protocol
 from urllib.parse import urlencode
 
@@ -53,6 +54,7 @@ class RefreshExchange:
 class BlueWayTransport(Protocol):
     def begin_device_authorization(self, *, client_id: str, audience: str, device_code: str, user_code: str, pkce_challenge: str) -> DeviceAuthorization: ...
     def exchange(self, *, request_id: str, device_code: str, code_verifier: str) -> TokenExchange: ...
+    def cancel(self, *, request_id: str, device_code: str) -> str: ...
     def refresh(self, *, refresh_token: str, rotation_request_id: str) -> RefreshExchange: ...
     def fetch_snapshot(self, *, access_token: str, cursor: str | None) -> dict[str, Any]: ...
     def revoke(self, *, refresh_token: str) -> None: ...
@@ -134,7 +136,15 @@ class HttpBlueWayTransport:
     def begin_device_authorization(self, *, client_id: str, audience: str, device_code: str, user_code: str, pkce_challenge: str) -> DeviceAuthorization:
         payload = self._pairing({"action": "start", "client_id": client_id, "audience": audience, "device_code": device_code, "user_code": user_code, "code_challenge": pkce_challenge})
         request_id, expires_at = payload.get("request_id"), payload.get("expires_at")
-        if not isinstance(request_id, str) or not isinstance(expires_at, str):
+        if (
+            not isinstance(request_id, str)
+            or not re.fullmatch(
+                r"[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}",
+                request_id,
+                flags=re.IGNORECASE,
+            )
+            or not isinstance(expires_at, str)
+        ):
             raise BlueWayTransportError("BlueWay pairing response is invalid")
         try:
             timestamp = __import__("datetime").datetime.fromisoformat(expires_at.replace("Z", "+00:00")).timestamp()
@@ -155,6 +165,15 @@ class HttpBlueWayTransport:
         if payload == {"error": "authorization_pending"}:
             raise BlueWayAuthorizationPending("BlueWay approval is still pending")
         return self._exchange(payload)
+
+    def cancel(self, *, request_id: str, device_code: str) -> str:
+        payload = self._pairing(
+            {"action": "cancel", "request_id": request_id, "device_code": device_code},
+        )
+        state = payload.get("state")
+        if state not in {"cancelled", "expired"}:
+            raise BlueWayTransportError("BlueWay pairing cancellation response is invalid")
+        return state
 
     def refresh(self, *, refresh_token: str, rotation_request_id: str) -> RefreshExchange:
         payload = self._pairing({"action": "refresh", "refresh_token": refresh_token, "rotation_request_id": rotation_request_id})

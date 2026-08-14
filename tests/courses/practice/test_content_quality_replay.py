@@ -4,7 +4,6 @@ from pathlib import Path
 
 from deeptutor.courses.content_quality_replay import replay_manifest
 
-
 REPO_ROOT = Path(__file__).resolve().parents[3]
 MANIFEST = (
     REPO_ROOT

@@ -7,6 +7,21 @@ around a two-layer plugin model — single-shot **Tools** invoked by the
 LLM, and multi-stage **Capabilities** that take over a turn — exposed
 through three entry points: CLI, WebSocket API, and Python SDK.
 
+## Public branding boundary
+
+`TEEECHR` is the only learner-facing product name. Any new or edited web UI,
+metadata, accessibility label, localization string, loading/error state,
+settings description, help text, sample learner content, test assertion for
+visible copy, or other public product surface must use `TEEECHR` and must not
+introduce `DeepTutor` or `deeptutor` as visible branding.
+
+Keep `DeepTutor` / `deeptutor` only when the identifier is explicitly technical
+or historical, including repository and package names, Python imports, API
+routes, environment variables, storage keys, CLI commands, migrations, GitHub
+URLs, archived receipts, screenshots, provenance artifacts, and fixtures that
+intentionally document legacy behavior. When in doubt, classify the occurrence
+before editing; never rename a technical contract merely to make a search clean.
+
 ## Architecture
 
 ```

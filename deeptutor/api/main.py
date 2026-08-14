@@ -2,11 +2,13 @@ from contextlib import asynccontextmanager
 import logging
 import sys
 
-from fastapi import Depends, FastAPI, HTTPException
+from fastapi import Depends, FastAPI, HTTPException, Request
+from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 
+from deeptutor.api.auth_validation import login_validation_exception_handler
 from deeptutor.logging import configure_logging
 from deeptutor.services.config import (
     ensure_runtime_settings_files,
@@ -277,6 +279,11 @@ app = FastAPI(
     # See: https://github.com/HKUDS/DeepTutor/issues/112
     redirect_slashes=False,
 )
+
+
+@app.exception_handler(RequestValidationError)
+async def _request_validation_exception_handler(request: Request, exc: RequestValidationError):
+    return await login_validation_exception_handler(request, exc)
 
 # Access logging is funneled through this one middleware. uvicorn's own
 # per-request access log is disabled on every launch path (run_server.py via

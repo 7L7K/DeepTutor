@@ -8,6 +8,7 @@ from typing import Callable, ContextManager
 from deeptutor.multi_user.identity import get_user_by_id, identity_write_lock
 from deeptutor.multi_user.models import LOCAL_ADMIN_ID
 
+from .content_quality import validate_c3_output
 from .generation_models import (
     PracticeGenerationInput,
     PracticeGenerationOperation,
@@ -28,7 +29,6 @@ from .generation_provider import (
     practice_generation_provider_available,
 )
 from .generation_repository import CoursePracticeGenerationRepository
-from .content_quality import validate_c3_output
 from .provider_runtime import run_provider_with_deadline
 from .repository import CourseConflictError, CourseNotFoundError
 

@@ -1,8 +1,8 @@
 from __future__ import annotations
 
+from collections.abc import Iterable
 import os
 import time
-from collections.abc import Iterable
 
 from deeptutor.learning.models import (
     KnowledgeType,

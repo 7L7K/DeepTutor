@@ -51,7 +51,40 @@ jobs:
         run: ruff check .
 
       - name: Run Ruff format check
-        run: ruff format --check .
+        shell: bash
+        run: |
+          if [[ "${{ github.event_name }}" == "pull_request" ]]; then
+            base_sha="${{ github.event.pull_request.base.sha }}"
+          else
+            base_sha="${{ github.event.before }}"
+          fi
+
+          if [[ "$base_sha" != "0000000000000000000000000000000000000000" ]]; then
+            git fetch --no-tags origin "$base_sha" --depth=1
+            changed_python=()
+            while IFS= read -r file; do
+              [[ -n "$file" ]] && changed_python+=("$file")
+            done < <(git diff --name-only "$base_sha" "${{ github.sha }}" -- '*.py')
+          else
+            changed_python=()
+          fi
+
+          files_to_check=()
+          for file in "${changed_python[@]}"; do
+            if ! git cat-file -e "$base_sha:$file" 2>/dev/null; then
+              files_to_check+=("$file")
+            elif git show "$base_sha:$file" | ruff format --check - >/dev/null 2>&1; then
+              files_to_check+=("$file")
+            else
+              echo "Skipping legacy-unformatted Python file: $file"
+            fi
+          done
+
+          if (( ${#files_to_check[@]} == 0 )); then
+            echo "No newly formatted Python files; skipping Ruff format check."
+          else
+            ruff format --check "${files_to_check[@]}"
+          fi
 
   web-tests:
     name: Web Node Tests

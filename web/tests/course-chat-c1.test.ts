@@ -1,5 +1,7 @@
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import test from "node:test";
+import path from "node:path";
 
 const READY_SOURCE = {
   source_id: "src_bio",
@@ -23,11 +25,113 @@ test("Course Chat routes preserve exact Course and optional session identity", a
 });
 
 test("canonical academic term keeps identity while rendering a human label", async () => {
-  const { academicTermLabel } = await import("../lib/course-chat");
+  const { academicTermLabel, learnerCourseTermLabel } = await import(
+    "../lib/course-chat"
+  );
 
   assert.equal(academicTermLabel("fall-2026"), "Fall 2026");
   assert.equal(academicTermLabel("spring-2027"), "Spring 2027");
-  assert.equal(academicTermLabel(null), "Term not linked yet");
+  assert.equal(academicTermLabel(null), "No term set");
+  assert.equal(learnerCourseTermLabel(null), null);
+  assert.equal(learnerCourseTermLabel("  fall-2026 "), "Fall 2026");
+});
+
+test("Course navigation preserves the Course ID and marks the active destination", async () => {
+  const {
+    COURSE_NAVIGATION_DESTINATIONS,
+    courseDestinationIsActive,
+    courseDestinationPath,
+  } = await import("../lib/course-chat");
+
+  assert.deepEqual(
+    COURSE_NAVIGATION_DESTINATIONS.map((destination) => destination.label),
+    ["Overview", "Chat", "Practice", "Review", "Materials"],
+  );
+  assert.equal(
+    courseDestinationPath("crs/bio", "/materials"),
+    "/classes/crs%2Fbio/materials",
+  );
+  assert.equal(
+    courseDestinationIsActive(
+      "/classes/crs%2Fbio/materials",
+      "crs/bio",
+      "/materials",
+    ),
+    true,
+  );
+  assert.equal(
+    courseDestinationIsActive(
+      "/classes/crs%2Fbio/materials",
+      "crs/other",
+      "/materials",
+    ),
+    false,
+  );
+});
+
+test("CourseShell contains the mobile navigation and focus-visibility contract", () => {
+  const source = readFileSync(
+    path.join(process.cwd(), "components/courses/CourseShell.tsx"),
+    "utf8",
+  );
+
+  assert.match(source, /overflow-x-auto/);
+  assert.match(source, /shrink-0 whitespace-nowrap/);
+  assert.match(source, /aria-current=\{active \? "page" : undefined\}/);
+  assert.match(source, /scrollIntoView/);
+  assert.match(source, /onFocus=\{revealActiveDestination\}/);
+  assert.match(source, /overflow-x-hidden/);
+});
+
+test("General Study keeps its label without the Course-only selector bar", () => {
+  const source = readFileSync(
+    path.join(
+      process.cwd(),
+      "components/chat/home/GeneralStudyWorkspace.tsx",
+    ),
+    "utf8",
+  );
+
+  assert.match(source, /hideCourseBar/);
+  assert.match(source, /hideCourseScope/);
+  assert.match(source, /surfaceLabel="General Study"/);
+});
+
+test("learner shells do not expose unqualified Progress or Course scope copy", () => {
+  const overview = readFileSync(
+    path.join(process.cwd(), "components/courses/CourseOverview.tsx"),
+    "utf8",
+  );
+  const composer = readFileSync(
+    path.join(process.cwd(), "components/chat/home/ChatComposer.tsx"),
+    "utf8",
+  );
+  const courseChat = readFileSync(
+    path.join(process.cwd(), "components/courses/CourseChatRoute.tsx"),
+    "utf8",
+  );
+
+  assert.doesNotMatch(overview, /Progress and recommendations/);
+  assert.doesNotMatch(overview, /Not available in this slice/);
+  assert.match(composer, /Course sources only/);
+  assert.match(courseChat, /hideCourseBar/);
+  assert.doesNotMatch(courseChat, /hideCourseScope/);
+});
+
+test("opening a Course enters Chat and the expanded sidebar uses TEEECHR branding", () => {
+  const coursePage = readFileSync(
+    path.join(process.cwd(), "app/(workspace)/classes/[courseId]/page.tsx"),
+    "utf8",
+  );
+  const sidebar = readFileSync(
+    path.join(process.cwd(), "components/sidebar/SidebarShell.tsx"),
+    "utf8",
+  );
+
+  assert.match(coursePage, /CourseChatRoute/);
+  assert.doesNotMatch(coursePage, /CourseOverview/);
+  assert.match(sidebar, />\s*TEEECHR\s*</);
+  assert.doesNotMatch(sidebar, /src="\/banner\.png"/);
 });
 
 test("Course Chat hides internal managed knowledge references", async () => {
@@ -43,7 +147,7 @@ test("Course Chat hides internal managed knowledge references", async () => {
   assert.deepEqual(visibleChatKnowledgeReferences(references, false), references);
 });
 
-test("readiness presentation blocks zero, processing, and failed source states", async () => {
+test("readiness presentation keeps Chat usable without ready materials", async () => {
   const { courseChatReadinessPresentation } = await import("../lib/course-chat");
 
   assert.deepEqual(
@@ -53,9 +157,9 @@ test("readiness presentation blocks zero, processing, and failed source states",
       ready_sources: [],
     }),
     {
-      allowChat: false,
-      title: "This Course does not have any materials yet.",
-      body: "Add a Course material before asking grounded questions.",
+      allowChat: true,
+      title: "Course Chat is ready for general questions.",
+      body: "This Course has no materials yet. Answers will be general knowledge, not based on Course materials.",
       action: "Add materials",
     },
   );
@@ -65,7 +169,7 @@ test("readiness presentation blocks zero, processing, and failed source states",
       counts: { ready: 0, processing: 1, failed: 0, unavailable: 1, total: 1 },
       ready_sources: [],
     }).allowChat,
-    false,
+    true,
   );
   assert.equal(
     courseChatReadinessPresentation({
@@ -73,7 +177,7 @@ test("readiness presentation blocks zero, processing, and failed source states",
       counts: { ready: 0, processing: 0, failed: 2, unavailable: 2, total: 2 },
       ready_sources: [],
     }).allowChat,
-    false,
+    true,
   );
 });
 

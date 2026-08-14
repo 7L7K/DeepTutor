@@ -12,7 +12,6 @@ from deeptutor.courses.practice_models import (
     SingleChoiceOption,
 )
 
-
 ROOT = Path(__file__).resolve().parents[3]
 PRIMARY = ROOT / "docs/verification/2026-08-10-teeechr-c3-final-learning-loop-v3-1/primary/model-qualified-candidate.json"
 REMEDIATION = ROOT / "docs/verification/2026-08-10-teeechr-c3-final-learning-loop-v3-1-remediation-v2/remediation/model-qualified-candidate.json"

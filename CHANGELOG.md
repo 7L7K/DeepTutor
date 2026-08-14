@@ -2,6 +2,26 @@
 
 ## Unreleased
 
+- Hardened mobile TEEECHR sign-in with whitespace-safe email matching and
+  mobile input attributes, added server-only privacy-bounded login diagnostics
+  with a safe attempt reference header, and added accessible show/hide controls
+  to login and registration password fields. Public authentication failures
+  remain generic and credentials, hashes, tokens, cookies, and caller-supplied
+  correlation IDs are never logged.
+
+- Added dedicated `/connect/blueway` and `/connect/blueway/complete` routes for
+  same-phone BlueWay pairing. The TEEECHR page now makes the native app handoff
+  primary, keeps QR behind an explicit cross-device disclosure, validates the
+  completion request server-side, and fails closed for malformed links.
+
+- Fixed BlueWay workspace reactivation to require a current exact active
+  Course/term mapping, and atomically consume each verified assertion `jti` so
+  replayed reads cannot refresh the local launch lease. Direct launch authority
+  is now explicitly bounded to the 60-second assertion lifetime. Added a
+  distinct replay-protected revocation assertion that clears the exact local
+  launch lease immediately when delivered, plus a dry-run-by-default command
+  for upgrading every supported user Course database.
+
 - Added the C4 provider-free materialization path for the exact C3-H3
   model-qualified Biology Practice and Review artifacts. Single-choice option
   identities and four-source-citation remediation provenance are now persisted

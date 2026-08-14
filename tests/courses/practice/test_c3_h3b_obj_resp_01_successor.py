@@ -25,7 +25,6 @@ from deeptutor.learning.models import (
 )
 from deeptutor.learning.storage import LearningStore
 
-
 REFERENCE_ROOT = Path(__file__).resolve().parents[3] / "evals/reference_course"
 PROVIDER_ARTIFACT = (
     REFERENCE_ROOT

@@ -207,6 +207,7 @@ def _request_snapshot_metadata(
                 "sourceRevisions": dict(course_context.get("source_revisions") or {}),
                 "sourceFingerprints": dict(course_context.get("source_fingerprints") or {}),
                 "sourceTitles": dict(course_context.get("source_titles") or {}),
+                "answerMode": course_context.get("answer_mode"),
             }
         )
     return {"request_snapshot": snapshot}
@@ -1051,6 +1052,8 @@ class TurnRuntimeManager:
                 "source_revisions": dict(snapshot.get("sourceRevisions") or {}),
                 "source_fingerprints": dict(snapshot.get("sourceFingerprints") or {}),
             }
+            if snapshot.get("answerMode"):
+                preserved_course_context["answer_mode"] = snapshot["answerMode"]
             source_titles = dict(snapshot.get("sourceTitles") or {})
             if source_titles:
                 preserved_course_context["source_titles"] = source_titles

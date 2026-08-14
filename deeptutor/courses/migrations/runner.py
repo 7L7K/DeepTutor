@@ -18,6 +18,7 @@ import unicodedata
 from pydantic import TypeAdapter, ValidationError
 
 from deeptutor.courses.assessment_grading import grade_assessment_response
+from deeptutor.courses.database_lock import course_database_lock
 from deeptutor.courses.practice_models import (
     BoundedShortAnswerContract,
     ExactAnswerContract,
@@ -25,7 +26,6 @@ from deeptutor.courses.practice_models import (
     SingleChoiceAnswerContract,
     SingleChoiceOption,
 )
-from deeptutor.courses.database_lock import course_database_lock
 
 _MIGRATION_FILE = re.compile(r"^(?P<version>\d{4})_(?P<name>[a-z0-9_]+)\.sql$")
 _CORE_PHASE3A_TABLES = frozenset({"courses", "course_sources"})

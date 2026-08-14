@@ -467,7 +467,7 @@ export default function MemorySection({
             </p>
             <p className="mt-0.5 text-[var(--muted-foreground)]">
               {t(
-                "Stored at memory/backup/{{name}}. v2 starts fresh — interact with DeepTutor and click Update on each doc to build memory.",
+                "Stored at memory/backup/{{name}}. v2 starts fresh — interact with TEEECHR and click Update on each doc to build memory.",
                 { name: latestBackup },
               )}
             </p>

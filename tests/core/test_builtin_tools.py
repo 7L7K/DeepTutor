@@ -25,6 +25,12 @@ from deeptutor.tools.builtin import (
 )
 
 
+@pytest.fixture(autouse=True)
+def _disable_local_auth_for_tool_unit_tests(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Keep registry behavior tests independent of the developer runtime."""
+    monkeypatch.setattr("deeptutor.services.auth.AUTH_ENABLED", False)
+
+
 def _install_module(
     monkeypatch: pytest.MonkeyPatch, fullname: str, **attrs: Any
 ) -> types.ModuleType:

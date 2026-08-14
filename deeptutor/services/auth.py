@@ -26,7 +26,7 @@ Multi-user setup (recommended):
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 import logging
-from typing import Any
+from typing import Any, Literal
 
 from deeptutor.services.config import load_auth_settings, load_integrations_settings
 
@@ -72,6 +72,25 @@ class TokenPayload:
     username: str
     role: str
     user_id: str = ""
+
+
+@dataclass(frozen=True)
+class AuthenticationResult:
+    """Authentication result plus bounded lookup state for server diagnostics."""
+
+    payload: TokenPayload | None
+    lookup: Literal["exact", "casefold", "none"]
+    account_state: Literal["active", "disabled", "unknown"]
+    password_result: Literal["match", "mismatch", "not_checked"]
+
+
+@dataclass(frozen=True)
+class PocketBaseAuthenticationResult:
+    """PocketBase login result with safe credential/provider failure state."""
+
+    payload: TokenPayload | None
+    token: str | None
+    outcome: Literal["success", "invalid_credentials", "provider_failure"]
 
 
 # ---------------------------------------------------------------------------
@@ -299,13 +318,13 @@ def decode_token(token: str) -> TokenPayload | None:
 # ---------------------------------------------------------------------------
 
 
-def authenticate_pb(username: str, password: str) -> tuple[TokenPayload, str] | None:
+def authenticate_pb(username: str, password: str) -> PocketBaseAuthenticationResult:
     """
-    Authenticate against PocketBase and return (TokenPayload, raw_pb_token).
+    Authenticate against PocketBase and return a bounded result.
 
     Only called when POCKETBASE_ENABLED=True.
-    Returns None on failure.
-    The raw token is the PocketBase JWT string to be stored in the cookie.
+    The raw token is returned only to the caller that stores it in the cookie;
+    it is never included in diagnostics or logs.
 
     PocketBase requires an email address; plain usernames are mapped to
     <username>@deeptutor.local to match the email used at registration.
@@ -326,10 +345,20 @@ def authenticate_pb(username: str, password: str) -> tuple[TokenPayload, str] | 
         # Admins authenticated via PocketBase admin panel use a separate endpoint.
         role = getattr(record, "role", "user") or "user"
         user_id = str(getattr(record, "id", "") or "")
-        return TokenPayload(username=str(username), role=str(role), user_id=user_id), token
+        return PocketBaseAuthenticationResult(
+            payload=TokenPayload(username=str(username), role=str(role), user_id=user_id),
+            token=token,
+            outcome="success",
+        )
     except Exception as exc:
-        logger.warning(f"PocketBase authentication failed: {exc}")
-        return None
+        status_code = getattr(exc, "status", None) or getattr(exc, "status_code", None)
+        outcome = (
+            "invalid_credentials"
+            if isinstance(status_code, int) and status_code in {400, 401, 403}
+            else "provider_failure"
+        )
+        logger.warning("PocketBase authentication failed (outcome=%s)", outcome)
+        return PocketBaseAuthenticationResult(payload=None, token=None, outcome=outcome)
 
 
 def register_pb(username: str, email: str, password: str) -> dict | None:
@@ -368,28 +397,53 @@ def authenticate(username: str, password: str) -> TokenPayload | None:
     When auth is disabled, always returns a dummy admin payload so that
     callers don't need to special-case the disabled state.
     """
-    if not AUTH_ENABLED:
-        return TokenPayload(username=username or "local", role="admin", user_id="local-admin")
+    return authenticate_detailed(username, password).payload
 
+
+def authenticate_detailed(username: str, password: str) -> AuthenticationResult:
+    """Validate credentials and retain only non-secret branch information."""
+    if not AUTH_ENABLED:
+        return AuthenticationResult(
+            payload=TokenPayload(username=username or "local", role="admin", user_id="local-admin"),
+            lookup="none",
+            account_state="active",
+            password_result="not_checked",
+        )
+
+    username = username.strip()
     users = _load_users()
     if not users:
         logger.warning(
             "No users configured — login will always fail. "
             "Navigate to /register to create your first account."
         )
-        return None
+        return AuthenticationResult(None, "none", "unknown", "not_checked")
 
     record = users.get(username)
+    lookup: Literal["exact", "casefold", "none"] = "exact"
+    if record is None and "@" in username:
+        folded = username.casefold()
+        for candidate_username, candidate_record in users.items():
+            if str(candidate_username).casefold() == folded:
+                username = str(candidate_username)
+                record = candidate_record
+                lookup = "casefold"
+                break
     if not record:
-        return None
+        return AuthenticationResult(None, "none", "unknown", "not_checked")
 
     if isinstance(record, dict) and bool(record.get("disabled", False)):
-        return None
+        return AuthenticationResult(None, lookup, "disabled", "not_checked")
 
     hashed = record.get("hash", "") if isinstance(record, dict) else record
     if not verify_password(password, hashed):
-        return None
+        return AuthenticationResult(None, lookup, "active", "mismatch")
 
     role = record.get("role", "user") if isinstance(record, dict) else "user"
     user_id = str(record.get("id") or "") if isinstance(record, dict) else ""
-    return TokenPayload(username=username, role=role, user_id=user_id)
+    return AuthenticationResult(
+        TokenPayload(username=username, role=role, user_id=user_id),
+        lookup,
+        "active",
+        "match",
+    )
