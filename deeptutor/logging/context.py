@@ -15,6 +15,7 @@ LOG_CONTEXT_FIELDS = (
     "capability",
     "stage",
     "sink",
+    "blueway_event",
 )
 
 _context: contextvars.ContextVar[dict[str, Any]] = contextvars.ContextVar(

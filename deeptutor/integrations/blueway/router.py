@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import logging
 import re
 
 from fastapi import APIRouter, Header, HTTPException, Query
@@ -20,12 +19,12 @@ from .transport import BlueWayTransportError
 from .assertion import AssertionError as WorkspaceAssertionError, verify_assertion
 from .workspace import ConsentRequiredError, project_workspace
 from .launch import resolve_course_launch
+from .observability import emit_blueway_event, request_trace_id
 from deeptutor.courses.service import CourseUnavailableError, get_current_course_service
 
 router = APIRouter()
 workspace_router = APIRouter()
 _test_service: BlueWayService | None = None
-logger = logging.getLogger(__name__)
 
 
 class DisconnectRequest(BaseModel):
@@ -42,6 +41,7 @@ class WorkspaceReadRequest(BaseModel):
 def launch(
     external_course_id: str = Query(min_length=1, max_length=256),
     external_term_id: str | None = Query(default=None, max_length=256),
+    x_request_id: str | None = Header(default=None),
 ):
     """Resolve a BlueWay launch hint inside the authenticated Course scope."""
     try:
@@ -51,11 +51,29 @@ def launch(
             status_code=503,
             detail="Course launch is temporarily unavailable",
         ) from exc
-    payload = resolve_course_launch(
+    resolution = resolve_course_launch(
         BlueWayRepository(course_service.repository),
         external_course_id=external_course_id,
         external_term_id=external_term_id,
-    ).as_dict()
+    )
+    event_name = (
+        "blueway_course_launch_allowed"
+        if resolution.status in {"ready", "stale"}
+        else "blueway_course_launch_denied"
+    )
+    emit_blueway_event(
+        event_name,
+        trace_id=resolution.trace_id or request_trace_id(),
+        connection_ref=resolution.connection_ref,
+        request_ref=(
+            x_request_id
+            if x_request_id and re.fullmatch(r"[A-Za-z0-9._:-]{1,128}", x_request_id)
+            else None
+        ),
+        reason_code=resolution.status,
+        outcome="allowed" if event_name.endswith("allowed") else "denied",
+    )
+    payload = resolution.as_dict()
     return JSONResponse(
         content=payload,
         headers={"Cache-Control": "private, no-store"},
@@ -121,6 +139,25 @@ def status():
     if not service.settings.enabled:
         return {"enabled": False, "connection": None, "active_run": None}
     connection, run = _call(service.status)
+    observed_state = "not_connected"
+    if connection is not None:
+        if connection.credential_status == "recovery_required":
+            observed_state = "recovery_required"
+        else:
+            observed_state = {
+                "active": "active",
+                "disconnected": "not_connected",
+                "revocation_pending": "revoked",
+                "error": "temporarily_unavailable",
+            }.get(connection.state, "temporarily_unavailable")
+    emit_blueway_event(
+        "blueway_connection_status_read",
+        trace_id=connection.observability_trace_id if connection and connection.observability_trace_id else request_trace_id(),
+        connection_ref=connection.id if connection else None,
+        sync_ref=run.id if run else None,
+        state_to=observed_state,
+        outcome="success",
+    )
     return {"enabled": True, "connection": _connection(connection), "active_run": _run(run)}
 
 
@@ -213,6 +250,14 @@ def unlinked():
 @router.post("/disconnect")
 def disconnect(body: DisconnectRequest):
     connection = _call(lambda: _service().disconnect(expected_revision=body.expected_revision))
+    emit_blueway_event(
+        "blueway_connection_revoked",
+        trace_id=connection.observability_trace_id,
+        connection_ref=connection.id,
+        state_from="revocation_pending",
+        state_to="disconnected",
+        outcome="success",
+    )
     return {"connection": _connection(connection)}
 
 
@@ -224,17 +269,13 @@ def workspace_read(
 ):
     """Read the owner-scoped allowlist projection using a BlueWay assertion only."""
     request_id = x_request_id if x_request_id and re.fullmatch(r"[A-Za-z0-9._:-]{1,128}", x_request_id) else None
-    logger.info(
-        "blueway_workspace_request_received",
-        extra={"request_id": request_id, "course_id": body.course_id, "has_term": body.term_id is not None},
-    )
     if not authorization or not authorization.startswith("Bearer ") or not authorization[7:].strip():
         raise HTTPException(status_code=401, detail="Workspace assertion required")
     try:
         claims = verify_assertion(authorization[7:].strip())
         if claims["external_course_id"] != body.course_id or claims.get("external_term_id") != body.term_id:
             raise HTTPException(status_code=400, detail="Workspace request identity does not match assertion")
-        return project_workspace(claims)
+        return project_workspace(claims, request_ref=request_id)
     except WorkspaceAssertionError as exc:
         raise HTTPException(status_code=401, detail="Invalid workspace assertion") from exc
     except ConsentRequiredError as exc:

@@ -32,7 +32,8 @@ def test_exact_legacy_profiles_adopt_without_rewriting_domain_rows(
             conn, ignored_columns={"courses": {"workspace_kind"}}
         )
 
-    assert ensure_course_schema(path) == tuple(range(16))
+    expected_versions = tuple(artifact.version for artifact in runner.discover_migrations())
+    assert ensure_course_schema(path) == expected_versions
     with sqlite3.connect(path) as conn:
         conn.row_factory = sqlite3.Row
         assert domain_digest(
@@ -43,9 +44,10 @@ def test_exact_legacy_profiles_adopt_without_rewriting_domain_rows(
                 # columns; the legacy values themselves must remain intact.
                 "blueway_course_maps": {"external_term_id"},
                 "blueway_records": {"external_term_id"},
+                "blueway_connections": {"observability_trace_id"},
             },
         ) == before
-        assert conn.execute("SELECT COUNT(*) FROM schema_migrations").fetchone()[0] == 16
+        assert conn.execute("SELECT COUNT(*) FROM schema_migrations").fetchone()[0] == len(expected_versions)
         assert tuple(conn.execute(
             "SELECT id, revision, write_epoch, managed_kb_ref, workspace_kind FROM courses"
         ).fetchone()) == (

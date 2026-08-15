@@ -37,6 +37,7 @@ class Connection:
     connected_at: float | None
     last_sync_at: float | None
     disconnected_at: float | None
+    observability_trace_id: str | None = None
     rotation_request_id: str | None = None
     rotation_started_at: float | None = None
 
@@ -101,7 +102,9 @@ class BlueWayRepository:
         self.courses.ensure_schema()
 
     def create_active_connection(
-        self, *, external_subject: str, scope_version: str, connection_id: str | None = None
+        self, *, external_subject: str, scope_version: str,
+        connection_id: str | None = None,
+        observability_trace_id: str | None = None,
     ) -> Connection:
         if not external_subject or not scope_version:
             raise ValueError("BlueWay subject and scope version are required")
@@ -113,10 +116,11 @@ class BlueWayRepository:
                     """INSERT INTO blueway_connections
                        (id, owner_user_id, external_subject, state, scope_version, revision, grant_generation,
                         credential_ref, credential_status, created_at, updated_at, connected_at,
-                        last_sync_at, disconnected_at, rotation_request_id, rotation_started_at)
-                       VALUES (?, ?, ?, 'active', ?, 1, 1, ?, 'healthy', ?, ?, ?, NULL, NULL, NULL, NULL)""",
+                        last_sync_at, disconnected_at, observability_trace_id,
+                        rotation_request_id, rotation_started_at)
+                       VALUES (?, ?, ?, 'active', ?, 1, 1, ?, 'healthy', ?, ?, ?, NULL, NULL, ?, NULL, NULL)""",
                     (connection_id, self.owner_user_id, external_subject, scope_version,
-                     f"blueway:{connection_id}", now, now, now),
+                     f"blueway:{connection_id}", now, now, now, observability_trace_id),
                 )
             except sqlite3.IntegrityError as exc:
                 raise CourseConflictError("An active BlueWay connection already exists") from exc
@@ -281,7 +285,7 @@ class BlueWayRepository:
 
     def complete_credential_recovery(
         self, connection_id: str, *, expected_revision: int,
-        expected_generation: int,
+        expected_generation: int, observability_trace_id: str | None = None,
     ) -> Connection:
         """Reactivate the same connection after an owner-approved same-subject grant."""
         now = time.time()
@@ -291,6 +295,7 @@ class BlueWayRepository:
                    SET credential_status = 'healthy',
                        revision = revision + 1,
                        grant_generation = grant_generation + 1,
+                       observability_trace_id = COALESCE(?, observability_trace_id),
                        rotation_request_id = NULL,
                        rotation_started_at = NULL,
                        updated_at = ?
@@ -299,7 +304,7 @@ class BlueWayRepository:
                      AND credential_status = 'recovery_required'
                      AND revision = ? AND grant_generation = ?""",
                 (
-                    now, connection_id, self.owner_user_id,
+                    observability_trace_id, now, connection_id, self.owner_user_id,
                     expected_revision, expected_generation,
                 ),
             )

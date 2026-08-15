@@ -25,6 +25,7 @@ from .bundles import (
 )
 from .config import BlueWaySettings, IntegrationConfigurationError
 from .credentials import CredentialError, CredentialStore
+from .observability import emit_blueway_event, safe_pairing_trace_id, safe_transport_reason
 from .repository import BlueWayNotFoundError, BlueWayRepository, Connection, SyncRun
 from .snapshot import SnapshotValidationError, validate_snapshot
 from .transport import (
@@ -55,6 +56,7 @@ class PairingAttempt:
     verification_uri: str
     expires_at: float
     request_id: str
+    trace_id: str
     mode: str = "connect"
     recovery_connection_id: str | None = None
     recovery_revision: int | None = None
@@ -182,9 +184,17 @@ class BlueWayService:
                         device_code=device_code, verifier=verifier,
                         user_code=authorization.user_code, verification_uri=authorization.verification_uri,
                         expires_at=authorization.expires_at, request_id=authorization.request_id,
+                        trace_id=safe_pairing_trace_id(authorization.request_id),
                         mode="connect",
                     )
                     self._attempts[attempt.id] = attempt
+                    emit_blueway_event(
+                        "blueway_pairing_started",
+                        trace_id=attempt.trace_id,
+                        attempt_ref=attempt.id,
+                        state_to="pending",
+                        outcome="pending",
+                    )
         finally:
             with self._lock:
                 self._starting_owners.discard(owner)
@@ -248,6 +258,7 @@ class BlueWayService:
                     verification_uri=authorization.verification_uri,
                     expires_at=authorization.expires_at,
                     request_id=authorization.request_id,
+                    trace_id=safe_pairing_trace_id(authorization.request_id),
                     mode="recovery",
                     recovery_connection_id=current.id,
                     recovery_revision=current.revision,
@@ -255,6 +266,13 @@ class BlueWayService:
                 )
                 with self._lock:
                     self._attempts[attempt.id] = attempt
+                emit_blueway_event(
+                    "blueway_pairing_started",
+                    trace_id=attempt.trace_id,
+                    attempt_ref=attempt.id,
+                    state_to="pending",
+                    outcome="pending",
+                )
         finally:
             with self._lock:
                 self._starting_owners.discard(owner)
@@ -295,6 +313,7 @@ class BlueWayService:
                 connection = repository.create_active_connection(
                     external_subject=exchange.external_subject, scope_version=scope_version,
                     connection_id=provisional_id,
+                    observability_trace_id=attempt.trace_id,
                 )
             except Exception:
                 store.remove(provisional_id)
@@ -356,6 +375,7 @@ class BlueWayService:
                     current.id,
                     expected_revision=current.revision,
                     expected_generation=current.grant_generation,
+                    observability_trace_id=attempt.trace_id,
                 )
         except Exception:
             store.clear_staged_recovery(connection.id)
@@ -389,9 +409,22 @@ class BlueWayService:
                 self._assert_owner_current(owner)
                 if self._repository().visible_connection() is not None:
                     raise CourseConflictError("Disconnect BlueWay before exchanging a replacement pairing")
-            exchange = self.transport.exchange(
-                request_id=attempt.request_id, device_code=attempt.device_code, code_verifier=attempt.verifier
-            )
+            try:
+                exchange = self.transport.exchange(
+                    request_id=attempt.request_id, device_code=attempt.device_code, code_verifier=attempt.verifier
+                )
+            except BlueWayAuthorizationPending:
+                raise
+            except BlueWayTransportError as exc:
+                emit_blueway_event(
+                    "blueway_pairing_approval_rejected",
+                    trace_id=attempt.trace_id,
+                    attempt_ref=attempt.id,
+                    state_to="failed",
+                    reason_code=safe_transport_reason(exc),
+                    outcome="rejected",
+                )
+                raise
             try:
                 connection = self.complete_connection_for_transport(attempt_id=attempt_id, exchange=exchange)
             except Exception:
@@ -405,6 +438,23 @@ class BlueWayService:
                 raise
             with self._lock:
                 self._completed_attempts[key] = (connection.id, attempt.expires_at)
+            emit_blueway_event(
+                "blueway_pairing_exchanged",
+                trace_id=attempt.trace_id,
+                attempt_ref=attempt.id,
+                connection_ref=connection.id,
+                state_from="approved",
+                state_to="exchanged",
+                outcome="success",
+            )
+            emit_blueway_event(
+                "blueway_connection_created",
+                trace_id=attempt.trace_id,
+                attempt_ref=attempt.id,
+                connection_ref=connection.id,
+                state_to="active",
+                outcome="success",
+            )
             return connection
         finally:
             with self._lock:
@@ -412,11 +462,12 @@ class BlueWayService:
 
     def poll_connection(self, *, attempt_id: str) -> tuple[Connection | None, SyncRun | None]:
         """POST-only approval poll.  Browser clients never receive token material."""
+        attempt = self.get_attempt(attempt_id)
         try:
             connection = self.exchange_connection_for_transport(attempt_id=attempt_id)
         except BlueWayAuthorizationPending:
             return None, None
-        run = self.queue_sync()
+        run = self.queue_sync(trace_id=attempt.trace_id)
         self.schedule_sync(run)
         return connection, run
 
@@ -476,7 +527,7 @@ class BlueWayService:
                 connection = repository.get_connection(connection.id)
         return connection, repository.active_run(connection.id) if connection else None
 
-    def queue_sync(self) -> SyncRun:
+    def queue_sync(self, *, trace_id: str | None = None) -> SyncRun:
         repository = self._repository()
         connection = repository.active_connection()
         if connection is None:
@@ -487,7 +538,32 @@ class BlueWayService:
                 )
             raise BlueWayNotFoundError("Integration resource not found")
         self._preflight_connection(repository, connection)
-        return repository.queue_sync(connection.id)
+        existing = repository.active_run(connection.id)
+        run = repository.queue_sync(connection.id)
+        event_trace = trace_id or connection.observability_trace_id
+        if event_trace:
+            if existing is not None and existing.id == run.id and run.state in {
+                "queued", "fetching", "validating", "staging", "indexing",
+            }:
+                emit_blueway_event(
+                    "blueway_sync_duplicate_suppressed",
+                    trace_id=event_trace,
+                    connection_ref=connection.id,
+                    sync_ref=run.id,
+                    state_to=run.state,
+                    reason_code="active_run_exists",
+                    outcome="suppressed",
+                )
+            else:
+                emit_blueway_event(
+                    "blueway_sync_requested",
+                    trace_id=event_trace,
+                    connection_ref=connection.id,
+                    sync_ref=run.id,
+                    state_to=run.state,
+                    outcome="accepted",
+                )
+        return run
 
     def schedule_sync(self, run: SyncRun) -> None:
         """At most three process workers and one worker per owner connection."""
@@ -523,6 +599,24 @@ class BlueWayService:
 
     def _run_queued_sync_with_repository(self, *, repository: BlueWayRepository, run_id: str) -> SyncRun:
         run = repository.get_run(run_id)
+        connection: Connection | None = None
+
+        def transition(next_state: str) -> SyncRun:
+            nonlocal run
+            previous_state = run.state
+            run = repository.transition_run(run.id, state=next_state)
+            if connection is not None and connection.observability_trace_id:
+                emit_blueway_event(
+                    "blueway_sync_state_changed",
+                    trace_id=connection.observability_trace_id,
+                    connection_ref=connection.id,
+                    sync_ref=run.id,
+                    state_from=previous_state,
+                    state_to=run.state,
+                    outcome="in_progress",
+                )
+            return run
+
         try:
             connection = repository.get_connection(run.connection_id, active_only=True)
             if connection.grant_generation != run.expected_generation:
@@ -557,16 +651,38 @@ class BlueWayService:
             store.write(owner_user_id=connection.owner_user_id, connection_id=connection.id, scope_version=connection.scope_version, refresh_token=tokens.refresh_token)
             repository.clear_rotation(connection.id, expected_generation=run.expected_generation, request_id=rotation_id)
             store.clear_rotation_envelope(connection.id)
-            repository.transition_run(run.id, state="fetching")
+            transition("fetching")
             snapshot = self.transport.fetch_snapshot(access_token=tokens.access_token, cursor=None)
             validate_snapshot(snapshot)
             if not bool(snapshot.get("complete")) or snapshot.get("next_cursor") is not None:
                 raise SnapshotValidationError("BlueWay beta requires one complete stable snapshot")
             self._assert_owner_current(connection.owner_user_id)
-            repository.transition_run(run.id, state="validating")
-            repository.transition_run(run.id, state="staging")
+            transition("validating")
+            transition("staging")
+            previous_state = run.state
             completed = repository.apply_verified_snapshot(run.id, snapshot)
+            run = completed
+            if connection.observability_trace_id and completed.state != previous_state:
+                emit_blueway_event(
+                    "blueway_sync_state_changed",
+                    trace_id=connection.observability_trace_id,
+                    connection_ref=connection.id,
+                    sync_ref=run.id,
+                    state_from=previous_state,
+                    state_to=completed.state,
+                    outcome="in_progress" if completed.state != "completed" else "completed",
+                )
             if completed.state == "completed":
+                if connection.observability_trace_id:
+                    emit_blueway_event(
+                        "blueway_sync_completed",
+                        trace_id=connection.observability_trace_id,
+                        connection_ref=connection.id,
+                        sync_ref=completed.id,
+                        state_from=previous_state,
+                        state_to="completed",
+                        outcome="success",
+                    )
                 return completed
             self._assert_owner_current(connection.owner_user_id)
             materialize_course_bundles(
@@ -574,18 +690,71 @@ class BlueWayService:
                 assert_owner_current=lambda: self._assert_owner_current(connection.owner_user_id),
             )
             self._assert_owner_current(connection.owner_user_id)
-            return repository.complete_materialization(completed.id)
+            finished = repository.complete_materialization(completed.id)
+            if connection.observability_trace_id:
+                emit_blueway_event(
+                    "blueway_sync_state_changed",
+                    trace_id=connection.observability_trace_id,
+                    connection_ref=connection.id,
+                    sync_ref=finished.id,
+                    state_from="indexing",
+                    state_to="completed",
+                    outcome="completed",
+                )
+                emit_blueway_event(
+                    "blueway_sync_completed",
+                    trace_id=connection.observability_trace_id,
+                    connection_ref=connection.id,
+                    sync_ref=finished.id,
+                    state_from="indexing",
+                    state_to="completed",
+                    outcome="success",
+                )
+            return finished
         except BlueWayAuthorityError:
+            if connection is not None and connection.observability_trace_id:
+                emit_blueway_event(
+                    "blueway_sync_failed",
+                    trace_id=connection.observability_trace_id,
+                    connection_ref=connection.id,
+                    sync_ref=run.id,
+                    state_from=run.state,
+                    state_to="failed",
+                    reason_code="provider_authority_lost",
+                    outcome="failed",
+                )
             repository.require_repair(connection.id, expected_generation=run.expected_generation)
             store.remove(connection.id)
             raise
         except BlueWayCredentialRecoveryRequired:
+            if connection is not None and connection.observability_trace_id:
+                emit_blueway_event(
+                    "blueway_sync_failed",
+                    trace_id=connection.observability_trace_id,
+                    connection_ref=connection.id,
+                    sync_ref=run.id,
+                    state_from=run.state,
+                    state_to="failed",
+                    reason_code="credential_recovery_required",
+                    outcome="failed",
+                )
             raise
         except (
             BlueWayTransportError, SnapshotValidationError, ValueError, CourseConflictError,
             BundleMaterializationError, BlueWayUnavailableError,
         ) as exc:
-            repository.fail_run(run.id, error_code=type(exc).__name__)
+            failed = repository.fail_run(run.id, error_code=type(exc).__name__)
+            if connection is not None and connection.observability_trace_id:
+                emit_blueway_event(
+                    "blueway_sync_failed",
+                    trace_id=connection.observability_trace_id,
+                    connection_ref=connection.id,
+                    sync_ref=failed.id,
+                    state_from=run.state,
+                    state_to="failed",
+                    reason_code=safe_transport_reason(exc),
+                    outcome="failed",
+                )
             raise
 
     def get_run(self, run_id: str) -> SyncRun:
@@ -680,6 +849,15 @@ class BlueWayService:
         for key, attempt in list(self._attempts.items()):
             if attempt.expires_at <= now:
                 self._attempts.pop(key, None)
+                emit_blueway_event(
+                    "blueway_pairing_expired",
+                    trace_id=attempt.trace_id,
+                    attempt_ref=attempt.id,
+                    state_from="pending",
+                    state_to="expired",
+                    reason_code="request_expired",
+                    outcome="terminal",
+                )
         for key, (_connection_id, expires_at) in list(self._completed_attempts.items()):
             if expires_at <= now:
                 self._completed_attempts.pop(key, None)
