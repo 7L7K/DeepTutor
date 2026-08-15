@@ -467,6 +467,11 @@ def test_normal_pairing_poll_replay_returns_one_connection_without_duplicate_syn
     service.transport = transport
     attempt = service.start_connection()
     scheduled: list[str] = []
+    events: list[tuple[str, dict[str, object]]] = []
+    monkeypatch.setattr(
+        "deeptutor.integrations.blueway.service.emit_blueway_event",
+        lambda event, **fields: events.append((event, fields)),
+    )
     monkeypatch.setattr(service, "schedule_sync", lambda run: scheduled.append(run.id))
 
     first, first_run = service.poll_connection(attempt_id=attempt.id)
@@ -475,6 +480,56 @@ def test_normal_pairing_poll_replay_returns_one_connection_without_duplicate_syn
     assert first is not None and second is not None and first.id == second.id
     assert first_run is not None and second_run is None
     assert scheduled == [first_run.id]
+    assert transport.exchange_calls == 1
+    replay_events = [fields for event, fields in events if event == "blueway_pairing_replayed"]
+    assert len(replay_events) == 1
+    assert replay_events[0]["trace_id"] == first.observability_trace_id
+
+
+def test_concurrent_normal_pairing_poll_rejects_duplicate_without_404_or_duplicate_sync(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    entered, release = threading.Event(), threading.Event()
+
+    class BlockingApprovedTransport(FakeTransport):
+        exchange_calls = 0
+
+        def exchange(self, **_kwargs) -> TokenExchange:
+            self.exchange_calls += 1
+            entered.set()
+            assert release.wait(5)
+            return TokenExchange(
+                "grant-a", "subject-a", "access", "2026-07-23T00:00:00Z",
+                "refresh-secret",
+            )
+
+    transport = BlockingApprovedTransport()
+    service, _courses = _service(tmp_path, monkeypatch)
+    service.transport = transport
+    attempt = service.start_connection()
+    scheduled: list[str] = []
+    monkeypatch.setattr(service, "schedule_sync", lambda run: scheduled.append(run.id))
+    result: dict[str, object] = {}
+
+    def poll() -> None:
+        try:
+            result["value"] = service.poll_connection(attempt_id=attempt.id)
+        except BaseException as exc:  # noqa: BLE001 - retain the cross-thread result.
+            result["error"] = exc
+
+    thread = threading.Thread(target=poll)
+    thread.start()
+    assert entered.wait(5)
+    with pytest.raises(CourseConflictError, match="already being completed"):
+        service.poll_connection(attempt_id=attempt.id)
+    release.set()
+    thread.join(5)
+
+    assert not thread.is_alive()
+    assert "error" not in result
+    connection, run = result["value"]  # type: ignore[misc]
+    assert connection is not None and run is not None
+    assert scheduled == [run.id]
     assert transport.exchange_calls == 1
 
 

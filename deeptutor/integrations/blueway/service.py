@@ -391,13 +391,20 @@ class BlueWayService:
         return completed
 
     def exchange_connection_for_transport(self, *, attempt_id: str) -> Connection:
+        connection, _replayed = self._exchange_connection_for_transport(attempt_id=attempt_id)
+        return connection
+
+    def _exchange_connection_for_transport(
+        self, *, attempt_id: str,
+    ) -> tuple[Connection, bool]:
+        """Exchange one normal pairing, atomically reporting a replay."""
         owner = self._owner()
         key = (owner, attempt_id)
         with self._lock:
             self._purge_expired_attempts(time.time())
             completed = self._completed_attempts.get(key)
             if completed:
-                return self._repository().get_connection(completed[0])
+                return self._repository().get_connection(completed[0]), True
             if key in self._exchanging_attempts:
                 raise CourseConflictError("BlueWay pairing is already being completed")
             if self._repository().visible_connection() is not None:
@@ -455,27 +462,29 @@ class BlueWayService:
                 state_to="active",
                 outcome="success",
             )
-            return connection
+            return connection, False
         finally:
             with self._lock:
                 self._exchanging_attempts.discard(key)
 
     def poll_connection(self, *, attempt_id: str) -> tuple[Connection | None, SyncRun | None]:
         """POST-only approval poll.  Browser clients never receive token material."""
-        owner = self._owner()
-        key = (owner, attempt_id)
-        with self._lock:
-            self._purge_expired_attempts(time.time())
-            replayed = key in self._completed_attempts
-        if replayed:
-            connection = self.exchange_connection_for_transport(attempt_id=attempt_id)
-            return connection, None
-        attempt = self.get_attempt(attempt_id)
         try:
-            connection = self.exchange_connection_for_transport(attempt_id=attempt_id)
+            connection, replayed = self._exchange_connection_for_transport(attempt_id=attempt_id)
         except BlueWayAuthorizationPending:
             return None, None
-        run = self.queue_sync(trace_id=attempt.trace_id)
+        if replayed:
+            emit_blueway_event(
+                "blueway_pairing_replayed",
+                trace_id=connection.observability_trace_id,
+                attempt_ref=attempt_id,
+                connection_ref=connection.id,
+                state_from="exchanged",
+                state_to="exchanged",
+                outcome="success",
+            )
+            return connection, None
+        run = self.queue_sync(trace_id=connection.observability_trace_id)
         self.schedule_sync(run)
         return connection, run
 
