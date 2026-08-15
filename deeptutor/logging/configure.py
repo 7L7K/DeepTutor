@@ -13,6 +13,20 @@ from .loguru_bridge import install_loguru_bridge
 
 _CONFIGURED = False
 _MANAGED_ATTR = "_deeptutor_managed"
+_BLUEWAY_EVENT_LOGGER = "deeptutor.integrations.blueway.observability"
+
+
+class _ConfiguredLevelOrBlueWayEvent(logging.Filter):
+    """Keep product threshold semantics while retaining the audit event stream."""
+
+    def __init__(self, configured_level: int) -> None:
+        super().__init__()
+        self.configured_level = configured_level
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        return record.levelno >= self.configured_level or (
+            record.name == _BLUEWAY_EVENT_LOGGER and record.levelno >= logging.INFO
+        )
 
 
 def _level(value: str | int) -> int:
@@ -21,9 +35,13 @@ def _level(value: str | int) -> int:
     return int(getattr(logging, str(value).upper(), logging.INFO))
 
 
-def _managed(handler: logging.Handler) -> logging.Handler:
+def _managed(
+    handler: logging.Handler, *, configured_level: int | None = None,
+) -> logging.Handler:
     setattr(handler, _MANAGED_ATTR, True)
     handler.addFilter(ContextFilter())
+    if configured_level is not None:
+        handler.addFilter(_ConfiguredLevelOrBlueWayEvent(configured_level))
     return handler
 
 
@@ -50,8 +68,10 @@ def configure_logging(force: bool = False) -> LoggingConfig:
     root.setLevel(logging.DEBUG)
 
     if config.console_output:
-        console = _managed(logging.StreamHandler(sys.stdout))
-        console.setLevel(level)
+        console = _managed(
+            logging.StreamHandler(sys.stdout), configured_level=level,
+        )
+        console.setLevel(logging.DEBUG)
         console.setFormatter(ConsoleFormatter())
         root.addHandler(console)
 
@@ -64,9 +84,10 @@ def configure_logging(force: bool = False) -> LoggingConfig:
                 maxBytes=config.max_bytes,
                 backupCount=config.backup_count,
                 encoding="utf-8",
-            )
+            ),
+            configured_level=level,
         )
-        file_handler.setLevel(level)
+        file_handler.setLevel(logging.DEBUG)
         file_handler.setFormatter(JsonlFormatter())
         root.addHandler(file_handler)
 

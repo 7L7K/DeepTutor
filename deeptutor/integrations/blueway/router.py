@@ -7,6 +7,7 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel, ConfigDict, Field
 
 from deeptutor.courses.service import CourseUnavailableError, get_current_course_service
+from deeptutor.services import auth as auth_service
 
 from .assertion import REVOCATION_SCOPE, verify_assertion
 from .assertion import AssertionError as WorkspaceAssertionError
@@ -75,7 +76,9 @@ def launch(
         event_name,
         trace_id=resolution.trace_id or request_trace_id(),
         connection_ref=resolution.connection_ref,
-        request_ref=safe_request_ref(x_request_id),
+        request_ref=safe_request_ref(
+            x_request_id, auth_secret=auth_service.AUTH_SECRET or None,
+        ),
         reason_code=resolution.status,
         outcome="allowed" if event_name.endswith("allowed") else "denied",
     )
@@ -331,7 +334,9 @@ def workspace_read(
     x_request_id: str | None = Header(default=None),
 ):
     """Read the owner-scoped allowlist projection using a BlueWay assertion only."""
-    request_id = safe_request_ref(x_request_id)
+    request_id = safe_request_ref(
+        x_request_id, auth_secret=auth_service.AUTH_SECRET or None,
+    )
     if not authorization or not authorization.startswith("Bearer ") or not authorization[7:].strip():
         raise HTTPException(status_code=401, detail="Workspace assertion required")
     try:

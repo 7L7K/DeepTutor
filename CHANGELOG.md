@@ -2,6 +2,17 @@
 
 ## Unreleased
 
+- Added failure-isolated, privacy-bounded BlueWay lifecycle observability from
+  pairing through Course launch, with durable safe correlation references and
+  migration support. Pairing replay now retries a stranded initial sync,
+  binds to the exact connection that approved it, and cannot affect a later
+  replacement account. Lifecycle events now survive the production logging
+  default, preserve release and request correlation, and agree with durable
+  cancellation, expiry, recovery, revocation, launch, and sync-deduplication
+  states. Migration startup is serialized across processes with a private
+  sidecar lock without rolling back earlier committed versions when a later
+  migration fails.
+
 - Hardened mobile TEEECHR sign-in with whitespace-safe email matching and
   mobile input attributes, added server-only privacy-bounded login diagnostics
   with a safe attempt reference header, and added accessible show/hide controls

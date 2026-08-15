@@ -38,7 +38,13 @@ def test_route_requires_bearer_and_rejects_body_identity_override(monkeypatch, c
             json=valid,
         )
         assert response.status_code == 200
-        assert calls == [{"consume_replay": True, "request_ref": safe_request_ref("slice-a-route-001")}]
+        assert calls == [{
+            "consume_replay": True,
+            "request_ref": safe_request_ref(
+                "slice-a-route-001",
+                auth_secret=blueway_router.auth_service.AUTH_SECRET or None,
+            ),
+        }]
         assert "slice-a-route-001" not in repr(calls)
         assert not any("course-1" in record.getMessage() for record in caplog.records)
         altered = {"course_id": "course-2", "term_id": "fall"}
@@ -88,7 +94,10 @@ def test_launch_route_hashes_caller_request_reference_before_emission(monkeypatc
         {
             "trace_id": "bwr_11111111-1111-4111-8111-111111111111",
             "connection_ref": "bwc_connection",
-            "request_ref": safe_request_ref(raw_request_id),
+            "request_ref": safe_request_ref(
+                raw_request_id,
+                auth_secret=blueway_router.auth_service.AUTH_SECRET or None,
+            ),
             "reason_code": "ready",
             "outcome": "allowed",
         }

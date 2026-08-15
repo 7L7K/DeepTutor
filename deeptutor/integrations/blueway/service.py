@@ -27,6 +27,7 @@ from .config import BlueWaySettings, IntegrationConfigurationError
 from .credentials import CredentialError, CredentialStore
 from .observability import (
     emit_blueway_event,
+    request_trace_id,
     safe_pairing_trace_id,
     safe_persisted_pairing_trace_id,
     safe_transport_reason,
@@ -67,6 +68,7 @@ class PairingAttempt:
     state: str = "pending"
     terminal_at: float | None = None
     error_code: str | None = None
+    connection_id: str | None = None
     recovery_connection_id: str | None = None
     recovery_revision: int | None = None
     recovery_generation: int | None = None
@@ -137,6 +139,7 @@ class BlueWayService:
             "state": attempt.state,
             "terminal_at": attempt.terminal_at,
             "error_code": attempt.error_code,
+            "connection_id": attempt.connection_id,
             "recovery_connection_id": attempt.recovery_connection_id,
             "recovery_revision": attempt.recovery_revision,
             "recovery_generation": attempt.recovery_generation,
@@ -164,6 +167,7 @@ class BlueWayService:
                 state=str(record.get("state", "pending")),
                 terminal_at=(float(record["terminal_at"]) if record.get("terminal_at") is not None else None),
                 error_code=(str(record["error_code"]) if record.get("error_code") is not None else None),
+                connection_id=(str(record["connection_id"]) if record.get("connection_id") is not None else None),
                 recovery_connection_id=(str(record["recovery_connection_id"]) if record.get("recovery_connection_id") is not None else None),
                 recovery_revision=(int(record["recovery_revision"]) if record.get("recovery_revision") is not None else None),
                 recovery_generation=(int(record["recovery_generation"]) if record.get("recovery_generation") is not None else None),
@@ -184,6 +188,7 @@ class BlueWayService:
         state: str,
         *,
         error_code: str | None = None,
+        connection_id: str | None = None,
         clear_secrets: bool = True,
     ) -> PairingAttempt:
         if state not in {"pending", "approved", "expired", "cancelled", "failed"}:
@@ -197,6 +202,7 @@ class BlueWayService:
                 "state": state,
                 "terminal_at": time.time() if state != "pending" else None,
                 "error_code": error_code,
+                "connection_id": connection_id or attempt.connection_id,
             }
         )
         self._persist_attempt(next_attempt)
@@ -238,6 +244,10 @@ class BlueWayService:
     def _preflight_connection(
         self, repository: BlueWayRepository, connection: Connection,
     ) -> tuple[Connection, CredentialStore, str]:
+        if connection.observability_trace_id is None:
+            connection = repository.ensure_observability_trace(
+                connection.id, trace_id=request_trace_id(),
+            )
         if connection.credential_status != "healthy":
             raise BlueWayCredentialRecoveryRequired(
                 "BlueWay credential recovery is required"
@@ -252,6 +262,15 @@ class BlueWayService:
         except CredentialError as exc:
             repository.require_credential_recovery(
                 connection.id, expected_revision=connection.revision,
+            )
+            emit_blueway_event(
+                "blueway_credential_recovery_required",
+                trace_id=connection.observability_trace_id,
+                connection_ref=connection.id,
+                state_from="active",
+                state_to="recovery_required",
+                reason_code="credential_recovery_required",
+                outcome="required",
             )
             raise BlueWayCredentialRecoveryRequired(
                 "BlueWay credential recovery is required"
@@ -507,7 +526,7 @@ class BlueWayService:
             except Exception:
                 store.remove(provisional_id)
                 raise
-        self._transition_attempt(attempt, "approved")
+        self._transition_attempt(attempt, "approved", connection_id=connection.id)
         return connection
 
     def complete_recovery_for_transport(
@@ -531,7 +550,19 @@ class BlueWayService:
             try:
                 self.transport.revoke(refresh_token=exchange.refresh_token)
             finally:
-                self._transition_attempt(attempt, "failed", error_code="wrong_account")
+                failed_attempt = self._transition_attempt(
+                    attempt, "failed", error_code="wrong_account",
+                )
+                emit_blueway_event(
+                    "blueway_pairing_wrong_account",
+                    trace_id=failed_attempt.trace_id,
+                    attempt_ref=failed_attempt.id,
+                    connection_ref=connection.id,
+                    state_from="pending",
+                    state_to="failed",
+                    reason_code="wrong_account",
+                    outcome="rejected",
+                )
                 raise BlueWayCredentialRecoveryRequired(
                     "Recovery must use the same BlueWay account"
                 )
@@ -571,10 +602,64 @@ class BlueWayService:
                 self.transport.revoke(refresh_token=exchange.refresh_token)
             except Exception:
                 pass
-            self._transition_attempt(attempt, "failed", error_code="recovery_failed")
+            failed_attempt = self._transition_attempt(
+                attempt, "failed", error_code="recovery_failed",
+            )
+            emit_blueway_event(
+                "blueway_pairing_approval_rejected",
+                trace_id=failed_attempt.trace_id,
+                attempt_ref=failed_attempt.id,
+                connection_ref=connection.id,
+                state_from="pending",
+                state_to="failed",
+                reason_code="recovery_failed",
+                outcome="rejected",
+            )
             raise
-        self._transition_attempt(attempt, "approved")
+        approved_attempt = self._transition_attempt(
+            attempt, "approved", connection_id=completed.id,
+        )
+        emit_blueway_event(
+            "blueway_pairing_approval_received",
+            trace_id=approved_attempt.trace_id,
+            attempt_ref=approved_attempt.id,
+            connection_ref=completed.id,
+            state_from="pending",
+            state_to="approved",
+            outcome="success",
+        )
+        emit_blueway_event(
+            "blueway_pairing_exchanged",
+            trace_id=approved_attempt.trace_id,
+            attempt_ref=approved_attempt.id,
+            connection_ref=completed.id,
+            state_from="approved",
+            state_to="exchanged",
+            outcome="success",
+        )
         return completed
+
+    def _approved_connection(self, attempt: PairingAttempt) -> Connection | None:
+        """Resolve only the active connection created by this approved attempt.
+
+        New attempts carry an explicit connection id. Older encrypted records
+        may be accepted only when their trace already matches the active
+        connection; an unbound legacy attempt must never attach to a later
+        replacement connection.
+        """
+
+        connection = self._repository().active_connection()
+        if connection is None:
+            return None
+        bound_connection_id = attempt.connection_id or attempt.recovery_connection_id
+        if bound_connection_id is not None:
+            return connection if connection.id == bound_connection_id else None
+        if (
+            connection.observability_trace_id is not None
+            and connection.observability_trace_id == attempt.trace_id
+        ):
+            return connection
+        return None
 
     def exchange_connection_for_transport(self, *, attempt_id: str) -> Connection | None:
         owner = self._owner()
@@ -583,7 +668,7 @@ class BlueWayService:
         if attempt.mode != "connect":
             raise BlueWayNotFoundError("Integration resource not found")
         if attempt.state == "approved":
-            connection = self._repository().active_connection()
+            connection = self._approved_connection(attempt)
             if connection is None:
                 raise BlueWayNotFoundError("Integration resource not found")
             return connection
@@ -599,7 +684,7 @@ class BlueWayService:
             attempt = self.get_attempt(attempt_id)
             if attempt.state != "pending":
                 if attempt.state == "approved":
-                    connection = self._repository().active_connection()
+                    connection = self._approved_connection(attempt)
                     if connection is None:
                         raise BlueWayNotFoundError("Integration resource not found")
                     return connection
@@ -615,20 +700,28 @@ class BlueWayService:
             except BlueWayAuthorizationPending:
                 raise
             except Exception as exc:
+                expired = time.time() >= attempt.expires_at
+                terminal_state = "expired" if expired else "failed"
                 self._transition_attempt(
                     attempt,
-                    "expired" if time.time() >= attempt.expires_at else "failed",
-                    error_code="expired" if time.time() >= attempt.expires_at else type(exc).__name__,
+                    terminal_state,
+                    error_code="expired" if expired else type(exc).__name__,
                 )
-                if isinstance(exc, BlueWayTransportError):
-                    emit_blueway_event(
-                        "blueway_pairing_approval_rejected",
-                        trace_id=attempt.trace_id,
-                        attempt_ref=attempt.id,
-                        state_to="failed",
-                        reason_code=safe_transport_reason(exc),
-                        outcome="rejected",
-                    )
+                emit_blueway_event(
+                    (
+                        "blueway_pairing_expired"
+                        if expired
+                        else "blueway_pairing_approval_rejected"
+                    ),
+                    trace_id=attempt.trace_id,
+                    attempt_ref=attempt.id,
+                    state_from="pending",
+                    state_to=terminal_state,
+                    reason_code=(
+                        "request_expired" if expired else safe_transport_reason(exc)
+                    ),
+                    outcome="terminal" if expired else "rejected",
+                )
                 raise
             try:
                 connection = self.complete_connection_for_transport(attempt_id=attempt_id, exchange=exchange)
@@ -641,6 +734,15 @@ class BlueWayService:
                 except Exception:
                     pass
                 raise
+            emit_blueway_event(
+                "blueway_pairing_approval_received",
+                trace_id=attempt.trace_id,
+                attempt_ref=attempt.id,
+                connection_ref=connection.id,
+                state_from="pending",
+                state_to="approved",
+                outcome="success",
+            )
             emit_blueway_event(
                 "blueway_pairing_exchanged",
                 trace_id=attempt.trace_id,
@@ -669,8 +771,19 @@ class BlueWayService:
         if attempt.mode != "connect":
             raise BlueWayNotFoundError("Integration resource not found")
         if attempt.state == "approved":
-            connection = self._repository().active_connection()
-            return (connection, None) if connection is not None else (None, None)
+            connection = self._approved_connection(attempt)
+            if connection is None:
+                return None, None
+            emit_blueway_event(
+                "blueway_pairing_replayed",
+                trace_id=connection.observability_trace_id,
+                attempt_ref=attempt.id,
+                connection_ref=connection.id,
+                state_from="exchanged",
+                state_to="exchanged",
+                outcome="success",
+            )
+            return connection, self._recover_replayed_initial_sync(connection)
         if attempt.state != "pending":
             return None, None
         try:
@@ -683,6 +796,23 @@ class BlueWayService:
         self.schedule_sync(run)
         return connection, run
 
+    def _recover_replayed_initial_sync(self, connection: Connection) -> SyncRun | None:
+        """Retry only a missing, failed, or unscheduled initial synchronization."""
+
+        repository = self._repository()
+        existing = repository.active_run(connection.id)
+        if existing is None or existing.state in {"failed", "cancelled"}:
+            run = self.queue_sync(trace_id=connection.observability_trace_id)
+            self.schedule_sync(run)
+            return run
+        if existing.state in {"queued", "fetching", "validating", "staging", "indexing"}:
+            key = (connection.owner_user_id, connection.id)
+            with self._lock:
+                scheduled = key in self._scheduled_connections
+            if not scheduled:
+                self.schedule_sync(existing)
+        return None
+
     def poll_recovery(
         self, *, attempt_id: str,
     ) -> tuple[Connection | None, SyncRun | None]:
@@ -692,7 +822,7 @@ class BlueWayService:
         if attempt.mode != "recovery":
             raise BlueWayNotFoundError("Integration resource not found")
         if attempt.state == "approved":
-            return self._repository().active_connection(), None
+            return self._approved_connection(attempt), None
         if attempt.state != "pending":
             return None, None
         with self._lock:
@@ -719,10 +849,29 @@ class BlueWayService:
                 current = self.get_attempt(attempt_id)
                 if current.state == "pending":
                     expired = time.time() >= current.expires_at
+                    terminal_state = "expired" if expired else "failed"
                     self._transition_attempt(
                         current,
-                        "expired" if expired else "failed",
+                        terminal_state,
                         error_code="expired" if expired else type(exc).__name__,
+                    )
+                    emit_blueway_event(
+                        (
+                            "blueway_pairing_expired"
+                            if expired
+                            else "blueway_pairing_approval_rejected"
+                        ),
+                        trace_id=current.trace_id,
+                        attempt_ref=current.id,
+                        connection_ref=current.recovery_connection_id,
+                        state_from="pending",
+                        state_to=terminal_state,
+                        reason_code=(
+                            "request_expired"
+                            if expired
+                            else safe_transport_reason(exc)
+                        ),
+                        outcome="terminal" if expired else "rejected",
                     )
                 raise
             connection = self.complete_recovery_for_transport(
@@ -752,9 +901,25 @@ class BlueWayService:
         except Exception as exc:
             raise BlueWayTransportError("BlueWay pairing cancellation failed") from exc
         terminal_state = "expired" if provider_state == "expired" else "cancelled"
-        return self._transition_attempt(
+        terminal = self._transition_attempt(
             attempt, terminal_state, error_code=terminal_state,
         )
+        emit_blueway_event(
+            (
+                "blueway_pairing_expired"
+                if terminal_state == "expired"
+                else "blueway_pairing_cancelled"
+            ),
+            trace_id=terminal.trace_id,
+            attempt_ref=terminal.id,
+            state_from="pending",
+            state_to=terminal_state,
+            reason_code=(
+                "request_expired" if terminal_state == "expired" else "cancelled"
+            ),
+            outcome="terminal",
+        )
+        return terminal
 
     def status(self) -> tuple[Connection | None, SyncRun | None]:
         if not self.settings.enabled:
@@ -783,12 +948,13 @@ class BlueWayService:
                     "BlueWay credential recovery is required"
                 )
             raise BlueWayNotFoundError("Integration resource not found")
-        self._preflight_connection(repository, connection)
-        existing = repository.active_run(connection.id)
-        run = repository.queue_sync(connection.id)
+        connection, _store, _refresh_token = self._preflight_connection(
+            repository, connection,
+        )
+        run, created = repository.queue_sync_result(connection.id)
         event_trace = trace_id or connection.observability_trace_id
         if event_trace:
-            if existing is not None and existing.id == run.id and run.state in {
+            if not created and run.state in {
                 "queued", "fetching", "validating", "staging", "indexing",
             }:
                 emit_blueway_event(
@@ -827,7 +993,12 @@ class BlueWayService:
                 with self._lock:
                     self._scheduled_connections.discard(key)
 
-        self._executor.submit(worker)
+        try:
+            self._executor.submit(worker)
+        except Exception:
+            with self._lock:
+                self._scheduled_connections.discard(key)
+            raise
 
     def run_queued_sync(self, *, run_id: str) -> SyncRun:
         """Deterministic single-process worker; callers inject a transport in tests.
@@ -958,31 +1129,36 @@ class BlueWayService:
                 )
             return finished
         except BlueWayAuthorityError:
+            previous_state = run.state
+            repository.require_repair(
+                connection.id, expected_generation=run.expected_generation,
+            )
+            terminal = repository.get_run(run.id)
             if connection is not None and connection.observability_trace_id:
                 emit_blueway_event(
                     "blueway_sync_failed",
                     trace_id=connection.observability_trace_id,
                     connection_ref=connection.id,
-                    sync_ref=run.id,
-                    state_from=run.state,
-                    state_to="failed",
+                    sync_ref=terminal.id,
+                    state_from=previous_state,
+                    state_to=terminal.state,
                     reason_code="provider_authority_lost",
-                    outcome="failed",
+                    outcome="terminal",
                 )
-            repository.require_repair(connection.id, expected_generation=run.expected_generation)
             store.remove(connection.id)
             raise
         except BlueWayCredentialRecoveryRequired:
+            terminal = repository.get_run(run.id)
             if connection is not None and connection.observability_trace_id:
                 emit_blueway_event(
                     "blueway_sync_failed",
                     trace_id=connection.observability_trace_id,
                     connection_ref=connection.id,
-                    sync_ref=run.id,
+                    sync_ref=terminal.id,
                     state_from=run.state,
-                    state_to="failed",
+                    state_to=terminal.state,
                     reason_code="credential_recovery_required",
-                    outcome="failed",
+                    outcome="terminal",
                 )
             raise
         except (
@@ -1027,7 +1203,19 @@ class BlueWayService:
             raise CourseConflictError("BlueWay connection revision is stale")
         # The local generation is already fenced. On remote failure the pending
         # row and encrypted credential are retained solely for this retry.
-        self.transport.revoke(refresh_token=refresh_token)
+        try:
+            self.transport.revoke(refresh_token=refresh_token)
+        except Exception as exc:
+            emit_blueway_event(
+                "blueway_connection_revoke_failed",
+                trace_id=connection.observability_trace_id,
+                connection_ref=connection.id,
+                state_from="revocation_pending",
+                state_to="revocation_pending",
+                reason_code=safe_transport_reason(exc),
+                outcome="failed",
+            )
+            raise
         disconnected = repository.complete_disconnect(connection.id, expected_revision=connection.revision)
         store.remove(connection.id)
         return disconnected
@@ -1056,11 +1244,30 @@ class BlueWayService:
             try:
                 token = store.read(owner_user_id=owner_user_id, connection_id=connection.id, scope_version=connection.scope_version)
                 self.transport.revoke(refresh_token=token)
-                repository.complete_disconnect(connection.id, expected_revision=connection.revision)
+                disconnected = repository.complete_disconnect(
+                    connection.id, expected_revision=connection.revision,
+                )
                 store.remove(connection.id)
+                emit_blueway_event(
+                    "blueway_connection_revoked",
+                    trace_id=disconnected.observability_trace_id,
+                    connection_ref=disconnected.id,
+                    state_from="revocation_pending",
+                    state_to="disconnected",
+                    outcome="success",
+                )
                 revoked += 1
-            except (CredentialError, BlueWayTransportError, OSError):
+            except (CredentialError, BlueWayTransportError, OSError) as exc:
                 # Pending remains a hard local fence; startup never reactivates it.
+                emit_blueway_event(
+                    "blueway_connection_revoke_failed",
+                    trace_id=connection.observability_trace_id,
+                    connection_ref=connection.id,
+                    state_from="revocation_pending",
+                    state_to="revocation_pending",
+                    reason_code=safe_transport_reason(exc),
+                    outcome="failed",
+                )
                 continue
         known = repository.credential_connection_ids()
         orphans = 0

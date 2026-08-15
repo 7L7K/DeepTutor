@@ -24,8 +24,42 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout code
+      - name: Checkout release tag
         uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.release.tag_name }}
+          fetch-depth: 0
+
+      - name: Verify release source and version
+        id: version
+        shell: bash
+        env:
+          RELEASE_TAG: ${{ github.event.release.tag_name }}
+        run: |
+          set -euo pipefail
+          git fetch origin main:refs/remotes/origin/main --no-tags
+          tag_commit="$(git rev-list -n 1 "$RELEASE_TAG")"
+          if ! git merge-base --is-ancestor "$tag_commit" origin/main; then
+            echo "Release tag $RELEASE_TAG is not on origin/main." >&2
+            exit 1
+          fi
+          python - <<'PY'
+          import os
+          import re
+          from pathlib import Path
+
+          tag = os.environ["RELEASE_TAG"]
+          expected = tag[1:] if tag.startswith("v") else tag
+          source = Path("deeptutor/__version__.py").read_text(encoding="utf-8")
+          match = re.search(r'^__version__\s*=\s*"([^"]+)"', source, re.MULTILINE)
+          if match is None or match.group(1) != expected:
+              actual = match.group(1) if match else "missing"
+              raise SystemExit(
+                  f"Release tag version {expected!r} does not match source {actual!r}."
+              )
+          with Path(os.environ["GITHUB_OUTPUT"]).open("a", encoding="utf-8") as output:
+              output.write(f"version={expected}\n")
+          PY
 
       # Required for linux/arm64 cross-compilation on GitHub-hosted ubuntu runners
       - name: Set up QEMU
@@ -54,6 +88,32 @@ jobs:
             type=semver,pattern={{version}}
             type=raw,value=latest
 
+      - name: Build release-candidate image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ./Dockerfile
+          target: production
+          platforms: linux/amd64
+          load: true
+          push: false
+          tags: teeechr-release-candidate:${{ steps.version.outputs.version }}
+          build-args: |
+            TEEECHR_APP_VERSION=${{ steps.version.outputs.version }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Verify release-candidate migration and event identity
+        env:
+          RELEASE_VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          docker run --rm \
+            --entrypoint python \
+            -e EXPECTED_RELEASE_VERSION="$RELEASE_VERSION" \
+            -e PYTHONPATH=/app \
+            "teeechr-release-candidate:$RELEASE_VERSION" \
+            /app/scripts/verify-teeechr-release-container.py
+
       - name: Build and push
         uses: docker/build-push-action@v6
         with:
@@ -66,6 +126,8 @@ jobs:
           sbom: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
+          build-args: |
+            TEEECHR_APP_VERSION=${{ steps.version.outputs.version }}
           # Use GitHub Actions cache to speed up repeated builds
           # mode=max caches all intermediate layers (frontend-builder and python-base are expensive)
           cache-from: type=gha

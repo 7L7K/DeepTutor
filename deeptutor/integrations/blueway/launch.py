@@ -144,9 +144,9 @@ def resolve_course_launch(
         # refreshed the exact Course authorization lease. A historical local
         # row, or a row for another Course/term, cannot authorize launch.
         if row["workspace_status"] != "active" or row["lease_expires_at"] is None:
-            return CourseLaunchResolution("course_not_ready")
+            return result("course_not_ready", row)
         if float(row["lease_expires_at"]) <= (now if now is not None else time.time()):
-            return CourseLaunchResolution("course_not_ready")
+            return result("course_not_ready", row)
 
         source_states = {
             str(source[0])

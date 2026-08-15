@@ -16,6 +16,7 @@ import re
 from typing import Any, Literal
 from uuid import UUID, uuid4
 
+from deeptutor.__version__ import __version__
 from deeptutor.logging.context import bind_log_context
 from deeptutor.services.auth_diagnostics import validated_request_id
 
@@ -36,6 +37,7 @@ EventName = Literal[
     "blueway_connection_status_read",
     "blueway_connection_created",
     "blueway_connection_revoked",
+    "blueway_connection_revoke_failed",
     "blueway_credential_recovery_required",
     "blueway_sync_requested",
     "blueway_sync_duplicate_suppressed",
@@ -61,6 +63,7 @@ EVENT_NAMES = frozenset(
         "blueway_connection_status_read",
         "blueway_connection_created",
         "blueway_connection_revoked",
+        "blueway_connection_revoke_failed",
         "blueway_credential_recovery_required",
         "blueway_sync_requested",
         "blueway_sync_duplicate_suppressed",
@@ -98,7 +101,9 @@ _SAFE_STATES = frozenset(
         "cancelled",
         "active",
         "paused",
+        "revocation_pending",
         "revoked",
+        "disconnected",
         "recovery_required",
         "queued",
         "fetching",
@@ -133,8 +138,10 @@ _REASON_CODES = _SAFE_STATES | frozenset(
         "provider_rejected",
         "request_cancelled",
         "request_expired",
+        "recovery_failed",
         "state_conflict",
         "validation_failure",
+        "wrong_account",
     }
 )
 _OUTCOMES = frozenset(
@@ -149,6 +156,7 @@ _OUTCOMES = frozenset(
         "pending",
         "ready",
         "rejected",
+        "required",
         "success",
         "suppressed",
         "terminal",
@@ -192,7 +200,7 @@ def request_trace_id() -> str:
 def _event_envelope(payload: dict[str, Any]) -> dict[str, Any]:
     raw_environment = os.getenv("TEEECHR_ENVIRONMENT", "unknown").strip().lower()
     environment = raw_environment if raw_environment in _ENVIRONMENTS else "unknown"
-    raw_version = os.getenv("TEEECHR_APP_VERSION", "unknown").strip()
+    raw_version = os.getenv("TEEECHR_APP_VERSION", "").strip() or __version__
     application_version = raw_version if _SAFE_VERSION.fullmatch(raw_version) else "unknown"
     return {
         "timestamp": datetime.now(UTC).isoformat().replace("+00:00", "Z"),

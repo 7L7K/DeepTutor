@@ -422,6 +422,27 @@ class BlueWayRepository:
             raise BlueWayNotFoundError("Integration resource not found")
         return Connection.from_row(row)
 
+    def ensure_observability_trace(
+        self, connection_id: str, *, trace_id: str,
+    ) -> Connection:
+        """Assign one durable operation trace to a pre-observability connection."""
+
+        with self.courses._write_lock, self.courses._connect() as conn:  # noqa: SLF001
+            conn.execute(
+                """UPDATE blueway_connections
+                   SET observability_trace_id = COALESCE(observability_trace_id, ?)
+                   WHERE id = ? AND owner_user_id = ?
+                     AND state IN ('active', 'revocation_pending')""",
+                (trace_id, connection_id, self.owner_user_id),
+            )
+            row = conn.execute(
+                "SELECT * FROM blueway_connections WHERE id = ? AND owner_user_id = ?",
+                (connection_id, self.owner_user_id),
+            ).fetchone()
+        if row is None:
+            raise BlueWayNotFoundError("Integration resource not found")
+        return Connection.from_row(row)
+
     def require_credential_recovery(
         self, connection_id: str, *, expected_revision: int | None = None,
     ) -> Connection:
@@ -594,6 +615,12 @@ class BlueWayRepository:
             )
 
     def queue_sync(self, connection_id: str) -> SyncRun:
+        run, _created = self.queue_sync_result(connection_id)
+        return run
+
+    def queue_sync_result(self, connection_id: str) -> tuple[SyncRun, bool]:
+        """Queue once and report creation from the authoritative transaction."""
+
         now, run_id = time.time(), _id("bwr")
         with self.courses._write_lock, self.courses._connect() as conn:  # noqa: SLF001
             conn.execute("BEGIN IMMEDIATE")
@@ -611,7 +638,7 @@ class BlueWayRepository:
                 (connection["id"],),
             ).fetchone()
             if existing:
-                return SyncRun.from_row(existing)
+                return SyncRun.from_row(existing), False
             conn.execute(
                 """INSERT INTO blueway_sync_runs
                    (id, connection_id, expected_generation, snapshot_id, snapshot_sha256, state,
@@ -621,7 +648,7 @@ class BlueWayRepository:
             )
             row = conn.execute("SELECT * FROM blueway_sync_runs WHERE id = ?", (run_id,)).fetchone()
         assert row is not None
-        return SyncRun.from_row(row)
+        return SyncRun.from_row(row), True
 
     def get_run(self, run_id: str) -> SyncRun:
         with self.courses._connect() as conn:  # noqa: SLF001

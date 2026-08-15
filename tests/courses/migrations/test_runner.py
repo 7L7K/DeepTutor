@@ -5,6 +5,7 @@ from __future__ import annotations
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import replace
 import multiprocessing
+import os
 from pathlib import Path
 import sqlite3
 import threading
@@ -283,7 +284,7 @@ def test_concurrent_startup_applies_once_and_other_wrapper_observes_receipt(
 def test_spawned_processes_first_start_apply_once_and_converge_on_one_receipt(
     tmp_path: Path,
 ) -> None:
-    """SQLite transaction exclusion, rather than the local lock, wins cross-process."""
+    """The batch lock prevents process interleaving while SQLite protects each step."""
 
     path = tmp_path / "courses.db"
     expected_versions = tuple(artifact.version for artifact in discover_migrations())
@@ -315,6 +316,22 @@ def test_spawned_processes_first_start_apply_once_and_converge_on_one_receipt(
         assert runner._schema_signature(conn, include_ledger=True) == runner._expected_signature(
             discover_migrations()
         )
+
+
+@pytest.mark.skipif(os.name == "nt", reason="POSIX symlink contract")
+def test_migration_lock_rejects_symlink_substitution(tmp_path: Path) -> None:
+    path = tmp_path / "courses.db"
+    target = tmp_path / "do-not-touch"
+    target.write_text("private", encoding="utf-8")
+    target.chmod(0o640)
+    lock = tmp_path / ".courses.db.migration.lock"
+    lock.symlink_to(target)
+
+    with pytest.raises(CourseMigrationError, match="Could not open Course migration lock"):
+        ensure_course_schema(path)
+
+    assert target.read_text(encoding="utf-8") == "private"
+    assert target.stat().st_mode & 0o777 == 0o640
 
 
 def test_normal_connection_enables_and_verifies_foreign_keys(tmp_path: Path) -> None:

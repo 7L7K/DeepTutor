@@ -10,6 +10,7 @@ from pathlib import Path
 
 import pytest
 
+from deeptutor.__version__ import __version__
 from deeptutor.courses.repository import CourseRepository
 from deeptutor.integrations.blueway.observability import (
     EVENT_SCHEMA_VERSION,
@@ -65,18 +66,23 @@ def test_persisted_pairing_attempt_keeps_trace_and_legacy_records_get_a_safe_fal
         expires_at=1_800_000_000.0,
         request_id=REQUEST_ID,
         trace_id=TRACE_ID,
+        connection_id="bwc_connection",
     )
 
     record = BlueWayService._attempt_record(attempt)
     restored = BlueWayService._attempt_from_record("attempt-1", record)
     legacy = BlueWayService._attempt_from_record(
-        "attempt-1", {key: value for key, value in record.items() if key != "trace_id"}
+        "attempt-1",
+        {key: value for key, value in record.items() if key not in {"trace_id", "connection_id"}},
     )
     malformed = BlueWayService._attempt_from_record("attempt-1", {**record, "trace_id": "owner-a"})
 
     assert record["trace_id"] == TRACE_ID
+    assert record["connection_id"] == "bwc_connection"
     assert restored.trace_id == TRACE_ID
+    assert restored.connection_id == "bwc_connection"
     assert legacy.trace_id == TRACE_ID
+    assert legacy.connection_id is None
     assert malformed.trace_id == safe_persisted_pairing_trace_id(None, REQUEST_ID)
 
 
@@ -231,7 +237,7 @@ def test_success_and_failure_traces_are_reconstructable_without_private_payloads
     assert '"timestamp":' in formatted
     assert '"emitting_service": "teeechr-server"' in formatted
     assert '"environment": "unknown"' in formatted
-    assert '"application_version": "unknown"' in formatted
+    assert f'"application_version": "{__version__}"' in formatted
     assert '"password"' not in formatted
     serialized = repr([success, failed])
     for forbidden in (
@@ -247,6 +253,26 @@ def test_success_and_failure_traces_are_reconstructable_without_private_payloads
 
 
 def test_event_builder_rejects_unsafe_state_and_reference() -> None:
+    revoked = build_blueway_event(
+        "blueway_connection_revoked",
+        trace_id=TRACE_ID,
+        state_from="revocation_pending",
+        state_to="disconnected",
+        outcome="success",
+    )
+    assert revoked["state_from"] == "revocation_pending"
+    assert revoked["state_to"] == "disconnected"
+
+    recovery = build_blueway_event(
+        "blueway_credential_recovery_required",
+        trace_id=TRACE_ID,
+        state_from="active",
+        state_to="recovery_required",
+        reason_code="credential_recovery_required",
+        outcome="required",
+    )
+    assert recovery["outcome"] == "required"
+
     with pytest.raises(ValueError):
         build_blueway_event(
             "blueway_sync_state_changed",

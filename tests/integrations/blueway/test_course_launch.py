@@ -59,7 +59,11 @@ def _ready_map(
 def test_launch_is_exact_by_course_and_term_and_does_not_create_rows(tmp_path: Path) -> None:
     courses = CourseRepository(tmp_path / "courses.db", "owner-a")
     blueway = BlueWayRepository(courses)
-    connection = blueway.create_active_connection(external_subject="blueway-a", scope_version="v1")
+    connection = blueway.create_active_connection(
+        external_subject="blueway-a",
+        scope_version="v1",
+        observability_trace_id="bwr_11111111-1111-4111-8111-111111111111",
+    )
     with courses._write_lock, courses._connect() as conn:  # noqa: SLF001
         conn.execute("UPDATE blueway_connections SET last_sync_at = ? WHERE id = ?", (1_800_000_000.0, connection.id))
 
@@ -172,12 +176,15 @@ def test_launch_requires_exact_scoped_authorization_and_unexpired_lease(tmp_path
             "UPDATE blueway_workspace_authorizations SET lease_expires_at = ?",
             (1_800_000_000.0,),
         )
-    assert resolve_course_launch(
+    expired = resolve_course_launch(
         blueway,
         external_course_id="blueway-biology-101",
         external_term_id="spring-2027",
         now=1_800_000_001.0,
-    ).status == "course_not_ready"
+    )
+    assert expired.status == "course_not_ready"
+    assert expired.trace_id == connection.observability_trace_id
+    assert expired.connection_ref == connection.id
 
 
 def test_revoked_exact_workspace_authorization_blocks_direct_launch(tmp_path: Path) -> None:
