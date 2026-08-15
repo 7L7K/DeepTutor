@@ -171,7 +171,10 @@ def project_workspace(
     claims: dict[str, Any], *, now: float | None = None,
     consume_replay: bool = False, request_ref: str | None = None,
 ) -> dict[str, Any]:
-    authorization, blueway = resolve_authorization(claims, consume_replay=consume_replay)
+    if consume_replay:
+        authorization, blueway = resolve_authorization(claims, consume_replay=True)
+    else:
+        authorization, blueway = resolve_authorization(claims)
     if (
         claims.get("client_id") != authorization.client_id
         or claims.get("authorization_id") != authorization.authorization_id

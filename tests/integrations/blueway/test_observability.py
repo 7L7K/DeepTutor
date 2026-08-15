@@ -55,6 +55,8 @@ def test_legacy_connection_without_trace_uses_a_request_scoped_trace(monkeypatch
         connection_id = Connection.id
         status = "revoked"
         external_subject_hash = hashlib.sha256(Connection.external_subject.encode()).hexdigest()
+        external_course_id = "course-1"
+        external_term_id = None
 
     class Repository:
         owner_user_id = "owner-a"
