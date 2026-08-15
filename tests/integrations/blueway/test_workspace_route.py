@@ -36,14 +36,8 @@ def test_route_requires_bearer_and_rejects_body_identity_override(monkeypatch, c
             json=valid,
         )
         assert response.status_code == 200
-        assert calls == [{"consume_replay": True}]
-        record = next(
-            item for item in caplog.records
-            if item.message == "blueway_workspace_request_received" and item.request_id
-        )
-        assert record.request_id == "slice-a-route-001"
-        assert record.course_id == "course-1"
-        assert record.has_term is True
+        assert calls == [{"consume_replay": True, "request_ref": "slice-a-route-001"}]
+        assert not any("course-1" in record.getMessage() for record in caplog.records)
         altered = {"course_id": "course-2", "term_id": "fall"}
         assert client.post("/api/v1/integrations/blueway/workspace", headers=headers, json=altered).status_code == 400
         old_contract = {"external_course_id": "course-1", "external_term_id": "fall"}

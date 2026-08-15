@@ -27,6 +27,7 @@ from .repository import (
     BlueWayRepository,
     WorkspaceAuthorization,
 )
+from .observability import emit_blueway_event, request_trace_id
 
 SCHEMA_VERSION = "teeechr.workspace.v1"
 WORKSPACE_FRESHNESS_SECONDS = 24 * 60 * 60
@@ -168,7 +169,7 @@ def revoke_workspace_authorization(
 
 def project_workspace(
     claims: dict[str, Any], *, now: float | None = None,
-    consume_replay: bool = False,
+    consume_replay: bool = False, request_ref: str | None = None,
 ) -> dict[str, Any]:
     authorization, blueway = resolve_authorization(claims, consume_replay=consume_replay)
     if (
@@ -183,14 +184,37 @@ def project_workspace(
     connection = blueway.get_connection(authorization.connection_id)
     if connection.external_subject != claims["sub"]:
         raise LookupError("Workspace subject does not match connection")
+    operation_trace_id = connection.observability_trace_id or request_trace_id()
+
+    def finish(payload: dict[str, Any]) -> dict[str, Any]:
+        status = str(payload.get("status", "temporarily_unavailable"))
+        emit_blueway_event(
+            "blueway_course_readiness_evaluated",
+            trace_id=operation_trace_id,
+            connection_ref=connection.id,
+            request_ref=request_ref,
+            state_to=status,
+            reason_code=status,
+            outcome="ready" if status in {"ready", "stale"} else "blocked",
+        )
+        emit_blueway_event(
+            "blueway_workspace_read",
+            trace_id=operation_trace_id,
+            connection_ref=connection.id,
+            request_ref=request_ref,
+            state_to=status,
+            outcome="success",
+        )
+        return payload
+
     if authorization.status == "revoked":
-        return {"schema_version": SCHEMA_VERSION, "status": "revoked"}
+        return finish({"schema_version": SCHEMA_VERSION, "status": "revoked"})
     if authorization.status != "active" or authorization.scope != "teeechr.workspace.read.v1":
-        return {"schema_version": SCHEMA_VERSION, "status": "consent_required"}
+        return finish({"schema_version": SCHEMA_VERSION, "status": "consent_required"})
     if connection.state in {"disconnected", "error"}:
-        return {"schema_version": SCHEMA_VERSION, "status": "not_connected"}
+        return finish({"schema_version": SCHEMA_VERSION, "status": "not_connected"})
     if connection.state != "active" or connection.credential_status != "healthy":
-        return {"schema_version": SCHEMA_VERSION, "status": "temporarily_unavailable"}
+        return finish({"schema_version": SCHEMA_VERSION, "status": "temporarily_unavailable"})
     external_course_id = str(claims["external_course_id"])
     external_term_id = claims.get("external_term_id")
     with blueway.courses._connect() as conn:  # noqa: SLF001
@@ -209,7 +233,7 @@ def project_workspace(
                 status = "temporarily_unavailable"
             else:
                 status = "not_ready"
-            return {"schema_version": SCHEMA_VERSION, "status": status}
+            return finish({"schema_version": SCHEMA_VERSION, "status": status})
         connected_sources_count = conn.execute(
             """SELECT COUNT(*) FROM course_sources
                WHERE course_id = ? AND state = 'ready'""",
@@ -241,11 +265,11 @@ def project_workspace(
         status = "ready"
     else:
         status = "not_ready"
-    return {
+    return finish({
         "schema_version": SCHEMA_VERSION, "status": status,
         "course": {"external_course_id": mapping["external_course_id"], **({"external_term_id": mapping["external_term_id"]} if mapping["external_term_id"] is not None else {}), "title": mapping["remote_title"]},
         "sync": {"last_synced_at": _iso_timestamp(connection.last_sync_at), "is_stale": status == "stale"},
         "summary": counts,
         "resume": None,
         "recommended_next_action": None,
-    }
+    })
