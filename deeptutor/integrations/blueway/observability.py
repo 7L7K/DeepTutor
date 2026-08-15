@@ -138,8 +138,19 @@ _REASON_CODES = _SAFE_STATES | frozenset(
 )
 _OUTCOMES = frozenset(
     {
-        "accepted", "allowed", "blocked", "completed", "denied", "failed",
-        "in_progress", "pending", "ready", "rejected", "success", "suppressed", "terminal",
+        "accepted",
+        "allowed",
+        "blocked",
+        "completed",
+        "denied",
+        "failed",
+        "in_progress",
+        "pending",
+        "ready",
+        "rejected",
+        "success",
+        "suppressed",
+        "terminal",
     }
 )
 _COUNT_KEYS = frozenset(
@@ -167,9 +178,7 @@ def pairing_trace_id(request_id: str) -> str:
         # Provider adapters and hermetic tests may use a bounded opaque
         # reference instead of a UUID. Preserve the same trace rule without
         # putting that reference into logs or exposing it cross-system.
-        normalized = hashlib.sha256(
-            b"teeechr.blueway.trace.v1\0" + raw.encode("utf-8")
-        ).hexdigest()
+        normalized = hashlib.sha256(b"teeechr.blueway.trace.v1\0" + raw.encode("utf-8")).hexdigest()
     return f"bwp_{normalized}"
 
 
@@ -233,7 +242,9 @@ def build_blueway_event(
             raise ValueError("Invalid BlueWay diagnostic state")
     if reason_code is not None and reason_code not in _REASON_CODES:
         raise ValueError("Invalid BlueWay diagnostic reason")
-    if duration_ms is not None and (isinstance(duration_ms, bool) or duration_ms < 0 or duration_ms > 86_400_000):
+    if duration_ms is not None and (
+        isinstance(duration_ms, bool) or duration_ms < 0 or duration_ms > 86_400_000
+    ):
         raise ValueError("Invalid BlueWay diagnostic duration")
     if outcome is not None and outcome not in _OUTCOMES:
         raise ValueError("Invalid BlueWay diagnostic outcome")
@@ -243,7 +254,12 @@ def build_blueway_event(
         for key, value in counts.items():
             if str(key) not in _COUNT_KEYS:
                 raise ValueError("Invalid BlueWay diagnostic count")
-            if isinstance(value, bool) or not isinstance(value, int) or value < 0 or value > 1_000_000:
+            if (
+                isinstance(value, bool)
+                or not isinstance(value, int)
+                or value < 0
+                or value > 1_000_000
+            ):
                 raise ValueError("Invalid BlueWay diagnostic count")
             safe_counts[str(key)] = value
 
@@ -293,20 +309,22 @@ def emit_blueway_event(
     """
 
     try:
-        payload = _event_envelope(build_blueway_event(
-            event,
-            trace_id=trace_id,
-            attempt_ref=attempt_ref,
-            connection_ref=connection_ref,
-            sync_ref=sync_ref,
-            request_ref=request_ref,
-            state_from=state_from,
-            state_to=state_to,
-            reason_code=reason_code,
-            duration_ms=duration_ms,
-            outcome=outcome,
-            counts=counts,
-        ))
+        payload = _event_envelope(
+            build_blueway_event(
+                event,
+                trace_id=trace_id,
+                attempt_ref=attempt_ref,
+                connection_ref=connection_ref,
+                sync_ref=sync_ref,
+                request_ref=request_ref,
+                state_from=state_from,
+                state_to=state_to,
+                reason_code=reason_code,
+                duration_ms=duration_ms,
+                outcome=outcome,
+                counts=counts,
+            )
+        )
         # The formatter serializes only this allowlisted context field.  No
         # raw exception, request body, user identity, Course payload, or
         # credential is passed to the logger.

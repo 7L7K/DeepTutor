@@ -70,17 +70,23 @@ def test_legacy_connection_without_trace_uses_a_request_scoped_trace(monkeypatch
             return Authorization()
 
     emitted: list[dict[str, object]] = []
-    monkeypatch.setattr(workspace, "resolve_authorization", lambda _claims: (Authorization(), Repository()))
+    monkeypatch.setattr(
+        workspace, "resolve_authorization", lambda _claims: (Authorization(), Repository())
+    )
     monkeypatch.setattr(workspace, "request_trace_id", lambda: "bwr_legacy-request")
-    monkeypatch.setattr(workspace, "emit_blueway_event", lambda _event, **fields: emitted.append(fields))
+    monkeypatch.setattr(
+        workspace, "emit_blueway_event", lambda _event, **fields: emitted.append(fields)
+    )
 
-    result = workspace.project_workspace({
-        "authorization_id": Authorization.authorization_id,
-        "client_id": Authorization.client_id,
-        "scope": Authorization.scope,
-        "sub": Connection.external_subject,
-        "external_course_id": "course-1",
-    })
+    result = workspace.project_workspace(
+        {
+            "authorization_id": Authorization.authorization_id,
+            "client_id": Authorization.client_id,
+            "scope": Authorization.scope,
+            "sub": Connection.external_subject,
+            "external_course_id": "course-1",
+        }
+    )
 
     assert result["status"] == "revoked"
     assert emitted
@@ -89,9 +95,12 @@ def test_legacy_connection_without_trace_uses_a_request_scoped_trace(monkeypatch
 
 def test_pinned_conformance_corpus_matches_the_python_contract() -> None:
     assert CORPUS["contract_version"] == EVENT_SCHEMA_VERSION
-    assert hashlib.sha256(
-        json.dumps(CORPUS, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode()
-    ).hexdigest() == "cc6de03c589866ebe04f7dc935df706266e956f76a7af985620049ece2df26c2"
+    assert (
+        hashlib.sha256(
+            json.dumps(CORPUS, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode()
+        ).hexdigest()
+        == "cc6de03c589866ebe04f7dc935df706266e956f76a7af985620049ece2df26c2"
+    )
     accepted = [item for item in CORPUS["cases"] if item["expected"] == "accepted"]
     for item in accepted:
         fields = dict(item["fields"])
@@ -100,9 +109,22 @@ def test_pinned_conformance_corpus_matches_the_python_contract() -> None:
 
     redaction = next(item for item in CORPUS["cases"] if item["name"] == "redaction_attempt")
     safe_fields = {
-        key: value for key, value in redaction["fields"].items()
-        if key in {"trace_id", "attempt_ref", "connection_ref", "sync_ref", "request_ref",
-                   "state_from", "state_to", "reason_code", "duration_ms", "outcome", "counts"}
+        key: value
+        for key, value in redaction["fields"].items()
+        if key
+        in {
+            "trace_id",
+            "attempt_ref",
+            "connection_ref",
+            "sync_ref",
+            "request_ref",
+            "state_from",
+            "state_to",
+            "reason_code",
+            "duration_ms",
+            "outcome",
+            "counts",
+        }
     }
     redacted = build_blueway_event(redaction["event"], **safe_fields)
     assert "private_field" not in redacted
@@ -211,16 +233,26 @@ def test_event_builder_rejects_unsafe_state_and_reference() -> None:
 def test_event_failures_are_best_effort_and_never_escape_to_callers(monkeypatch) -> None:
     import deeptutor.integrations.blueway.observability as observability
 
-    monkeypatch.setattr(observability.logger, "info", lambda _message: (_ for _ in ()).throw(RuntimeError("sink down")))
-    assert emit_blueway_event(
-        "blueway_course_launch_allowed",
-        trace_id=request_trace_id(),
-        reason_code="ready",
-        outcome="allowed",
-    ) is None
-    assert emit_blueway_event(
-        "blueway_sync_failed",
-        trace_id=request_trace_id(),
-        reason_code="invented_reason",  # type: ignore[arg-type]
-        outcome="failed",
-    ) is None
+    monkeypatch.setattr(
+        observability.logger,
+        "info",
+        lambda _message: (_ for _ in ()).throw(RuntimeError("sink down")),
+    )
+    assert (
+        emit_blueway_event(
+            "blueway_course_launch_allowed",
+            trace_id=request_trace_id(),
+            reason_code="ready",
+            outcome="allowed",
+        )
+        is None
+    )
+    assert (
+        emit_blueway_event(
+            "blueway_sync_failed",
+            trace_id=request_trace_id(),
+            reason_code="invented_reason",  # type: ignore[arg-type]
+            outcome="failed",
+        )
+        is None
+    )
