@@ -25,7 +25,12 @@ from .bundles import (
 )
 from .config import BlueWaySettings, IntegrationConfigurationError
 from .credentials import CredentialError, CredentialStore
-from .observability import emit_blueway_event, safe_pairing_trace_id, safe_transport_reason
+from .observability import (
+    emit_blueway_event,
+    safe_pairing_trace_id,
+    safe_persisted_pairing_trace_id,
+    safe_transport_reason,
+)
 from .pairing_store import PairingAttemptStore, PairingStoreError
 from .repository import BlueWayNotFoundError, BlueWayRepository, Connection, SyncRun
 from .snapshot import SnapshotValidationError, validate_snapshot
@@ -127,6 +132,7 @@ class BlueWayService:
             "verification_uri": attempt.verification_uri,
             "expires_at": attempt.expires_at,
             "request_id": attempt.request_id,
+            "trace_id": attempt.trace_id,
             "mode": attempt.mode,
             "state": attempt.state,
             "terminal_at": attempt.terminal_at,
@@ -151,6 +157,9 @@ class BlueWayService:
                 verification_uri=str(record["verification_uri"]),
                 expires_at=float(record["expires_at"]),
                 request_id=str(record["request_id"]),
+                trace_id=safe_persisted_pairing_trace_id(
+                    record.get("trace_id"), str(record["request_id"])
+                ),
                 mode=str(record.get("mode", "connect")),
                 state=str(record.get("state", "pending")),
                 terminal_at=(float(record["terminal_at"]) if record.get("terminal_at") is not None else None),

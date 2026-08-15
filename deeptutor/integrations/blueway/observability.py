@@ -211,6 +211,30 @@ def safe_pairing_trace_id(request_id: str) -> str:
         return request_trace_id()
 
 
+def safe_persisted_pairing_trace_id(trace_id: Any, request_id: str) -> str:
+    """Restore a persisted pairing trace without trusting stored text blindly."""
+
+    if isinstance(trace_id, str) and _TRACE.fullmatch(trace_id):
+        return trace_id
+    return safe_pairing_trace_id(request_id)
+
+
+def safe_request_ref(request_id: str | None) -> str | None:
+    """Hash a caller request reference before it can enter lifecycle logs.
+
+    The digest is stable for correlation, but the caller-controlled value is
+    never written to the server logs or copied into an event payload.
+    """
+
+    if request_id is None:
+        return None
+    raw = str(request_id).strip()
+    if not _SAFE_REF.fullmatch(raw):
+        return None
+    digest = hashlib.sha256(b"teeechr.blueway.request-ref.v1\0" + raw.encode("utf-8")).hexdigest()
+    return f"req_{digest}"
+
+
 def build_blueway_event(
     event: EventName,
     *,

@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-import re
-
 from fastapi import APIRouter, Header, HTTPException, Query
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, ConfigDict, Field
@@ -13,7 +11,7 @@ from deeptutor.courses.service import CourseUnavailableError, get_current_course
 from .assertion import REVOCATION_SCOPE, verify_assertion
 from .assertion import AssertionError as WorkspaceAssertionError
 from .launch import resolve_course_launch
-from .observability import emit_blueway_event, request_trace_id
+from .observability import emit_blueway_event, request_trace_id, safe_request_ref
 from .repository import (
     BlueWayNotFoundError,
     BlueWayRepository,
@@ -77,11 +75,7 @@ def launch(
         event_name,
         trace_id=resolution.trace_id or request_trace_id(),
         connection_ref=resolution.connection_ref,
-        request_ref=(
-            x_request_id
-            if x_request_id and re.fullmatch(r"[A-Za-z0-9._:-]{1,128}", x_request_id)
-            else None
-        ),
+        request_ref=safe_request_ref(x_request_id),
         reason_code=resolution.status,
         outcome="allowed" if event_name.endswith("allowed") else "denied",
     )
@@ -337,7 +331,7 @@ def workspace_read(
     x_request_id: str | None = Header(default=None),
 ):
     """Read the owner-scoped allowlist projection using a BlueWay assertion only."""
-    request_id = x_request_id if x_request_id and re.fullmatch(r"[A-Za-z0-9._:-]{1,128}", x_request_id) else None
+    request_id = safe_request_ref(x_request_id)
     if not authorization or not authorization.startswith("Bearer ") or not authorization[7:].strip():
         raise HTTPException(status_code=401, detail="Workspace assertion required")
     try:

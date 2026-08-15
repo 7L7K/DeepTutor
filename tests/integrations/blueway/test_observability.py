@@ -17,8 +17,11 @@ from deeptutor.integrations.blueway.observability import (
     emit_blueway_event,
     pairing_trace_id,
     request_trace_id,
+    safe_persisted_pairing_trace_id,
+    safe_request_ref,
 )
 from deeptutor.integrations.blueway.repository import BlueWayRepository
+from deeptutor.integrations.blueway.service import BlueWayService, PairingAttempt
 from deeptutor.logging.formatters import ContextFilter, JsonlFormatter
 
 REQUEST_ID = "11111111-1111-4111-8111-111111111111"
@@ -35,6 +38,43 @@ def test_pairing_trace_is_deterministic_and_uuid_is_explicitly_opaque_safe() -> 
     assert request_trace_id().startswith("bwr_")
     with pytest.raises(ValueError):
         pairing_trace_id("https://attacker.example")
+
+
+def test_request_reference_is_stable_but_never_preserves_caller_text() -> None:
+    raw = "phone-attempt-20260815-001"
+    safe = safe_request_ref(raw)
+
+    assert safe is not None
+    assert safe.startswith("req_")
+    assert safe == safe_request_ref(raw)
+    assert raw not in safe
+    assert safe_request_ref("https://attacker.example") is None
+
+
+def test_persisted_pairing_attempt_keeps_trace_and_legacy_records_get_a_safe_fallback() -> None:
+    attempt = PairingAttempt(
+        id="attempt-1",
+        owner_user_id="owner-a",
+        device_code="device-code",
+        verifier="verifier",
+        user_code="ABCD-EFGH",
+        verification_uri="https://teeechr.example/connect",
+        expires_at=1_800_000_000.0,
+        request_id=REQUEST_ID,
+        trace_id=TRACE_ID,
+    )
+
+    record = BlueWayService._attempt_record(attempt)
+    restored = BlueWayService._attempt_from_record("attempt-1", record)
+    legacy = BlueWayService._attempt_from_record(
+        "attempt-1", {key: value for key, value in record.items() if key != "trace_id"}
+    )
+    malformed = BlueWayService._attempt_from_record("attempt-1", {**record, "trace_id": "owner-a"})
+
+    assert record["trace_id"] == TRACE_ID
+    assert restored.trace_id == TRACE_ID
+    assert legacy.trace_id == TRACE_ID
+    assert malformed.trace_id == safe_persisted_pairing_trace_id(None, REQUEST_ID)
 
 
 def test_legacy_connection_without_trace_uses_a_request_scoped_trace(monkeypatch) -> None:
