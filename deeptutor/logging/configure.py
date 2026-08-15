@@ -36,7 +36,9 @@ def _level(value: str | int) -> int:
 
 
 def _managed(
-    handler: logging.Handler, *, configured_level: int | None = None,
+    handler: logging.Handler,
+    *,
+    configured_level: int | None = None,
 ) -> logging.Handler:
     setattr(handler, _MANAGED_ATTR, True)
     handler.addFilter(ContextFilter())
@@ -69,7 +71,8 @@ def configure_logging(force: bool = False) -> LoggingConfig:
 
     if config.console_output:
         console = _managed(
-            logging.StreamHandler(sys.stdout), configured_level=level,
+            logging.StreamHandler(sys.stdout),
+            configured_level=level,
         )
         console.setLevel(logging.DEBUG)
         console.setFormatter(ConsoleFormatter())
