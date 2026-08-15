@@ -1367,7 +1367,9 @@ def test_0015_preserves_legacy_essay_exact_runtime_but_new_authoring_is_canonica
 ) -> None:
     path = tmp_path / "legacy-exact.db"
     artifacts = runner.discover_migrations()
-    assert artifacts[-1].filename == "0015_bounded_assessment_runtime.sql"
+    assert next(
+        artifact for artifact in artifacts if artifact.version == 15
+    ).filename == "0015_bounded_assessment_runtime.sql"
     monkeypatch.setattr(runner, "discover_migrations", lambda: artifacts[:15])
     assert ensure_course_schema(path) == tuple(range(15))
     with sqlite3.connect(path) as conn:
@@ -1422,7 +1424,7 @@ def test_0015_preserves_legacy_essay_exact_runtime_but_new_authoring_is_canonica
         )
 
     monkeypatch.setattr(runner, "discover_migrations", lambda: artifacts)
-    assert ensure_course_schema(path) == (15,)
+    assert ensure_course_schema(path) == (15, 16)
     assert ensure_course_schema(path) == ()
     with sqlite3.connect(path) as conn:
         after = tuple(
@@ -1442,8 +1444,8 @@ def test_0015_preserves_legacy_essay_exact_runtime_but_new_authoring_is_canonica
             for row in conn.execute(
                 "SELECT version FROM schema_migrations ORDER BY version"
             )
-        ) == tuple(range(16))
-        assert conn.execute("SELECT COUNT(*) FROM schema_migrations").fetchone()[0] == 16
+        ) == tuple(range(17))
+        assert conn.execute("SELECT COUNT(*) FROM schema_migrations").fetchone()[0] == 17
 
     courses = CourseRepository(path, "u_alice")
     practice = CoursePracticeService(CoursePracticeRepository(courses))

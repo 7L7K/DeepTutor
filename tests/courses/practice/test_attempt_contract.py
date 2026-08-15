@@ -899,7 +899,7 @@ def test_database_freezes_answers_after_submit_or_parent_archive_and_receipts_ca
 
 def test_migration_0002_replay_tamper_and_rollback_are_transactional(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     path = tmp_path / "courses.db"
-    assert ensure_course_schema(path) == tuple(range(16))
+    assert ensure_course_schema(path) == tuple(range(17))
     assert ensure_course_schema(path) == ()
     artifacts = runner.discover_migrations()
     assessment = artifacts[2]
@@ -979,7 +979,7 @@ def test_upgrade_from_exact_p4_02b_state_applies_generation_migrations_and_prese
         }
 
     monkeypatch.setattr(runner, "discover_migrations", lambda: artifacts)
-    assert ensure_course_schema(path) == tuple(range(3, 16))
+    assert ensure_course_schema(path) == tuple(range(3, 17))
     assert ensure_course_schema(path) == ()
     with courses._connect() as conn:
         after = {
@@ -998,6 +998,6 @@ def test_upgrade_from_exact_p4_02b_state_applies_generation_migrations_and_prese
             for row in conn.execute(
                 "SELECT version FROM schema_migrations ORDER BY version"
             )
-        ) == tuple(range(16))
+        ) == tuple(range(17))
     assert before == after
     assert practice_set.id and revision.id and len(questions) == 2

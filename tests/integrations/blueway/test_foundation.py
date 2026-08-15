@@ -472,7 +472,13 @@ def test_normal_pairing_poll_replay_returns_one_connection_without_duplicate_syn
         "deeptutor.integrations.blueway.service.emit_blueway_event",
         lambda event, **fields: events.append((event, fields)),
     )
-    monkeypatch.setattr(service, "schedule_sync", lambda run: scheduled.append(run.id))
+
+    def record_schedule(run) -> None:
+        scheduled.append(run.id)
+        with service._lock:  # noqa: SLF001 - mirror the scheduler's in-flight marker.
+            service._scheduled_connections.add(("owner-a", run.connection_id))  # noqa: SLF001
+
+    monkeypatch.setattr(service, "schedule_sync", record_schedule)
 
     first, first_run = service.poll_connection(attempt_id=attempt.id)
     second, second_run = service.poll_connection(attempt_id=attempt.id)
@@ -484,6 +490,44 @@ def test_normal_pairing_poll_replay_returns_one_connection_without_duplicate_syn
     replay_events = [fields for event, fields in events if event == "blueway_pairing_replayed"]
     assert len(replay_events) == 1
     assert replay_events[0]["trace_id"] == first.observability_trace_id
+    event_names = [event for event, _fields in events]
+    assert event_names.index("blueway_pairing_exchanged") < event_names.index(
+        "blueway_pairing_replayed"
+    )
+    assert event_names.index("blueway_connection_created") < event_names.index(
+        "blueway_pairing_replayed"
+    )
+
+
+def test_pairing_replay_retries_initial_sync_after_scheduler_failure(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class ApprovedTransport(FakeTransport):
+        def exchange(self, **_kwargs) -> TokenExchange:
+            return TokenExchange(
+                "grant-a", "subject-a", "access", "2026-07-23T00:00:00Z",
+                "refresh-secret",
+            )
+
+    service, courses = _service(tmp_path, monkeypatch)
+    service.transport = ApprovedTransport()
+    attempt = service.start_connection()
+    failures = [1]
+    scheduled: list[str] = []
+
+    def schedule(run) -> None:
+        if failures[0]:
+            failures[0] -= 1
+            raise RuntimeError("scheduler unavailable")
+        scheduled.append(run.id)
+
+    monkeypatch.setattr(service, "schedule_sync", schedule)
+    with pytest.raises(RuntimeError, match="scheduler unavailable"):
+        service.poll_connection(attempt_id=attempt.id)
+
+    connection, replay_run = service.poll_connection(attempt_id=attempt.id)
+    assert connection is not None and replay_run is None
+    assert scheduled == [BlueWayRepository(courses).active_run(connection.id).id]
 
 
 def test_concurrent_normal_pairing_poll_rejects_duplicate_without_404_or_duplicate_sync(

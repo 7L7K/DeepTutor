@@ -39,8 +39,11 @@ export default function BlueWaySettingsPage() {
   const [message, setMessage] = useState("");
   const identityEpochRef = useRef(0);
   const requestSequenceRef = useRef(0);
+  const refreshInFlightRef = useRef(false);
 
   const refresh = useCallback(async () => {
+    if (refreshInFlightRef.current) return;
+    refreshInFlightRef.current = true;
     const identityEpoch = identityEpochRef.current;
     const requestSequence = ++requestSequenceRef.current;
     try {
@@ -72,6 +75,8 @@ export default function BlueWaySettingsPage() {
         requestSequenceRef.current,
       )) return;
       setMessage(error instanceof Error ? error.message : String(error));
+    } finally {
+      refreshInFlightRef.current = false;
     }
   }, [attempt]);
 

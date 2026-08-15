@@ -443,8 +443,6 @@ class BlueWayService:
                 except Exception:
                     pass
                 raise
-            with self._lock:
-                self._completed_attempts[key] = (connection.id, attempt.expires_at)
             emit_blueway_event(
                 "blueway_pairing_exchanged",
                 trace_id=attempt.trace_id,
@@ -462,10 +460,28 @@ class BlueWayService:
                 state_to="active",
                 outcome="success",
             )
+            with self._lock:
+                self._completed_attempts[key] = (connection.id, attempt.expires_at)
             return connection, False
         finally:
             with self._lock:
                 self._exchanging_attempts.discard(key)
+
+    def _recover_replayed_initial_sync(self, connection: Connection) -> SyncRun | None:
+        """Retry only a missing or failed initial sync on a pairing replay."""
+        repository = self._repository()
+        existing = repository.active_run(connection.id)
+        if existing is None or existing.state in {"failed", "cancelled"}:
+            run = self.queue_sync(trace_id=connection.observability_trace_id)
+            self.schedule_sync(run)
+            return run
+        if existing.state in {"queued", "fetching", "validating", "staging", "indexing"}:
+            key = (connection.owner_user_id, connection.id)
+            with self._lock:
+                scheduled = key in self._scheduled_connections
+            if not scheduled:
+                self.schedule_sync(existing)
+        return None
 
     def poll_connection(self, *, attempt_id: str) -> tuple[Connection | None, SyncRun | None]:
         """POST-only approval poll.  Browser clients never receive token material."""
@@ -474,6 +490,7 @@ class BlueWayService:
         except BlueWayAuthorizationPending:
             return None, None
         if replayed:
+            run = self._recover_replayed_initial_sync(connection)
             emit_blueway_event(
                 "blueway_pairing_replayed",
                 trace_id=connection.observability_trace_id,
@@ -483,7 +500,7 @@ class BlueWayService:
                 state_to="exchanged",
                 outcome="success",
             )
-            return connection, None
+            return connection, run
         run = self.queue_sync(trace_id=connection.observability_trace_id)
         self.schedule_sync(run)
         return connection, run
@@ -598,7 +615,12 @@ class BlueWayService:
                 with self._lock:
                     self._scheduled_connections.discard(key)
 
-        self._executor.submit(worker)
+        try:
+            self._executor.submit(worker)
+        except Exception:
+            with self._lock:
+                self._scheduled_connections.discard(key)
+            raise
 
     def run_queued_sync(self, *, run_id: str) -> SyncRun:
         """Deterministic single-process worker; callers inject a transport in tests.
