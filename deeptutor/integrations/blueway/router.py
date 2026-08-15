@@ -13,6 +13,7 @@ from deeptutor.courses.service import CourseUnavailableError, get_current_course
 from .assertion import REVOCATION_SCOPE, verify_assertion
 from .assertion import AssertionError as WorkspaceAssertionError
 from .launch import resolve_course_launch
+from .observability import emit_blueway_event, request_trace_id
 from .repository import (
     BlueWayNotFoundError,
     BlueWayRepository,
@@ -28,7 +29,6 @@ from .service import (
 )
 from .transport import BlueWayTransportError
 from .workspace import ConsentRequiredError, project_workspace, revoke_workspace_authorization
-from .observability import emit_blueway_event, request_trace_id
 
 router = APIRouter()
 workspace_router = APIRouter()

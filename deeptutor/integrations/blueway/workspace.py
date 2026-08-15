@@ -22,12 +22,12 @@ from deeptutor.courses.migrations.runner import open_course_connection
 from deeptutor.courses.repository import CourseRepository
 from deeptutor.multi_user import paths
 
+from .observability import emit_blueway_event, request_trace_id
 from .repository import (
     BlueWayNotFoundError,
     BlueWayRepository,
     WorkspaceAuthorization,
 )
-from .observability import emit_blueway_event, request_trace_id
 
 SCHEMA_VERSION = "teeechr.workspace.v1"
 WORKSPACE_FRESHNESS_SECONDS = 24 * 60 * 60

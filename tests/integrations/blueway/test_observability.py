@@ -2,16 +2,15 @@
 
 from __future__ import annotations
 
-import json
 import hashlib
-import logging
 from io import StringIO
+import json
+import logging
 from pathlib import Path
 
 import pytest
 
 from deeptutor.courses.repository import CourseRepository
-from deeptutor.logging.formatters import ContextFilter, JsonlFormatter
 from deeptutor.integrations.blueway.observability import (
     EVENT_SCHEMA_VERSION,
     build_blueway_event,
@@ -20,6 +19,7 @@ from deeptutor.integrations.blueway.observability import (
     request_trace_id,
 )
 from deeptutor.integrations.blueway.repository import BlueWayRepository
+from deeptutor.logging.formatters import ContextFilter, JsonlFormatter
 
 REQUEST_ID = "11111111-1111-4111-8111-111111111111"
 TRACE_ID = f"bwp_{REQUEST_ID}"

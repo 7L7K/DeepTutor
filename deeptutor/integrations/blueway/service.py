@@ -25,8 +25,8 @@ from .bundles import (
 )
 from .config import BlueWaySettings, IntegrationConfigurationError
 from .credentials import CredentialError, CredentialStore
-from .pairing_store import PairingAttemptStore, PairingStoreError
 from .observability import emit_blueway_event, safe_pairing_trace_id, safe_transport_reason
+from .pairing_store import PairingAttemptStore, PairingStoreError
 from .repository import BlueWayNotFoundError, BlueWayRepository, Connection, SyncRun
 from .snapshot import SnapshotValidationError, validate_snapshot
 from .transport import (
