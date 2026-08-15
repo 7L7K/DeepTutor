@@ -490,7 +490,8 @@ class BlueWayService:
         except BlueWayAuthorizationPending:
             return None, None
         if replayed:
-            run = self._recover_replayed_initial_sync(connection)
+            # This receipt means the replay was received; emit it before any
+            # retry work so lifecycle logs retain causal ordering.
             emit_blueway_event(
                 "blueway_pairing_replayed",
                 trace_id=connection.observability_trace_id,
@@ -500,6 +501,7 @@ class BlueWayService:
                 state_to="exchanged",
                 outcome="success",
             )
+            run = self._recover_replayed_initial_sync(connection)
             return connection, run
         run = self.queue_sync(trace_id=connection.observability_trace_id)
         self.schedule_sync(run)
