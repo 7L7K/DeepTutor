@@ -440,23 +440,26 @@ def ensure_course_schema(
             while True:
                 try:
                     # The process-local path lock coordinates repository wrappers
-                    # here. BEGIN IMMEDIATE is the cross-process authority. State
-                    # must be re-read after acquiring it because another process
-                    # may have migrated after our initial classification.
+                    # here. BEGIN IMMEDIATE is the cross-process authority. Hold
+                    # it across the complete first-start batch so two processes
+                    # cannot interleave migrations and both report partial work.
                     conn.execute("BEGIN IMMEDIATE")
                     applied_count = _inspect_migration_state(conn, artifacts)
                     if applied_count == len(artifacts):
                         _verify_foreign_keys(conn)
                         conn.execute("COMMIT")
                         return tuple(applied)
-                    artifact = artifacts[applied_count]
-                    _apply_migration_in_transaction(
-                        conn,
-                        artifact,
-                        artifacts[: applied_count + 1],
-                    )
+                    while applied_count < len(artifacts):
+                        artifact = artifacts[applied_count]
+                        _apply_migration_in_transaction(
+                            conn,
+                            artifact,
+                            artifacts[: applied_count + 1],
+                        )
+                        applied.append(artifact.version)
+                        applied_count += 1
                     conn.execute("COMMIT")
-                    applied.append(artifact.version)
+                    return tuple(applied)
                 except Exception:
                     if conn.in_transaction:
                         conn.execute("ROLLBACK")
