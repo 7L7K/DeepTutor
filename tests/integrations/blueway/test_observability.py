@@ -23,6 +23,7 @@ from deeptutor.integrations.blueway.observability import (
 from deeptutor.integrations.blueway.repository import BlueWayRepository
 from deeptutor.integrations.blueway.service import BlueWayService, PairingAttempt
 from deeptutor.logging.formatters import ContextFilter, JsonlFormatter
+from deeptutor.services.auth_diagnostics import validated_request_id
 
 REQUEST_ID = "11111111-1111-4111-8111-111111111111"
 TRACE_ID = f"bwp_{REQUEST_ID}"
@@ -42,11 +43,13 @@ def test_pairing_trace_is_deterministic_and_uuid_is_explicitly_opaque_safe() -> 
 
 def test_request_reference_is_stable_but_never_preserves_caller_text() -> None:
     raw = "phone-attempt-20260815-001"
-    safe = safe_request_ref(raw)
+    safe = safe_request_ref(raw, auth_secret="blueway-test-diagnostic-secret")
 
     assert safe is not None
     assert safe.startswith("req_")
-    assert safe == safe_request_ref(raw)
+    assert safe == safe_request_ref(raw, auth_secret="blueway-test-diagnostic-secret")
+    assert safe == validated_request_id(raw, auth_secret="blueway-test-diagnostic-secret")
+    assert safe != safe_request_ref(raw, auth_secret="different-secret")
     assert raw not in safe
     assert safe_request_ref("https://attacker.example") is None
 

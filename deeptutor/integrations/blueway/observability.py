@@ -17,6 +17,7 @@ from typing import Any, Literal
 from uuid import UUID, uuid4
 
 from deeptutor.logging.context import bind_log_context
+from deeptutor.services.auth_diagnostics import validated_request_id
 
 logger = logging.getLogger(__name__)
 
@@ -219,20 +220,21 @@ def safe_persisted_pairing_trace_id(trace_id: Any, request_id: str) -> str:
     return safe_pairing_trace_id(request_id)
 
 
-def safe_request_ref(request_id: str | None) -> str | None:
-    """Hash a caller request reference before it can enter lifecycle logs.
+def safe_request_ref(
+    request_id: str | None,
+    *,
+    auth_secret: str | bytes | None = None,
+) -> str | None:
+    """HMAC a caller request reference before it can enter lifecycle logs.
 
     The digest is stable for correlation, but the caller-controlled value is
-    never written to the server logs or copied into an event payload.
+    never written to the server logs or copied into an event payload. When a
+    deployment secret is not supplied, the shared diagnostic helper uses its
+    server-held process key; callers with a durable deployment key may inject
+    it for cross-process correlation.
     """
 
-    if request_id is None:
-        return None
-    raw = str(request_id).strip()
-    if not _SAFE_REF.fullmatch(raw):
-        return None
-    digest = hashlib.sha256(b"teeechr.blueway.request-ref.v1\0" + raw.encode("utf-8")).hexdigest()
-    return f"req_{digest}"
+    return validated_request_id(request_id, auth_secret=auth_secret)
 
 
 def build_blueway_event(
