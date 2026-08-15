@@ -462,6 +462,14 @@ class BlueWayService:
 
     def poll_connection(self, *, attempt_id: str) -> tuple[Connection | None, SyncRun | None]:
         """POST-only approval poll.  Browser clients never receive token material."""
+        owner = self._owner()
+        key = (owner, attempt_id)
+        with self._lock:
+            self._purge_expired_attempts(time.time())
+            replayed = key in self._completed_attempts
+        if replayed:
+            connection = self.exchange_connection_for_transport(attempt_id=attempt_id)
+            return connection, None
         attempt = self.get_attempt(attempt_id)
         try:
             connection = self.exchange_connection_for_transport(attempt_id=attempt_id)

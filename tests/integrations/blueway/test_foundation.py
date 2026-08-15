@@ -449,6 +449,35 @@ def test_pending_pairing_poll_does_not_queue_until_the_provider_approves(tmp_pat
     assert connection is not None and run is not None and scheduled == [run.id]
 
 
+def test_normal_pairing_poll_replay_returns_one_connection_without_duplicate_sync(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class ApprovedTransport(FakeTransport):
+        exchange_calls = 0
+
+        def exchange(self, **_kwargs) -> TokenExchange:
+            self.exchange_calls += 1
+            return TokenExchange(
+                "grant-a", "subject-a", "access", "2026-07-23T00:00:00Z",
+                "refresh-secret",
+            )
+
+    transport = ApprovedTransport()
+    service, _courses = _service(tmp_path, monkeypatch)
+    service.transport = transport
+    attempt = service.start_connection()
+    scheduled: list[str] = []
+    monkeypatch.setattr(service, "schedule_sync", lambda run: scheduled.append(run.id))
+
+    first, first_run = service.poll_connection(attempt_id=attempt.id)
+    second, second_run = service.poll_connection(attempt_id=attempt.id)
+
+    assert first is not None and second is not None and first.id == second.id
+    assert first_run is not None and second_run is None
+    assert scheduled == [first_run.id]
+    assert transport.exchange_calls == 1
+
+
 def test_disconnect_wins_the_generation_fence_before_late_course_map(tmp_path: Path) -> None:
     repository = BlueWayRepository(CourseRepository(tmp_path / "courses.db", "owner-a"))
     connection = repository.create_active_connection(external_subject="subject-a", scope_version="academic.read.v1")

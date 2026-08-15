@@ -555,12 +555,15 @@ def test_0015_preserves_populated_exact_history_and_effective_semantics(
                 "SELECT name FROM sqlite_master WHERE type = 'trigger'"
             )
         }
+        expected_versions = tuple(
+            artifact.version for artifact in runner.discover_migrations()
+        )
         assert tuple(
             int(row[0])
             for row in conn.execute(
                 "SELECT version FROM schema_migrations ORDER BY version"
             )
-        ) == tuple(range(16))
+        ) == expected_versions
         assert conn.execute(
             "SELECT COUNT(*) FROM practice_questions WHERE options_json = '[]'"
         ).fetchone()[0] == len(QUESTIONS)
