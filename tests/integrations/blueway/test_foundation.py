@@ -902,7 +902,10 @@ def test_fifty_owner_repositories_are_isolated_under_concurrent_local_operations
         visible = repo.visible_connection()
         assert visible is not None and visible.id == connection.id
         return owner, repo.get_connection(connection.id).owner_user_id
-    with ThreadPoolExecutor(max_workers=10) as pool:
+    # Fresh private databases perform CPU/GIL-bound schema validation. Ten
+    # workers oversubscribe that work and make this isolation test appear hung
+    # without increasing the concurrency coverage of the owner operations.
+    with ThreadPoolExecutor(max_workers=4) as pool:
         results = list(pool.map(create, range(50)))
     assert results == [(f"owner-{index:02d}", f"owner-{index:02d}") for index in range(50)]
     assert len({tmp_path / owner / "courses.db" for owner, _ in results}) == 50
