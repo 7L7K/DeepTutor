@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+import copy
 from dataclasses import dataclass
 from datetime import UTC, datetime
+from functools import lru_cache
 import hashlib
 from importlib import resources
 import json
@@ -29,6 +31,7 @@ from deeptutor.courses.database_lock import course_database_lock
 
 _MIGRATION_FILE = re.compile(r"^(?P<version>\d{4})_(?P<name>[a-z0-9_]+)\.sql$")
 _CORE_PHASE3A_TABLES = frozenset({"courses", "course_sources"})
+_EXPECTED_SIGNATURE_CACHE_LOCK = threading.Lock()
 
 
 class CourseMigrationError(RuntimeError):
@@ -601,6 +604,23 @@ def _expected_signature(
     artifacts: Iterable[MigrationArtifact],
     *,
     include_ledger: bool = True,
+) -> dict[str, Any]:
+    """Return the immutable expected schema shape for these migration bytes.
+
+    The expected shape depends only on the migration artifacts, never on a
+    user's database. Cache that pure computation so concurrent private-database
+    initialization does not rebuild the same in-memory schema once per owner.
+    """
+
+    with _EXPECTED_SIGNATURE_CACHE_LOCK:
+        cached = _expected_signature_cached(tuple(artifacts), include_ledger)
+    return copy.deepcopy(cached)
+
+
+@lru_cache(maxsize=32)
+def _expected_signature_cached(
+    artifacts: tuple[MigrationArtifact, ...],
+    include_ledger: bool,
 ) -> dict[str, Any]:
     conn = sqlite3.connect(":memory:", isolation_level=None)
     conn.row_factory = sqlite3.Row
