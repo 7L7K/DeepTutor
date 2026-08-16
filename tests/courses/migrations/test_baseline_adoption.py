@@ -44,6 +44,7 @@ def test_exact_legacy_profiles_adopt_without_rewriting_domain_rows(
                 # columns; the legacy values themselves must remain intact.
                 "blueway_course_maps": {"external_term_id"},
                 "blueway_records": {"external_term_id"},
+                "blueway_connections": {"observability_trace_id"},
             },
         ) == before
         assert conn.execute("SELECT COUNT(*) FROM schema_migrations").fetchone()[0] == len(expected_versions)

@@ -41,6 +41,7 @@ class Connection:
     connected_at: float | None
     last_sync_at: float | None
     disconnected_at: float | None
+    observability_trace_id: str | None = None
     rotation_request_id: str | None = None
     rotation_started_at: float | None = None
 

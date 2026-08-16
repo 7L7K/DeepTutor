@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- Added a rollback-compatible bridge for BlueWay observability migration
+  `0018`. The bridge recognizes and applies the nullable trace column while
+  preserving pre-observability behavior, and can hydrate connection rows after
+  the full observability release has written a trace value.
+
 - Hardened mobile TEEECHR sign-in with whitespace-safe email matching and
   mobile input attributes, added server-only privacy-bounded login diagnostics
   with a safe attempt reference header, and added accessible show/hide controls
