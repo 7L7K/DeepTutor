@@ -800,7 +800,7 @@ def test_0002_upgrade_applies_grading_and_generation_migrations_preserves_rows_a
     with sqlite3.connect(path) as conn:
         conn.execute("INSERT INTO courses (id, owner_user_id, title, state, revision, write_epoch, managed_kb_ref, created_at, updated_at, archived_at) VALUES ('crs_keep', 'u_alice', 'Keep', 'active', 1, 1, NULL, 1, 1, NULL)")
     monkeypatch.setattr(runner, "discover_migrations", lambda: artifacts)
-    assert ensure_course_schema(path) == tuple(range(3, 18))
+    assert ensure_course_schema(path) == tuple(range(3, 19))
     with sqlite3.connect(path) as conn:
         assert conn.execute("SELECT title FROM courses WHERE id = 'crs_keep'").fetchone()[0] == "Keep"
 
@@ -962,7 +962,7 @@ def test_exact_p4_03_upgrade_applies_generation_and_flashcard_migrations_and_pre
         }
 
     monkeypatch.setattr(runner, "discover_migrations", lambda: artifacts)
-    assert ensure_course_schema(path) == tuple(range(4, 18))
+    assert ensure_course_schema(path) == tuple(range(4, 19))
     assert ensure_course_schema(path) == ()
     with courses._connect() as conn:
         after = {
@@ -992,7 +992,7 @@ def test_exact_p4_03_upgrade_applies_generation_and_flashcard_migrations_and_pre
         } <= effective_triggers
         assert tuple(
             row[0] for row in conn.execute("SELECT version FROM schema_migrations ORDER BY version")
-        ) == tuple(range(18))
+        ) == tuple(range(19))
         assert conn.execute(
             "SELECT options_json FROM practice_questions WHERE id = ?",
             (_question.id,),

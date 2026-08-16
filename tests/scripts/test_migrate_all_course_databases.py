@@ -44,7 +44,9 @@ def test_verify_then_apply_covers_all_discovered_databases(tmp_path: Path) -> No
     for path in paths:
         ensure_course_schema(path)
         with open_course_connection(path) as conn:
+            conn.execute("DELETE FROM schema_migrations WHERE version = 18")
             conn.execute("DELETE FROM schema_migrations WHERE version = 17")
+            conn.execute("ALTER TABLE blueway_connections DROP COLUMN observability_trace_id")
             conn.execute("DROP TABLE blueway_workspace_assertion_replays")
     artifacts = discover_migrations()
     results = [module.check_database(path, apply=False, artifacts=artifacts) for path in paths]
@@ -56,5 +58,5 @@ def test_verify_then_apply_covers_all_discovered_databases(tmp_path: Path) -> No
     for path in paths:
         result = module.check_database(path, apply=True, artifacts=artifacts)
         assert result.status == "migrated"
-        assert result.applied == (17,)
+        assert result.applied == (17, 18)
         assert module.check_database(path, apply=False, artifacts=artifacts).status == "ready"
