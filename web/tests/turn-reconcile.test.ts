@@ -137,7 +137,7 @@ test("regenerate turns reconcile the assistant id only", () => {
   assert.equal(result.messages[0].id, 40);
 });
 
-test("falls back to the last assistant bubble when turn id is missing", () => {
+test("does not reconcile by position when turn id is missing", () => {
   const result = reconcileTurnIds(
     optimisticTurn(),
     {},
@@ -147,8 +147,8 @@ test("falls back to the last assistant bubble when turn id is missing", () => {
       assistantMessageId: 13,
     },
   );
-  assert.equal(result.changed, true);
-  assert.equal(result.messages[3].id, 13);
+  assert.equal(result.changed, false);
+  assert.equal(result.messages[3].id, -2001);
 });
 
 test("remaps selectedBranches keys and values that used optimistic ids", () => {
@@ -311,6 +311,16 @@ test("latest assistant turn guard rejects a newer local turn", () => {
       85,
       "turn_old",
       86,
+    ),
+    false,
+  );
+  assert.equal(
+    canApplyTurnRevalidation(
+      [{ id: -8501, role: "assistant", content: "", events: [] }],
+      null,
+      85,
+      null,
+      null,
     ),
     false,
   );

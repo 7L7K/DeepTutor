@@ -80,7 +80,6 @@ export function canApplyTurnRevalidation(
   if (expectedTurnId && lastCompletedTurnId !== expectedTurnId) return false;
   if (
     expectedAssistantMessageId != null &&
-    lastCompletedAssistantMessageId != null &&
     lastCompletedAssistantMessageId !== expectedAssistantMessageId
   ) {
     return false;
@@ -116,8 +115,9 @@ function isOptimisticId(id: unknown): id is number {
  * Swap the turn's optimistic message ids for their persisted counterparts.
  *
  * Locates the turn's assistant bubble (last assistant message carrying an
- * event with ``turnId``; falls back to the last assistant message when the
- * turn id is unavailable) and the user message immediately preceding it.
+ * event with ``turnId``) and the user message immediately preceding it. A
+ * persisted assistant id without a turn id is intentionally not reconciled
+ * by position; the caller must use the guarded session snapshot instead.
  * Only optimistic (negative) ids are ever overwritten — rows that already
  * carry persisted ids (e.g. after a mid-turn session reload) are left
  * untouched, which also makes stale ``done`` replays harmless. All
@@ -140,6 +140,10 @@ export function reconcileTurnIds<T extends ReconcilableMessage>(
   if (ids.assistantMessageId == null && ids.userMessageId == null) {
     return unchanged;
   }
+  // Without a turn id there is no safe way to tell which optimistic assistant
+  // a persisted assistant id belongs to. The caller must use a guarded
+  // session snapshot instead of renaming the latest bubble by position.
+  if (!ids.turnId && ids.assistantMessageId != null) return unchanged;
 
   let assistantIndex = -1;
   for (let i = messages.length - 1; i >= 0; i--) {

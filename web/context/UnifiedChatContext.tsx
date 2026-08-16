@@ -539,9 +539,7 @@ function reducer(state: ProviderState, action: Action): ProviderState {
             lastCompletedAssistantMessageId:
               action.status === 'running'
                 ? state.sessions[action.key]?.lastCompletedAssistantMessageId || null
-                : action.assistantMessageId ??
-                  state.sessions[action.key]?.lastCompletedAssistantMessageId ??
-                  null,
+                : action.assistantMessageId ?? null,
             updatedAt: Date.now(),
           },
         },
@@ -988,6 +986,7 @@ export function UnifiedChatProvider({ children }: { children: React.ReactNode })
   // corresponding reducer update.
   const completedTurnsRef = useRef<Map<string, string>>(new Map())
   const completedAssistantIdsRef = useRef<Map<string, number>>(new Map())
+  const seenCompletedAssistantIdsRef = useRef<Map<string, Set<number>>>(new Map())
   // Forward-declared so ``handleRunnerEvent`` (created above
   // ``loadSession`` in source order) can trigger a server refresh after
   // a turn finishes without taking a stale closure of ``loadSession``.
@@ -1093,6 +1092,13 @@ export function UnifiedChatProvider({ children }: { children: React.ReactNode })
           assistant_message_id?: number
         } | null
         const assistantMessageId = doneMeta?.assistant_message_id ?? null
+        if (assistantMessageId != null) {
+          const seen =
+            seenCompletedAssistantIdsRef.current.get(effectiveKey) ?? new Set<number>()
+          if (seen.has(assistantMessageId)) return
+          seen.add(assistantMessageId)
+          seenCompletedAssistantIdsRef.current.set(effectiveKey, seen)
+        }
         dispatch({
           type: 'STREAM_END',
           key: effectiveKey,
@@ -1105,6 +1111,8 @@ export function UnifiedChatProvider({ children }: { children: React.ReactNode })
         }
         if (assistantMessageId != null) {
           completedAssistantIdsRef.current.set(effectiveKey, assistantMessageId)
+        } else {
+          completedAssistantIdsRef.current.delete(effectiveKey)
         }
         pendingRegenerateRef.current.delete(effectiveKey)
         const runner = runnersRef.current.get(effectiveKey)
@@ -1132,13 +1140,18 @@ export function UnifiedChatProvider({ children }: { children: React.ReactNode })
         // the tab for seconds on long conversations.
         if (status === 'completed') {
           if (assistantMessageId != null) {
-            dispatch({
-              type: 'RECONCILE_TURN',
-              key: effectiveKey,
-              turnId: event.turn_id || null,
-              userMessageId: doneMeta?.user_message_id ?? null,
-              assistantMessageId,
-            })
+            // A legacy done without a turn id cannot safely identify the
+            // optimistic assistant locally; use the guarded session snapshot
+            // instead of letting a stale replay rename the latest bubble.
+            if (event.turn_id) {
+              dispatch({
+                type: 'RECONCILE_TURN',
+                key: effectiveKey,
+                turnId: event.turn_id,
+                userMessageId: doneMeta?.user_message_id ?? null,
+                assistantMessageId,
+              })
+            }
             const finishedSession = stateRef.current.sessions[effectiveKey]
             const sessionId = finishedSession?.sessionId
             if (sessionId && event.turn_id) {
@@ -1146,13 +1159,17 @@ export function UnifiedChatProvider({ children }: { children: React.ReactNode })
             }
             if (sessionId && assistantMessageId != null) {
               completedAssistantIdsRef.current.set(sessionId, assistantMessageId)
+            } else if (sessionId) {
+              completedAssistantIdsRef.current.delete(sessionId)
             }
             if (
               sessionId &&
-              latestAssistantNeedsHydration(
-                finishedSession?.messages ?? [],
-                event.turn_id || null,
-              )
+              (!event.turn_id ||
+                latestAssistantNeedsHydration(
+                  finishedSession?.messages ?? [],
+                  event.turn_id,
+                  assistantMessageId,
+                ))
             ) {
               // The id-only fast path is safe when live content arrived. If
               // it did not, rehydrate the persisted assistant row instead of
@@ -1176,6 +1193,8 @@ export function UnifiedChatProvider({ children }: { children: React.ReactNode })
             }
             if (sessionId && assistantMessageId != null) {
               completedAssistantIdsRef.current.set(sessionId, assistantMessageId)
+            } else if (sessionId) {
+              completedAssistantIdsRef.current.delete(sessionId)
             }
             if (sessionId) {
               loadSessionRef.current?.(sessionId, {
