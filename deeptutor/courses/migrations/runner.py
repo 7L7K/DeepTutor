@@ -462,6 +462,42 @@ def ensure_course_schema(
             conn.close()
 
 
+def verify_course_schema(
+    db_path: Path | str,
+    *,
+    artifacts: tuple[MigrationArtifact, ...] | None = None,
+) -> int:
+    """Validate one Course database without applying migrations or writing state.
+
+    Returns the number of valid, consecutively applied migration receipts.
+    Receipt, schema-signature, and foreign-key mismatches fail closed.
+    """
+
+    resolved = Path(db_path).resolve()
+    selected_artifacts = discover_migrations() if artifacts is None else artifacts
+    uri = f"file:{resolved}?mode=ro"
+    try:
+        conn = sqlite3.connect(uri, uri=True, timeout=10.0)
+    except sqlite3.Error as exc:
+        raise CourseMigrationError(f"Cannot open Course database read-only: {exc}") from exc
+    conn.row_factory = sqlite3.Row
+    _register_course_validation_functions(conn)
+    conn.execute("PRAGMA query_only = ON")
+    conn.execute("PRAGMA foreign_keys = ON")
+    if int(conn.execute("PRAGMA foreign_keys").fetchone()[0]) != 1:
+        conn.close()
+        raise CourseMigrationError("SQLite foreign-key enforcement is unavailable")
+    conn.execute("PRAGMA busy_timeout = 10000")
+    try:
+        applied_count = _inspect_migration_state(conn, selected_artifacts)
+        _verify_foreign_keys(conn)
+        return applied_count
+    except sqlite3.Error as exc:
+        raise CourseMigrationError(f"Cannot verify Course database read-only: {exc}") from exc
+    finally:
+        conn.close()
+
+
 def _inspect_migration_state(
     conn: sqlite3.Connection,
     artifacts: tuple[MigrationArtifact, ...],

@@ -1,4 +1,4 @@
-"""Rollback-compatibility contract for the observability schema boundary."""
+"""Forward-compatibility contract for the observability schema boundary."""
 
 from __future__ import annotations
 
@@ -16,7 +16,7 @@ def test_bridge_upgrades_0017_and_restarts_after_full_candidate_write(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """The bridge must remain usable on both sides of migration 0018."""
+    """The bridge is the rollback floor after it upgrades an 0017 database."""
 
     path = tmp_path / "courses.db"
     artifacts = discover_migrations()
