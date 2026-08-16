@@ -228,7 +228,7 @@ jobs:
           echo "🧪 Running Python tests on Python ${{ matrix.python-version }}"
           test_start=$SECONDS
           set +e
-          pytest -q -n auto --dist=loadfile --durations=20 tests deeptutor/learning/tests
+          pytest -q -n 4 --dist=loadfile --durations=20 tests deeptutor/learning/tests
           test_status=$?
           set -e
           test_duration=$((SECONDS-test_start))
@@ -237,7 +237,7 @@ jobs:
             echo "### Python test diagnostics (${{ matrix.python-version }})"
             echo "- Full pytest suite: ${test_duration}s"
             echo "- Parallel mode: xdist auto workers with file-level scheduling"
-            echo "- Slowest tests: see the \\\`--durations=20\\\` output above"
+            echo '- Slowest tests: see the `--durations=20` output above'
           } >> "$GITHUB_STEP_SUMMARY"
           exit "$test_status"
         env:

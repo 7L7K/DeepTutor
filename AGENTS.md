@@ -276,8 +276,9 @@ release artifact:
 6. CI from an earlier head or base is stale and cannot authorize a merge.
 7. For a one-way migration, name the minimum rollback binary before applying
    it. Never restart an older incompatible image afterward.
-8. Build deployment artifacts only from the final merge SHA, not from a dirty
-   checkout, PR head, local branch label, or short display SHA.
+8. Build deployment artifacts only from the exact approved release tag or
+   merge SHA, and verify that a tag resolves to the intended merge commit. Do
+   not build from a dirty checkout, PR head, local branch label, or short SHA.
 
 ## Release identity and dirty-checkout boundaries
 
