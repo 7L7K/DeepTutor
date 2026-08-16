@@ -155,6 +155,7 @@ interface SessionEntry extends ChatState {
   status: SessionRuntimeStatus
   activeTurnId: string | null
   lastCompletedTurnId: string | null
+  lastCompletedAssistantMessageId: number | null
   lastSeq: number
   updatedAt: number
   /** Edit-branching: maps a parent_message_id (stringified, or "null" for
@@ -220,10 +221,11 @@ type Action =
   | { type: 'STREAM_START'; key: string }
   | { type: 'STREAM_EVENT'; key: string; event: StreamEvent }
   | {
-      type: 'STREAM_END'
+    type: 'STREAM_END'
       key: string
       status?: SessionRuntimeStatus
       turnId?: string | null
+      assistantMessageId?: number | null
     }
   | {
       type: 'BIND_SERVER_SESSION'
@@ -279,6 +281,7 @@ function createSessionEntry(
     status: 'idle',
     activeTurnId: null,
     lastCompletedTurnId: null,
+    lastCompletedAssistantMessageId: null,
     lastSeq: 0,
     updatedAt: Date.now(),
     selectedBranches: {},
@@ -533,6 +536,12 @@ function reducer(state: ProviderState, action: Action): ProviderState {
               action.status === 'running'
                 ? state.sessions[action.key]?.lastCompletedTurnId || null
                 : action.turnId || state.sessions[action.key]?.activeTurnId || null,
+            lastCompletedAssistantMessageId:
+              action.status === 'running'
+                ? state.sessions[action.key]?.lastCompletedAssistantMessageId || null
+                : action.assistantMessageId ??
+                  state.sessions[action.key]?.lastCompletedAssistantMessageId ??
+                  null,
             updatedAt: Date.now(),
           },
         },
@@ -585,6 +594,7 @@ function reducer(state: ProviderState, action: Action): ProviderState {
             action.expectedTurnId,
             action.expectedAssistantMessageId,
             local.lastCompletedTurnId,
+            local.lastCompletedAssistantMessageId,
           )
         ) {
           return state
@@ -617,6 +627,8 @@ function reducer(state: ProviderState, action: Action): ProviderState {
             currentStage: '',
             activeTurnId: action.activeTurnId || null,
             lastCompletedTurnId: action.expectedTurnId || existing.lastCompletedTurnId || null,
+            lastCompletedAssistantMessageId:
+              action.expectedAssistantMessageId ?? existing.lastCompletedAssistantMessageId ?? null,
             status: action.status || 'idle',
             language: action.language ?? existing.language,
             selectedBranches: action.selectedBranches ?? existing.selectedBranches,
@@ -975,6 +987,7 @@ export function UnifiedChatProvider({ children }: { children: React.ReactNode })
   // revalidation can reject an older response even before React commits the
   // corresponding reducer update.
   const completedTurnsRef = useRef<Map<string, string>>(new Map())
+  const completedAssistantIdsRef = useRef<Map<string, number>>(new Map())
   // Forward-declared so ``handleRunnerEvent`` (created above
   // ``loadSession`` in source order) can trigger a server refresh after
   // a turn finishes without taking a stale closure of ``loadSession``.
@@ -1075,14 +1088,23 @@ export function UnifiedChatProvider({ children }: { children: React.ReactNode })
         const status = String(
           (event.metadata as { status?: string } | undefined)?.status || 'completed'
         )
+        const doneMeta = event.metadata as {
+          user_message_id?: number
+          assistant_message_id?: number
+        } | null
+        const assistantMessageId = doneMeta?.assistant_message_id ?? null
         dispatch({
           type: 'STREAM_END',
           key: effectiveKey,
           status: (status as SessionRuntimeStatus) || 'completed',
           turnId: event.turn_id || null,
+          assistantMessageId,
         })
         if (event.turn_id) {
           completedTurnsRef.current.set(effectiveKey, event.turn_id)
+        }
+        if (assistantMessageId != null) {
+          completedAssistantIdsRef.current.set(effectiveKey, assistantMessageId)
         }
         pendingRegenerateRef.current.delete(effectiveKey)
         const runner = runnersRef.current.get(effectiveKey)
@@ -1108,11 +1130,6 @@ export function UnifiedChatProvider({ children }: { children: React.ReactNode })
         // (the previous approach) re-downloaded, re-normalized, and
         // re-rendered the entire transcript after every turn, freezing
         // the tab for seconds on long conversations.
-        const doneMeta = event.metadata as {
-          user_message_id?: number
-          assistant_message_id?: number
-        } | null
-        const assistantMessageId = doneMeta?.assistant_message_id ?? null
         if (status === 'completed') {
           if (assistantMessageId != null) {
             dispatch({
@@ -1126,6 +1143,9 @@ export function UnifiedChatProvider({ children }: { children: React.ReactNode })
             const sessionId = finishedSession?.sessionId
             if (sessionId && event.turn_id) {
               completedTurnsRef.current.set(sessionId, event.turn_id)
+            }
+            if (sessionId && assistantMessageId != null) {
+              completedAssistantIdsRef.current.set(sessionId, assistantMessageId)
             }
             if (
               sessionId &&
@@ -1153,6 +1173,9 @@ export function UnifiedChatProvider({ children }: { children: React.ReactNode })
             const sessionId = finishedSession?.sessionId
             if (sessionId && event.turn_id) {
               completedTurnsRef.current.set(sessionId, event.turn_id)
+            }
+            if (sessionId && assistantMessageId != null) {
+              completedAssistantIdsRef.current.set(sessionId, assistantMessageId)
             }
             if (sessionId) {
               loadSessionRef.current?.(sessionId, {
@@ -1351,6 +1374,9 @@ export function UnifiedChatProvider({ children }: { children: React.ReactNode })
         const completedTurnId = options.expectedTurnId
           ? completedTurnsRef.current.get(key) || local?.lastCompletedTurnId
           : local?.lastCompletedTurnId
+        const completedAssistantMessageId = options.expectedAssistantMessageId
+          ? completedAssistantIdsRef.current.get(key) || local?.lastCompletedAssistantMessageId
+          : local?.lastCompletedAssistantMessageId
         const locallyCompletingExpectedTurn = Boolean(
           options.expectedTurnId &&
             completedTurnsRef.current.get(key) === options.expectedTurnId &&
@@ -1369,6 +1395,7 @@ export function UnifiedChatProvider({ children }: { children: React.ReactNode })
             options.expectedTurnId,
             options.expectedAssistantMessageId,
             completedTurnId,
+            completedAssistantMessageId,
           )
         ) {
           return

@@ -300,6 +300,7 @@ test("latest assistant turn guard rejects a newer local turn", () => {
       "turn_old",
       85,
       "turn_old",
+      85,
     ),
     true,
   );
@@ -308,7 +309,8 @@ test("latest assistant turn guard rejects a newer local turn", () => {
       [{ id: -8501, role: "assistant", content: "", events: [] }],
       "turn_old",
       85,
-      "turn_new",
+      "turn_old",
+      86,
     ),
     false,
   );

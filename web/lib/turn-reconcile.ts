@@ -75,8 +75,16 @@ export function canApplyTurnRevalidation(
   expectedTurnId?: string | null,
   expectedAssistantMessageId?: number | null,
   lastCompletedTurnId?: string | null,
+  lastCompletedAssistantMessageId?: number | null,
 ): boolean {
   if (expectedTurnId && lastCompletedTurnId !== expectedTurnId) return false;
+  if (
+    expectedAssistantMessageId != null &&
+    lastCompletedAssistantMessageId != null &&
+    lastCompletedAssistantMessageId !== expectedAssistantMessageId
+  ) {
+    return false;
+  }
   return latestAssistantMatchesTurn(messages, expectedTurnId, expectedAssistantMessageId);
 }
 
