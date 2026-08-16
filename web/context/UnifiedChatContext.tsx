@@ -31,7 +31,12 @@ import { normalizeMarkdownForDisplay } from '@/lib/markdown-display'
 import { normalizeMessageContent } from '@/lib/message-content'
 import { buildVisiblePath, tipMessageId } from '@/lib/message-branches'
 import { nextOptimisticId } from '@/lib/optimistic-id'
-import { reconcileTurnIds } from '@/lib/turn-reconcile'
+import {
+  canApplyTurnRevalidation,
+  latestAssistantNeedsHydration,
+  reconcileTurnIds,
+  snapshotMatchesExpectedTurn,
+} from '@/lib/turn-reconcile'
 import { isNarrationMarker, recomputeAnswerContent, shouldAppendEventContent } from '@/lib/stream'
 import { hasPendingAskUserInMessages } from '@/lib/ask-user-state'
 import { notify } from '@/lib/notifications'
@@ -150,6 +155,8 @@ interface SessionEntry extends ChatState {
   key: string
   status: SessionRuntimeStatus
   activeTurnId: string | null
+  lastCompletedTurnId: string | null
+  lastCompletedAssistantMessageId: number | null
   lastSeq: number
   updatedAt: number
   /** Edit-branching: maps a parent_message_id (stringified, or "null" for
@@ -181,6 +188,16 @@ interface SessionSnapshot {
   language?: string
   selectedBranches?: Record<string, number>
   courseId?: string | null
+  /** Guards a background snapshot against a newer local turn. */
+  expectedTurnId?: string | null
+  expectedAssistantMessageId?: number | null
+}
+
+type LoadSessionOptions = {
+  signal?: AbortSignal
+  revalidate?: boolean
+  expectedTurnId?: string | null
+  expectedAssistantMessageId?: number | null
 }
 
 type Action =
@@ -205,10 +222,11 @@ type Action =
   | { type: 'STREAM_START'; key: string }
   | { type: 'STREAM_EVENT'; key: string; event: StreamEvent }
   | {
-      type: 'STREAM_END'
+    type: 'STREAM_END'
       key: string
       status?: SessionRuntimeStatus
       turnId?: string | null
+      assistantMessageId?: number | null
     }
   | {
       type: 'BIND_SERVER_SESSION'
@@ -263,6 +281,8 @@ function createSessionEntry(
     language: typeof window === 'undefined' ? 'en' : readStoredLanguage(),
     status: 'idle',
     activeTurnId: null,
+    lastCompletedTurnId: null,
+    lastCompletedAssistantMessageId: null,
     lastSeq: 0,
     updatedAt: Date.now(),
     selectedBranches: {},
@@ -513,6 +533,14 @@ function reducer(state: ProviderState, action: Action): ProviderState {
               action.status === 'running'
                 ? action.turnId || state.sessions[action.key]?.activeTurnId || null
                 : null,
+            lastCompletedTurnId:
+              action.status === 'running'
+                ? state.sessions[action.key]?.lastCompletedTurnId || null
+                : action.turnId || state.sessions[action.key]?.activeTurnId || null,
+            lastCompletedAssistantMessageId:
+              action.status === 'running'
+                ? state.sessions[action.key]?.lastCompletedAssistantMessageId || null
+                : action.assistantMessageId ?? null,
             updatedAt: Date.now(),
           },
         },
@@ -559,6 +587,22 @@ function reducer(state: ProviderState, action: Action): ProviderState {
         if (!local || local.isStreaming || local.status === 'running') {
           return state
         }
+        if (
+          !canApplyTurnRevalidation(
+            local.messages,
+            action.expectedTurnId,
+            action.expectedAssistantMessageId,
+            local.lastCompletedTurnId,
+            local.lastCompletedAssistantMessageId,
+          ) ||
+          !snapshotMatchesExpectedTurn(
+            action.messages,
+            action.expectedTurnId,
+            action.expectedAssistantMessageId,
+          )
+        ) {
+          return state
+        }
       }
       const existing =
         state.sessions[action.key] ?? createSessionEntry(action.key, action.sessionId)
@@ -586,6 +630,9 @@ function reducer(state: ProviderState, action: Action): ProviderState {
             isStreaming: (action.status || 'idle') === 'running',
             currentStage: '',
             activeTurnId: action.activeTurnId || null,
+            lastCompletedTurnId: action.expectedTurnId || existing.lastCompletedTurnId || null,
+            lastCompletedAssistantMessageId:
+              action.expectedAssistantMessageId ?? existing.lastCompletedAssistantMessageId ?? null,
             status: action.status || 'idle',
             language: action.language ?? existing.language,
             selectedBranches: action.selectedBranches ?? existing.selectedBranches,
@@ -795,7 +842,7 @@ interface ChatContextValue {
    *  dropped rather than applied if a turn started meanwhile. */
   loadSession: (
     sessionId: string,
-    options?: { signal?: AbortSignal; revalidate?: boolean }
+    options?: LoadSessionOptions
   ) => Promise<void>
   /** Select an already-loaded session without fetching. Returns false when
    *  it isn't in memory, i.e. the caller must load it. */
@@ -940,10 +987,18 @@ export function UnifiedChatProvider({ children }: { children: React.ReactNode })
   // assistant message if the server rejects the request (e.g. ``regenerate_busy``
   // or ``nothing_to_regenerate``). Keyed by session entry key.
   const pendingRegenerateRef = useRef<Map<string, MessageItem>>(new Map())
+  // Updated synchronously from terminal WebSocket events so an async
+  // revalidation can reject an older response even before React commits the
+  // corresponding reducer update.
+  const completedTurnsRef = useRef<Map<string, string>>(new Map())
+  const completedAssistantIdsRef = useRef<Map<string, number>>(new Map())
+  const seenCompletedAssistantIdsRef = useRef<Map<string, Set<number>>>(new Map())
   // Forward-declared so ``handleRunnerEvent`` (created above
   // ``loadSession`` in source order) can trigger a server refresh after
   // a turn finishes without taking a stale closure of ``loadSession``.
-  const loadSessionRef = useRef<((sessionId: string) => Promise<void>) | null>(null)
+  const loadSessionRef = useRef<
+    ((sessionId: string, options?: LoadSessionOptions) => Promise<void>) | null
+  >(null)
 
   useLayoutEffect(() => {
     stateRef.current = state
@@ -1038,12 +1093,52 @@ export function UnifiedChatProvider({ children }: { children: React.ReactNode })
         const status = String(
           (event.metadata as { status?: string } | undefined)?.status || 'completed'
         )
+        const doneMeta = event.metadata as {
+          user_message_id?: number
+          assistant_message_id?: number
+        } | null
+        const assistantMessageId = doneMeta?.assistant_message_id ?? null
+        if (assistantMessageId != null) {
+          const seen =
+            seenCompletedAssistantIdsRef.current.get(effectiveKey) ?? new Set<number>()
+          if (seen.has(assistantMessageId)) return
+          seen.add(assistantMessageId)
+          seenCompletedAssistantIdsRef.current.set(effectiveKey, seen)
+        }
+        const localAtDone = stateRef.current.sessions[effectiveKey]
+        if (localAtDone?.isStreaming) {
+          if (
+            event.turn_id &&
+            localAtDone.activeTurnId &&
+            event.turn_id !== localAtDone.activeTurnId
+          ) {
+            return
+          }
+          // A terminal frame with neither identity cannot safely terminate a
+          // live turn; leave the stream running for the socket/retry path.
+          if (!event.turn_id && assistantMessageId == null) return
+        } else if (
+          event.turn_id &&
+          localAtDone?.lastCompletedTurnId &&
+          event.turn_id !== localAtDone.lastCompletedTurnId
+        ) {
+          return
+        }
         dispatch({
           type: 'STREAM_END',
           key: effectiveKey,
           status: (status as SessionRuntimeStatus) || 'completed',
           turnId: event.turn_id || null,
+          assistantMessageId,
         })
+        if (event.turn_id) {
+          completedTurnsRef.current.set(effectiveKey, event.turn_id)
+        }
+        if (assistantMessageId != null) {
+          completedAssistantIdsRef.current.set(effectiveKey, assistantMessageId)
+        } else {
+          completedAssistantIdsRef.current.delete(effectiveKey)
+        }
         pendingRegenerateRef.current.delete(effectiveKey)
         const runner = runnersRef.current.get(effectiveKey)
         // Hold the WS open briefly so post-turn ``session_meta`` events
@@ -1068,27 +1163,70 @@ export function UnifiedChatProvider({ children }: { children: React.ReactNode })
         // (the previous approach) re-downloaded, re-normalized, and
         // re-rendered the entire transcript after every turn, freezing
         // the tab for seconds on long conversations.
-        const doneMeta = event.metadata as {
-          user_message_id?: number
-          assistant_message_id?: number
-        } | null
-        const assistantMessageId = doneMeta?.assistant_message_id ?? null
         if (status === 'completed') {
           if (assistantMessageId != null) {
-            dispatch({
-              type: 'RECONCILE_TURN',
-              key: effectiveKey,
-              turnId: event.turn_id || null,
-              userMessageId: doneMeta?.user_message_id ?? null,
-              assistantMessageId,
-            })
-          } else {
-            // Older backend without ids on ``done`` — fall back to the
-            // full session refetch.
+            // A legacy done without a turn id cannot safely identify the
+            // optimistic assistant locally; use the guarded session snapshot
+            // instead of letting a stale replay rename the latest bubble.
+            if (event.turn_id) {
+              dispatch({
+                type: 'RECONCILE_TURN',
+                key: effectiveKey,
+                turnId: event.turn_id,
+                userMessageId: doneMeta?.user_message_id ?? null,
+                assistantMessageId,
+              })
+            }
             const finishedSession = stateRef.current.sessions[effectiveKey]
             const sessionId = finishedSession?.sessionId
-            if (sessionId) {
-              loadSessionRef.current?.(sessionId).catch(() => {
+            if (sessionId && event.turn_id) {
+              completedTurnsRef.current.set(sessionId, event.turn_id)
+            }
+            if (sessionId && assistantMessageId != null) {
+              completedAssistantIdsRef.current.set(sessionId, assistantMessageId)
+            } else if (sessionId) {
+              completedAssistantIdsRef.current.delete(sessionId)
+            }
+            if (
+              sessionId &&
+              (!event.turn_id ||
+                latestAssistantNeedsHydration(
+                  finishedSession?.messages ?? [],
+                  event.turn_id,
+                  assistantMessageId,
+                ))
+            ) {
+              // The id-only fast path is safe when live content arrived. If
+              // it did not, rehydrate the persisted assistant row instead of
+              // leaving a completed turn visibly blank. Revalidation also
+              // prevents this GET from replacing a newer local turn.
+              loadSessionRef.current?.(sessionId, {
+                revalidate: true,
+                expectedTurnId: event.turn_id || null,
+                expectedAssistantMessageId: assistantMessageId,
+              }).catch(() => {
+                /* non-fatal — the live state remains usable */
+              })
+            }
+          } else {
+            // A turn id is still enough to scope a legacy refetch. A terminal
+            // frame with neither identity is not safe to apply in the
+            // background; a later cold session load can recover it.
+            const finishedSession = stateRef.current.sessions[effectiveKey]
+            const sessionId = finishedSession?.sessionId
+            if (sessionId && event.turn_id) {
+              completedTurnsRef.current.set(sessionId, event.turn_id)
+            }
+            if (sessionId && assistantMessageId != null) {
+              completedAssistantIdsRef.current.set(sessionId, assistantMessageId)
+            } else if (sessionId) {
+              completedAssistantIdsRef.current.delete(sessionId)
+            }
+            if (sessionId && event.turn_id) {
+              loadSessionRef.current?.(sessionId, {
+                revalidate: true,
+                expectedTurnId: event.turn_id,
+              }).catch(() => {
                 /* non-fatal — local state remains usable */
               })
             }
@@ -1101,7 +1239,11 @@ export function UnifiedChatProvider({ children }: { children: React.ReactNode })
           const failedSession = stateRef.current.sessions[effectiveKey]
           const sessionId = failedSession?.sessionId
           if (sessionId) {
-            loadSessionRef.current?.(sessionId).catch(() => {
+            loadSessionRef.current?.(sessionId, {
+              revalidate: true,
+              expectedTurnId: event.turn_id || null,
+              expectedAssistantMessageId: assistantMessageId,
+            }).catch(() => {
               /* live terminal event remains visible when refresh fails */
             })
           }
@@ -1163,11 +1305,28 @@ export function UnifiedChatProvider({ children }: { children: React.ReactNode })
               if (hasPendingAskUserInMessages(session.messages, session.activeTurnId)) {
                 return
               }
+              const completedTurnId = session.activeTurnId
               dispatch({
                 type: 'STREAM_END',
                 key: record.key,
                 status: 'failed',
+                turnId: completedTurnId,
               })
+              const sessionId = session.sessionId
+              if (sessionId && completedTurnId) {
+                completedTurnsRef.current.set(sessionId, completedTurnId)
+              }
+              if (sessionId) {
+                // A close can happen after the backend has persisted the
+                // answer but before the final stream event reaches the UI.
+                // Reload the session so a completed turn is not left blank.
+                loadSessionRef.current?.(sessionId, {
+                  revalidate: true,
+                  expectedTurnId: completedTurnId,
+                }).catch(() => {
+                  /* non-fatal — the failed state remains visible */
+                })
+              }
               // Surface the disconnect to the user. The WS client already
               // logs to console — we add a toast so non-debugging users
               // don't see streaming silently flatline.
@@ -1232,10 +1391,25 @@ export function UnifiedChatProvider({ children }: { children: React.ReactNode })
   }, [])
 
   const loadSession = useCallback(
-    async (sessionId: string, options?: { signal?: AbortSignal; revalidate?: boolean }) => {
+    async (
+      sessionId: string,
+      options?: {
+        signal?: AbortSignal
+        revalidate?: boolean
+        expectedTurnId?: string | null
+        expectedAssistantMessageId?: number | null
+      }
+    ) => {
+      const expectedSession =
+        options?.revalidate &&
+        !options.expectedTurnId &&
+        options.expectedAssistantMessageId == null
+          ? stateRef.current.sessions[sessionId]
+          : undefined
       const session = await getSession(sessionId, options?.signal)
       const key = session.session_id || session.id
       const activeTurn = Array.isArray(session.active_turns) ? session.active_turns[0] : undefined
+      const hydratedMessages = hydrateMessages(session.messages ?? [])
       if (options?.revalidate) {
         // Background refresh of a session already on screen. Drop the whole
         // snapshot — data *and* the re-subscribe below — once a turn is live
@@ -1243,14 +1417,47 @@ export function UnifiedChatProvider({ children }: { children: React.ReactNode })
         // re-subscribing from ``after_seq: 0`` would replay them on top of
         // what we have, and the snapshot predates the turn anyway.
         const local = stateRef.current.sessions[key]
-        if (!local || local.isStreaming || local.status === 'running') return
+        const completedTurnId = options.expectedTurnId
+          ? completedTurnsRef.current.get(key) || local?.lastCompletedTurnId
+          : local?.lastCompletedTurnId
+        const completedAssistantMessageId = options.expectedAssistantMessageId
+          ? completedAssistantIdsRef.current.get(key) || local?.lastCompletedAssistantMessageId
+          : local?.lastCompletedAssistantMessageId
+        const locallyCompletingExpectedTurn = Boolean(
+          options.expectedTurnId &&
+            completedTurnsRef.current.get(key) === options.expectedTurnId &&
+            local?.activeTurnId === options.expectedTurnId,
+        )
+        if (
+          !local ||
+          (local.isStreaming && !locallyCompletingExpectedTurn) ||
+          (local.status === 'running' && !locallyCompletingExpectedTurn) ||
+          (expectedSession && local !== expectedSession) ||
+          (!expectedSession &&
+            !options.expectedTurnId &&
+            options.expectedAssistantMessageId == null) ||
+          !canApplyTurnRevalidation(
+            local.messages,
+            options.expectedTurnId,
+            options.expectedAssistantMessageId,
+            completedTurnId,
+            completedAssistantMessageId,
+          ) ||
+          !snapshotMatchesExpectedTurn(
+            hydratedMessages,
+            options.expectedTurnId,
+            options.expectedAssistantMessageId,
+          )
+        ) {
+          return
+        }
       }
       dispatch({
         type: options?.revalidate ? 'REVALIDATE_SESSION' : 'LOAD_SESSION',
         key,
         sessionId: key,
         title: session.title || '',
-        messages: hydrateMessages(session.messages ?? []),
+        messages: hydratedMessages,
         activeTurnId: activeTurn?.turn_id || activeTurn?.id || null,
         status:
           (session.status as SessionRuntimeStatus | undefined) || (activeTurn ? 'running' : 'idle'),
@@ -1268,6 +1475,8 @@ export function UnifiedChatProvider({ children }: { children: React.ReactNode })
         language: readStoredLanguage(),
         selectedBranches: normalizeSelectedBranches(session.preferences?.selected_branches),
         courseId: session.course_id || null,
+        expectedTurnId: options?.expectedTurnId,
+        expectedAssistantMessageId: options?.expectedAssistantMessageId,
       })
       if (activeTurn?.turn_id || activeTurn?.id) {
         // Reached on a revalidate too, when the turn is live on the server but

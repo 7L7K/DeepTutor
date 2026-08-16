@@ -1009,7 +1009,10 @@ export default function UnifiedChatPage({
       const cached = showCachedSession(sid)
       setSessionLoading(!cached)
 
-      void loadSession(sid, { signal: ctrl.signal, revalidate: cached })
+      void loadSession(sid, {
+        signal: ctrl.signal,
+        revalidate: cached,
+      })
         .then(() => {
           if (!ctrl.signal.aborted) {
             loadAbortRef.current = null
