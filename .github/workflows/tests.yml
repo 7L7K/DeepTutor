@@ -184,16 +184,19 @@ jobs:
         uses: actions/cache@v4
         with:
           path: ~/.cache/pip
-          key: ${{ runner.os }}-pip-${{ matrix.python-version }}-${{ hashFiles('requirements/server.txt', 'requirements/cli.txt', 'requirements/partners.txt') }}
+          key: ${{ runner.os }}-pip-${{ matrix.python-version }}-${{ hashFiles('requirements/server.txt', 'requirements/cli.txt', 'requirements/partners.txt', 'requirements/dev.txt', 'pyproject.toml') }}
           restore-keys: |
             ${{ runner.os }}-pip-${{ matrix.python-version }}-
 
       - name: Install smoke test dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install -r requirements/server.txt
-          pip install -r requirements/partners.txt
-          pip install pytest pytest-asyncio
+          pip install \
+            -r requirements/server.txt \
+            -r requirements/partners.txt \
+            pytest \
+            pytest-asyncio \
+            pytest-xdist
 
       - name: Create minimal runtime config
         run: |
@@ -205,10 +208,38 @@ jobs:
             level: WARNING
           YAML
 
-      - name: Run Python tests
+      - name: Capture Python test environment
+        run: |
+          echo "runner_os=${RUNNER_OS}"
+          echo "runner_arch=${RUNNER_ARCH}"
+          echo "python_version=$(python --version 2>&1)"
+          echo "pip_version=$(python -m pip --version)"
+          echo "cpu_count=$(nproc)"
+          echo "workspace_disk=$(df -h . | tail -n 1)"
+          python - <<'PY'
+          from importlib.metadata import version
+
+          for package in ("pytest", "pytest-asyncio", "pytest-xdist"):
+              print(f"{package}_version={version(package)}")
+          PY
+
+      - name: Run Python tests with timing diagnostics
         run: |
           echo "🧪 Running Python tests on Python ${{ matrix.python-version }}"
-          pytest -q tests deeptutor/learning/tests
+          test_start=$SECONDS
+          set +e
+          pytest -q -n auto --dist=loadfile --durations=20 tests deeptutor/learning/tests
+          test_status=$?
+          set -e
+          test_duration=$((SECONDS-test_start))
+          echo "python_test_duration_seconds=$test_duration"
+          {
+            echo "### Python test diagnostics (${{ matrix.python-version }})"
+            echo "- Full pytest suite: ${test_duration}s"
+            echo "- Parallel mode: xdist auto workers with file-level scheduling"
+            echo "- Slowest tests: see the \\\`--durations=20\\\` output above"
+          } >> "$GITHUB_STEP_SUMMARY"
+          exit "$test_status"
         env:
           PYTHONPATH: ${{ github.workspace }}
 
