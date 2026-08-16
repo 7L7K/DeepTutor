@@ -37,6 +37,21 @@ export interface ReconcileResult<T> {
   changed: boolean;
 }
 
+export function latestAssistantMatchesTurn(
+  messages: ReconcilableMessage[],
+  turnId?: string | null,
+): boolean {
+  if (!turnId) return true;
+  if (messages[messages.length - 1]?.role !== "assistant") return false;
+  const assistant = [...messages]
+    .reverse()
+    .find((message) => message.role === "assistant");
+  return Boolean(
+    assistant &&
+      (assistant.events ?? []).some((event) => event.turn_id === turnId),
+  );
+}
+
 /**
  * The completed-turn event carries persisted row ids, but the assistant body
  * still arrives through the live event stream. If that stream was interrupted
@@ -45,11 +60,13 @@ export interface ReconcileResult<T> {
  */
 export function latestAssistantNeedsHydration(
   messages: ReconcilableMessage[],
+  turnId?: string | null,
 ): boolean {
   const assistant = [...messages]
     .reverse()
     .find((message) => message.role === "assistant");
-  return Boolean(assistant && !(assistant.content ?? "").trim());
+  if (!assistant || !latestAssistantMatchesTurn(messages, turnId)) return false;
+  return !(assistant.content ?? "").trim();
 }
 
 function isOptimisticId(id: unknown): id is number {

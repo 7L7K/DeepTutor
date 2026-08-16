@@ -1,6 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import {
+  latestAssistantMatchesTurn,
   latestAssistantNeedsHydration,
   reconcileTurnIds,
   type ReconcilableMessage,
@@ -176,8 +177,13 @@ test("detects a completed turn whose local assistant body was missed", () => {
   assert.equal(
     latestAssistantNeedsHydration([
       { id: 50, role: "user", content: "question" },
-      { id: -5001, role: "assistant", content: "" },
-    ]),
+      {
+        id: -5001,
+        role: "assistant",
+        content: "",
+        events: [{ turn_id: "turn_missing" }],
+      },
+    ], "turn_missing"),
     true,
   );
 });
@@ -186,8 +192,85 @@ test("does not rehydrate a completed turn that already has content", () => {
   assert.equal(
     latestAssistantNeedsHydration([
       { id: 51, role: "user", content: "question" },
-      { id: 52, role: "assistant", content: "answer" },
-    ]),
+      {
+        id: 52,
+        role: "assistant",
+        content: "answer",
+        events: [{ turn_id: "turn_done" }],
+      },
+    ], "turn_done"),
     false,
+  );
+});
+
+test("does not hydrate a newer blank assistant for a stale completed turn", () => {
+  assert.equal(
+    latestAssistantNeedsHydration(
+      [
+        {
+          id: 60,
+          role: "assistant",
+          content: "old answer",
+          events: [{ turn_id: "turn_old" }],
+        },
+        {
+          id: -6001,
+          role: "assistant",
+          content: "",
+          events: [{ turn_id: "turn_new" }],
+        },
+      ],
+      "turn_old",
+    ),
+    false,
+  );
+});
+
+test("latest assistant turn guard rejects a newer local turn", () => {
+  assert.equal(
+    latestAssistantMatchesTurn(
+      [
+        {
+          id: 80,
+          role: "assistant",
+          content: "old",
+          events: [{ turn_id: "turn_old" }],
+        },
+        {
+          id: -8001,
+          role: "assistant",
+          content: "",
+          events: [{ turn_id: "turn_new" }],
+        },
+      ],
+      "turn_old",
+    ),
+    false,
+  );
+  assert.equal(
+    latestAssistantMatchesTurn(
+      [{ id: 81, role: "assistant", content: "old", events: [{ turn_id: "turn_old" }] }],
+      "turn_old",
+    ),
+    true,
+  );
+  assert.equal(
+    latestAssistantMatchesTurn(
+      [
+        { id: 82, role: "assistant", content: "old", events: [{ turn_id: "turn_old" }] },
+        { id: -8201, role: "user", content: "new question" },
+      ],
+      "turn_old",
+    ),
+    false,
+  );
+});
+
+test("legacy completion without a turn id still checks the latest assistant", () => {
+  assert.equal(
+    latestAssistantNeedsHydration([
+      { id: 70, role: "assistant", content: "" },
+    ]),
+    true,
   );
 });
