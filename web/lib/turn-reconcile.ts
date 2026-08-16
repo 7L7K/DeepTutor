@@ -87,6 +87,19 @@ export function canApplyTurnRevalidation(
   return latestAssistantMatchesTurn(messages, expectedTurnId, expectedAssistantMessageId);
 }
 
+/** Verify that a fetched snapshot contains the identity the refresh was for. */
+export function snapshotMatchesExpectedTurn(
+  messages: ReconcilableMessage[],
+  expectedTurnId?: string | null,
+  expectedAssistantMessageId?: number | null,
+): boolean {
+  if (!expectedTurnId && expectedAssistantMessageId == null) return false;
+  const assistant = messages[messages.length - 1];
+  if (!assistant || assistant.role !== "assistant") return false;
+  if (expectedAssistantMessageId != null) return assistant.id === expectedAssistantMessageId;
+  return (assistant.events ?? []).some((event) => event.turn_id === expectedTurnId);
+}
+
 /**
  * The completed-turn event carries persisted row ids, but the assistant body
  * still arrives through the live event stream. If that stream was interrupted
@@ -143,7 +156,7 @@ export function reconcileTurnIds<T extends ReconcilableMessage>(
   // Without a turn id there is no safe way to tell which optimistic assistant
   // a persisted assistant id belongs to. The caller must use a guarded
   // session snapshot instead of renaming the latest bubble by position.
-  if (!ids.turnId && ids.assistantMessageId != null) return unchanged;
+  if (!ids.turnId) return unchanged;
 
   let assistantIndex = -1;
   for (let i = messages.length - 1; i >= 0; i--) {

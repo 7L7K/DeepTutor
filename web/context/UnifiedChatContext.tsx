@@ -35,6 +35,7 @@ import {
   canApplyTurnRevalidation,
   latestAssistantNeedsHydration,
   reconcileTurnIds,
+  snapshotMatchesExpectedTurn,
 } from '@/lib/turn-reconcile'
 import { isNarrationMarker, recomputeAnswerContent, shouldAppendEventContent } from '@/lib/stream'
 import { hasPendingAskUserInMessages } from '@/lib/ask-user-state'
@@ -593,6 +594,11 @@ function reducer(state: ProviderState, action: Action): ProviderState {
             action.expectedAssistantMessageId,
             local.lastCompletedTurnId,
             local.lastCompletedAssistantMessageId,
+          ) ||
+          !snapshotMatchesExpectedTurn(
+            action.messages,
+            action.expectedTurnId,
+            action.expectedAssistantMessageId,
           )
         ) {
           return state
@@ -1099,6 +1105,25 @@ export function UnifiedChatProvider({ children }: { children: React.ReactNode })
           seen.add(assistantMessageId)
           seenCompletedAssistantIdsRef.current.set(effectiveKey, seen)
         }
+        const localAtDone = stateRef.current.sessions[effectiveKey]
+        if (localAtDone?.isStreaming) {
+          if (
+            event.turn_id &&
+            localAtDone.activeTurnId &&
+            event.turn_id !== localAtDone.activeTurnId
+          ) {
+            return
+          }
+          // A terminal frame with neither identity cannot safely terminate a
+          // live turn; leave the stream running for the socket/retry path.
+          if (!event.turn_id && assistantMessageId == null) return
+        } else if (
+          event.turn_id &&
+          localAtDone?.lastCompletedTurnId &&
+          event.turn_id !== localAtDone.lastCompletedTurnId
+        ) {
+          return
+        }
         dispatch({
           type: 'STREAM_END',
           key: effectiveKey,
@@ -1184,8 +1209,9 @@ export function UnifiedChatProvider({ children }: { children: React.ReactNode })
               })
             }
           } else {
-            // Older backend without ids on ``done`` — fall back to the
-            // full session refetch.
+            // A turn id is still enough to scope a legacy refetch. A terminal
+            // frame with neither identity is not safe to apply in the
+            // background; a later cold session load can recover it.
             const finishedSession = stateRef.current.sessions[effectiveKey]
             const sessionId = finishedSession?.sessionId
             if (sessionId && event.turn_id) {
@@ -1196,10 +1222,10 @@ export function UnifiedChatProvider({ children }: { children: React.ReactNode })
             } else if (sessionId) {
               completedAssistantIdsRef.current.delete(sessionId)
             }
-            if (sessionId) {
+            if (sessionId && event.turn_id) {
               loadSessionRef.current?.(sessionId, {
                 revalidate: true,
-                expectedTurnId: event.turn_id || null,
+                expectedTurnId: event.turn_id,
               }).catch(() => {
                 /* non-fatal — local state remains usable */
               })
@@ -1383,6 +1409,7 @@ export function UnifiedChatProvider({ children }: { children: React.ReactNode })
       const session = await getSession(sessionId, options?.signal)
       const key = session.session_id || session.id
       const activeTurn = Array.isArray(session.active_turns) ? session.active_turns[0] : undefined
+      const hydratedMessages = hydrateMessages(session.messages ?? [])
       if (options?.revalidate) {
         // Background refresh of a session already on screen. Drop the whole
         // snapshot — data *and* the re-subscribe below — once a turn is live
@@ -1415,6 +1442,11 @@ export function UnifiedChatProvider({ children }: { children: React.ReactNode })
             options.expectedAssistantMessageId,
             completedTurnId,
             completedAssistantMessageId,
+          ) ||
+          !snapshotMatchesExpectedTurn(
+            hydratedMessages,
+            options.expectedTurnId,
+            options.expectedAssistantMessageId,
           )
         ) {
           return
@@ -1425,7 +1457,7 @@ export function UnifiedChatProvider({ children }: { children: React.ReactNode })
         key,
         sessionId: key,
         title: session.title || '',
-        messages: hydrateMessages(session.messages ?? []),
+        messages: hydratedMessages,
         activeTurnId: activeTurn?.turn_id || activeTurn?.id || null,
         status:
           (session.status as SessionRuntimeStatus | undefined) || (activeTurn ? 'running' : 'idle'),

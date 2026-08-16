@@ -5,6 +5,7 @@ import {
   latestAssistantMatchesTurn,
   latestAssistantNeedsHydration,
   reconcileTurnIds,
+  snapshotMatchesExpectedTurn,
   type ReconcilableMessage,
 } from "../lib/turn-reconcile";
 
@@ -149,6 +150,12 @@ test("does not reconcile by position when turn id is missing", () => {
   );
   assert.equal(result.changed, false);
   assert.equal(result.messages[3].id, -2001);
+  const userOnly = reconcileTurnIds(
+    optimisticTurn(),
+    {},
+    { turnId: null, userMessageId: 12, assistantMessageId: null },
+  );
+  assert.equal(userOnly.changed, false);
 });
 
 test("remaps selectedBranches keys and values that used optimistic ids", () => {
@@ -321,6 +328,28 @@ test("latest assistant turn guard rejects a newer local turn", () => {
       85,
       null,
       null,
+    ),
+    false,
+  );
+  assert.equal(
+    snapshotMatchesExpectedTurn(
+      [{ id: 85, role: "assistant", content: "answer", events: [] }],
+      "turn_old",
+      85,
+    ),
+    true,
+  );
+  assert.equal(
+    snapshotMatchesExpectedTurn(
+      [{ id: 85, role: "assistant", content: "answer", events: [{ turn_id: "turn_old" }] }],
+      "turn_old",
+    ),
+    true,
+  );
+  assert.equal(
+    snapshotMatchesExpectedTurn(
+      [{ id: 85, role: "assistant", content: "answer", events: [] }],
+      "turn_old",
     ),
     false,
   );
