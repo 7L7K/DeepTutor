@@ -14,6 +14,11 @@ on:
   release:
     types: [published]
 
+concurrency:
+  group: docker-release
+  queue: max
+  cancel-in-progress: false
+
 permissions:
   contents: read
   packages: write
@@ -29,6 +34,14 @@ jobs:
         with:
           ref: ${{ github.event.release.tag_name }}
           fetch-depth: 0
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install release version parser
+        run: python -m pip install --disable-pip-version-check "packaging==25.0"
 
       - name: Verify release source and version
         id: version
@@ -54,13 +67,14 @@ jobs:
           import os
           import re
           from pathlib import Path
+          from packaging.version import Version
 
           tag = os.environ["RELEASE_TAG"]
-          expected = tag[1:] if tag.startswith("v") else tag
+          expected = str(Version(tag[1:] if tag.startswith("v") else tag))
           source = Path("deeptutor/__version__.py").read_text(encoding="utf-8")
           match = re.search(r'^__version__\s*=\s*"([^"]+)"', source, re.MULTILINE)
-          if match is None or match.group(1) != expected:
-              actual = match.group(1) if match else "missing"
+          actual = str(Version(match.group(1))) if match else "missing"
+          if actual != expected:
               raise SystemExit(
                   f"Release tag version {expected!r} does not match source {actual!r}."
               )
@@ -93,7 +107,7 @@ jobs:
         with:
           images: ghcr.io/hkuds/deeptutor
           tags: |
-            type=semver,pattern={{version}}
+            type=pep440,pattern={{version}}
             type=raw,value=latest
           labels: |
             org.opencontainers.image.revision=${{ steps.version.outputs.commit }}
@@ -198,12 +212,12 @@ jobs:
 
           amd64_output="$(mktemp)"
           arm64_output="$(mktemp)"
-          python scripts/verify-docker-release-manifest.py platform \
+          python .github/scripts/verify-docker-release-manifest.py platform \
             --image "$IMAGE" \
             --digest "$AMD64_DIGEST" \
             --platform linux/amd64 \
             --output "$amd64_output"
-          python scripts/verify-docker-release-manifest.py platform \
+          python .github/scripts/verify-docker-release-manifest.py platform \
             --image "$IMAGE" \
             --digest "$ARM64_DIGEST" \
             --platform linux/arm64 \
@@ -238,7 +252,7 @@ jobs:
             echo "Could not resolve the candidate manifest digest." >&2
             exit 1
           fi
-          python scripts/verify-docker-release-manifest.py release \
+          python .github/scripts/verify-docker-release-manifest.py release \
             --image "$IMAGE" \
             --digest "$manifest_digest" \
             --amd64-payload "$AMD64_PAYLOAD" \
@@ -275,9 +289,12 @@ jobs:
           while IFS= read -r tag; do
             [[ -n "$tag" ]] || continue
             tag_digest="$(
-              docker buildx imagetools inspect "$tag" |
-                awk '$1 == "Digest:" { print $2; exit }'
+              docker buildx imagetools inspect "$tag" --format '{{.Manifest.Digest}}'
             )"
+            if [[ ! "$tag_digest" =~ ^sha256:[0-9a-f]{64}$ ]]; then
+              echo "$tag returned an invalid manifest digest: $tag_digest" >&2
+              exit 1
+            fi
             if [[ "$tag_digest" != "$MANIFEST_DIGEST" ]]; then
               echo "$tag resolved to $tag_digest instead of $MANIFEST_DIGEST." >&2
               exit 1

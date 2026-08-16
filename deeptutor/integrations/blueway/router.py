@@ -188,7 +188,7 @@ def status():
             observed_state = {
                 "active": "active",
                 "disconnected": "not_connected",
-                "revocation_pending": "revoked",
+                "revocation_pending": "revocation_pending",
                 "error": "temporarily_unavailable",
             }.get(connection.state, "temporarily_unavailable")
     emit_blueway_event(

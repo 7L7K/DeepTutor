@@ -20,6 +20,11 @@ def test_each_platform_is_built_once_and_pushed_only_by_digest() -> None:
     assert workflow.count("push-by-digest=true,name-canonical=true,push=true") == 2
     assert "          push: true\n" not in workflow
     assert "platforms: linux/amd64,linux/arm64" not in workflow
+    assert "group: docker-release" in workflow
+    assert "queue: max" in workflow
+    assert "cancel-in-progress: false" in workflow
+    assert "type=pep440,pattern={{version}}" in workflow
+    assert "type=semver,pattern={{version}}" not in workflow
 
 
 def test_exact_platform_digests_are_pulled_and_runtime_verified() -> None:
@@ -50,8 +55,11 @@ def test_manifest_is_created_only_from_verified_artifacts_without_rebuild() -> N
     assert '"$IMAGE@$AMD64_DIGEST"' in workflow[manifest_start:]
     assert '"$IMAGE@$ARM64_DIGEST"' in workflow[manifest_start:]
     assert '"$IMAGE@$MANIFEST_DIGEST"' in workflow[manifest_start:]
-    assert "verify-docker-release-manifest.py platform" in workflow[manifest_start:]
-    assert "verify-docker-release-manifest.py release" in workflow[manifest_start:]
+    assert ".github/scripts/verify-docker-release-manifest.py platform" in workflow[manifest_start:]
+    assert ".github/scripts/verify-docker-release-manifest.py release" in workflow[manifest_start:]
+    assert "python scripts/verify-docker-release-manifest.py" not in workflow
+    assert "--format '{{.Manifest.Digest}}'" in workflow[manifest_start:]
+    assert "awk '$1 == \"Digest:\"'" not in workflow[manifest_start:]
     assert "tag_digest" in workflow[manifest_start:]
 
 
@@ -75,4 +83,6 @@ def test_release_source_identity_is_bound_before_building() -> None:
     first_build = workflow.index("uses: docker/build-push-action@v6")
     assert source_check < first_build
     assert "RELEASE_EVENT_SHA: ${{ github.sha }}" in workflow
+    assert "from packaging.version import Version" in workflow
+    assert "expected = str(Version(" in workflow
     assert 'echo "commit=$tag_commit" >> "$GITHUB_OUTPUT"' in workflow

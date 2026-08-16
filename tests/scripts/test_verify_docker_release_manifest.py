@@ -8,7 +8,7 @@ from types import ModuleType
 
 import pytest
 
-SCRIPT = Path(__file__).parents[2] / "scripts" / "verify-docker-release-manifest.py"
+SCRIPT = Path(__file__).parents[2] / ".github" / "scripts" / "verify-docker-release-manifest.py"
 AMD64_PAYLOAD = f"sha256:{'a' * 64}"
 ARM64_PAYLOAD = f"sha256:{'b' * 64}"
 AMD64_ATTESTATION = f"sha256:{'c' * 64}"

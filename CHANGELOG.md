@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+- Hardened Docker publication so each amd64 and arm64 artifact is built once,
+  verified by immutable digest, checked for release identity and attestation
+  structure, and assembled into public tags only from the verified manifest.
+  Release runs are serialized, version tags share the PyPI normalization
+  contract, and lifecycle status/failure events preserve durable
+  `revocation_pending` and concurrently cancelled states.
+
 - Added failure-isolated, privacy-bounded BlueWay lifecycle observability from
   pairing through Course launch, with durable safe correlation references and
   migration support. Pairing replay now retries a stranded initial sync,

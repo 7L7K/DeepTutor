@@ -1173,9 +1173,9 @@ class BlueWayService:
                     connection_ref=connection.id,
                     sync_ref=failed.id,
                     state_from=run.state,
-                    state_to="failed",
+                    state_to=failed.state,
                     reason_code=safe_transport_reason(exc),
-                    outcome="failed",
+                    outcome=("failed" if failed.state == "failed" else "terminal"),
                 )
             raise
 

@@ -1,4 +1,4 @@
-"""Validate Docker release indexes and their BuildKit attestations."""
+"""Validate Docker release indexes and their BuildKit attestation structure."""
 
 from __future__ import annotations
 

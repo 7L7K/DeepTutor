@@ -1969,3 +1969,89 @@ def test_api_status_is_stable_and_disabled_by_default() -> None:
         blueway_router.set_test_service(None)
     assert response.status_code == 200
     assert response.json() == {"enabled": False, "connection": None, "active_run": None}
+
+
+def test_api_status_event_preserves_revocation_pending(monkeypatch: pytest.MonkeyPatch) -> None:
+    from deeptutor.integrations.blueway import router as blueway_router
+
+    connection = SimpleNamespace(
+        id="bwc_pending",
+        state="revocation_pending",
+        credential_status="healthy",
+        revision=2,
+        scope_version="academic.read.v1",
+        connected_at=1.0,
+        last_sync_at=None,
+        observability_trace_id="bwr_11111111-1111-4111-8111-111111111111",
+    )
+    service = SimpleNamespace(
+        settings=SimpleNamespace(enabled=True),
+        status=lambda: (connection, None),
+    )
+    events: list[tuple[str, dict[str, object]]] = []
+    monkeypatch.setattr(
+        blueway_router,
+        "emit_blueway_event",
+        lambda event, **fields: events.append((event, fields)),
+    )
+    blueway_router.set_test_service(service)
+    app = FastAPI()
+    app.include_router(blueway_router.router, prefix="/api/v1/integrations/blueway")
+    try:
+        response = TestClient(app).get("/api/v1/integrations/blueway")
+    finally:
+        blueway_router.set_test_service(None)
+
+    assert response.status_code == 200
+    assert response.json()["connection"]["state"] == "revocation_pending"
+    assert events[-1][0] == "blueway_connection_status_read"
+    assert events[-1][1]["state_to"] == "revocation_pending"
+
+
+def test_sync_failure_event_preserves_concurrent_cancellation(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    service, courses = _service(tmp_path, monkeypatch)
+    attempt = service.start_connection()
+    connection = service.complete_connection_for_transport(
+        attempt_id=attempt.id,
+        exchange=TokenExchange(
+            "grant-a", "subject-a", "access", "2026-07-23T00:00:00Z",
+            "refresh-secret",
+        ),
+    )
+    events: list[tuple[str, dict[str, object]]] = []
+    monkeypatch.setattr(
+        "deeptutor.integrations.blueway.service.emit_blueway_event",
+        lambda event, **fields: events.append((event, fields)),
+    )
+    run = service.queue_sync()
+    fetch_started = threading.Event()
+    release_fetch = threading.Event()
+
+    def fail_after_disconnect(**_kwargs):
+        fetch_started.set()
+        assert release_fetch.wait(5)
+        raise BlueWayTransportError("offline")
+
+    monkeypatch.setattr(
+        service.transport,
+        "fetch_snapshot",
+        fail_after_disconnect,
+    )
+
+    with ThreadPoolExecutor(max_workers=1) as executor:
+        worker = executor.submit(service.run_queued_sync, run_id=run.id)
+        assert fetch_started.wait(5)
+        disconnected = service.disconnect(expected_revision=connection.revision)
+        assert disconnected.state == "disconnected"
+        release_fetch.set()
+        with pytest.raises(BlueWayTransportError, match="offline"):
+            worker.result(timeout=5)
+
+    persisted = BlueWayRepository(courses).get_run(run.id)
+    assert persisted.state == "cancelled"
+    assert persisted.completed_at is not None
+    failure = [fields for event, fields in events if event == "blueway_sync_failed"][-1]
+    assert failure["state_to"] == "cancelled"
+    assert failure["outcome"] == "terminal"
