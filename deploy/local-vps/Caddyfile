@@ -1,0 +1,25 @@
+{
+	admin off
+}
+
+:80 {
+	# Keep the local release marker visible without exposing the app directly.
+	# This mirrors the VPS's operator-facing /api/version contract while making
+	# the local checkout identity explicit.
+	handle /api/version {
+		header Content-Type text/plain
+		header X-TEEECHR-Commit "{$LOCAL_VPS_COMMIT}"
+		respond "TEEECHR local-beta {$LOCAL_VPS_COMMIT}" 200
+	}
+
+	# These paths belong to FastAPI on the VPS. The browser still reaches them
+	# through the same origin, so proxy and WebSocket behavior are exercised.
+	@backend path /api/* /ws/* /docs* /openapi.json /outputs/* /static/outputs/*
+	handle @backend {
+		reverse_proxy app:8001
+	}
+
+	handle {
+		reverse_proxy app:3782
+	}
+}
