@@ -156,9 +156,11 @@ from deeptutor.courses.repository import CourseRepository
 db_path = Path(sys.argv[1])
 receipt_path = Path(sys.argv[2])
 artifacts = runner.discover_migrations()
-assert artifacts[-1].version == 15
+through_0014 = artifacts[:15]
+through_0015 = artifacts[:16]
+target_0015 = next(artifact for artifact in artifacts if artifact.version == 15)
 real_discover = runner.discover_migrations
-runner.discover_migrations = lambda: artifacts[:15]
+runner.discover_migrations = lambda: through_0014
 try:
     assert runner.ensure_course_schema(db_path) == tuple(range(15))
     courses = CourseRepository(db_path, "h2_migration_owner")
@@ -263,6 +265,7 @@ before = {table: rows(table) for table in tables}
 before_digest = hashlib.sha256(
     json.dumps(before, sort_keys=True, separators=(",", ":")).encode()
 ).hexdigest()
+runner.discover_migrations = lambda: through_0015
 assert runner.ensure_course_schema(db_path) == (15,)
 assert runner.ensure_course_schema(db_path) == ()
 after = {table: rows(table) for table in tables}
@@ -287,8 +290,8 @@ with runner.open_course_connection(db_path) as conn:
 
 payload = {
     "status": "PASS_POPULATED_HISTORY_0015",
-    "migration": artifacts[-1].filename,
-    "migration_sha256": artifacts[-1].checksum_sha256,
+    "migration": target_0015.filename,
+    "migration_sha256": target_0015.checksum_sha256,
     "before_digest": before_digest,
     "retained_counts": {table: len(values) for table, values in before.items()},
     "migration_versions": versions,

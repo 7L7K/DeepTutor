@@ -16,6 +16,7 @@ from fastapi.testclient import TestClient
 import pytest
 
 from deeptutor.api.routers import space_cli_apps
+from deeptutor.api.routers.auth import require_admin
 from deeptutor.services.cli_apps.models import AppRuntime, InstallKind
 from deeptutor.services.cli_apps.paths import abi_stamp
 from deeptutor.services.cli_apps.state import InstalledApp, record_install
@@ -50,6 +51,10 @@ def caller(monkeypatch: pytest.MonkeyPatch) -> dict[str, Any]:
 def client(caller: dict[str, Any]) -> TestClient:
     app = FastAPI()
     app.include_router(space_cli_apps.router, prefix="/api/v1/space/cli-apps")
+    # The route-level admin dependency is tested structurally below. For the
+    # handler tests, provide the already-established synthetic caller rather
+    # than coupling them to the developer's local auth/session configuration.
+    app.dependency_overrides[require_admin] = lambda: None
     return TestClient(app)
 
 

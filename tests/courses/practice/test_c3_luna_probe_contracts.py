@@ -19,7 +19,6 @@ from scripts.run_c3_luna_probe import (
     _request,
 )
 
-
 REPO_ROOT = Path(__file__).resolve().parents[3]
 REFERENCE_ROOT = REPO_ROOT / "evals/reference_course"
 

@@ -17,6 +17,7 @@
 export interface ReconcilableMessage {
   id?: number;
   role: "user" | "assistant" | "system";
+  content?: string;
   parentMessageId?: number | null;
   events?: Array<{ turn_id?: string }>;
 }
@@ -36,6 +37,91 @@ export interface ReconcileResult<T> {
   changed: boolean;
 }
 
+export function latestAssistantMatchesTurn(
+  messages: ReconcilableMessage[],
+  turnId?: string | null,
+  assistantMessageId?: number | null,
+): boolean {
+  if (messages[messages.length - 1]?.role !== "assistant") return false;
+  if (!turnId && assistantMessageId == null) return true;
+  const assistant = [...messages]
+    .reverse()
+    .find((message) => message.role === "assistant");
+  if (!assistant) return false;
+  const eventTurnIds = (assistant.events ?? [])
+    .map((event) => event.turn_id)
+    .filter((eventTurnId): eventTurnId is string => Boolean(eventTurnId));
+  if (
+    assistantMessageId != null &&
+    assistant.id !== assistantMessageId &&
+    !(isOptimisticId(assistant.id) &&
+      !(assistant.content ?? "").trim() &&
+      (!turnId || eventTurnIds.length === 0 || eventTurnIds.includes(turnId)))
+  ) {
+    return false;
+  }
+  // A lost stream can leave the placeholder with no event metadata at all.
+  // In that case the assistant row position (and, when available, persisted
+  // id) is the only local evidence we have, so let the server snapshot fill it.
+  return !turnId || eventTurnIds.length === 0 || eventTurnIds.includes(turnId);
+}
+
+/**
+ * A revalidation may accept a metadata-free optimistic placeholder only when
+ * the provider has recorded the same turn as its most recent completion.
+ * Without this second identity, an older no-event response could replace a
+ * newer blank turn because both look locally identical.
+ */
+export function canApplyTurnRevalidation(
+  messages: ReconcilableMessage[],
+  expectedTurnId?: string | null,
+  expectedAssistantMessageId?: number | null,
+  lastCompletedTurnId?: string | null,
+  lastCompletedAssistantMessageId?: number | null,
+): boolean {
+  if (expectedTurnId && lastCompletedTurnId !== expectedTurnId) return false;
+  if (
+    expectedAssistantMessageId != null &&
+    lastCompletedAssistantMessageId !== expectedAssistantMessageId
+  ) {
+    return false;
+  }
+  return latestAssistantMatchesTurn(messages, expectedTurnId, expectedAssistantMessageId);
+}
+
+/** Verify that a fetched snapshot contains the identity the refresh was for. */
+export function snapshotMatchesExpectedTurn(
+  messages: ReconcilableMessage[],
+  expectedTurnId?: string | null,
+  expectedAssistantMessageId?: number | null,
+): boolean {
+  if (!expectedTurnId && expectedAssistantMessageId == null) return true;
+  const assistant = messages[messages.length - 1];
+  if (!assistant || assistant.role !== "assistant") return false;
+  if (expectedAssistantMessageId != null) return assistant.id === expectedAssistantMessageId;
+  return (assistant.events ?? []).some((event) => event.turn_id === expectedTurnId);
+}
+
+/**
+ * The completed-turn event carries persisted row ids, but the assistant body
+ * still arrives through the live event stream. If that stream was interrupted
+ * or a client/backend version mismatch filtered the content event, the local
+ * assistant row can be empty even though the server has persisted the answer.
+ */
+export function latestAssistantNeedsHydration(
+  messages: ReconcilableMessage[],
+  turnId?: string | null,
+  assistantMessageId?: number | null,
+): boolean {
+  const assistant = [...messages]
+    .reverse()
+    .find((message) => message.role === "assistant");
+  if (!assistant || !latestAssistantMatchesTurn(messages, turnId, assistantMessageId)) {
+    return false;
+  }
+  return !(assistant.content ?? "").trim();
+}
+
 function isOptimisticId(id: unknown): id is number {
   return typeof id === "number" && id < 0;
 }
@@ -44,8 +130,9 @@ function isOptimisticId(id: unknown): id is number {
  * Swap the turn's optimistic message ids for their persisted counterparts.
  *
  * Locates the turn's assistant bubble (last assistant message carrying an
- * event with ``turnId``; falls back to the last assistant message when the
- * turn id is unavailable) and the user message immediately preceding it.
+ * event with ``turnId``) and the user message immediately preceding it. A
+ * persisted assistant id without a turn id is intentionally not reconciled
+ * by position; the caller must use the guarded session snapshot instead.
  * Only optimistic (negative) ids are ever overwritten — rows that already
  * carry persisted ids (e.g. after a mid-turn session reload) are left
  * untouched, which also makes stale ``done`` replays harmless. All
@@ -68,6 +155,10 @@ export function reconcileTurnIds<T extends ReconcilableMessage>(
   if (ids.assistantMessageId == null && ids.userMessageId == null) {
     return unchanged;
   }
+  // Without a turn id there is no safe way to tell which optimistic assistant
+  // a persisted assistant id belongs to. The caller must use a guarded
+  // session snapshot instead of renaming the latest bubble by position.
+  if (!ids.turnId) return unchanged;
 
   let assistantIndex = -1;
   for (let i = messages.length - 1; i >= 0; i--) {

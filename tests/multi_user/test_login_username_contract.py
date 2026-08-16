@@ -83,6 +83,17 @@ def test_login_accepts_plain_username(username: str) -> None:
     assert req.password == "x"
 
 
+def test_login_trims_username_without_changing_password() -> None:
+    req = LoginRequest(username="  user@example.com  ", password=" pass phrase ")
+    assert req.username == "user@example.com"
+    assert req.password == " pass phrase "
+
+
+def test_login_rejects_blank_username() -> None:
+    with pytest.raises(ValidationError):
+        LoginRequest(username="   ", password="x")
+
+
 # ---------------------------------------------------------------------------
 # End-to-end: a user created with a plain username can authenticate
 # ---------------------------------------------------------------------------
@@ -103,3 +114,17 @@ def test_authenticate_round_trip_with_plain_username(
 
     assert auth_service.authenticate("plainuser", "wrong-password") is None
     assert auth_service.authenticate("ghost", "password1234") is None
+
+
+def test_authenticate_accepts_email_case_and_outer_whitespace(
+    monkeypatch: pytest.MonkeyPatch, seed_user
+) -> None:
+    pytest.importorskip("bcrypt")
+    from deeptutor.services import auth as auth_service
+
+    monkeypatch.setattr(auth_service, "AUTH_ENABLED", True)
+    seed_user("User@example.com", password="password1234")
+
+    payload = auth_service.authenticate("  user@EXAMPLE.COM  ", "password1234")
+    assert payload is not None
+    assert payload.username == "User@example.com"

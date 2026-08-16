@@ -323,6 +323,7 @@ test("manual Practice and Flashcard learner flows remain usable without a provid
   await page.getByLabel("Active course").selectOption(state.aliceCourseId);
   await expect(page.getByText("Loading Shared Biology Practice…")).toBeVisible();
   await expect(page.getByLabel("New Practice title")).toHaveCount(0);
+  await page.getByRole("tab", { name: "Create" }).click();
   await page.getByLabel("New Practice title").fill("Visible manual quiz");
   const practiceCreateResponse = page.waitForResponse(
     (response) =>
@@ -334,10 +335,7 @@ test("manual Practice and Flashcard learner flows remain usable without a provid
       response.url().includes("/revisions") &&
       response.request().method() === "POST",
   );
-  await page
-    .getByRole("complementary")
-    .getByRole("button", { name: "Create", exact: true })
-    .click();
+  await page.getByRole("button", { name: "Create manual", exact: true }).click();
   expect((await practiceCreateResponse).status()).toBe(200);
   expect((await revisionCreateResponse).status()).toBe(200);
   await expect(page.getByRole("status")).toContainText(

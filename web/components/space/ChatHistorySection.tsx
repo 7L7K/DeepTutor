@@ -28,12 +28,14 @@ export interface ChatHistorySectionProps {
   icon?: LucideIcon;
   title?: string;
   description?: string;
+  scope?: "all" | "general";
 }
 
 export default function ChatHistorySection({
   icon,
   title,
   description,
+  scope = "all",
 }: ChatHistorySectionProps = {}) {
   const basePath = "/home";
   const { t } = useTranslation();
@@ -56,15 +58,22 @@ export default function ChatHistorySection({
     void load(true);
   }, [load]);
 
+  const scopedSessions = useMemo(
+    () =>
+      scope === "general"
+        ? sessions.filter((session) => session.course_id == null)
+        : sessions,
+    [scope, sessions],
+  );
   const filteredSessions = useMemo(() => {
     const needle = query.trim().toLowerCase();
-    if (!needle) return sessions;
-    return sessions.filter((session) =>
+    if (!needle) return scopedSessions;
+    return scopedSessions.filter((session) =>
       [session.title, session.last_message]
         .filter(Boolean)
         .some((value) => value.toLowerCase().includes(needle)),
     );
-  }, [query, sessions]);
+  }, [query, scopedSessions]);
 
   const handleSelect = useCallback(
     (sessionId: string) => {
@@ -110,7 +119,7 @@ export default function ChatHistorySection({
         description={headerDescription}
         meta={
           <span className="rounded-full border border-[var(--border)] bg-[var(--card)] px-2 py-0.5 text-[10.5px] font-medium text-[var(--muted-foreground)]">
-            {sessions.length} {t("conversations")}
+            {scopedSessions.length} {t("conversations")}
           </span>
         }
         action={

@@ -260,7 +260,7 @@ def resolve_course_turn_payload(
             raise CourseUnavailableError(f"{field} is not available in private course mode")
 
     all_sources = service.list_sources(course_id)
-    from .chat_contract import classify_course_chat_sources, readiness_error_message
+    from .chat_contract import classify_course_chat_sources
 
     readiness = classify_course_chat_sources(all_sources, course_id=course.id)
     if preserved_context is not None:
@@ -296,8 +296,6 @@ def resolve_course_turn_payload(
                 )
             sources.append(source)
     else:
-        if not readiness.ready_sources:
-            raise CourseUnavailableError(readiness_error_message(readiness))
         ready_ids = {source.source_id for source in readiness.ready_sources}
         sources = [
             source
@@ -334,6 +332,7 @@ def resolve_course_turn_payload(
             "source_titles": {
                 source.id: source.display_name for source in sources
             },
+            "answer_mode": "course_grounded" if sources else "general_knowledge",
         }
     )
     return {

@@ -32,6 +32,15 @@ export async function startBlueWayConnection(): Promise<BlueWayConnectAttempt> {
   );
 }
 
+export async function getBlueWayCurrentAttempt(): Promise<BlueWayConnectAttempt | null> {
+  const payload = await integrationJson<{ attempt: BlueWayConnectAttempt | null }>(
+    await apiFetch(apiUrl("/api/v1/integrations/blueway/connect/current"), {
+      cache: "no-store",
+    }),
+  );
+  return payload.attempt;
+}
+
 export async function startBlueWayRecovery(): Promise<BlueWayConnectAttempt> {
   const attempt = await integrationJson<BlueWayConnectAttempt>(
     await apiFetch(apiUrl("/api/v1/integrations/blueway/recovery/start"), {
@@ -72,6 +81,30 @@ export async function pollBlueWayRecovery(
       { method: "POST" },
     ),
   );
+}
+
+export async function cancelBlueWayConnection(
+  attemptId: string,
+): Promise<BlueWayConnectAttempt> {
+  const payload = await integrationJson<{ attempt: BlueWayConnectAttempt }>(
+    await apiFetch(
+      apiUrl(`/api/v1/integrations/blueway/connect/${encodeURIComponent(attemptId)}/cancel`),
+      { method: "POST" },
+    ),
+  );
+  return payload.attempt;
+}
+
+export async function cancelBlueWayRecovery(
+  attemptId: string,
+): Promise<BlueWayConnectAttempt> {
+  const payload = await integrationJson<{ attempt: BlueWayConnectAttempt }>(
+    await apiFetch(
+      apiUrl(`/api/v1/integrations/blueway/recovery/${encodeURIComponent(attemptId)}/cancel`),
+      { method: "POST" },
+    ),
+  );
+  return payload.attempt;
 }
 
 export async function startBlueWaySync(): Promise<BlueWaySyncRunView> {

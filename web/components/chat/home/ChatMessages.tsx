@@ -211,7 +211,7 @@ function formatFileSize(bytes?: number): string {
   return `${unit === 0 ? value : value.toFixed(1)} ${units[unit]}`;
 }
 
-/** "DeepTutor_Introduction.pdf" → "DeepTutor Introduction" — the card title
+/** "TEEECHR_Introduction.pdf" → "TEEECHR Introduction" — the card title
  * reads like a document name; the extension already shows in the subtitle. */
 function humanizeFilename(filename: string): string {
   const stem = filename.replace(/\.[A-Za-z0-9]{1,8}$/, "");
@@ -468,8 +468,8 @@ const AssistantMessage = memo(function AssistantMessage({
   return (
     <>
       {/* Activity block pinned to the TOP: the status header
-          ("DeepTutor Exploring… · 8s" → "DeepTutor responded. · 10s") with
-          the exploring trace nested beneath it — expanded while DeepTutor is
+          ("TEEECHR Exploring… · 8s" → "TEEECHR responded. · 10s") with
+          the exploring trace nested beneath it — expanded while TEEECHR is
           still working, collapsed once it settles into the final answer. */}
       <AssistantActivity
         events={events}

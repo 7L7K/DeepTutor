@@ -29,6 +29,10 @@ def _use_legacy_llm_config_for_generic_turn_tests(monkeypatch):
         "deeptutor.services.model_selection.runtime.set_text_generation_feature",
         lambda _feature: None,
     )
+    # These tests exercise turn persistence and event ordering, not live account
+    # authorization. Keep them independent of a developer's local auth setting;
+    # the explicit revalidation test below enables auth for its own assertions.
+    monkeypatch.setattr("deeptutor.services.auth.AUTH_ENABLED", False)
 
 
 def _fake_skill_service() -> SimpleNamespace:

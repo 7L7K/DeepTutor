@@ -20,6 +20,7 @@ import threading
 import time
 from typing import Any
 from urllib.parse import parse_qs, urlsplit
+from uuid import uuid4
 
 from fastapi import Depends, FastAPI
 from fastapi.testclient import TestClient
@@ -248,7 +249,10 @@ class SyntheticBlueWayAuthority:
                 ):
                     self._json_response(handler, 400, {"error": "invalid_request"})
                     return
-                request_id = self._next("req")
+                # The hosted pairing contract returns a UUID request ID. Keep
+                # the hermetic authority aligned with that boundary so its
+                # response exercises the same validation as production.
+                request_id = str(uuid4())
                 self._requests[request_id] = _Request(
                     request_id=request_id,
                     device_code=str(payload["device_code"]),

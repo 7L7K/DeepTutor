@@ -125,8 +125,11 @@ remain in the persistent data tree.
 We identify the correct clean starting point and create a feature branch or
 worktree.
 
-For the current project, the safest future base is the published hosted beta
-tag until the local `main` history and dirty changes are reconciled.
+For the current project, future work must start from a clean, remotely verified
+commit or tag. The 2026-08-12 hosted-beta tag and its deployed commit are
+historical receipt fields; verify that the ref exists on the intended remote
+before using it. If it cannot be verified, stop and select another exact
+remote ref rather than substituting a local branch or dirty checkout.
 
 ### 2. Make the change
 
@@ -286,9 +289,10 @@ tag:    teeechr-hosted-beta-2026-08-12
 commit: 964c090ad8fdba452fa715a6034574313f091a96
 ```
 
-That release is the recovery point for the running site. Future development
-should start from a clean known branch/worktree, not from the dirty canonical
-checkout, until the local history is deliberately reconciled.
+That receipt records a historical recovery point for the running site. Before
+using it for rollback or future development, verify the tag, commit, image, and
+release directory on the intended remote/VPS. Future development should start
+from a clean known branch/worktree, not from the dirty canonical checkout.
 
 ## One-sentence memory aid
 

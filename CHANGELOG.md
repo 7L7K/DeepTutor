@@ -12,6 +12,58 @@
 - Documented the existing pre-commit recipe, current local-hook/CI coverage,
   and the explicit manual production gates; future hook and deployment-workflow
   automation remains a separate implementation lane.
+
+- Added a compatibility bridge for BlueWay observability migration `0018`.
+  The bridge upgrades `0017` databases, preserves pre-observability behavior,
+  and can hydrate connection rows after the full observability release has
+  written a trace value. Applying `0018` establishes this bridge as the minimum
+  supported rollback floor; pre-`0018` binaries cannot reopen an upgraded
+  database.
+
+- Hardened Docker publication so each amd64 and arm64 artifact is built once,
+  verified by immutable digest, checked for release identity and attestation
+  structure, and assembled into public tags only from the verified manifest.
+  Release runs are serialized, version tags share the PyPI normalization
+  contract, and lifecycle status/failure events preserve durable
+  `revocation_pending` and concurrently cancelled states.
+
+- Added failure-isolated, privacy-bounded BlueWay lifecycle observability from
+  pairing through Course launch, with durable safe correlation references and
+  migration support. Pairing replay now retries a stranded initial sync,
+  binds to the exact connection that approved it, and cannot affect a later
+  replacement account. Lifecycle events now survive the production logging
+  default, preserve release and request correlation, and agree with durable
+  cancellation, expiry, recovery, revocation, launch, and sync-deduplication
+  states. Migration startup is serialized across processes with a private
+  sidecar lock without rolling back earlier committed versions when a later
+  migration fails.
+
+- Hardened mobile TEEECHR sign-in with whitespace-safe email matching and
+  mobile input attributes, added server-only privacy-bounded login diagnostics
+  with a safe attempt reference header, and added accessible show/hide controls
+  to login and registration password fields. Public authentication failures
+  remain generic and credentials, hashes, tokens, cookies, and caller-supplied
+  correlation IDs are never logged.
+
+- Added dedicated `/connect/blueway` and `/connect/blueway/complete` routes for
+  same-phone BlueWay pairing. The TEEECHR page now makes the native app handoff
+  primary, keeps QR behind an explicit cross-device disclosure, validates the
+  completion request server-side, and fails closed for malformed links.
+
+- Fixed the pairing recovery path so browser approval polling cannot overlap.
+  Pending requests now expose an explicit Stop pairing action, terminal requests
+  expose Redo connection, and completion-race errors explain when the server is
+  safely finishing the previous approval instead of leaving the page in a
+  misleading pending state.
+
+- Fixed BlueWay workspace reactivation to require a current exact active
+  Course/term mapping, and atomically consume each verified assertion `jti` so
+  replayed reads cannot refresh the local launch lease. Direct launch authority
+  is now explicitly bounded to the 60-second assertion lifetime. Added a
+  distinct replay-protected revocation assertion that clears the exact local
+  launch lease immediately when delivered, plus a dry-run-by-default command
+  for upgrading every supported user Course database.
+
 - Added the C4 provider-free materialization path for the exact C3-H3
   model-qualified Biology Practice and Review artifacts. Single-choice option
   identities and four-source-citation remediation provenance are now persisted

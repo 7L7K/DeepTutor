@@ -15,7 +15,6 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator, model_valida
 
 from .practice_models import (
     BoundedShortAnswerContract,
-    ExactAnswerContract,
     PracticeAnswerContract,
     PracticeCitation,
     PracticeSourceReceipt,

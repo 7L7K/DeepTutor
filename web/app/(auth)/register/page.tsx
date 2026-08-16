@@ -3,6 +3,7 @@
 import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
+import { Eye, EyeOff } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import { register, checkIsFirstUser, fetchAuthStatus } from "@/lib/auth";
 
@@ -13,6 +14,8 @@ export default function RegisterPage() {
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");
+  const [showPassword, setShowPassword] = useState(false);
+  const [showConfirmPassword, setShowConfirmPassword] = useState(false);
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
   const [isFirst, setIsFirst] = useState(false);
@@ -56,7 +59,7 @@ export default function RegisterPage() {
       {/* Logo / Title */}
       <div className="text-center mb-8">
         <h1 className="font-serif text-2xl font-semibold text-[var(--foreground)] tracking-tight">
-          DeepTutor
+          TEEECHR
         </h1>
         <p className="mt-1 text-sm text-[var(--muted-foreground)]">
           {t("Create your account")}
@@ -108,20 +111,30 @@ export default function RegisterPage() {
             >
               {t("Password")}
             </label>
-            <input
-              id="password"
-              type="password"
-              autoComplete="new-password"
-              required
-              value={password}
-              onChange={(e) => setPassword(e.target.value)}
-              className="w-full px-3.5 py-2.5 rounded-lg border border-[var(--border)]
-                         bg-[var(--background)] text-[var(--foreground)]
-                         placeholder:text-[var(--muted-foreground)]
-                         focus:outline-none focus:ring-2 focus:ring-[var(--primary)] focus:border-transparent
-                         transition-shadow text-sm"
-              placeholder="••••••••"
-            />
+            <div className="relative">
+              <input
+                id="password"
+                type={showPassword ? "text" : "password"}
+                autoComplete="new-password"
+                required
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+                className="w-full px-3.5 py-2.5 pr-11 rounded-lg border border-[var(--border)]
+                           bg-[var(--background)] text-[var(--foreground)]
+                           placeholder:text-[var(--muted-foreground)]
+                           focus:outline-none focus:ring-2 focus:ring-[var(--primary)] focus:border-transparent
+                           transition-shadow text-sm"
+                placeholder="••••••••"
+              />
+              <button
+                type="button"
+                onClick={() => setShowPassword((visible) => !visible)}
+                aria-label={showPassword ? t("Hide password") : t("Show password")}
+                className="absolute inset-y-0 right-0 flex w-11 items-center justify-center text-[var(--muted-foreground)] hover:text-[var(--foreground)]"
+              >
+                {showPassword ? <EyeOff size={18} aria-hidden="true" /> : <Eye size={18} aria-hidden="true" />}
+              </button>
+            </div>
             <p className="mt-1 text-xs text-[var(--muted-foreground)]">
               {t("At least 8 characters")}
             </p>
@@ -135,20 +148,30 @@ export default function RegisterPage() {
             >
               {t("Confirm password")}
             </label>
-            <input
-              id="confirmPassword"
-              type="password"
-              autoComplete="new-password"
-              required
-              value={confirmPassword}
-              onChange={(e) => setConfirmPassword(e.target.value)}
-              className="w-full px-3.5 py-2.5 rounded-lg border border-[var(--border)]
-                         bg-[var(--background)] text-[var(--foreground)]
-                         placeholder:text-[var(--muted-foreground)]
-                         focus:outline-none focus:ring-2 focus:ring-[var(--primary)] focus:border-transparent
-                         transition-shadow text-sm"
-              placeholder="••••••••"
-            />
+            <div className="relative">
+              <input
+                id="confirmPassword"
+                type={showConfirmPassword ? "text" : "password"}
+                autoComplete="new-password"
+                required
+                value={confirmPassword}
+                onChange={(e) => setConfirmPassword(e.target.value)}
+                className="w-full px-3.5 py-2.5 pr-11 rounded-lg border border-[var(--border)]
+                           bg-[var(--background)] text-[var(--foreground)]
+                           placeholder:text-[var(--muted-foreground)]
+                           focus:outline-none focus:ring-2 focus:ring-[var(--primary)] focus:border-transparent
+                           transition-shadow text-sm"
+                placeholder="••••••••"
+              />
+              <button
+                type="button"
+                onClick={() => setShowConfirmPassword((visible) => !visible)}
+                aria-label={showConfirmPassword ? t("Hide password") : t("Show password")}
+                className="absolute inset-y-0 right-0 flex w-11 items-center justify-center text-[var(--muted-foreground)] hover:text-[var(--foreground)]"
+              >
+                {showConfirmPassword ? <EyeOff size={18} aria-hidden="true" /> : <Eye size={18} aria-hidden="true" />}
+              </button>
+            </div>
           </div>
 
           {/* Error message */}
@@ -184,7 +207,7 @@ export default function RegisterPage() {
       </p>
 
       <p className="mt-3 text-center text-xs text-[var(--muted-foreground)]">
-        DeepTutor · Agent-Native Learning
+        TEEECHR · Agent-Native Learning
       </p>
     </div>
   );

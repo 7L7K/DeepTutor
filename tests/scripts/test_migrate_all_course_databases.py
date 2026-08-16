@@ -1,0 +1,87 @@
+from __future__ import annotations
+
+import importlib.util
+from pathlib import Path
+import sys
+
+from deeptutor.courses.migrations import runner
+from deeptutor.courses.migrations.runner import (
+    discover_migrations,
+    ensure_course_schema,
+    open_course_connection,
+)
+
+
+def _module():
+    path = Path(__file__).parents[2] / "scripts" / "migrate-all-course-databases.py"
+    spec = importlib.util.spec_from_file_location("migrate_all_course_databases", path)
+    assert spec and spec.loader
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = module
+    spec.loader.exec_module(module)
+    return module
+
+
+def test_discovery_is_bounded_and_ignores_symlinks(tmp_path: Path) -> None:
+    module = _module()
+    (tmp_path / "user").mkdir()
+    (tmp_path / "users" / "alice" / "user").mkdir(parents=True)
+    (tmp_path / "users" / "nested" / "ignored" / "user").mkdir(parents=True)
+    admin = tmp_path / "user" / "courses.db"
+    alice = tmp_path / "users" / "alice" / "user" / "courses.db"
+    admin.touch()
+    alice.touch()
+    outside = tmp_path / "outside.db"
+    outside.touch()
+    (tmp_path / "users" / "bob").symlink_to(outside.parent, target_is_directory=True)
+    assert module.discover_course_databases(tmp_path) == (admin, alice)
+
+
+def test_main_reports_invalid_data_root_without_masking_the_error(
+    tmp_path: Path,
+    capsys,
+) -> None:
+    module = _module()
+
+    assert module.main(["--data-root", str(tmp_path / "missing")]) == 1
+    assert "Data root is not a real directory" in capsys.readouterr().err
+
+
+def test_verify_then_apply_covers_all_discovered_databases(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    module = _module()
+    (tmp_path / "user").mkdir()
+    (tmp_path / "users" / "alice" / "user").mkdir(parents=True)
+    paths = (tmp_path / "user" / "courses.db", tmp_path / "users" / "alice" / "user" / "courses.db")
+    artifacts = discover_migrations()
+    through_0016 = artifacts[:17]
+    monkeypatch.setattr(runner, "discover_migrations", lambda: through_0016)
+    for path in paths:
+        ensure_course_schema(path)
+    monkeypatch.setattr(runner, "discover_migrations", lambda: artifacts)
+    results = [module.check_database(path, apply=False, artifacts=artifacts) for path in paths]
+    assert [result.status for result in results] == ["pending", "pending"]
+    assert all(
+        "pending migrations" in result.detail or "replay fence" in result.detail
+        for result in results
+    )
+    for path in paths:
+        result = module.check_database(path, apply=True, artifacts=artifacts)
+        assert result.status == "migrated"
+        assert result.applied == (17, 18)
+        assert module.check_database(path, apply=False, artifacts=artifacts).status == "ready"
+
+
+def test_verify_fails_closed_when_0018_receipt_outlives_its_column(tmp_path: Path) -> None:
+    module = _module()
+    path = tmp_path / "courses.db"
+    ensure_course_schema(path)
+    with open_course_connection(path) as conn:
+        conn.execute("ALTER TABLE blueway_connections DROP COLUMN observability_trace_id")
+
+    result = module.check_database(path, apply=False, artifacts=discover_migrations())
+
+    assert result.status == "pending"
+    assert "observability_trace_id" in result.detail

@@ -8,7 +8,6 @@ import pytest
 
 from scripts.c3_human_review import canonical_sha256, verify_human_review_record
 
-
 REFERENCE_ROOT = Path(__file__).resolve().parents[3] / "evals/reference_course"
 ARTIFACT = (
     REFERENCE_ROOT

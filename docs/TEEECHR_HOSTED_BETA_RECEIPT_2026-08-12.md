@@ -17,6 +17,9 @@ Re-run the VPS checks before relying on any value that may have changed.
 | Image digest | `sha256:152a147102c8950e64878dde9119f14ebc9b3de7c2c6b6d5428c42f544366c13` |
 | Source archive SHA-256 | `f3e24a7e6bd38827349b7cb92902d1805fc7dedfa5616685a7c6519ec854dfec` |
 | Previous deployed commit | `82b33b75dc5916764b1050b724e5abf5db0e0593` |
+| Previous deployed image | `teeechr:82b33b75dc5916764b1050b724e5abf5db0e0593` |
+| Previous image ID | `sha256:b33f87c5d85478aa1e4a3783386af36d444db985a389725b4837f5ef6948d172` |
+| Previous release directory | `/opt/teeechr/releases/82b33b75dc5916764b1050b724e5abf5db0e0593` |
 | Persistent mount | `/opt/teeechr/data → /app/data` |
 
 The production image was built from the clean isolated deployment branch. The

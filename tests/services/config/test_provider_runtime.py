@@ -167,6 +167,17 @@ def test_llm_explicit_binding_and_headers() -> None:
     assert resolved.extra_headers == {"APP-Code": "abc"}
 
 
+def test_openai_profile_uses_process_environment_when_catalog_key_is_empty(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("LLM_API_KEY", "env-llm-key")
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+
+    resolved = resolve_llm_runtime_config(catalog=_build_catalog())
+
+    assert resolved.api_key == "env-llm-key"
+
+
 def test_llm_api_key_prefix_gateway() -> None:
     catalog = _build_catalog(
         llm_profile={

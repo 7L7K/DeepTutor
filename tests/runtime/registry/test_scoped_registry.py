@@ -10,6 +10,12 @@ from deeptutor.runtime.registry.scoped_registry import ScopedToolRegistry
 from deeptutor.runtime.registry.tool_registry import ToolRegistry
 
 
+@pytest.fixture(autouse=True)
+def _disable_local_auth_for_registry_unit_tests(monkeypatch: pytest.MonkeyPatch) -> None:
+    """These tests cover registry composition, not account authorization."""
+    monkeypatch.setattr("deeptutor.services.auth.AUTH_ENABLED", False)
+
+
 class _Tool(BaseTool):
     def __init__(self, name: str, *, deferred: bool = False, provider: str = "") -> None:
         self._name = name

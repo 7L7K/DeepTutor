@@ -24,24 +24,21 @@ from deeptutor.courses.generation_models import (
 )
 from deeptutor.courses.practice_models import normalize_bounded_short_answer
 from scripts.run_c3_h3_model_qualification import (
-    CAMPAIGN_ID as H3_CAMPAIGN_ID,
-    CampaignClient,
-    CampaignStop,
     GENERATION_OUTPUT_LIMIT,
     MAX_PROVIDER_SPEND_MICROUSD,
     MODEL,
     REASONING,
     STORE,
-    _record_transport_event,
+    CampaignClient,
+    CampaignStop,
     _judge_result,
     _load_generation_contracts,
     _material,
     _objective_evidence,
-    _qualified_candidate,
+    _record_transport_event,
     _write_json,
 )
 from scripts.run_c3_luna_probe import APPROVED_OBJECTIVE_IDS
-
 
 FINAL_CAMPAIGN_ID = "2026-08-09-teeechr-c3-final-learning-loop-v1"
 FINAL_CONTRACT_ID = "c3-final-learning-loop-v1"

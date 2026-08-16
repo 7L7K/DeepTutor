@@ -1,10 +1,12 @@
-"""Strict Ed25519/JWS assertions for the BlueWay workspace read contract.
+"""Strict Ed25519/JWS assertions for BlueWay workspace contracts.
 
 BlueWay sends a short-lived signed assertion, never a TEEECHR bearer or
 refresh token.  The accepted compact JWS is fixed to EdDSA, a configured
 ``kid``, issuer, audience ``teeechr-workspace-api``, and the exact scope
 ``teeechr.workspace.read.v1``.  ``sub``, ``client_id``, ``authorization_id``,
 and ``external_course_id`` are required; ``external_term_id`` is optional.
+The read and revocation contracts use separate scopes so a read assertion
+can never be replayed as a revocation instruction.
 Production keys are configured with ``TEEECHR_BLUEWAY_WORKSPACE_KEYS`` as a
 JSON object of kid -> base64url raw Ed25519 public key. Tests may inject a key
 set with :func:`set_test_keys`.
@@ -25,6 +27,7 @@ from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
 
 AUDIENCE = "teeechr-workspace-api"
 SCOPE = "teeechr.workspace.read.v1"
+REVOCATION_SCOPE = "teeechr.workspace.revoke.v1"
 _test_keys: dict[str, Ed25519PublicKey] | None = None
 
 
@@ -58,7 +61,9 @@ def _keys() -> dict[str, Ed25519PublicKey]:
         raise AssertionError("Workspace assertion keys are unavailable") from exc
 
 
-def verify_assertion(token: str, *, now: float | None = None) -> dict[str, Any]:
+def verify_assertion(
+    token: str, *, now: float | None = None, expected_scope: str = SCOPE,
+) -> dict[str, Any]:
     if not isinstance(token, str) or token.count(".") != 2:
         raise AssertionError("Malformed workspace assertion")
     encoded_header, encoded_payload, encoded_signature = token.split(".")
@@ -79,7 +84,7 @@ def verify_assertion(token: str, *, now: float | None = None) -> dict[str, Any]:
     if not isinstance(claims, dict):
         raise AssertionError("Invalid workspace assertion claims")
     issuer = str(os.environ.get("TEEECHR_BLUEWAY_WORKSPACE_ISSUER", "blueway-workspace-api"))
-    if claims.get("iss") != issuer or claims.get("aud") != AUDIENCE or claims.get("scope") != SCOPE:
+    if claims.get("iss") != issuer or claims.get("aud") != AUDIENCE or claims.get("scope") != expected_scope:
         raise AssertionError("Workspace assertion context is invalid")
     required = ("sub", "client_id", "authorization_id", "external_course_id", "iat", "nbf", "exp", "jti")
     if any(not isinstance(claims.get(name), str) or not claims[name] for name in required[:4] + ("jti",)):

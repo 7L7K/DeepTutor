@@ -11,21 +11,11 @@ from __future__ import annotations
 
 import hashlib
 import json
-import sys
 from pathlib import Path
+import sys
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from deeptutor.courses.flashcard_generation_models import (
-    FlashcardCitation,
-    FlashcardGenerationBrief,
-    FlashcardCandidatePublication,
-    GeneratedFlashcard,
-    GeneratedFlashcardOutput,
-)
-from deeptutor.courses.flashcard_generation_repository import (
-    CourseFlashcardGenerationRepository,
-)
 from deeptutor.courses.generation_models import (
     GeneratedPracticeOutput,
     GeneratedPracticeQuestion,
@@ -42,7 +32,6 @@ from deeptutor.courses.practice_models import (
 )
 from deeptutor.courses.repository import CourseRepository
 from deeptutor.multi_user.paths import get_personal_path_service
-
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 PRIMARY = REPO_ROOT / "docs/verification/2026-08-10-teeechr-c3-final-learning-loop-v3-1/primary/model-qualified-candidate.json"

@@ -4,8 +4,8 @@ from __future__ import annotations
 
 import hashlib
 import json
-import sqlite3
 from pathlib import Path
+import sqlite3
 
 import pytest
 
@@ -22,7 +22,6 @@ from deeptutor.courses.migrations.runner import (
     open_course_connection,
 )
 from deeptutor.courses.repository import CourseRepository
-
 
 OWNER = "u_history_owner"
 COURSE_ID = "crs_populated_history"
@@ -560,7 +559,7 @@ def test_0015_preserves_populated_exact_history_and_effective_semantics(
             for row in conn.execute(
                 "SELECT version FROM schema_migrations ORDER BY version"
             )
-        ) == tuple(range(16))
+        ) == tuple(item.version for item in runner.discover_migrations())
         assert conn.execute(
             "SELECT COUNT(*) FROM practice_questions WHERE options_json = '[]'"
         ).fetchone()[0] == len(QUESTIONS)

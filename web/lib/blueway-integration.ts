@@ -6,6 +6,13 @@ export type BlueWayConnectionState =
   | "disconnected"
   | "error";
 
+export type BlueWayPairingState =
+  | "pending"
+  | "approved"
+  | "expired"
+  | "cancelled"
+  | "failed";
+
 export type BlueWaySyncState =
   | "queued"
   | "fetching"
@@ -30,20 +37,24 @@ export interface BlueWaySyncRunView {
   state: BlueWaySyncState;
   counts?: Record<string, number>;
   error_code?: string | null;
+  created_at?: number;
 }
 
 export interface BlueWayIntegrationStatus {
   enabled: boolean;
   connection: BlueWayConnectionView | null;
   active_run: BlueWaySyncRunView | null;
+  pairing?: BlueWayConnectAttempt | null;
 }
 
 export interface BlueWayConnectAttempt {
   attempt_id: string;
+  request_id: string;
   user_code: string;
   verification_uri: string;
   expires_at: number;
   mode?: "connect" | "recovery";
+  state: BlueWayPairingState;
 }
 
 export interface BlueWayUnlinkedRecord {
@@ -83,6 +94,17 @@ export function blueWayResponseIsCurrent(
   );
 }
 
+export function blueWayPairingErrorMessage(error: unknown): string {
+  const message = error instanceof Error ? error.message : String(error);
+  if (message === "BlueWay pairing is already being completed") {
+    return "BlueWay is finishing the previous approval. Wait a moment, then try Stop pairing again.";
+  }
+  if (message === "BlueWay pairing is already pending") {
+    return "A BlueWay pairing is already pending. Stop it before starting over.";
+  }
+  return message;
+}
+
 export function blueWayIdentityIsCurrent(
   requestIdentityEpoch: number,
   currentIdentityEpoch: number,
@@ -113,10 +135,37 @@ export function safeBlueWayVerificationUri(value: string): string | null {
       return null;
     }
     if (parsed.username || parsed.password) return null;
+    if (!loopback) {
+      const allowedPath = parsed.hostname === "blueway-teeechr-beta.expo.app"
+        || parsed.hostname === "blueway.gesahni.com"
+        ? "/teeechr-connect"
+        : null;
+      if (allowedPath !== parsed.pathname || parsed.hash) return null;
+      const keys = [...parsed.searchParams.keys()].sort();
+      if (keys.length !== 2 || keys[0] !== "request_id" || keys[1] !== "user_code") return null;
+      const requestId = parsed.searchParams.get("request_id");
+      const userCode = parsed.searchParams.get("user_code");
+      if (
+        !requestId
+        || !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(requestId)
+        || !userCode
+        || !/^[A-Za-z0-9_-]{8,64}$/.test(userCode)
+      ) return null;
+    }
     return parsed.toString();
   } catch {
     return null;
   }
+}
+
+/** Build the same-phone handoff without accepting a caller-controlled scheme or destination. */
+export function safeBlueWayNativeApprovalUri(input: {
+  request_id: string;
+  user_code: string;
+}): string | null {
+  if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(input.request_id)) return null;
+  if (!/^[A-Za-z0-9_-]{8,64}$/.test(input.user_code)) return null;
+  return `blueway://teeechr-connect?request_id=${encodeURIComponent(input.request_id)}&user_code=${encodeURIComponent(input.user_code)}`;
 }
 
 /**

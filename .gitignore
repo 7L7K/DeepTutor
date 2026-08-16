@@ -22,7 +22,7 @@ deeptutor/services/rag/eg_only_for_analysis/
 !/docs/TEEECHR_HISTORICAL_LEARNER_DATA_MIGRATION_PLAN.md
 !/docs/TEEECHR_NEXT_ADVANCED_LEARNER_FEATURE_DECISION.md
 !/docs/TEEECHR_VPS_RUNBOOK.md
-!/docs/TEEECHR_HOSTED_BETA_RECEIPT_2026-08-12.md
+!/docs/TEEECHR_HOSTED_BETA_RECEIPT_*.md
 !/docs/TEEECHR_CHANGE_WORKFLOW.md
 !/docs/contracts/
 /docs/contracts/*

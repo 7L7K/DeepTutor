@@ -3,6 +3,7 @@ from __future__ import annotations
 import base64
 from concurrent.futures import ThreadPoolExecutor
 import copy
+from dataclasses import replace
 import json
 import os
 from pathlib import Path
@@ -14,11 +15,11 @@ from fastapi.testclient import TestClient
 import httpx
 import pytest
 
-from deeptutor.courses.repository import CourseConflictError, CourseRepository
 from deeptutor.courses.flashcard_generation_models import FlashcardSourceReceipt
 from deeptutor.courses.flashcard_generation_provider import (
     DeterministicIndexFlashcardSourceTextResolver,
 )
+from deeptutor.courses.repository import CourseConflictError, CourseRepository
 from deeptutor.integrations.blueway import config as blueway_config
 from deeptutor.integrations.blueway.bundles import (
     BundleMaterializationError,
@@ -27,13 +28,18 @@ from deeptutor.integrations.blueway.bundles import (
 )
 from deeptutor.integrations.blueway.config import BlueWaySettings, IntegrationConfigurationError
 from deeptutor.integrations.blueway.credentials import CredentialError, CredentialStore
+from deeptutor.integrations.blueway.pairing_store import PairingAttemptStore
 from deeptutor.integrations.blueway.refresh import (
     RefreshReceiptCoordinator,
     RefreshResult,
     RefreshReuseError,
 )
-from deeptutor.integrations.blueway.repository import BlueWayRepository
-from deeptutor.integrations.blueway.service import BlueWayService, BlueWayUnavailableError
+from deeptutor.integrations.blueway.repository import BlueWayNotFoundError, BlueWayRepository
+from deeptutor.integrations.blueway.service import (
+    BlueWayCredentialRecoveryRequired,
+    BlueWayService,
+    BlueWayUnavailableError,
+)
 from deeptutor.integrations.blueway.snapshot import (
     MAX_PAGE_BYTES,
     SnapshotValidationError,
@@ -57,6 +63,7 @@ class FakeTransport:
     def __init__(self) -> None:
         self.fail_revoke = False
         self.revocations: list[str] = []
+        self.cancellations: list[tuple[str, str]] = []
 
     def begin_device_authorization(self, *, client_id: str, audience: str, device_code: str, user_code: str, pkce_challenge: str) -> DeviceAuthorization:
         assert client_id == "client-test"
@@ -69,6 +76,10 @@ class FakeTransport:
         if self.fail_revoke:
             raise RuntimeError("offline")
         assert refresh_token in {"refresh-secret", "next-refresh"}
+
+    def cancel(self, *, request_id: str, device_code: str) -> str:
+        self.cancellations.append((request_id, device_code))
+        return "cancelled"
 
     def refresh(self, *, refresh_token: str, rotation_request_id: str) -> TokenExchange:
         assert refresh_token in {"refresh-secret", "next-refresh"}
@@ -263,7 +274,7 @@ def test_snapshot_accepts_optional_term_identity_only_on_qualified_datasets() ->
     assert validate_snapshot(snapshot)["datasets"]["courses"][0]["term_id"] == "fall-2026"
 
 
-def test_pairing_refuses_a_second_provider_grant_until_the_local_connection_is_terminal(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_pairing_start_is_idempotent_and_replacement_stays_blocked_until_connection_is_terminal(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     service, _courses = _service(tmp_path, monkeypatch)
     starts = [0]
     original = service.transport.begin_device_authorization
@@ -274,8 +285,8 @@ def test_pairing_refuses_a_second_provider_grant_until_the_local_connection_is_t
 
     service.transport.begin_device_authorization = begin
     first = service.start_connection()
-    with pytest.raises(CourseConflictError, match="pending"):
-        service.start_connection()
+    second = service.start_connection()
+    assert second.id == first.id
     assert starts == [1]
     service.complete_connection_for_transport(
         attempt_id=first.id,
@@ -291,6 +302,179 @@ def test_pairing_refuses_a_second_provider_grant_until_the_local_connection_is_t
     with pytest.raises(CourseConflictError, match="Disconnect"):
         service.start_connection()
     assert starts == [1]
+
+
+def test_pairing_pending_attempt_resumes_after_service_restart_without_provider_restart(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    service, _courses = _service(tmp_path, monkeypatch)
+    first = service.start_connection()
+    replacement_transport = FakeTransport()
+    replacement = BlueWayService(service.settings, replacement_transport)
+
+    resumed = replacement.start_connection()
+
+    assert resumed.id == first.id
+    assert resumed.request_id == first.request_id
+    assert replacement_transport.cancellations == []
+
+
+def test_pairing_expiry_is_server_timestamped_and_clears_provider_secrets(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    service, _courses = _service(tmp_path, monkeypatch)
+    first = service.start_connection()
+    service._persist_attempt(replace(first, expires_at=0.0))  # noqa: SLF001
+
+    expired = service.get_attempt(first.id)
+
+    assert expired.state == "expired"
+    assert expired.device_code == ""
+    assert expired.verifier == ""
+    restarted = BlueWayService(service.settings, FakeTransport())
+    assert restarted.get_attempt(first.id).state == "expired"
+    fresh = restarted.start_connection()
+    assert fresh.id != first.id
+
+
+def test_pairing_cancel_invalidates_provider_request_and_is_idempotent_after_terminal_state(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    service, _courses = _service(tmp_path, monkeypatch)
+    events: list[tuple[str, dict[str, object]]] = []
+    monkeypatch.setattr(
+        "deeptutor.integrations.blueway.service.emit_blueway_event",
+        lambda event, **fields: events.append((event, fields)),
+    )
+    attempt = service.start_connection()
+
+    cancelled = service.cancel_attempt(attempt_id=attempt.id)
+    repeated = service.cancel_attempt(attempt_id=attempt.id)
+
+    assert cancelled.state == "cancelled"
+    assert repeated.state == "cancelled"
+    assert len(service.transport.cancellations) == 1
+    assert service.transport.cancellations[0] == (attempt.request_id, attempt.device_code)
+    assert service.exchange_connection_for_transport(attempt_id=attempt.id) is None
+    cancelled_events = [fields for event, fields in events if event == "blueway_pairing_cancelled"]
+    assert len(cancelled_events) == 1
+    assert cancelled_events[0]["state_to"] == "cancelled"
+
+
+def test_pairing_provider_failure_becomes_terminal_and_does_not_poll_forever(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    service, _courses = _service(tmp_path, monkeypatch)
+    attempt = service.start_connection()
+
+    def fail_exchange(**_kwargs):
+        raise BlueWayTransportError("provider unavailable")
+
+    service.transport.exchange = fail_exchange
+    with pytest.raises(BlueWayTransportError):
+        service.poll_connection(attempt_id=attempt.id)
+
+    failed = service.get_attempt(attempt.id)
+    assert failed.state == "failed"
+    assert failed.device_code == ""
+    assert failed.verifier == ""
+
+
+def test_pairing_provider_failure_after_expiry_emits_expired_state(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    service, _courses = _service(tmp_path, monkeypatch)
+    now = [100.0]
+    monkeypatch.setattr(
+        "deeptutor.integrations.blueway.service.time.time", lambda: now[0],
+    )
+    attempt = service.start_connection()
+    service._persist_attempt(replace(attempt, expires_at=200.0))  # noqa: SLF001
+    events: list[tuple[str, dict[str, object]]] = []
+    monkeypatch.setattr(
+        "deeptutor.integrations.blueway.service.emit_blueway_event",
+        lambda event, **fields: events.append((event, fields)),
+    )
+
+    def fail_after_expiry(**_kwargs):
+        now[0] = 201.0
+        raise BlueWayTransportError("provider unavailable")
+
+    service.transport.exchange = fail_after_expiry
+    with pytest.raises(BlueWayTransportError):
+        service.poll_connection(attempt_id=attempt.id)
+
+    expired = service.get_attempt(attempt.id, purge_expired=False)
+    assert expired.state == "expired"
+    event, fields = events[-1]
+    assert event == "blueway_pairing_expired"
+    assert fields["state_to"] == "expired"
+    assert fields["reason_code"] == "request_expired"
+
+
+def test_pairing_attempt_is_account_bound_after_restart(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    service, _courses = _service(tmp_path, monkeypatch)
+    attempt = service.start_connection()
+    monkeypatch.setattr(
+        "deeptutor.integrations.blueway.service.get_current_user_or_none",
+        lambda: SimpleNamespace(id="owner-b"),
+    )
+    monkeypatch.setattr(
+        "deeptutor.integrations.blueway.service._current_personal_user",
+        lambda _owner: SimpleNamespace(id="owner-b"),
+    )
+
+    with pytest.raises(BlueWayNotFoundError):
+        service.get_attempt(attempt.id)
+
+
+def test_pairing_completion_lookup_accepts_provider_request_id_only_inside_owner_scope(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    service, _courses = _service(tmp_path, monkeypatch)
+    attempt = service.start_connection()
+
+    assert service.get_attempt(attempt.request_id).id == attempt.id
+
+    monkeypatch.setattr(
+        "deeptutor.integrations.blueway.service.get_current_user_or_none",
+        lambda: SimpleNamespace(id="owner-b"),
+    )
+    monkeypatch.setattr(
+        "deeptutor.integrations.blueway.service._current_personal_user",
+        lambda _owner: SimpleNamespace(id="owner-b"),
+    )
+    with pytest.raises(BlueWayNotFoundError):
+        service.get_attempt(attempt.request_id)
+
+
+def test_pairing_store_encrypts_device_and_pkce_material_with_private_permissions(tmp_path: Path) -> None:
+    store = PairingAttemptStore(tmp_path / "pairing", b"k" * 32)
+    record = {
+        "owner_user_id": "owner-a",
+        "device_code": "device-secret",
+        "verifier": "pkce-secret",
+        "state": "pending",
+    }
+
+    store.write(owner_user_id="owner-a", attempt_id="bwa_" + "a" * 32, record=record)
+    path = tmp_path / "pairing" / ("bwa_" + "a" * 32 + ".enc")
+
+    assert path.stat().st_mode & 0o777 == 0o600
+    assert path.parent.stat().st_mode & 0o777 == 0o700
+    assert b"device-secret" not in path.read_bytes()
+    assert b"pkce-secret" not in path.read_bytes()
+    assert store.read(owner_user_id="owner-a", attempt_id="bwa_" + "a" * 32) == record
+
+
+def test_pairing_api_payload_contains_only_safe_resume_metadata(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    from deeptutor.integrations.blueway import router as blueway_router
+
+    service, _courses = _service(tmp_path, monkeypatch)
+    app = FastAPI()
+    app.include_router(blueway_router.router, prefix="/api/v1/integrations/blueway")
+    blueway_router.set_test_service(service)
+    try:
+        response = TestClient(app).post("/api/v1/integrations/blueway/connect/start")
+    finally:
+        blueway_router.set_test_service(None)
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert set(payload) == {"attempt_id", "request_id", "user_code", "verification_uri", "expires_at", "mode", "state"}
+    assert "device_code" not in payload
+    assert "verifier" not in payload
+    assert "owner_user_id" not in payload
 
 
 def test_approval_url_is_an_explicit_pinned_deployment_url(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -355,6 +539,36 @@ def test_http_pairing_rejects_chunked_oversize_and_preserves_authorization_pendi
     )
     with pytest.raises(BlueWayAuthorizationPending):
         pending.exchange(request_id="request", device_code="device", code_verifier="verifier")
+
+
+def test_http_pairing_cancel_requires_a_typed_terminal_state() -> None:
+    settings = BlueWaySettings(
+        enabled=True, base_url="https://api.blueway.example", client_id="client-test",
+        api_secret="s" * 32, approval_url="https://consent.blueway.example/approve", master_key=b"k" * 32,
+    )
+    cancelled = HttpBlueWayTransport(
+        settings,
+        client=httpx.Client(transport=httpx.MockTransport(
+            lambda _request: httpx.Response(200, json={"state": "cancelled"}),
+        )),
+    )
+    expired = HttpBlueWayTransport(
+        settings,
+        client=httpx.Client(transport=httpx.MockTransport(
+            lambda _request: httpx.Response(200, json={"state": "expired"}),
+        )),
+    )
+    invalid = HttpBlueWayTransport(
+        settings,
+        client=httpx.Client(transport=httpx.MockTransport(
+            lambda _request: httpx.Response(200, json={"cancelled": True}),
+        )),
+    )
+
+    assert cancelled.cancel(request_id="request", device_code="device") == "cancelled"
+    assert expired.cancel(request_id="request", device_code="device") == "expired"
+    with pytest.raises(BlueWayTransportError, match="cancellation response is invalid"):
+        invalid.cancel(request_id="request", device_code="device")
 
 
 def test_slow_pairing_provider_does_not_hold_identity_lock_or_allow_duplicate_start(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -449,6 +663,227 @@ def test_pending_pairing_poll_does_not_queue_until_the_provider_approves(tmp_pat
     assert connection is not None and run is not None and scheduled == [run.id]
 
 
+def test_normal_pairing_poll_replay_returns_one_connection_without_duplicate_sync(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class ApprovedTransport(FakeTransport):
+        exchange_calls = 0
+
+        def exchange(self, **_kwargs) -> TokenExchange:
+            self.exchange_calls += 1
+            return TokenExchange(
+                "grant-a", "subject-a", "access", "2026-07-23T00:00:00Z",
+                "refresh-secret",
+            )
+
+    transport = ApprovedTransport()
+    service, _courses = _service(tmp_path, monkeypatch)
+    service.transport = transport
+    attempt = service.start_connection()
+    scheduled: list[str] = []
+    events: list[tuple[str, dict[str, object]]] = []
+    monkeypatch.setattr(
+        "deeptutor.integrations.blueway.service.emit_blueway_event",
+        lambda event, **fields: events.append((event, fields)),
+    )
+
+    def record_schedule(run) -> None:
+        scheduled.append(run.id)
+        with service._lock:  # noqa: SLF001 - mirror the scheduler's in-flight marker.
+            service._scheduled_connections.add(("owner-a", run.connection_id))  # noqa: SLF001
+
+    monkeypatch.setattr(service, "schedule_sync", record_schedule)
+
+    first, first_run = service.poll_connection(attempt_id=attempt.id)
+    second, second_run = service.poll_connection(attempt_id=attempt.id)
+
+    assert first is not None and second is not None and first.id == second.id
+    assert first_run is not None and second_run is None
+    assert scheduled == [first_run.id]
+    assert transport.exchange_calls == 1
+    replay_events = [fields for event, fields in events if event == "blueway_pairing_replayed"]
+    assert len(replay_events) == 1
+    assert replay_events[0]["trace_id"] == first.observability_trace_id
+    event_names = [event for event, _fields in events]
+    assert event_names.index("blueway_pairing_exchanged") < event_names.index(
+        "blueway_pairing_replayed"
+    )
+    assert event_names.index("blueway_connection_created") < event_names.index(
+        "blueway_pairing_replayed"
+    )
+
+
+def test_pairing_replay_retries_initial_sync_after_scheduler_failure(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class ApprovedTransport(FakeTransport):
+        def exchange(self, **_kwargs) -> TokenExchange:
+            return TokenExchange(
+                "grant-a", "subject-a", "access", "2026-07-23T00:00:00Z",
+                "refresh-secret",
+            )
+
+    service, courses = _service(tmp_path, monkeypatch)
+    service.transport = ApprovedTransport()
+    attempt = service.start_connection()
+    failures = [1]
+    scheduled: list[str] = []
+
+    def schedule(run) -> None:
+        if failures[0]:
+            failures[0] -= 1
+            raise RuntimeError("scheduler unavailable")
+        scheduled.append(run.id)
+
+    monkeypatch.setattr(service, "schedule_sync", schedule)
+    with pytest.raises(RuntimeError, match="scheduler unavailable"):
+        service.poll_connection(attempt_id=attempt.id)
+
+    connection, replay_run = service.poll_connection(attempt_id=attempt.id)
+    assert connection is not None and replay_run is None
+    assert scheduled == [BlueWayRepository(courses).active_run(connection.id).id]
+
+
+def test_stale_approved_attempt_cannot_replay_against_replacement_connection(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    service, _courses = _service(tmp_path, monkeypatch)
+    first_attempt = service.start_connection()
+    first_connection = service.complete_connection_for_transport(
+        attempt_id=first_attempt.id,
+        exchange=TokenExchange(
+            "grant-a", "subject-a", "access", "2026-07-23T00:00:00Z",
+            "refresh-secret",
+        ),
+    )
+    assert service.disconnect(expected_revision=first_connection.revision).state == "disconnected"
+    second_attempt = service.start_connection()
+    second_connection = service.complete_connection_for_transport(
+        attempt_id=second_attempt.id,
+        exchange=TokenExchange(
+            "grant-b", "subject-b", "access", "2026-07-23T00:00:00Z",
+            "refresh-secret",
+        ),
+    )
+    scheduled: list[str] = []
+    monkeypatch.setattr(service, "schedule_sync", lambda run: scheduled.append(run.id))
+
+    assert service.poll_connection(attempt_id=first_attempt.id) == (None, None)
+    assert service.status()[0].id == second_connection.id
+    assert scheduled == []
+
+
+def test_stale_approved_recovery_cannot_replay_against_replacement_connection(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    service, courses = _service(tmp_path, monkeypatch)
+    connect_attempt = service.start_connection()
+    first = service.complete_connection_for_transport(
+        attempt_id=connect_attempt.id,
+        exchange=TokenExchange(
+            "grant-a", "subject-a", "access", "2026-07-23T00:00:00Z",
+            "refresh-secret",
+        ),
+    )
+    repository = BlueWayRepository(courses)
+    recovery_required = repository.require_credential_recovery(
+        first.id, expected_revision=first.revision,
+    )
+    recovery_attempt = service.start_recovery()
+    recovered = service.complete_recovery_for_transport(
+        attempt_id=recovery_attempt.id,
+        exchange=TokenExchange(
+            "grant-recovery", "subject-a", "access", "2026-07-23T00:00:00Z",
+            "refresh-secret",
+        ),
+    )
+    assert recovered.id == recovery_required.id
+    assert service.disconnect(expected_revision=recovered.revision).state == "disconnected"
+    replacement_attempt = service.start_connection()
+    replacement = service.complete_connection_for_transport(
+        attempt_id=replacement_attempt.id,
+        exchange=TokenExchange(
+            "grant-b", "subject-b", "access", "2026-07-23T00:00:00Z",
+            "refresh-secret",
+        ),
+    )
+
+    assert service.poll_recovery(attempt_id=recovery_attempt.id) == (None, None)
+    assert service.status()[0].id == replacement.id
+
+
+def test_concurrent_normal_pairing_poll_rejects_duplicate_without_duplicate_sync(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    entered, release = threading.Event(), threading.Event()
+
+    class BlockingApprovedTransport(FakeTransport):
+        exchange_calls = 0
+
+        def exchange(self, **_kwargs) -> TokenExchange:
+            self.exchange_calls += 1
+            entered.set()
+            assert release.wait(5)
+            return TokenExchange(
+                "grant-a", "subject-a", "access", "2026-07-23T00:00:00Z",
+                "refresh-secret",
+            )
+
+    transport = BlockingApprovedTransport()
+    service, _courses = _service(tmp_path, monkeypatch)
+    service.transport = transport
+    attempt = service.start_connection()
+    scheduled: list[str] = []
+    monkeypatch.setattr(service, "schedule_sync", lambda run: scheduled.append(run.id))
+    result: dict[str, object] = {}
+
+    def poll() -> None:
+        try:
+            result["value"] = service.poll_connection(attempt_id=attempt.id)
+        except BaseException as exc:  # noqa: BLE001 - retain the cross-thread result.
+            result["error"] = exc
+
+    thread = threading.Thread(target=poll)
+    thread.start()
+    assert entered.wait(5)
+    with pytest.raises(CourseConflictError, match="already being completed"):
+        service.poll_connection(attempt_id=attempt.id)
+    release.set()
+    thread.join(5)
+
+    assert not thread.is_alive()
+    assert "error" not in result
+    connection, run = result["value"]  # type: ignore[misc]
+    assert connection is not None and run is not None
+    assert scheduled == [run.id]
+    assert transport.exchange_calls == 1
+
+
+def test_schedule_sync_clears_marker_when_executor_submission_fails(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    service, _courses = _service(tmp_path, monkeypatch)
+    attempt = service.start_connection()
+    connection = service.complete_connection_for_transport(
+        attempt_id=attempt.id,
+        exchange=TokenExchange(
+            "grant-a", "subject-a", "access", "2026-07-23T00:00:00Z",
+            "refresh-secret",
+        ),
+    )
+    run = service.queue_sync()
+
+    class FailingExecutor:
+        @staticmethod
+        def submit(_worker) -> None:
+            raise RuntimeError("executor unavailable")
+
+    service._executor = FailingExecutor()  # type: ignore[assignment]  # noqa: SLF001
+    with pytest.raises(RuntimeError, match="executor unavailable"):
+        service.schedule_sync(run)
+    assert (connection.owner_user_id, connection.id) not in service._scheduled_connections  # noqa: SLF001
+
+
 def test_disconnect_wins_the_generation_fence_before_late_course_map(tmp_path: Path) -> None:
     repository = BlueWayRepository(CourseRepository(tmp_path / "courses.db", "owner-a"))
     connection = repository.create_active_connection(external_subject="subject-a", scope_version="academic.read.v1")
@@ -465,6 +900,11 @@ def test_disconnect_fences_before_remote_revoke_and_retries(tmp_path: Path, monk
     service, courses = _service(tmp_path, monkeypatch)
     paths = PathService(tmp_path / "workspace")
     fake = service.transport
+    events: list[tuple[str, dict[str, object]]] = []
+    monkeypatch.setattr(
+        "deeptutor.integrations.blueway.service.emit_blueway_event",
+        lambda event, **fields: events.append((event, fields)),
+    )
     attempt = service.start_connection()
     connection = service.complete_connection_for_transport(attempt_id=attempt.id, exchange=TokenExchange("grant-a", "subject-a", "access", "2026-07-23T00:00:00Z", "refresh-secret"))
     queued = service.queue_sync()
@@ -476,10 +916,152 @@ def test_disconnect_fences_before_remote_revoke_and_retries(tmp_path: Path, monk
     assert pending is not None and pending.state == "revocation_pending" and pending.grant_generation == 2
     assert repository.get_run(queued.id).state == "cancelled"
     assert (paths.get_integration_credentials_dir() / f"{connection.id}.enc").exists()
+    revoke_failure = next(
+        fields for event, fields in events if event == "blueway_connection_revoke_failed"
+    )
+    assert revoke_failure["state_to"] == "revocation_pending"
     fake.fail_revoke = False
     finished = service.disconnect(expected_revision=pending.revision)
     assert finished.state == "disconnected"
     assert not (paths.get_integration_credentials_dir() / f"{connection.id}.enc").exists()
+
+
+def test_legacy_connection_gets_one_durable_trace_on_first_preflight(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    service, courses = _service(tmp_path, monkeypatch)
+    repository = BlueWayRepository(courses)
+    connection = repository.create_active_connection(
+        external_subject="subject-a", scope_version="academic.read.v1",
+    )
+    CredentialStore(
+        PathService(tmp_path / "workspace").get_integration_credentials_dir(),
+        service.settings.master_key,
+    ).write(
+        owner_user_id="owner-a",
+        connection_id=connection.id,
+        scope_version=connection.scope_version,
+        refresh_token="refresh-secret",
+    )
+
+    first, _run = service.status()
+    second, _run = service.status()
+
+    assert first is not None and first.observability_trace_id is not None
+    assert second is not None and second.observability_trace_id == first.observability_trace_id
+    assert repository.get_connection(connection.id).observability_trace_id == first.observability_trace_id
+
+
+def test_first_legacy_sync_uses_backfilled_trace_for_requested_and_duplicate_events(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    service, courses = _service(tmp_path, monkeypatch)
+    repository = BlueWayRepository(courses)
+    connection = repository.create_active_connection(
+        external_subject="subject-a", scope_version="academic.read.v1",
+    )
+    CredentialStore(
+        PathService(tmp_path / "workspace").get_integration_credentials_dir(),
+        service.settings.master_key,
+    ).write(
+        owner_user_id="owner-a",
+        connection_id=connection.id,
+        scope_version=connection.scope_version,
+        refresh_token="refresh-secret",
+    )
+    events: list[tuple[str, dict[str, object]]] = []
+    monkeypatch.setattr(
+        "deeptutor.integrations.blueway.service.emit_blueway_event",
+        lambda event, **fields: events.append((event, fields)),
+    )
+
+    first = service.queue_sync()
+    second = service.queue_sync()
+
+    assert second.id == first.id
+    requested = next(fields for event, fields in events if event == "blueway_sync_requested")
+    suppressed = next(
+        fields for event, fields in events if event == "blueway_sync_duplicate_suppressed"
+    )
+    assert requested["trace_id"] == suppressed["trace_id"]
+    assert requested["trace_id"] == repository.get_connection(connection.id).observability_trace_id
+
+
+def test_credential_recovery_events_cover_required_wrong_account_and_success(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    service, _courses = _service(tmp_path, monkeypatch)
+    events: list[tuple[str, dict[str, object]]] = []
+    monkeypatch.setattr(
+        "deeptutor.integrations.blueway.service.emit_blueway_event",
+        lambda event, **fields: events.append((event, fields)),
+    )
+    attempt = service.start_connection()
+    connection = service.complete_connection_for_transport(
+        attempt_id=attempt.id,
+        exchange=TokenExchange(
+            "grant-a", "subject-a", "access", "2026-07-23T00:00:00Z",
+            "refresh-secret",
+        ),
+    )
+    credential = (
+        PathService(tmp_path / "workspace").get_integration_credentials_dir()
+        / f"{connection.id}.enc"
+    )
+    credential.unlink()
+    recovered_connection, _run = service.status()
+    assert recovered_connection is not None
+    assert recovered_connection.credential_status == "recovery_required"
+
+    wrong_attempt = service.start_recovery()
+    with pytest.raises(
+        BlueWayCredentialRecoveryRequired, match="same BlueWay account",
+    ):
+        service.complete_recovery_for_transport(
+            attempt_id=wrong_attempt.id,
+            exchange=TokenExchange(
+                "grant-b", "subject-b", "access", "2026-07-23T00:00:00Z",
+                "refresh-secret",
+            ),
+        )
+    original_stage = CredentialStore.stage_recovery
+    monkeypatch.setattr(
+        CredentialStore,
+        "stage_recovery",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(OSError("disk unavailable")),
+    )
+    failed_attempt = service.start_recovery()
+    with pytest.raises(OSError, match="disk unavailable"):
+        service.complete_recovery_for_transport(
+            attempt_id=failed_attempt.id,
+            exchange=TokenExchange(
+                "grant-failed", "subject-a", "access", "2026-07-23T00:00:00Z",
+                "refresh-secret",
+            ),
+        )
+    monkeypatch.setattr(CredentialStore, "stage_recovery", original_stage)
+    success_attempt = service.start_recovery()
+    completed = service.complete_recovery_for_transport(
+        attempt_id=success_attempt.id,
+        exchange=TokenExchange(
+            "grant-c", "subject-a", "access", "2026-07-23T00:00:00Z",
+            "refresh-secret",
+        ),
+    )
+
+    assert completed.credential_status == "healthy"
+    names = [event for event, _fields in events]
+    assert "blueway_credential_recovery_required" in names
+    assert "blueway_pairing_wrong_account" in names
+    recovery_failure = next(
+        fields
+        for event, fields in events
+        if event == "blueway_pairing_approval_rejected"
+        and fields.get("reason_code") == "recovery_failed"
+    )
+    assert recovery_failure["state_to"] == "failed"
+    assert names.count("blueway_pairing_approval_received") >= 1
+    assert names.count("blueway_pairing_exchanged") >= 1
 
 
 def test_durable_sync_mirrors_exact_courses_and_unlinked_records(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -494,6 +1076,61 @@ def test_durable_sync_mirrors_exact_courses_and_unlinked_records(tmp_path: Path,
     assert all(len(sources) == 1 and sources[0].state == "ready" for sources in generated)
     assert len({sources[0].operation_id for sources in generated}) == 2
     assert all(len(str(sources[0].idempotency_key)) <= 160 for sources in generated)
+
+
+def test_queue_sync_deduplicates_an_active_connection_run(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    service, courses = _service(tmp_path, monkeypatch)
+    attempt = service.start_connection()
+    connection = service.complete_connection_for_transport(
+        attempt_id=attempt.id,
+        exchange=TokenExchange("grant-a", "subject-a", "access", "2026-07-23T00:00:00Z", "refresh-secret"),
+    )
+
+    first = service.queue_sync()
+    second = service.queue_sync()
+
+    assert second.id == first.id
+    assert second.state == "queued"
+    with courses._connect() as conn:  # noqa: SLF001 - assert durable de-duplication.
+        active = conn.execute(
+            "SELECT COUNT(*) AS count FROM blueway_sync_runs WHERE connection_id = ? AND state IN ('queued','fetching','validating','staging','indexing')",
+            (connection.id,),
+        ).fetchone()
+    assert active is not None and active["count"] == 1
+
+
+def test_concurrent_queue_sync_events_use_authoritative_dedup_result(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    service, _courses = _service(tmp_path, monkeypatch)
+    attempt = service.start_connection()
+    service.complete_connection_for_transport(
+        attempt_id=attempt.id,
+        exchange=TokenExchange(
+            "grant-a", "subject-a", "access", "2026-07-23T00:00:00Z",
+            "refresh-secret",
+        ),
+    )
+    barrier = threading.Barrier(2)
+    original = BlueWayRepository.queue_sync_result
+
+    def synchronized_queue(repository, connection_id):
+        barrier.wait(timeout=5)
+        return original(repository, connection_id)
+
+    events: list[str] = []
+    monkeypatch.setattr(BlueWayRepository, "queue_sync_result", synchronized_queue)
+    monkeypatch.setattr(
+        "deeptutor.integrations.blueway.service.emit_blueway_event",
+        lambda event, **_fields: events.append(event),
+    )
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        runs = list(executor.map(lambda _index: service.queue_sync(), range(2)))
+
+    assert runs[0].id == runs[1].id
+    assert events.count("blueway_sync_requested") == 1
+    assert events.count("blueway_sync_duplicate_suppressed") == 1
 
 
 def test_snapshot_is_offline_bounded_and_rejects_raw_audio() -> None:
@@ -711,7 +1348,10 @@ def test_fifty_owner_repositories_are_isolated_under_concurrent_local_operations
         visible = repo.visible_connection()
         assert visible is not None and visible.id == connection.id
         return owner, repo.get_connection(connection.id).owner_user_id
-    with ThreadPoolExecutor(max_workers=10) as pool:
+    # Fresh private databases perform CPU/GIL-bound schema validation. Ten
+    # workers oversubscribe that work and make this isolation test appear hung
+    # without increasing the concurrency coverage of the owner operations.
+    with ThreadPoolExecutor(max_workers=4) as pool:
         results = list(pool.map(create, range(50)))
     assert results == [(f"owner-{index:02d}", f"owner-{index:02d}") for index in range(50)]
     assert len({tmp_path / owner / "courses.db" for owner, _ in results}) == 50
@@ -923,17 +1563,60 @@ def test_generated_blueway_fixture_validates_with_explicit_unavailable_datasets(
 
 def test_permanent_refresh_authority_loss_removes_credential_and_fences_connection(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     service, courses = _service(tmp_path, monkeypatch)
+    events: list[tuple[str, dict[str, object]]] = []
+    monkeypatch.setattr(
+        "deeptutor.integrations.blueway.service.emit_blueway_event",
+        lambda event, **fields: events.append((event, fields)),
+    )
     attempt = service.start_connection()
     connection = service.complete_connection_for_transport(attempt_id=attempt.id, exchange=TokenExchange("grant-a", "subject-a", "access", "2026-07-23T00:00:00Z", "refresh-secret"))
     class Rejected(FakeTransport):
         def refresh(self, *, refresh_token: str, rotation_request_id: str):
             raise BlueWayAuthorityError("revoked")
     service.transport = Rejected()
+    run = service.queue_sync()
     with pytest.raises(BlueWayAuthorityError):
-        service.run_queued_sync(run_id=service.queue_sync().id)
+        service.run_queued_sync(run_id=run.id)
     repository = BlueWayRepository(courses)
     assert repository.get_connection(connection.id).state == "error"
+    assert repository.get_run(run.id).state == "cancelled"
+    failure = [fields for event, fields in events if event == "blueway_sync_failed"][-1]
+    assert failure["state_to"] == "cancelled"
+    assert failure["reason_code"] == "provider_authority_lost"
     assert not (PathService(tmp_path / "workspace").get_integration_credentials_dir() / f"{connection.id}.enc").exists()
+
+
+def test_missing_credential_cancels_run_and_event_matches_durable_state(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    service, courses = _service(tmp_path, monkeypatch)
+    events: list[tuple[str, dict[str, object]]] = []
+    monkeypatch.setattr(
+        "deeptutor.integrations.blueway.service.emit_blueway_event",
+        lambda event, **fields: events.append((event, fields)),
+    )
+    attempt = service.start_connection()
+    connection = service.complete_connection_for_transport(
+        attempt_id=attempt.id,
+        exchange=TokenExchange(
+            "grant-a", "subject-a", "access", "2026-07-23T00:00:00Z",
+            "refresh-secret",
+        ),
+    )
+    run = service.queue_sync()
+    credential = (
+        PathService(tmp_path / "workspace").get_integration_credentials_dir()
+        / f"{connection.id}.enc"
+    )
+    credential.unlink()
+
+    with pytest.raises(BlueWayCredentialRecoveryRequired):
+        service.run_queued_sync(run_id=run.id)
+
+    assert BlueWayRepository(courses).get_run(run.id).state == "cancelled"
+    failure = [fields for event, fields in events if event == "blueway_sync_failed"][-1]
+    assert failure["state_to"] == "cancelled"
+    assert failure["reason_code"] == "credential_recovery_required"
 
 
 def test_refresh_reuses_one_request_id_then_revokes_late_old_token() -> None:
@@ -1286,3 +1969,89 @@ def test_api_status_is_stable_and_disabled_by_default() -> None:
         blueway_router.set_test_service(None)
     assert response.status_code == 200
     assert response.json() == {"enabled": False, "connection": None, "active_run": None}
+
+
+def test_api_status_event_preserves_revocation_pending(monkeypatch: pytest.MonkeyPatch) -> None:
+    from deeptutor.integrations.blueway import router as blueway_router
+
+    connection = SimpleNamespace(
+        id="bwc_pending",
+        state="revocation_pending",
+        credential_status="healthy",
+        revision=2,
+        scope_version="academic.read.v1",
+        connected_at=1.0,
+        last_sync_at=None,
+        observability_trace_id="bwr_11111111-1111-4111-8111-111111111111",
+    )
+    service = SimpleNamespace(
+        settings=SimpleNamespace(enabled=True),
+        status=lambda: (connection, None),
+    )
+    events: list[tuple[str, dict[str, object]]] = []
+    monkeypatch.setattr(
+        blueway_router,
+        "emit_blueway_event",
+        lambda event, **fields: events.append((event, fields)),
+    )
+    blueway_router.set_test_service(service)
+    app = FastAPI()
+    app.include_router(blueway_router.router, prefix="/api/v1/integrations/blueway")
+    try:
+        response = TestClient(app).get("/api/v1/integrations/blueway")
+    finally:
+        blueway_router.set_test_service(None)
+
+    assert response.status_code == 200
+    assert response.json()["connection"]["state"] == "revocation_pending"
+    assert events[-1][0] == "blueway_connection_status_read"
+    assert events[-1][1]["state_to"] == "revocation_pending"
+
+
+def test_sync_failure_event_preserves_concurrent_cancellation(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    service, courses = _service(tmp_path, monkeypatch)
+    attempt = service.start_connection()
+    connection = service.complete_connection_for_transport(
+        attempt_id=attempt.id,
+        exchange=TokenExchange(
+            "grant-a", "subject-a", "access", "2026-07-23T00:00:00Z",
+            "refresh-secret",
+        ),
+    )
+    events: list[tuple[str, dict[str, object]]] = []
+    monkeypatch.setattr(
+        "deeptutor.integrations.blueway.service.emit_blueway_event",
+        lambda event, **fields: events.append((event, fields)),
+    )
+    run = service.queue_sync()
+    fetch_started = threading.Event()
+    release_fetch = threading.Event()
+
+    def fail_after_disconnect(**_kwargs):
+        fetch_started.set()
+        assert release_fetch.wait(5)
+        raise BlueWayTransportError("offline")
+
+    monkeypatch.setattr(
+        service.transport,
+        "fetch_snapshot",
+        fail_after_disconnect,
+    )
+
+    with ThreadPoolExecutor(max_workers=1) as executor:
+        worker = executor.submit(service.run_queued_sync, run_id=run.id)
+        assert fetch_started.wait(5)
+        disconnected = service.disconnect(expected_revision=connection.revision)
+        assert disconnected.state == "disconnected"
+        release_fetch.set()
+        with pytest.raises(BlueWayTransportError, match="offline"):
+            worker.result(timeout=5)
+
+    persisted = BlueWayRepository(courses).get_run(run.id)
+    assert persisted.state == "cancelled"
+    assert persisted.completed_at is not None
+    failure = [fields for event, fields in events if event == "blueway_sync_failed"][-1]
+    assert failure["state_to"] == "cancelled"
+    assert failure["outcome"] == "terminal"

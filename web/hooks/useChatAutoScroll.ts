@@ -58,6 +58,7 @@ export function useChatAutoScroll({
   const containerRef = useRef<HTMLDivElement>(null);
   const endRef = useRef<HTMLDivElement>(null);
   const shouldAutoScrollRef = useRef(true);
+  const wasStreamingRef = useRef(false);
 
   const pinToBottom = useCallback(() => {
     const container = containerRef.current;
@@ -68,6 +69,18 @@ export function useChatAutoScroll({
     // content has rendered but the scroll position is still stale.
     container.scrollTop = container.scrollHeight;
   }, []);
+
+  // A user may have released the pin while reading older messages. Starting
+  // a new turn is a new navigation intent: follow the reply being generated
+  // so the composer and latest answer stay in view. Re-arm on the transition
+  // itself rather than relying on the caller to win a render/scroll race.
+  useLayoutEffect(() => {
+    if (hasMessages && isStreaming && !wasStreamingRef.current) {
+      shouldAutoScrollRef.current = true;
+      pinToBottom();
+    }
+    wasStreamingRef.current = isStreaming;
+  }, [hasMessages, isStreaming, pinToBottom]);
 
   // Primary pin: runs in layout phase after every render that bumps
   // message count / streaming content / events / composer height /

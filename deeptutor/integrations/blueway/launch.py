@@ -33,6 +33,8 @@ _ACTIVE_RUN_STATES = {"queued", "fetching", "validating", "staging", "indexing"}
 class CourseLaunchResolution:
     status: LaunchStatus
     course_id: str | None = None
+    trace_id: str | None = None
+    connection_ref: str | None = None
 
     def as_dict(self) -> dict[str, str]:
         payload: dict[str, str] = {
@@ -59,20 +61,32 @@ def resolve_course_launch(
 
     course_hint = external_course_id.strip()
     term_hint = external_term_id.strip() if external_term_id is not None else None
+
+    def result(status: LaunchStatus, row: object | None = None, *, course_id: str | None = None) -> CourseLaunchResolution:
+        trace_id = str(row["observability_trace_id"]) if row is not None and row["observability_trace_id"] else None  # type: ignore[index]
+        connection_ref = str(row["connection_id"]) if row is not None and row["connection_id"] else None  # type: ignore[index]
+        return CourseLaunchResolution(status, course_id, trace_id, connection_ref)
+
     if not course_hint or len(course_hint) > 256:
-        return CourseLaunchResolution("course_not_found")
+        return result("course_not_found")
     if external_term_id is not None and not term_hint:
-        return CourseLaunchResolution("term_mismatch")
+        return result("term_mismatch")
 
     with blueway.courses._connect() as conn:  # noqa: SLF001 - owner-scoped read
         rows = conn.execute(
             """SELECT m.connection_id, m.external_course_id, m.external_term_id,
                       m.course_id, m.remote_state, c.state AS course_state,
                       b.state AS connection_state, b.credential_status,
-                      b.last_sync_at
+                      b.last_sync_at, wa.status AS workspace_status,
+                      wa.lease_expires_at, b.observability_trace_id
                  FROM blueway_course_maps AS m
                  JOIN courses AS c ON c.id = m.course_id
                  JOIN blueway_connections AS b ON b.id = m.connection_id
+                 LEFT JOIN blueway_workspace_authorizations AS wa
+                   ON wa.connection_id = b.id
+                  AND wa.external_course_id = m.external_course_id
+                  AND wa.external_term_id IS m.external_term_id
+                  AND wa.status = 'active'
                 WHERE b.owner_user_id = ? AND c.owner_user_id = ?
                   AND m.external_course_id = ?
                 ORDER BY m.updated_at DESC, m.course_id""",
@@ -80,20 +94,20 @@ def resolve_course_launch(
         ).fetchall()
 
         if not rows:
-            return CourseLaunchResolution("course_not_found")
+            return result("course_not_found")
         if external_term_id is None:
             # A termless launch is a narrowly scoped legacy compatibility path:
             # it may select one exact NULL-term mapping, but it must never
             # guess between term-qualified mappings or multiple legacy rows.
             exact_rows = [row for row in rows if row["external_term_id"] is None]
             if len(exact_rows) > 1:
-                return CourseLaunchResolution("course_not_found")
+                return result("course_not_found")
         else:
             exact_rows = [row for row in rows if row["external_term_id"] == term_hint]
         if not exact_rows:
-            return CourseLaunchResolution("term_mismatch")
+            return result("term_mismatch")
         if len(exact_rows) > 1:
-            return CourseLaunchResolution("course_not_found")
+            return result("course_not_found")
 
         live_rows = [
             row for row in exact_rows if row["connection_state"] == "active"
@@ -105,12 +119,12 @@ def resolve_course_launch(
                 in {"revocation_pending", "disconnected", "error"}
                 for row in exact_rows
             ):
-                return CourseLaunchResolution("connection_revoked")
-            return CourseLaunchResolution("course_not_found")
+                return result("connection_revoked", exact_rows[0])
+            return result("course_not_found", exact_rows[0])
 
         row = live_rows[0]
         if row["credential_status"] != "healthy":
-            return CourseLaunchResolution("temporarily_unavailable")
+            return result("temporarily_unavailable", row)
 
         latest_run = conn.execute(
             """SELECT state FROM blueway_sync_runs
@@ -119,12 +133,20 @@ def resolve_course_launch(
             (row["connection_id"],),
         ).fetchone()
         if latest_run and latest_run["state"] == "failed":
-            return CourseLaunchResolution("temporarily_unavailable")
+            return result("temporarily_unavailable", row)
         if latest_run and latest_run["state"] in _ACTIVE_RUN_STATES:
-            return CourseLaunchResolution("course_not_ready")
+            return result("course_not_ready", row)
 
         if row["course_state"] != "active" or row["remote_state"] != "active":
-            return CourseLaunchResolution("course_not_ready")
+            return result("course_not_ready", row)
+
+        # Direct launch is allowed only after a recent signed workspace read
+        # refreshed the exact Course authorization lease. A historical local
+        # row, or a row for another Course/term, cannot authorize launch.
+        if row["workspace_status"] != "active" or row["lease_expires_at"] is None:
+            return result("course_not_ready", row)
+        if float(row["lease_expires_at"]) <= (now if now is not None else time.time()):
+            return result("course_not_ready", row)
 
         source_states = {
             str(source[0])
@@ -134,10 +156,10 @@ def resolve_course_launch(
             ).fetchall()
         }
         if not source_states or "processing" in source_states or "ready" not in source_states:
-            return CourseLaunchResolution("course_not_ready")
+            return result("course_not_ready", row)
 
         if row["last_sync_at"] is None:
-            return CourseLaunchResolution("course_not_ready")
+            return result("course_not_ready", row)
 
         # A stale but previously proven mapping remains openable. Preserve the
         # state so BlueWay and the browser receipt can distinguish stale-open
@@ -146,4 +168,4 @@ def resolve_course_launch(
             (now if now is not None else time.time()) - float(row["last_sync_at"])
             > WORKSPACE_FRESHNESS_SECONDS
         )
-        return CourseLaunchResolution("stale" if is_stale else "ready", str(row["course_id"]))
+        return result("stale" if is_stale else "ready", row, course_id=str(row["course_id"]))

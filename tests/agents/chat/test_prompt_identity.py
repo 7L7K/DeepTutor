@@ -69,6 +69,25 @@ def test_partner_turn_policy_not_added_for_plain_chat():
     assert all(b.name != "partner_turn_policy" for b in blocks)
 
 
+def test_course_chat_policy_is_added_only_for_course_turns():
+    prompts = {**PROMPTS, "course_chat_policy": "Teach one small step at a time."}
+    assembler = ChatPromptAssembler(prompts=prompts, language="en")
+
+    plain_blocks = assembler.blocks(context=UnifiedContext(user_message="hi"), tool_manifest="")
+    course_blocks = assembler.blocks(
+        context=UnifiedContext(
+            user_message="hi",
+            metadata={"course_context": {"course_id": "crs_one"}},
+        ),
+        tool_manifest="",
+    )
+
+    assert all(block.name != "course_chat_policy" for block in plain_blocks)
+    assert next(block for block in course_blocks if block.name == "course_chat_policy").content == (
+        "Teach one small step at a time."
+    )
+
+
 def test_blank_identity_falls_back_to_product():
     context = UnifiedContext(
         user_message="hi",

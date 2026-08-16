@@ -8,6 +8,18 @@ const workspaceSource = readFileSync(
   "utf8",
 );
 
+test("Practice learner navigation defaults to Take and separates authoring from History", () => {
+  assert.match(workspaceSource, /type PracticeTab = "take" \| "create" \| "history"/);
+  assert.match(workspaceSource, /useState<PracticeTab>\("take"\)/);
+  assert.match(workspaceSource, /\["take", "create", "history"\]/);
+  assert.match(workspaceSource, /tab === "take" \? "Take"/);
+  assert.match(workspaceSource, /tab === "create" \? "Create"/);
+  assert.match(workspaceSource, /: "History"/);
+  assert.match(workspaceSource, /activeTab === "create" && !attemptView && revision\?\.state === "draft"/);
+  assert.doesNotMatch(workspaceSource, /activeTab === "take"[^\n]*New Practice title/);
+  assert.match(workspaceSource, /<h2 className="text-lg font-semibold">Practice history<\/h2>/);
+});
+
 test("Practice single-choice uses native grouped radios and immediate option-ID autosave", () => {
   assert.match(workspaceSource, /<fieldset[^>]*disabled=\{interactionReadOnly\}>/);
   assert.match(workspaceSource, /if \(!currentItem \|\| interactionReadOnly\) return;/);

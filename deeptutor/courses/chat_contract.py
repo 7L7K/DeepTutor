@@ -261,6 +261,20 @@ def finalize_course_chat_events(
             for source in (event.metadata or {}).get("sources") or []
             if isinstance(source, Mapping)
         )
+
+    if (
+        _bounded_scalar(course_context.get("answer_mode")) == "general_knowledge"
+        and not course_context.get("source_ids")
+    ):
+        retained = [event for event in event_list if event.type != StreamEventType.SOURCES]
+        for event in retained:
+            if event.type == StreamEventType.CONTENT:
+                event.metadata = {
+                    **event.metadata,
+                    "course_grounding": "general_knowledge",
+                }
+        return retained
+
     citations = build_validated_course_citations(course_context, proposed_sources)
 
     retained = [event for event in event_list if event.type != StreamEventType.SOURCES]

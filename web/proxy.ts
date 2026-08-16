@@ -62,7 +62,7 @@ export function proxy(req: NextRequest): NextResponse {
   //    loading once login is enabled — issue #599).
   if (!AUTH_ENABLED || isAuthExempt(pathname)) {
     const response = NextResponse.next();
-    if (pathname === "/launch/blueway") {
+    if (pathname === "/launch/blueway" || pathname === "/connect/blueway" || pathname === "/connect/blueway/complete") {
       response.headers.set("Cache-Control", "private, no-store");
     }
     return response;
@@ -74,7 +74,7 @@ export function proxy(req: NextRequest): NextResponse {
   }
 
   const response = NextResponse.next();
-  if (pathname === "/launch/blueway") {
+  if (pathname === "/launch/blueway" || pathname === "/connect/blueway" || pathname === "/connect/blueway/complete") {
     response.headers.set("Cache-Control", "private, no-store");
   }
   return response;

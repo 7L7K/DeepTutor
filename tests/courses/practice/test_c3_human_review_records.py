@@ -9,7 +9,6 @@ from scripts.c3_human_review import (
     verify_human_review_record,
 )
 
-
 REFERENCE_ROOT = Path(__file__).resolve().parents[3] / "evals/reference_course"
 REVIEW_ROOT = REFERENCE_ROOT / "human_reviews"
 

@@ -103,6 +103,8 @@ RUN pip install --upgrade pip && \
 # ============================================
 FROM python:3.11-slim AS production
 
+ARG TEEECHR_APP_VERSION=""
+
 # Labels
 LABEL maintainer="DeepTutor Team" \
       description="DeepTutor: AI-Powered Personalized Learning Assistant"
@@ -112,6 +114,8 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
     PYTHONIOENCODING=utf-8 \
     NODE_ENV=production \
+    TEEECHR_ENVIRONMENT=production \
+    TEEECHR_APP_VERSION=${TEEECHR_APP_VERSION} \
     DEEPTUTOR_IGNORE_PROCESS_ENV_OVERRIDES=1
 
 # Code-execution sandbox: the restricted-subprocess backend (which the office
@@ -433,6 +437,8 @@ ENTRYPOINT ["/app/entrypoint.sh"]
 # Stage 4: Development Image (Optional)
 # ============================================
 FROM production AS development
+
+ENV TEEECHR_ENVIRONMENT=development
 
 # Re-add full node_modules for development hot-reload
 # (Production uses standalone output which doesn't include full node_modules)

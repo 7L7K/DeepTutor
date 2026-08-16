@@ -2,20 +2,25 @@
 
 from __future__ import annotations
 
+from concurrent.futures import ThreadPoolExecutor
 import hashlib
 import json
 import logging
-from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 import pytest
 
 from deeptutor.courses.repository import CourseRepository
-from deeptutor.integrations.blueway.repository import BlueWayRepository
+from deeptutor.integrations.blueway.launch import resolve_course_launch
+from deeptutor.integrations.blueway.repository import (
+    BlueWayRepository,
+    WorkspaceAssertionReplayError,
+)
 from deeptutor.integrations.blueway.workspace import (
     WORKSPACE_FRESHNESS_SECONDS,
     ConsentRequiredError,
     project_workspace,
+    revoke_workspace_authorization,
 )
 
 
@@ -26,6 +31,7 @@ def _claims(term: str) -> dict[str, object]:
         "client_id": "blueway-client", "authorization_id": "auth-1",
         "scope": "teeechr.workspace.read.v1", "external_course_id": "course-1",
         "external_term_id": term,
+        "jti": f"jti-{term}", "exp": 1_800_000_060,
     }
 
 
@@ -39,6 +45,9 @@ def test_projection_is_allowlisted_and_term_qualified(tmp_path: Path, monkeypatc
         client_id="blueway-client",
         external_subject_hash=hashlib.sha256(b"blueway-subject").hexdigest(),
         scope="teeechr.workspace.read.v1",
+        connection_id=connection.id,
+        external_course_id="course-1",
+        external_term_id="fall",
     )
     with courses._write_lock, courses._connect() as conn:  # noqa: SLF001
         conn.execute("UPDATE blueway_connections SET last_sync_at = ? WHERE id = ?", (1704067200.0, connection.id))
@@ -75,7 +84,8 @@ def test_projection_is_allowlisted_and_term_qualified(tmp_path: Path, monkeypatc
         "sync": {"last_synced_at": "2024-01-01T00:00:00Z", "is_stale": False},
         "summary": {"connected_sources_count": 1, "meetings_count": 1}, "resume": None, "recommended_next_action": None,
     }
-    assert project_workspace(_claims("spring"))["course"]["title"] == "History II"
+    with pytest.raises(ConsentRequiredError):
+        project_workspace(_claims("spring"))
     encoded = str(result)
     assert fall.id not in encoded and spring.id not in encoded and "owner-one" not in encoded
     assert all(key not in result for key in {"owner_user_id", "id", "sources", "records", "transcript", "notes"})
@@ -98,14 +108,72 @@ def test_projection_is_allowlisted_and_term_qualified(tmp_path: Path, monkeypatc
             "UPDATE blueway_course_maps SET remote_state = 'archived' WHERE course_id = ?",
             (fall.id,),
         )
-    assert project_workspace(_claims("fall"), now=1704067200.0 + 3600.0)["status"] == "not_ready"
+    with pytest.raises(ConsentRequiredError):
+        project_workspace(_claims("fall"), now=1704067200.0 + 3600.0)
     with courses._connect() as conn:  # noqa: SLF001
         assert conn.execute("SELECT COUNT(*) FROM courses WHERE owner_user_id = ?", ("owner-one",)).fetchone()[0] == 2
 
     blueway.revoke_workspace_authorization("auth-1")
-    assert project_workspace(_claims("fall")) == {
-        "schema_version": "teeechr.workspace.v1", "status": "revoked"
+    with pytest.raises(ConsentRequiredError):
+        project_workspace(_claims("fall"))
+
+
+def test_first_valid_assertion_provisions_exact_authorization_and_repeated_reads_are_idempotent(tmp_path: Path, monkeypatch) -> None:
+    db = tmp_path / "courses.db"
+    courses = CourseRepository(db, "owner-one")
+    blueway = BlueWayRepository(courses)
+    connection = blueway.create_active_connection(external_subject="blueway-subject", scope_version="v1")
+    with courses._write_lock, courses._connect() as conn:
+        conn.execute("UPDATE blueway_connections SET last_sync_at = ? WHERE id = ?", (1704067200.0, connection.id))
+    course = blueway.create_course_map(
+        connection_id=connection.id, external_course_id="course-1", external_term_id="fall",
+        remote_title="History", remote_state="active", remote_hash="a" * 64,
+        snapshot_id="snapshot-fall", expected_generation=connection.grant_generation,
+    )
+    source = courses.create_source(course.id, kind="blueway snapshot", display_name="Verified", manifest=[], content_sha256="b" * 64)
+    with courses._write_lock, courses._connect() as conn:
+        conn.execute("UPDATE course_sources SET state = 'ready' WHERE id = ?", (source.id,))
+    monkeypatch.setattr("deeptutor.integrations.blueway.workspace._candidate_databases", lambda: [db])
+
+    first = project_workspace(_claims("fall"), now=1704067200.0 + 3600.0)
+    second = project_workspace(_claims("fall"), now=1704067200.0 + 3600.0)
+    assert first == second
+    with courses._connect() as conn:
+        assert conn.execute("SELECT COUNT(*) FROM blueway_workspace_authorizations").fetchone()[0] == 1
+        row = conn.execute("SELECT status, external_course_id, external_term_id FROM blueway_workspace_authorizations").fetchone()
+    assert tuple(row) == ("active", "course-1", "fall")
+
+    claims = _claims("fall")
+    project_workspace(claims, consume_replay=True)
+    with courses._connect() as conn:
+        lease = conn.execute(
+            "SELECT lease_expires_at FROM blueway_workspace_authorizations WHERE authorization_id = ?",
+            ("auth-1",),
+        ).fetchone()[0]
+    assert float(lease) <= float(claims["exp"])
+    with pytest.raises(WorkspaceAssertionReplayError):
+        project_workspace(claims, consume_replay=True)
+
+    revocation_claims = {
+        **claims,
+        "scope": "teeechr.workspace.revoke.v1",
+        "jti": "revoke-jti-fall",
     }
+    revoked = revoke_workspace_authorization(revocation_claims)
+    assert revoked.status == "revoked"
+    with courses._connect() as conn:
+        assert conn.execute(
+            "SELECT lease_expires_at FROM blueway_workspace_authorizations WHERE authorization_id = ?",
+            ("auth-1",),
+        ).fetchone()[0] is None
+    with pytest.raises(WorkspaceAssertionReplayError):
+        revoke_workspace_authorization(revocation_claims)
+    assert resolve_course_launch(
+        blueway,
+        external_course_id="course-1",
+        external_term_id="fall",
+        now=1704067200.0 + 3600.0,
+    ).status == "course_not_ready"
 
 
 def test_missing_or_altered_authorization_binding_fails_closed(tmp_path: Path, monkeypatch) -> None:

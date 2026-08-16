@@ -1,9 +1,13 @@
 from pathlib import Path
 
 from scripts import run_c3_final_set_plan_v3 as campaign
-from scripts.run_c3_final_set_plan_v2 import _instructions, _request, _set_failure_v2, _slot_contracts
 from scripts.run_c3_final_quality_campaign import _material, _objective_evidence
-
+from scripts.run_c3_final_set_plan_v2 import (
+    _instructions,
+    _request,
+    _set_failure_v2,
+    _slot_contracts,
+)
 
 REFERENCE_ROOT = Path(__file__).resolve().parents[3] / "evals/reference_course"
 
