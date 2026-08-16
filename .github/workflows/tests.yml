@@ -236,7 +236,7 @@ jobs:
           {
             echo "### Python test diagnostics (${{ matrix.python-version }})"
             echo "- Full pytest suite: ${test_duration}s"
-            echo "- Parallel mode: xdist auto workers with file-level scheduling"
+            echo "- Parallel mode: xdist 4 workers with file-level scheduling"
             echo '- Slowest tests: see the `--durations=20` output above'
           } >> "$GITHUB_STEP_SUMMARY"
           exit "$test_status"
