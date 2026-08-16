@@ -4,6 +4,7 @@ import importlib.util
 from pathlib import Path
 import sys
 
+from deeptutor.courses.migrations import runner
 from deeptutor.courses.migrations.runner import (
     discover_migrations,
     ensure_course_schema,
@@ -46,19 +47,20 @@ def test_main_reports_invalid_data_root_without_masking_the_error(
     assert "Data root is not a real directory" in capsys.readouterr().err
 
 
-def test_verify_then_apply_covers_all_discovered_databases(tmp_path: Path) -> None:
+def test_verify_then_apply_covers_all_discovered_databases(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
     module = _module()
     (tmp_path / "user").mkdir()
     (tmp_path / "users" / "alice" / "user").mkdir(parents=True)
     paths = (tmp_path / "user" / "courses.db", tmp_path / "users" / "alice" / "user" / "courses.db")
+    artifacts = discover_migrations()
+    through_0016 = artifacts[:17]
+    monkeypatch.setattr(runner, "discover_migrations", lambda: through_0016)
     for path in paths:
         ensure_course_schema(path)
-        with open_course_connection(path) as conn:
-            conn.execute("DELETE FROM schema_migrations WHERE version = 18")
-            conn.execute("DELETE FROM schema_migrations WHERE version = 17")
-            conn.execute("ALTER TABLE blueway_connections DROP COLUMN observability_trace_id")
-            conn.execute("DROP TABLE blueway_workspace_assertion_replays")
-    artifacts = discover_migrations()
+    monkeypatch.setattr(runner, "discover_migrations", lambda: artifacts)
     results = [module.check_database(path, apply=False, artifacts=artifacts) for path in paths]
     assert [result.status for result in results] == ["pending", "pending"]
     assert all(

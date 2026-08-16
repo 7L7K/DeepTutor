@@ -14,6 +14,11 @@ on:
   release:
     types: [published]
 
+concurrency:
+  group: docker-release
+  queue: max
+  cancel-in-progress: false
+
 permissions:
   contents: read
   packages: write
@@ -24,8 +29,59 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout code
+      - name: Checkout release tag
         uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.release.tag_name }}
+          fetch-depth: 0
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install release version parser
+        run: python -m pip install --disable-pip-version-check "packaging==25.0"
+
+      - name: Verify release source and version
+        id: version
+        shell: bash
+        env:
+          RELEASE_TAG: ${{ github.event.release.tag_name }}
+          RELEASE_EVENT_SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          git fetch origin main:refs/remotes/origin/main --no-tags
+          tag_commit="$(git rev-list -n 1 "$RELEASE_TAG")"
+          checkout_commit="$(git rev-parse HEAD)"
+          if ! git merge-base --is-ancestor "$tag_commit" origin/main; then
+            echo "Release tag $RELEASE_TAG is not on origin/main." >&2
+            exit 1
+          fi
+          if [[ "$checkout_commit" != "$tag_commit" || "$RELEASE_EVENT_SHA" != "$tag_commit" ]]; then
+            echo "Release source identity is inconsistent." >&2
+            echo "checkout=$checkout_commit tag=$tag_commit event=$RELEASE_EVENT_SHA" >&2
+            exit 1
+          fi
+          python - <<'PY'
+          import os
+          import re
+          from pathlib import Path
+          from packaging.version import Version
+
+          tag = os.environ["RELEASE_TAG"]
+          expected = str(Version(tag[1:] if tag.startswith("v") else tag))
+          source = Path("deeptutor/__version__.py").read_text(encoding="utf-8")
+          match = re.search(r'^__version__\s*=\s*"([^"]+)"', source, re.MULTILINE)
+          actual = str(Version(match.group(1))) if match else "missing"
+          if actual != expected:
+              raise SystemExit(
+                  f"Release tag version {expected!r} does not match source {actual!r}."
+              )
+          with Path(os.environ["GITHUB_OUTPUT"]).open("a", encoding="utf-8") as output:
+              output.write(f"version={expected}\n")
+          PY
+          echo "commit=$tag_commit" >> "$GITHUB_OUTPUT"
 
       # Required for linux/arm64 cross-compilation on GitHub-hosted ubuntu runners
       - name: Set up QEMU
@@ -51,22 +107,211 @@ jobs:
         with:
           images: ghcr.io/hkuds/deeptutor
           tags: |
-            type=semver,pattern={{version}}
+            type=pep440,pattern={{version}}
             type=raw,value=latest
+          labels: |
+            org.opencontainers.image.revision=${{ steps.version.outputs.commit }}
+            org.opencontainers.image.version=${{ steps.version.outputs.version }}
 
-      - name: Build and push
+      # Push each platform without a mutable tag. The digest returned by each
+      # build is the exact artifact verified below and later promoted into the
+      # release manifest; there is no rebuild after verification.
+      - name: Build and push amd64 image by digest
+        id: build_amd64
         uses: docker/build-push-action@v6
         with:
           context: .
           file: ./Dockerfile
           target: production
-          platforms: linux/amd64,linux/arm64
-          push: true
+          platforms: linux/amd64
           provenance: mode=max
           sbom: true
-          tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
-          # Use GitHub Actions cache to speed up repeated builds
-          # mode=max caches all intermediate layers (frontend-builder and python-base are expensive)
+          build-args: |
+            TEEECHR_APP_VERSION=${{ steps.version.outputs.version }}
+          outputs: type=image,name=ghcr.io/hkuds/deeptutor,push-by-digest=true,name-canonical=true,push=true
           cache-from: type=gha
           cache-to: type=gha,mode=max
+
+      - name: Build and push arm64 image by digest
+        id: build_arm64
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ./Dockerfile
+          target: production
+          platforms: linux/arm64
+          provenance: mode=max
+          sbom: true
+          labels: ${{ steps.meta.outputs.labels }}
+          build-args: |
+            TEEECHR_APP_VERSION=${{ steps.version.outputs.version }}
+          outputs: type=image,name=ghcr.io/hkuds/deeptutor,push-by-digest=true,name-canonical=true,push=true
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Pull and verify exact platform digests
+        env:
+          IMAGE: ghcr.io/hkuds/deeptutor
+          AMD64_DIGEST: ${{ steps.build_amd64.outputs.digest }}
+          ARM64_DIGEST: ${{ steps.build_arm64.outputs.digest }}
+          RELEASE_VERSION: ${{ steps.version.outputs.version }}
+          RELEASE_COMMIT: ${{ steps.version.outputs.commit }}
+        run: |
+          set -euo pipefail
+
+          verify_platform() {
+            local platform="$1"
+            local digest="$2"
+            local image_ref="$IMAGE@$digest"
+
+            if [[ ! "$digest" =~ ^sha256:[0-9a-f]{64}$ ]]; then
+              echo "Invalid $platform digest: $digest" >&2
+              exit 1
+            fi
+
+            docker pull --platform "$platform" "$image_ref"
+
+            local revision
+            local image_version
+            revision="$(docker image inspect \
+              --format '{{ index .Config.Labels "org.opencontainers.image.revision" }}' \
+              "$image_ref")"
+            image_version="$(docker image inspect \
+              --format '{{ index .Config.Labels "org.opencontainers.image.version" }}' \
+              "$image_ref")"
+            if [[ "$revision" != "$RELEASE_COMMIT" ]]; then
+              echo "$platform image revision $revision does not match $RELEASE_COMMIT." >&2
+              exit 1
+            fi
+            if [[ "$image_version" != "$RELEASE_VERSION" ]]; then
+              echo "$platform image version $image_version does not match $RELEASE_VERSION." >&2
+              exit 1
+            fi
+
+            docker run --rm \
+              --platform "$platform" \
+              --entrypoint python \
+              -e EXPECTED_RELEASE_VERSION="$RELEASE_VERSION" \
+              -e PYTHONPATH=/app \
+              "$image_ref" \
+              /app/scripts/verify-teeechr-release-container.py
+          }
+
+          verify_platform linux/amd64 "$AMD64_DIGEST"
+          verify_platform linux/arm64 "$ARM64_DIGEST"
+
+      - name: Verify platform index receipts
+        id: platform_receipts
+        env:
+          IMAGE: ghcr.io/hkuds/deeptutor
+          AMD64_DIGEST: ${{ steps.build_amd64.outputs.digest }}
+          ARM64_DIGEST: ${{ steps.build_arm64.outputs.digest }}
+        run: |
+          set -euo pipefail
+
+          amd64_output="$(mktemp)"
+          arm64_output="$(mktemp)"
+          python .github/scripts/verify-docker-release-manifest.py platform \
+            --image "$IMAGE" \
+            --digest "$AMD64_DIGEST" \
+            --platform linux/amd64 \
+            --output "$amd64_output"
+          python .github/scripts/verify-docker-release-manifest.py platform \
+            --image "$IMAGE" \
+            --digest "$ARM64_DIGEST" \
+            --platform linux/arm64 \
+            --output "$arm64_output"
+          echo "amd64_payload=$(sed -n 's/^payload_digest=//p' "$amd64_output")" >> "$GITHUB_OUTPUT"
+          echo "arm64_payload=$(sed -n 's/^payload_digest=//p' "$arm64_output")" >> "$GITHUB_OUTPUT"
+
+      # Assemble under a commit-scoped quarantine tag. Public release tags are
+      # untouched until this exact candidate digest passes structural and
+      # attestation validation.
+      - name: Assemble and verify candidate manifest
+        id: candidate
+        env:
+          IMAGE: ghcr.io/hkuds/deeptutor
+          AMD64_DIGEST: ${{ steps.build_amd64.outputs.digest }}
+          ARM64_DIGEST: ${{ steps.build_arm64.outputs.digest }}
+          AMD64_PAYLOAD: ${{ steps.platform_receipts.outputs.amd64_payload }}
+          ARM64_PAYLOAD: ${{ steps.platform_receipts.outputs.arm64_payload }}
+          RELEASE_COMMIT: ${{ steps.version.outputs.commit }}
+        run: |
+          set -euo pipefail
+
+          candidate_ref="$IMAGE:candidate-$RELEASE_COMMIT"
+          metadata_file="$(mktemp)"
+          docker buildx imagetools create \
+            --tag "$candidate_ref" \
+            --metadata-file "$metadata_file" \
+            "$IMAGE@$AMD64_DIGEST" \
+            "$IMAGE@$ARM64_DIGEST"
+          manifest_digest="$(jq -er '."containerimage.descriptor".digest' "$metadata_file")"
+          if [[ ! "$manifest_digest" =~ ^sha256:[0-9a-f]{64}$ ]]; then
+            echo "Could not resolve the candidate manifest digest." >&2
+            exit 1
+          fi
+          python .github/scripts/verify-docker-release-manifest.py release \
+            --image "$IMAGE" \
+            --digest "$manifest_digest" \
+            --amd64-payload "$AMD64_PAYLOAD" \
+            --arm64-payload "$ARM64_PAYLOAD"
+          echo "manifest_digest=$manifest_digest" >> "$GITHUB_OUTPUT"
+
+      - name: Promote verified manifest to release tags
+        id: manifest
+        env:
+          IMAGE: ghcr.io/hkuds/deeptutor
+          DOCKER_TAGS: ${{ steps.meta.outputs.tags }}
+          MANIFEST_DIGEST: ${{ steps.candidate.outputs.manifest_digest }}
+          AMD64_PAYLOAD: ${{ steps.platform_receipts.outputs.amd64_payload }}
+          ARM64_PAYLOAD: ${{ steps.platform_receipts.outputs.arm64_payload }}
+        run: |
+          set -euo pipefail
+
+          mapfile -t tags <<< "$DOCKER_TAGS"
+          tag_args=()
+          for tag in "${tags[@]}"; do
+            if [[ -n "$tag" ]]; then
+              tag_args+=(--tag "$tag")
+            fi
+          done
+          if (( ${#tag_args[@]} == 0 )); then
+            echo "No release tags were generated." >&2
+            exit 1
+          fi
+
+          docker buildx imagetools create \
+            "${tag_args[@]}" \
+            "$IMAGE@$MANIFEST_DIGEST"
+
+          while IFS= read -r tag; do
+            [[ -n "$tag" ]] || continue
+            tag_digest="$(
+              docker buildx imagetools inspect "$tag" --format '{{.Manifest.Digest}}'
+            )"
+            if [[ ! "$tag_digest" =~ ^sha256:[0-9a-f]{64}$ ]]; then
+              echo "$tag returned an invalid manifest digest: $tag_digest" >&2
+              exit 1
+            fi
+            if [[ "$tag_digest" != "$MANIFEST_DIGEST" ]]; then
+              echo "$tag resolved to $tag_digest instead of $MANIFEST_DIGEST." >&2
+              exit 1
+            fi
+          done <<< "$DOCKER_TAGS"
+
+          {
+            echo "manifest_digest=$MANIFEST_DIGEST"
+          } >> "$GITHUB_OUTPUT"
+
+          {
+            echo "### Verified Docker release artifacts"
+            echo
+            echo "- Source revision: \`${{ steps.version.outputs.commit }}\`"
+            echo "- amd64 build index: \`${{ steps.build_amd64.outputs.digest }}\`"
+            echo "- amd64 payload: \`$AMD64_PAYLOAD\`"
+            echo "- arm64 build index: \`${{ steps.build_arm64.outputs.digest }}\`"
+            echo "- arm64 payload: \`$ARM64_PAYLOAD\`"
+            echo "- manifest: \`$MANIFEST_DIGEST\`"
+          } >> "$GITHUB_STEP_SUMMARY"

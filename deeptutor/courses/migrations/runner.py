@@ -2,17 +2,22 @@
 
 from __future__ import annotations
 
+from contextlib import contextmanager
+import copy
 from dataclasses import dataclass
 from datetime import UTC, datetime
+from functools import lru_cache
 import hashlib
 from importlib import resources
 import json
+import os
 from pathlib import Path
 import re
 import sqlite3
+import stat
 import threading
 import time
-from typing import Any, Iterable
+from typing import Any, Iterable, Iterator
 import unicodedata
 
 from pydantic import TypeAdapter, ValidationError
@@ -29,6 +34,118 @@ from deeptutor.courses.practice_models import (
 
 _MIGRATION_FILE = re.compile(r"^(?P<version>\d{4})_(?P<name>[a-z0-9_]+)\.sql$")
 _CORE_PHASE3A_TABLES = frozenset({"courses", "course_sources"})
+_EXPECTED_SIGNATURE_CACHE_LOCK = threading.Lock()
+
+
+@contextmanager
+def _windows_migration_batch_lock(db_path: Path) -> Iterator[None]:
+    """Use a process-session mutex without following a filesystem reparse point."""
+
+    import ctypes
+    from ctypes import wintypes
+
+    mutex_name = "Local\\DeepTutorCourseMigration-" + hashlib.sha256(
+        os.path.normcase(str(db_path)).encode("utf-8")
+    ).hexdigest()
+    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    create_mutex = kernel32.CreateMutexW
+    create_mutex.argtypes = (wintypes.LPVOID, wintypes.BOOL, wintypes.LPCWSTR)
+    create_mutex.restype = wintypes.HANDLE
+    wait_for_single_object = kernel32.WaitForSingleObject
+    wait_for_single_object.argtypes = (wintypes.HANDLE, wintypes.DWORD)
+    wait_for_single_object.restype = wintypes.DWORD
+    release_mutex = kernel32.ReleaseMutex
+    release_mutex.argtypes = (wintypes.HANDLE,)
+    release_mutex.restype = wintypes.BOOL
+    close_handle = kernel32.CloseHandle
+    close_handle.argtypes = (wintypes.HANDLE,)
+    close_handle.restype = wintypes.BOOL
+
+    handle = create_mutex(None, False, mutex_name)
+    if not handle:
+        raise CourseMigrationError(
+            f"Could not create Course migration mutex: {db_path}"
+        )
+    acquired = False
+    try:
+        result = int(wait_for_single_object(handle, 10_000))
+        if result not in {0x00000000, 0x00000080}:  # object or abandoned mutex
+            if result == 0x00000102:
+                raise CourseMigrationError(
+                    f"Timed out waiting for Course migration lock: {db_path}"
+                )
+            raise CourseMigrationError(
+                f"Could not acquire Course migration mutex: {db_path}"
+            )
+        acquired = True
+        yield
+    finally:
+        if acquired:
+            release_mutex(handle)
+        close_handle(handle)
+
+
+@contextmanager
+def _migration_batch_lock(db_path: Path) -> Iterator[None]:
+    """Serialize a database's migration batch without widening SQL rollback.
+
+    SQLite transactions remain authoritative for each individual migration.
+    The Windows named mutex or POSIX sidecar lock prevents separate processes
+    from interleaving those committed steps and splitting the list of versions
+    reported by one startup. The POSIX lock file is intentionally retained so
+    removing it cannot race a waiter.
+    """
+
+    if os.name == "nt":
+        with _windows_migration_batch_lock(db_path):
+            yield
+        return
+
+    lock_path = db_path.with_name(f".{db_path.name}.migration.lock")
+    flags = os.O_RDWR | os.O_CREAT
+    if hasattr(os, "O_NOFOLLOW"):
+        flags |= os.O_NOFOLLOW
+    try:
+        descriptor = os.open(lock_path, flags, 0o600)
+    except OSError as exc:
+        raise CourseMigrationError(
+            f"Could not open Course migration lock: {db_path}"
+        ) from exc
+    handle = os.fdopen(descriptor, "r+b", buffering=0)
+    metadata = os.fstat(handle.fileno())
+    if not stat.S_ISREG(metadata.st_mode) or metadata.st_nlink != 1:
+        handle.close()
+        raise CourseMigrationError(
+            f"Course migration lock is not a private regular file: {db_path}"
+        )
+    if metadata.st_uid != os.getuid():
+        handle.close()
+        raise CourseMigrationError(
+            f"Course migration lock has an unexpected owner: {db_path}"
+        )
+    os.fchmod(handle.fileno(), 0o600)
+    deadline = time.monotonic() + 10.0
+    acquired = False
+    try:
+        while not acquired:
+            try:
+                import fcntl
+
+                fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+                acquired = True
+            except OSError as exc:
+                if time.monotonic() >= deadline:
+                    raise CourseMigrationError(
+                        f"Timed out waiting for Course migration lock: {db_path}"
+                    ) from exc
+                time.sleep(0.02)
+        yield
+    finally:
+        if acquired:
+            import fcntl
+
+            fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+        handle.close()
 
 
 class CourseMigrationError(RuntimeError):
@@ -424,7 +541,7 @@ def ensure_course_schema(
     resolved.parent.mkdir(parents=True, exist_ok=True)
     lock = write_lock or course_database_lock(resolved)
     artifacts = discover_migrations()
-    with lock:
+    with lock, _migration_batch_lock(resolved):
         conn = open_course_connection(resolved)
         conn.isolation_level = None
         try:
@@ -436,10 +553,10 @@ def ensure_course_schema(
             applied: list[int] = []
             while True:
                 try:
-                    # The process-local path lock coordinates repository wrappers
-                    # here. BEGIN IMMEDIATE is the cross-process authority. State
-                    # must be re-read after acquiring it because another process
-                    # may have migrated after our initial classification.
+                    # The process-local lock coordinates repository wrappers and
+                    # the sidecar lock coordinates this complete batch across
+                    # processes. Keep one SQLite transaction per migration so a
+                    # later failure cannot erase earlier committed receipts.
                     conn.execute("BEGIN IMMEDIATE")
                     applied_count = _inspect_migration_state(conn, artifacts)
                     if applied_count == len(artifacts):
@@ -637,6 +754,23 @@ def _expected_signature(
     artifacts: Iterable[MigrationArtifact],
     *,
     include_ledger: bool = True,
+) -> dict[str, Any]:
+    """Return the immutable expected schema shape for these migration bytes.
+
+    The expected shape depends only on the migration artifacts, never on a
+    user's database. Cache that pure computation so concurrent private-database
+    initialization does not rebuild the same in-memory schema once per owner.
+    """
+
+    with _EXPECTED_SIGNATURE_CACHE_LOCK:
+        cached = _expected_signature_cached(tuple(artifacts), include_ledger)
+    return copy.deepcopy(cached)
+
+
+@lru_cache(maxsize=32)
+def _expected_signature_cached(
+    artifacts: tuple[MigrationArtifact, ...],
+    include_ledger: bool,
 ) -> dict[str, Any]:
     conn = sqlite3.connect(":memory:", isolation_level=None)
     conn.row_factory = sqlite3.Row

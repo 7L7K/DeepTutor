@@ -9,6 +9,24 @@
   supported rollback floor; pre-`0018` binaries cannot reopen an upgraded
   database.
 
+- Hardened Docker publication so each amd64 and arm64 artifact is built once,
+  verified by immutable digest, checked for release identity and attestation
+  structure, and assembled into public tags only from the verified manifest.
+  Release runs are serialized, version tags share the PyPI normalization
+  contract, and lifecycle status/failure events preserve durable
+  `revocation_pending` and concurrently cancelled states.
+
+- Added failure-isolated, privacy-bounded BlueWay lifecycle observability from
+  pairing through Course launch, with durable safe correlation references and
+  migration support. Pairing replay now retries a stranded initial sync,
+  binds to the exact connection that approved it, and cannot affect a later
+  replacement account. Lifecycle events now survive the production logging
+  default, preserve release and request correlation, and agree with durable
+  cancellation, expiry, recovery, revocation, launch, and sync-deduplication
+  states. Migration startup is serialized across processes with a private
+  sidecar lock without rolling back earlier committed versions when a later
+  migration fails.
+
 - Hardened mobile TEEECHR sign-in with whitespace-safe email matching and
   mobile input attributes, added server-only privacy-bounded login diagnostics
   with a safe attempt reference header, and added accessible show/hide controls

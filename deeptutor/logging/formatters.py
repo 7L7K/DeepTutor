@@ -46,4 +46,12 @@ class ConsoleFormatter(logging.Formatter):
         context = getattr(record, "log_context", {}) or {}
         stage = f" @{context['stage']}" if context.get("stage") else ""
         task = f" #{context['task_id']}" if context.get("task_id") else ""
-        return f"{record.levelname:<7} {record.name}{stage}{task} - {record.getMessage()}"
+        blueway = context.get("blueway_event")
+        structured = (
+            f" {json.dumps(blueway, ensure_ascii=False, separators=(',', ':'))}"
+            if isinstance(blueway, dict)
+            else ""
+        )
+        return (
+            f"{record.levelname:<7} {record.name}{stage}{task} - {record.getMessage()}{structured}"
+        )

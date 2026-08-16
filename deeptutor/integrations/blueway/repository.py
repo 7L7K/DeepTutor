@@ -110,7 +110,9 @@ class BlueWayRepository:
         self.courses.ensure_schema()
 
     def create_active_connection(
-        self, *, external_subject: str, scope_version: str, connection_id: str | None = None
+        self, *, external_subject: str, scope_version: str,
+        connection_id: str | None = None,
+        observability_trace_id: str | None = None,
     ) -> Connection:
         if not external_subject or not scope_version:
             raise ValueError("BlueWay subject and scope version are required")
@@ -122,10 +124,11 @@ class BlueWayRepository:
                     """INSERT INTO blueway_connections
                        (id, owner_user_id, external_subject, state, scope_version, revision, grant_generation,
                         credential_ref, credential_status, created_at, updated_at, connected_at,
-                        last_sync_at, disconnected_at, rotation_request_id, rotation_started_at)
-                       VALUES (?, ?, ?, 'active', ?, 1, 1, ?, 'healthy', ?, ?, ?, NULL, NULL, NULL, NULL)""",
+                        last_sync_at, disconnected_at, observability_trace_id,
+                        rotation_request_id, rotation_started_at)
+                       VALUES (?, ?, ?, 'active', ?, 1, 1, ?, 'healthy', ?, ?, ?, NULL, NULL, ?, NULL, NULL)""",
                     (connection_id, self.owner_user_id, external_subject, scope_version,
-                     f"blueway:{connection_id}", now, now, now),
+                     f"blueway:{connection_id}", now, now, now, observability_trace_id),
                 )
             except sqlite3.IntegrityError as exc:
                 raise CourseConflictError("An active BlueWay connection already exists") from exc
@@ -419,6 +422,27 @@ class BlueWayRepository:
             raise BlueWayNotFoundError("Integration resource not found")
         return Connection.from_row(row)
 
+    def ensure_observability_trace(
+        self, connection_id: str, *, trace_id: str,
+    ) -> Connection:
+        """Assign one durable operation trace to a pre-observability connection."""
+
+        with self.courses._write_lock, self.courses._connect() as conn:  # noqa: SLF001
+            conn.execute(
+                """UPDATE blueway_connections
+                   SET observability_trace_id = COALESCE(observability_trace_id, ?)
+                   WHERE id = ? AND owner_user_id = ?
+                     AND state IN ('active', 'revocation_pending')""",
+                (trace_id, connection_id, self.owner_user_id),
+            )
+            row = conn.execute(
+                "SELECT * FROM blueway_connections WHERE id = ? AND owner_user_id = ?",
+                (connection_id, self.owner_user_id),
+            ).fetchone()
+        if row is None:
+            raise BlueWayNotFoundError("Integration resource not found")
+        return Connection.from_row(row)
+
     def require_credential_recovery(
         self, connection_id: str, *, expected_revision: int | None = None,
     ) -> Connection:
@@ -476,7 +500,7 @@ class BlueWayRepository:
 
     def complete_credential_recovery(
         self, connection_id: str, *, expected_revision: int,
-        expected_generation: int,
+        expected_generation: int, observability_trace_id: str | None = None,
     ) -> Connection:
         """Reactivate the same connection after an owner-approved same-subject grant."""
         now = time.time()
@@ -486,6 +510,7 @@ class BlueWayRepository:
                    SET credential_status = 'healthy',
                        revision = revision + 1,
                        grant_generation = grant_generation + 1,
+                       observability_trace_id = COALESCE(?, observability_trace_id),
                        rotation_request_id = NULL,
                        rotation_started_at = NULL,
                        updated_at = ?
@@ -494,7 +519,7 @@ class BlueWayRepository:
                      AND credential_status = 'recovery_required'
                      AND revision = ? AND grant_generation = ?""",
                 (
-                    now, connection_id, self.owner_user_id,
+                    observability_trace_id, now, connection_id, self.owner_user_id,
                     expected_revision, expected_generation,
                 ),
             )
@@ -590,6 +615,12 @@ class BlueWayRepository:
             )
 
     def queue_sync(self, connection_id: str) -> SyncRun:
+        run, _created = self.queue_sync_result(connection_id)
+        return run
+
+    def queue_sync_result(self, connection_id: str) -> tuple[SyncRun, bool]:
+        """Queue once and report creation from the authoritative transaction."""
+
         now, run_id = time.time(), _id("bwr")
         with self.courses._write_lock, self.courses._connect() as conn:  # noqa: SLF001
             conn.execute("BEGIN IMMEDIATE")
@@ -607,7 +638,7 @@ class BlueWayRepository:
                 (connection["id"],),
             ).fetchone()
             if existing:
-                return SyncRun.from_row(existing)
+                return SyncRun.from_row(existing), False
             conn.execute(
                 """INSERT INTO blueway_sync_runs
                    (id, connection_id, expected_generation, snapshot_id, snapshot_sha256, state,
@@ -617,7 +648,7 @@ class BlueWayRepository:
             )
             row = conn.execute("SELECT * FROM blueway_sync_runs WHERE id = ?", (run_id,)).fetchone()
         assert row is not None
-        return SyncRun.from_row(row)
+        return SyncRun.from_row(row), True
 
     def get_run(self, run_id: str) -> SyncRun:
         with self.courses._connect() as conn:  # noqa: SLF001

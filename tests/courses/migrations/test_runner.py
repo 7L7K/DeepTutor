@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import replace
 import multiprocessing
+import os
 from pathlib import Path
 import sqlite3
 import threading
@@ -91,13 +93,47 @@ def test_discovery_orders_exactly_and_rejects_duplicate_version_or_name(
         discover_migrations()
 
 
+def test_expected_signature_cache_reuses_only_immutable_migration_inputs(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    artifact = _artifact(0, "cached", _ledger_sql() + "\nCREATE TABLE cached (id INTEGER);")
+    calls = 0
+    original_execute = runner._execute_sql_artifact
+
+    def counted_execute(conn: sqlite3.Connection, sql: str) -> None:
+        nonlocal calls
+        calls += 1
+        original_execute(conn, sql)
+
+    runner._expected_signature_cached.cache_clear()
+    monkeypatch.setattr(runner, "_execute_sql_artifact", counted_execute)
+    try:
+        first = runner._expected_signature((artifact,))
+        baseline = runner._expected_signature((artifact,))
+        first["tables"]["cached"]["columns"].clear()
+        second = runner._expected_signature(iter((artifact,)))
+    finally:
+        runner._expected_signature_cached.cache_clear()
+
+    assert baseline == second
+    assert calls == 1
+
+    runner._expected_signature_cached.cache_clear()
+    calls = 0
+    with ThreadPoolExecutor(max_workers=4) as pool:
+        concurrent = list(pool.map(lambda _: runner._expected_signature((artifact,)), range(4)))
+
+    assert concurrent == [baseline] * 4
+    assert calls == 1
+
+
 def test_receipt_uses_exact_artifact_bytes_and_tamper_blocks_before_writes(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     path = tmp_path / "courses.db"
-    expected_versions = tuple(item.version for item in discover_migrations())
-    assert ensure_course_schema(path) == expected_versions
     artifacts = discover_migrations()
+    expected_versions = tuple(artifact.version for artifact in artifacts)
+    assert ensure_course_schema(path) == expected_versions
     artifact = artifacts[0]
     with open_course_connection(path) as conn:
         receipt_before = tuple(conn.execute(
@@ -217,6 +253,7 @@ def test_concurrent_startup_applies_once_and_other_wrapper_observes_receipt(
     tmp_path: Path,
 ) -> None:
     path = tmp_path / "courses.db"
+    expected_versions = tuple(artifact.version for artifact in discover_migrations())
     barrier = threading.Barrier(2)
     results: list[tuple[int, ...]] = []
     errors: list[BaseException] = []
@@ -236,7 +273,6 @@ def test_concurrent_startup_applies_once_and_other_wrapper_observes_receipt(
 
     assert not first.is_alive() and not second.is_alive()
     assert errors == []
-    expected_versions = tuple(item.version for item in discover_migrations())
     assert sorted(results) == [(), expected_versions]
     with open_course_connection(path) as conn:
         assert (
@@ -248,9 +284,10 @@ def test_concurrent_startup_applies_once_and_other_wrapper_observes_receipt(
 def test_spawned_processes_first_start_apply_once_and_converge_on_one_receipt(
     tmp_path: Path,
 ) -> None:
-    """SQLite transaction exclusion, rather than the local lock, wins cross-process."""
+    """The batch lock prevents process interleaving while SQLite protects each step."""
 
     path = tmp_path / "courses.db"
+    expected_versions = tuple(artifact.version for artifact in discover_migrations())
     context = multiprocessing.get_context("spawn")
     barrier = context.Barrier(2)
     outcomes = context.Queue()
@@ -268,7 +305,7 @@ def test_spawned_processes_first_start_apply_once_and_converge_on_one_receipt(
     results = [outcomes.get(timeout=5) for _ in processes]
     assert sorted(results) == [
         ("ok", ()),
-        ("ok", tuple(item.version for item in discover_migrations())),
+        ("ok", expected_versions),
     ]
     with open_course_connection(path) as conn:
         assert (
@@ -279,6 +316,22 @@ def test_spawned_processes_first_start_apply_once_and_converge_on_one_receipt(
         assert runner._schema_signature(conn, include_ledger=True) == runner._expected_signature(
             discover_migrations()
         )
+
+
+@pytest.mark.skipif(os.name == "nt", reason="POSIX symlink contract")
+def test_migration_lock_rejects_symlink_substitution(tmp_path: Path) -> None:
+    path = tmp_path / "courses.db"
+    target = tmp_path / "do-not-touch"
+    target.write_text("private", encoding="utf-8")
+    target.chmod(0o640)
+    lock = tmp_path / ".courses.db.migration.lock"
+    lock.symlink_to(target)
+
+    with pytest.raises(CourseMigrationError, match="Could not open Course migration lock"):
+        ensure_course_schema(path)
+
+    assert target.read_text(encoding="utf-8") == "private"
+    assert target.stat().st_mode & 0o777 == 0o640
 
 
 def test_normal_connection_enables_and_verifies_foreign_keys(tmp_path: Path) -> None:
