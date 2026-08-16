@@ -252,6 +252,20 @@ def test_success_and_failure_traces_are_reconstructable_without_private_payloads
         assert forbidden not in serialized
 
 
+def test_event_envelope_uses_established_environment_fallback(monkeypatch) -> None:
+    monkeypatch.delenv("TEEECHR_ENVIRONMENT", raising=False)
+    monkeypatch.setenv("ENVIRONMENT", "prod")
+
+    event = emit_blueway_event(
+        "blueway_connection_status_read",
+        trace_id=TRACE_ID,
+        state_to="active",
+        outcome="success",
+    )
+
+    assert event["environment"] == "production"
+
+
 def test_event_builder_rejects_unsafe_state_and_reference() -> None:
     revoked = build_blueway_event(
         "blueway_connection_revoked",

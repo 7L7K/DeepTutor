@@ -198,7 +198,11 @@ def request_trace_id() -> str:
 
 
 def _event_envelope(payload: dict[str, Any]) -> dict[str, Any]:
-    raw_environment = os.getenv("TEEECHR_ENVIRONMENT", "unknown").strip().lower()
+    raw_environment = (
+        os.getenv("TEEECHR_ENVIRONMENT", "").strip() or os.getenv("ENVIRONMENT", "unknown").strip()
+    ).lower()
+    if raw_environment == "prod":
+        raw_environment = "production"
     environment = raw_environment if raw_environment in _ENVIRONMENTS else "unknown"
     raw_version = os.getenv("TEEECHR_APP_VERSION", "").strip() or __version__
     application_version = raw_version if _SAFE_VERSION.fullmatch(raw_version) else "unknown"
