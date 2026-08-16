@@ -48,14 +48,36 @@ export function latestAssistantMatchesTurn(
     .reverse()
     .find((message) => message.role === "assistant");
   if (!assistant) return false;
-  if (assistantMessageId != null && assistant.id !== assistantMessageId) return false;
   const eventTurnIds = (assistant.events ?? [])
     .map((event) => event.turn_id)
     .filter((eventTurnId): eventTurnId is string => Boolean(eventTurnId));
+  if (
+    assistantMessageId != null &&
+    assistant.id !== assistantMessageId &&
+    !(isOptimisticId(assistant.id) && !(assistant.content ?? "").trim() && eventTurnIds.length === 0)
+  ) {
+    return false;
+  }
   // A lost stream can leave the placeholder with no event metadata at all.
   // In that case the assistant row position (and, when available, persisted
   // id) is the only local evidence we have, so let the server snapshot fill it.
   return !turnId || eventTurnIds.length === 0 || eventTurnIds.includes(turnId);
+}
+
+/**
+ * A revalidation may accept a metadata-free optimistic placeholder only when
+ * the provider has recorded the same turn as its most recent completion.
+ * Without this second identity, an older no-event response could replace a
+ * newer blank turn because both look locally identical.
+ */
+export function canApplyTurnRevalidation(
+  messages: ReconcilableMessage[],
+  expectedTurnId?: string | null,
+  expectedAssistantMessageId?: number | null,
+  lastCompletedTurnId?: string | null,
+): boolean {
+  if (expectedTurnId && lastCompletedTurnId !== expectedTurnId) return false;
+  return latestAssistantMatchesTurn(messages, expectedTurnId, expectedAssistantMessageId);
 }
 
 /**

@@ -1,6 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import {
+  canApplyTurnRevalidation,
   latestAssistantMatchesTurn,
   latestAssistantNeedsHydration,
   reconcileTurnIds,
@@ -292,6 +293,24 @@ test("latest assistant turn guard rejects a newer local turn", () => {
       84,
     ),
     true,
+  );
+  assert.equal(
+    canApplyTurnRevalidation(
+      [{ id: -8501, role: "assistant", content: "", events: [] }],
+      "turn_old",
+      85,
+      "turn_old",
+    ),
+    true,
+  );
+  assert.equal(
+    canApplyTurnRevalidation(
+      [{ id: -8501, role: "assistant", content: "", events: [] }],
+      "turn_old",
+      85,
+      "turn_new",
+    ),
+    false,
   );
 });
 

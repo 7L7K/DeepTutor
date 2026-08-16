@@ -32,7 +32,7 @@ import { normalizeMessageContent } from '@/lib/message-content'
 import { buildVisiblePath, tipMessageId } from '@/lib/message-branches'
 import { nextOptimisticId } from '@/lib/optimistic-id'
 import {
-  latestAssistantMatchesTurn,
+  canApplyTurnRevalidation,
   latestAssistantNeedsHydration,
   reconcileTurnIds,
 } from '@/lib/turn-reconcile'
@@ -154,6 +154,7 @@ interface SessionEntry extends ChatState {
   key: string
   status: SessionRuntimeStatus
   activeTurnId: string | null
+  lastCompletedTurnId: string | null
   lastSeq: number
   updatedAt: number
   /** Edit-branching: maps a parent_message_id (stringified, or "null" for
@@ -277,6 +278,7 @@ function createSessionEntry(
     language: typeof window === 'undefined' ? 'en' : readStoredLanguage(),
     status: 'idle',
     activeTurnId: null,
+    lastCompletedTurnId: null,
     lastSeq: 0,
     updatedAt: Date.now(),
     selectedBranches: {},
@@ -527,6 +529,10 @@ function reducer(state: ProviderState, action: Action): ProviderState {
               action.status === 'running'
                 ? action.turnId || state.sessions[action.key]?.activeTurnId || null
                 : null,
+            lastCompletedTurnId:
+              action.status === 'running'
+                ? state.sessions[action.key]?.lastCompletedTurnId || null
+                : action.turnId || state.sessions[action.key]?.activeTurnId || null,
             updatedAt: Date.now(),
           },
         },
@@ -574,10 +580,11 @@ function reducer(state: ProviderState, action: Action): ProviderState {
           return state
         }
         if (
-          !latestAssistantMatchesTurn(
+          !canApplyTurnRevalidation(
             local.messages,
             action.expectedTurnId,
             action.expectedAssistantMessageId,
+            local.lastCompletedTurnId,
           )
         ) {
           return state
@@ -609,6 +616,7 @@ function reducer(state: ProviderState, action: Action): ProviderState {
             isStreaming: (action.status || 'idle') === 'running',
             currentStage: '',
             activeTurnId: action.activeTurnId || null,
+            lastCompletedTurnId: action.expectedTurnId || existing.lastCompletedTurnId || null,
             status: action.status || 'idle',
             language: action.language ?? existing.language,
             selectedBranches: action.selectedBranches ?? existing.selectedBranches,
@@ -963,6 +971,10 @@ export function UnifiedChatProvider({ children }: { children: React.ReactNode })
   // assistant message if the server rejects the request (e.g. ``regenerate_busy``
   // or ``nothing_to_regenerate``). Keyed by session entry key.
   const pendingRegenerateRef = useRef<Map<string, MessageItem>>(new Map())
+  // Updated synchronously from terminal WebSocket events so an async
+  // revalidation can reject an older response even before React commits the
+  // corresponding reducer update.
+  const completedTurnsRef = useRef<Map<string, string>>(new Map())
   // Forward-declared so ``handleRunnerEvent`` (created above
   // ``loadSession`` in source order) can trigger a server refresh after
   // a turn finishes without taking a stale closure of ``loadSession``.
@@ -1069,6 +1081,9 @@ export function UnifiedChatProvider({ children }: { children: React.ReactNode })
           status: (status as SessionRuntimeStatus) || 'completed',
           turnId: event.turn_id || null,
         })
+        if (event.turn_id) {
+          completedTurnsRef.current.set(effectiveKey, event.turn_id)
+        }
         pendingRegenerateRef.current.delete(effectiveKey)
         const runner = runnersRef.current.get(effectiveKey)
         // Hold the WS open briefly so post-turn ``session_meta`` events
@@ -1109,6 +1124,9 @@ export function UnifiedChatProvider({ children }: { children: React.ReactNode })
             })
             const finishedSession = stateRef.current.sessions[effectiveKey]
             const sessionId = finishedSession?.sessionId
+            if (sessionId && event.turn_id) {
+              completedTurnsRef.current.set(sessionId, event.turn_id)
+            }
             if (
               sessionId &&
               latestAssistantNeedsHydration(
@@ -1133,6 +1151,9 @@ export function UnifiedChatProvider({ children }: { children: React.ReactNode })
             // full session refetch.
             const finishedSession = stateRef.current.sessions[effectiveKey]
             const sessionId = finishedSession?.sessionId
+            if (sessionId && event.turn_id) {
+              completedTurnsRef.current.set(sessionId, event.turn_id)
+            }
             if (sessionId) {
               loadSessionRef.current?.(sessionId, {
                 revalidate: true,
@@ -1216,19 +1237,24 @@ export function UnifiedChatProvider({ children }: { children: React.ReactNode })
               if (hasPendingAskUserInMessages(session.messages, session.activeTurnId)) {
                 return
               }
+              const completedTurnId = session.activeTurnId
               dispatch({
                 type: 'STREAM_END',
                 key: record.key,
                 status: 'failed',
+                turnId: completedTurnId,
               })
               const sessionId = session.sessionId
+              if (sessionId && completedTurnId) {
+                completedTurnsRef.current.set(sessionId, completedTurnId)
+              }
               if (sessionId) {
                 // A close can happen after the backend has persisted the
                 // answer but before the final stream event reaches the UI.
                 // Reload the session so a completed turn is not left blank.
                 loadSessionRef.current?.(sessionId, {
                   revalidate: true,
-                  expectedTurnId: session.activeTurnId,
+                  expectedTurnId: completedTurnId,
                 }).catch(() => {
                   /* non-fatal — the failed state remains visible */
                 })
@@ -1322,15 +1348,28 @@ export function UnifiedChatProvider({ children }: { children: React.ReactNode })
         // re-subscribing from ``after_seq: 0`` would replay them on top of
         // what we have, and the snapshot predates the turn anyway.
         const local = stateRef.current.sessions[key]
+        const completedTurnId = options.expectedTurnId
+          ? completedTurnsRef.current.get(key) || local?.lastCompletedTurnId
+          : local?.lastCompletedTurnId
+        const locallyCompletingExpectedTurn = Boolean(
+          options.expectedTurnId &&
+            completedTurnsRef.current.get(key) === options.expectedTurnId &&
+            local?.activeTurnId === options.expectedTurnId,
+        )
         if (
           !local ||
-          local.isStreaming ||
-          local.status === 'running' ||
+          (local.isStreaming && !locallyCompletingExpectedTurn) ||
+          (local.status === 'running' && !locallyCompletingExpectedTurn) ||
           (expectedSession && local !== expectedSession) ||
           (!expectedSession &&
             !options.expectedTurnId &&
             options.expectedAssistantMessageId == null) ||
-          !latestAssistantMatchesTurn(local.messages, options.expectedTurnId)
+          !canApplyTurnRevalidation(
+            local.messages,
+            options.expectedTurnId,
+            options.expectedAssistantMessageId,
+            completedTurnId,
+          )
         ) {
           return
         }
