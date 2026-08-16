@@ -188,6 +188,19 @@ test("detects a completed turn whose local assistant body was missed", () => {
   );
 });
 
+test("hydrates a blank assistant when the stream left no event metadata", () => {
+  assert.equal(
+    latestAssistantNeedsHydration(
+      [
+        { id: 50, role: "user", content: "question" },
+        { id: 51, role: "assistant", content: "", events: [] },
+      ],
+      "turn_missing",
+    ),
+    true,
+  );
+});
+
 test("does not rehydrate a completed turn that already has content", () => {
   assert.equal(
     latestAssistantNeedsHydration([
@@ -264,6 +277,22 @@ test("latest assistant turn guard rejects a newer local turn", () => {
     ),
     false,
   );
+  assert.equal(
+    latestAssistantMatchesTurn(
+      [{ id: 83, role: "assistant", content: "old", events: [] }],
+      "turn_old",
+      84,
+    ),
+    false,
+  );
+  assert.equal(
+    latestAssistantMatchesTurn(
+      [{ id: 84, role: "assistant", content: "old", events: [] }],
+      "turn_old",
+      84,
+    ),
+    true,
+  );
 });
 
 test("legacy completion without a turn id still checks the latest assistant", () => {
@@ -272,5 +301,12 @@ test("legacy completion without a turn id still checks the latest assistant", ()
       { id: 70, role: "assistant", content: "" },
     ]),
     true,
+  );
+  assert.equal(
+    latestAssistantNeedsHydration([
+      { id: 70, role: "assistant", content: "old answer" },
+      { id: -7001, role: "user", content: "new question" },
+    ]),
+    false,
   );
 });

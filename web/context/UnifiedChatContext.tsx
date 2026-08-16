@@ -185,6 +185,16 @@ interface SessionSnapshot {
   language?: string
   selectedBranches?: Record<string, number>
   courseId?: string | null
+  /** Guards a background snapshot against a newer local turn. */
+  expectedTurnId?: string | null
+  expectedAssistantMessageId?: number | null
+}
+
+type LoadSessionOptions = {
+  signal?: AbortSignal
+  revalidate?: boolean
+  expectedTurnId?: string | null
+  expectedAssistantMessageId?: number | null
 }
 
 type Action =
@@ -563,6 +573,15 @@ function reducer(state: ProviderState, action: Action): ProviderState {
         if (!local || local.isStreaming || local.status === 'running') {
           return state
         }
+        if (
+          !latestAssistantMatchesTurn(
+            local.messages,
+            action.expectedTurnId,
+            action.expectedAssistantMessageId,
+          )
+        ) {
+          return state
+        }
       }
       const existing =
         state.sessions[action.key] ?? createSessionEntry(action.key, action.sessionId)
@@ -799,7 +818,7 @@ interface ChatContextValue {
    *  dropped rather than applied if a turn started meanwhile. */
   loadSession: (
     sessionId: string,
-    options?: { signal?: AbortSignal; revalidate?: boolean; expectedTurnId?: string | null }
+    options?: LoadSessionOptions
   ) => Promise<void>
   /** Select an already-loaded session without fetching. Returns false when
    *  it isn't in memory, i.e. the caller must load it. */
@@ -948,11 +967,7 @@ export function UnifiedChatProvider({ children }: { children: React.ReactNode })
   // ``loadSession`` in source order) can trigger a server refresh after
   // a turn finishes without taking a stale closure of ``loadSession``.
   const loadSessionRef = useRef<
-    | ((
-      sessionId: string,
-      options?: { revalidate?: boolean; expectedTurnId?: string | null }
-    ) => Promise<void>)
-    | null
+    ((sessionId: string, options?: LoadSessionOptions) => Promise<void>) | null
   >(null)
 
   useLayoutEffect(() => {
@@ -1098,7 +1113,7 @@ export function UnifiedChatProvider({ children }: { children: React.ReactNode })
               sessionId &&
               latestAssistantNeedsHydration(
                 finishedSession?.messages ?? [],
-                event.turn_id || null
+                event.turn_id || null,
               )
             ) {
               // The id-only fast path is safe when live content arrived. If
@@ -1108,6 +1123,7 @@ export function UnifiedChatProvider({ children }: { children: React.ReactNode })
               loadSessionRef.current?.(sessionId, {
                 revalidate: true,
                 expectedTurnId: event.turn_id || null,
+                expectedAssistantMessageId: assistantMessageId,
               }).catch(() => {
                 /* non-fatal — the live state remains usable */
               })
@@ -1137,6 +1153,7 @@ export function UnifiedChatProvider({ children }: { children: React.ReactNode })
             loadSessionRef.current?.(sessionId, {
               revalidate: true,
               expectedTurnId: event.turn_id || null,
+              expectedAssistantMessageId: assistantMessageId,
             }).catch(() => {
               /* live terminal event remains visible when refresh fails */
             })
@@ -1286,8 +1303,15 @@ export function UnifiedChatProvider({ children }: { children: React.ReactNode })
         signal?: AbortSignal
         revalidate?: boolean
         expectedTurnId?: string | null
+        expectedAssistantMessageId?: number | null
       }
     ) => {
+      const expectedSession =
+        options?.revalidate &&
+        !options.expectedTurnId &&
+        options.expectedAssistantMessageId == null
+          ? stateRef.current.sessions[sessionId]
+          : undefined
       const session = await getSession(sessionId, options?.signal)
       const key = session.session_id || session.id
       const activeTurn = Array.isArray(session.active_turns) ? session.active_turns[0] : undefined
@@ -1302,6 +1326,10 @@ export function UnifiedChatProvider({ children }: { children: React.ReactNode })
           !local ||
           local.isStreaming ||
           local.status === 'running' ||
+          (expectedSession && local !== expectedSession) ||
+          (!expectedSession &&
+            !options.expectedTurnId &&
+            options.expectedAssistantMessageId == null) ||
           !latestAssistantMatchesTurn(local.messages, options.expectedTurnId)
         ) {
           return
@@ -1330,6 +1358,8 @@ export function UnifiedChatProvider({ children }: { children: React.ReactNode })
         language: readStoredLanguage(),
         selectedBranches: normalizeSelectedBranches(session.preferences?.selected_branches),
         courseId: session.course_id || null,
+        expectedTurnId: options?.expectedTurnId,
+        expectedAssistantMessageId: options?.expectedAssistantMessageId,
       })
       if (activeTurn?.turn_id || activeTurn?.id) {
         // Reached on a revalidate too, when the turn is live on the server but

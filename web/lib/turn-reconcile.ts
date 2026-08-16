@@ -40,16 +40,22 @@ export interface ReconcileResult<T> {
 export function latestAssistantMatchesTurn(
   messages: ReconcilableMessage[],
   turnId?: string | null,
+  assistantMessageId?: number | null,
 ): boolean {
-  if (!turnId) return true;
   if (messages[messages.length - 1]?.role !== "assistant") return false;
+  if (!turnId && assistantMessageId == null) return true;
   const assistant = [...messages]
     .reverse()
     .find((message) => message.role === "assistant");
-  return Boolean(
-    assistant &&
-      (assistant.events ?? []).some((event) => event.turn_id === turnId),
-  );
+  if (!assistant) return false;
+  if (assistantMessageId != null && assistant.id !== assistantMessageId) return false;
+  const eventTurnIds = (assistant.events ?? [])
+    .map((event) => event.turn_id)
+    .filter((eventTurnId): eventTurnId is string => Boolean(eventTurnId));
+  // A lost stream can leave the placeholder with no event metadata at all.
+  // In that case the assistant row position (and, when available, persisted
+  // id) is the only local evidence we have, so let the server snapshot fill it.
+  return !turnId || eventTurnIds.length === 0 || eventTurnIds.includes(turnId);
 }
 
 /**
@@ -61,11 +67,14 @@ export function latestAssistantMatchesTurn(
 export function latestAssistantNeedsHydration(
   messages: ReconcilableMessage[],
   turnId?: string | null,
+  assistantMessageId?: number | null,
 ): boolean {
   const assistant = [...messages]
     .reverse()
     .find((message) => message.role === "assistant");
-  if (!assistant || !latestAssistantMatchesTurn(messages, turnId)) return false;
+  if (!assistant || !latestAssistantMatchesTurn(messages, turnId, assistantMessageId)) {
+    return false;
+  }
   return !(assistant.content ?? "").trim();
 }
 
