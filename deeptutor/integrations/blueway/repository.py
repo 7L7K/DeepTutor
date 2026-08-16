@@ -43,6 +43,7 @@ class Connection:
     disconnected_at: float | None
     rotation_request_id: str | None = None
     rotation_started_at: float | None = None
+    observability_trace_id: str | None = None
 
     @classmethod
     def from_row(cls, row: sqlite3.Row) -> "Connection":
