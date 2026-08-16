@@ -234,17 +234,31 @@ Rollback means restoring a known prior application image and deployment file
 while preserving the current data tree unless a separately authorized data
 rollback is required.
 
+The application binary must be compatible with the schema already present in
+that data tree. Migration `0018` is the minimum rollback floor: once a Course
+database has been upgraded through `0018`, a pre-`0018` image must not be
+restored onto it. The `82b33b75` image recorded in the 2026-08-12 receipt is a
+historical pre-`0018` image, not an approved rollback target for migrated data.
+Use a verified `0018`-compatible image and release directory instead; the
+2026-08-16 read-only audit observed `teeechr:bridge-6b641400-production`
+with image ID `sha256:e3687873c6e87ab2437a3281f99e30cdb75b0393acfc5f84230f1afd28b0e5bc`
+and release directory
+`/opt/teeechr/releases/6b641400708edf792ca7ce28fa7b606added2d3e`. Re-verify
+availability, digest, release contents, and the live migration version before
+using it; this observation is not a deployment authorization.
+
 Before rollback, capture:
 
 - current `DEPLOYMENT` receipt;
 - current image tag/digest;
 - current container logs relevant to the failure;
 - current data-tree size and mount;
+- current database migration version and whether the candidate image can open it;
 - the exact prior release/image to restore.
 
-After rollback, verify health, auth, Course access, and persistence. Do not use
-Git reset or destructive data commands as a substitute for an operational
-rollback.
+After rollback, verify health, auth, Course access, migration compatibility, and
+persistence. Do not use Git reset or destructive data commands as a substitute
+for an operational rollback.
 
 ## Documentation boundaries
 

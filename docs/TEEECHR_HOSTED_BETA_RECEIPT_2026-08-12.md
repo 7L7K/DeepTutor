@@ -15,7 +15,7 @@ Re-run the VPS checks before relying on any value that may have changed.
 | Deployed commit | `964c090ad8fdba452fa715a6034574313f091a96` |
 | Deployed image | `teeechr:964c090ad8fdba452fa715a6034574313f091a96` |
 | Image digest | `sha256:152a147102c8950e64878dde9119f14ebc9b3de7c2c6b6d5428c42f544366c13` |
-| Source archive SHA-256 | `f3e24a7e6bd38827349b7cb92902d1805fc7dedfa5616685a7c6519ec854dfec` |
+| Historical source archive SHA-256 | `f3e24a7e6bd38827349b7cb92902d1805fc7dedfa5616685a7c6519ec854dfec` |
 | Previous deployed commit | `82b33b75dc5916764b1050b724e5abf5db0e0593` |
 | Previous deployed image | `teeechr:82b33b75dc5916764b1050b724e5abf5db0e0593` |
 | Previous image ID | `sha256:b33f87c5d85478aa1e4a3783386af36d444db985a389725b4837f5ef6948d172` |
@@ -25,6 +25,19 @@ Re-run the VPS checks before relying on any value that may have changed.
 The production image was built from the clean isolated deployment branch. The
 canonical local checkout contained unrelated user changes and was not reset,
 staged, or merged as part of this release.
+
+The source archive filename was `DeepTutor-964c090ad8fdba452fa715a6034574313f091a96.tar.gz`.
+A read-only VPS audit on 2026-08-16 did not find that archive at
+`/opt/teeechr/DeepTutor-964c090ad8fdba452fa715a6034574313f091a96.tar.gz`.
+Therefore the recorded archive hash is historical receipt data, not a currently
+available recovery artifact. Do not use it as independently verified source
+proof until the archive is recovered or a new exact-SHA archive is created and
+hashed with its filename, location, format, and retention record.
+
+Because migration `0018` is a one-way compatibility boundary, the previous
+`82b33b75` image is not a safe rollback target after a database has reached
+`0018`. The compatible rollback candidate observed in the 2026-08-16 audit is
+documented in the VPS runbook and must be re-verified before use.
 
 ## Runtime topology
 
