@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+- Added a compatibility bridge for BlueWay observability migration `0018`.
+  The bridge upgrades `0017` databases, preserves pre-observability behavior,
+  and can hydrate connection rows after the full observability release has
+  written a trace value. Applying `0018` establishes this bridge as the minimum
+  supported rollback floor; pre-`0018` binaries cannot reopen an upgraded
+  database.
+
 - Hardened Docker publication so each amd64 and arm64 artifact is built once,
   verified by immutable digest, checked for release identity and attestation
   structure, and assembled into public tags only from the verified manifest.

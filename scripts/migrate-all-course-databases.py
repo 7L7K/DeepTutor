@@ -17,9 +17,11 @@ import sys
 
 from deeptutor.courses.database_lock import course_database_lock
 from deeptutor.courses.migrations.runner import (
+    CourseMigrationError,
     MigrationArtifact,
     discover_migrations,
     ensure_course_schema,
+    verify_course_schema,
 )
 
 
@@ -52,35 +54,11 @@ def discover_course_databases(data_root: Path) -> tuple[Path, ...]:
 
 
 def _receipt_state(path: Path, artifacts: tuple[MigrationArtifact, ...]) -> tuple[int, str]:
-    uri = f"file:{path.resolve()}?mode=ro"
     try:
-        conn = sqlite3.connect(uri, uri=True)
-    except sqlite3.Error as exc:
-        raise ValueError(f"cannot open read-only: {exc}") from exc
-    try:
-        conn.execute("PRAGMA query_only=ON")
-        conn.execute("PRAGMA foreign_keys=ON")
-        has_ledger = conn.execute(
-            "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'schema_migrations'"
-        ).fetchone()
-        if not has_ledger:
-            return 0, "migration ledger is missing"
-        rows = conn.execute(
-            "SELECT version, name, checksum_sha256 FROM schema_migrations ORDER BY version"
-        ).fetchall()
-        if len(rows) > len(artifacts):
-            return len(rows), "database records an unknown migration"
-        for index, row in enumerate(rows):
-            expected = artifacts[index]
-            if tuple(row) != (expected.version, expected.name, expected.checksum_sha256):
-                return index, f"receipt mismatch at {expected.filename}"
-        if not conn.execute(
-            "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'blueway_workspace_assertion_replays'"
-        ).fetchone():
-            return len(rows), "workspace assertion replay fence is missing"
-        return len(rows), "ready" if len(rows) == len(artifacts) else "pending migrations"
-    finally:
-        conn.close()
+        count = verify_course_schema(path, artifacts=artifacts)
+    except (CourseMigrationError, OSError) as exc:
+        return 0, str(exc)
+    return count, "ready" if count == len(artifacts) else "pending migrations"
 
 
 def check_database(

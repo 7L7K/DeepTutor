@@ -37,6 +37,16 @@ def test_discovery_is_bounded_and_ignores_symlinks(tmp_path: Path) -> None:
     assert module.discover_course_databases(tmp_path) == (admin, alice)
 
 
+def test_main_reports_invalid_data_root_without_masking_the_error(
+    tmp_path: Path,
+    capsys,
+) -> None:
+    module = _module()
+
+    assert module.main(["--data-root", str(tmp_path / "missing")]) == 1
+    assert "Data root is not a real directory" in capsys.readouterr().err
+
+
 def test_verify_then_apply_covers_all_discovered_databases(
     tmp_path: Path,
     monkeypatch,
@@ -62,3 +72,16 @@ def test_verify_then_apply_covers_all_discovered_databases(
         assert result.status == "migrated"
         assert result.applied == (17, 18)
         assert module.check_database(path, apply=False, artifacts=artifacts).status == "ready"
+
+
+def test_verify_fails_closed_when_0018_receipt_outlives_its_column(tmp_path: Path) -> None:
+    module = _module()
+    path = tmp_path / "courses.db"
+    ensure_course_schema(path)
+    with open_course_connection(path) as conn:
+        conn.execute("ALTER TABLE blueway_connections DROP COLUMN observability_trace_id")
+
+    result = module.check_database(path, apply=False, artifacts=discover_migrations())
+
+    assert result.status == "pending"
+    assert "observability_trace_id" in result.detail
