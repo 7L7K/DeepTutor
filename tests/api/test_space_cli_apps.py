@@ -1,9 +1,7 @@
-"""The CLI apps API: who can install, and who can only choose.
+"""The CLI apps API is an administrator-only management surface.
 
-The router is auth-gated with ``require_admin`` on two routes rather than on the
-whole thing, which is only defensible if those two are genuinely the privileged
-half. These tests pin that split, and the rule that keeps *enable* from becoming
-a way around the grant.
+The router-level ``require_admin`` dependency prevents a regular account from
+discovering or mutating deployment-wide CLI app state through the API.
 """
 
 from __future__ import annotations
@@ -51,8 +49,7 @@ def caller(monkeypatch: pytest.MonkeyPatch) -> dict[str, Any]:
 def client(caller: dict[str, Any]) -> TestClient:
     app = FastAPI()
     app.include_router(space_cli_apps.router, prefix="/api/v1/space/cli-apps")
-    # The route-level admin dependency is tested structurally below. For the
-    # handler tests, provide the already-established synthetic caller rather
+    # For handler tests, provide the established synthetic admin caller rather
     # than coupling them to the developer's local auth/session configuration.
     app.dependency_overrides[require_admin] = lambda: None
     return TestClient(app)
@@ -212,9 +209,11 @@ def test_installing_and_removing_require_an_administrator() -> None:
     }
     assert ("/catalog/{app_id}/install", "POST") in gated
     assert ("/apps/{app_id}", "DELETE") in gated
-    # And the read/choose routes are not gated, or a learner could not use the page.
-    assert not any(path == "/apps" and method == "GET" for path, method in gated)
-    assert not any("enabled" in path for path, _method in gated)
+    # The router-level dependency now protects the read and preference routes
+    # too: CLI Apps are an admin-only management surface in the beta.
+    assert ("/apps", "GET") in gated
+    assert ("/catalog", "GET") in gated
+    assert ("/apps/{app_id}/enabled", "PUT") in gated
 
 
 def test_installing_something_not_in_the_catalog_is_a_404(client: TestClient) -> None:

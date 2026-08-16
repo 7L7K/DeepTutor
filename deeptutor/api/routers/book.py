@@ -12,9 +12,10 @@ import asyncio
 import logging
 from typing import Any
 
-from fastapi import APIRouter, HTTPException, WebSocket, WebSocketDisconnect
+from fastapi import APIRouter, Depends, HTTPException, WebSocket, WebSocketDisconnect
 from pydantic import BaseModel, Field
 
+from deeptutor.api.routers.auth import require_admin
 from deeptutor.book import (
     BlockType,
     BookProposal,
@@ -26,7 +27,7 @@ from deeptutor.book.streaming import SOURCE as BOOK_SOURCE
 from deeptutor.core.stream import StreamEventType
 from deeptutor.core.stream_bus import StreamBus
 
-router = APIRouter()
+router = APIRouter(dependencies=[Depends(require_admin)])
 logger = logging.getLogger(__name__)
 
 

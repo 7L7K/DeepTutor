@@ -71,6 +71,7 @@ def _client_with_fake_partner(monkeypatch):
 
     app = FastAPI()
     app.include_router(plugins_router_mod.router, prefix="/api/v1/plugins")
+    app.dependency_overrides[plugins_router_mod.require_admin] = lambda: None
     return TestClient(app), mgr
 
 

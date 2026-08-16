@@ -24,6 +24,7 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
 from deeptutor.api.routers.auth import require_admin
+from deeptutor.multi_user.context import get_current_user
 from deeptutor.knowledge.kb_types import SUBAGENT_KB_TYPE
 from deeptutor.multi_user.knowledge_access import current_kb_manager
 from deeptutor.multi_user.partner_access import assert_partner_allowed, visible_partner_cards
@@ -61,14 +62,14 @@ class SubagentMessageRequest(BaseModel):
 
 
 @router.get("/detect")
-async def detect_subagents():
+async def detect_subagents(_: object = Depends(require_admin)):
     """Report which agent CLIs are installed and usable on this machine."""
     detections = await detect_all()
     return {"backends": [d.to_dict() for d in detections]}
 
 
 @router.get("/backends/options")
-async def backend_options():
+async def backend_options(_: object = Depends(require_admin)):
     """Synced model + reasoning-effort options per backend (settings page sync)."""
     from deeptutor.services.subagent.models import list_backend_options
 
@@ -77,7 +78,7 @@ async def backend_options():
 
 
 @router.post("/backends/{kind}/sync")
-async def sync_backend(kind: str):
+async def sync_backend(kind: str, _: object = Depends(require_admin)):
     """Re-pull one backend's model catalog (the settings "sync" button).
 
     For Claude Code this scrapes its ``/model`` TUI live and caches the result;
@@ -115,6 +116,8 @@ async def list_connections():
         meta = manager.get_metadata(name)
         if not isinstance(meta, dict) or meta.get("type") != SUBAGENT_KB_TYPE:
             continue
+        if not get_current_user().is_admin and meta.get("agent_kind") != PARTNER_BACKEND_KIND:
+            continue
         connections.append(
             {
                 "name": name,
@@ -144,6 +147,12 @@ async def create_connection(payload: ConnectSubagentRequest):
         raise HTTPException(status_code=400, detail="Both name and agent_kind are required.")
     if agent_kind not in list_backend_kinds():
         raise HTTPException(status_code=400, detail=f"Unknown agent kind: {agent_kind!r}")
+
+    if not get_current_user().is_admin and agent_kind != PARTNER_BACKEND_KIND:
+        raise HTTPException(
+            status_code=403,
+            detail="Only assigned Partners can be connected by a regular user.",
+        )
 
     resolved_cwd = ""
     partner_id = ""
@@ -197,6 +206,8 @@ async def delete_connection(name: str):
     meta = manager.get_metadata(name)
     if not isinstance(meta, dict) or meta.get("type") != SUBAGENT_KB_TYPE:
         raise HTTPException(status_code=404, detail=f"No connected subagent named {name!r}.")
+    if not get_current_user().is_admin and meta.get("agent_kind") != PARTNER_BACKEND_KIND:
+        raise HTTPException(status_code=403, detail="Administrator access required.")
     try:
         manager.delete_knowledge_base(name, confirm=True)
     except Exception as exc:  # pragma: no cover - defensive
@@ -231,6 +242,8 @@ async def message_connection(name: str, payload: SubagentMessageRequest):
     meta = manager.get_metadata(name)
     if not isinstance(meta, dict) or meta.get("type") != SUBAGENT_KB_TYPE:
         raise HTTPException(status_code=404, detail=f"No connected subagent named {name!r}.")
+    if not get_current_user().is_admin and meta.get("agent_kind") != PARTNER_BACKEND_KIND:
+        raise HTTPException(status_code=403, detail="Administrator access required.")
 
     from deeptutor.services.subagent import get_backend
     from deeptutor.services.subagent.sessions import get_session, remember_session, session_key
@@ -298,7 +311,7 @@ async def message_connection(name: str, payload: SubagentMessageRequest):
     return StreamingResponse(event_stream(), media_type="application/x-ndjson")
 
 
-@router.get("/settings")
+@router.get("/settings", dependencies=[Depends(require_admin)])
 async def get_settings():
     """Read the consult budget and per-backend run config."""
     return load_subagent_settings().to_dict()

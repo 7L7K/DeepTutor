@@ -7,10 +7,11 @@ import traceback
 from typing import AsyncGenerator, Literal
 import uuid
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
+from deeptutor.api.routers.auth import require_admin
 from deeptutor.co_writer.edit_agent import (
     EditAgent,
     append_history,
@@ -27,8 +28,7 @@ from deeptutor.core.stream_bus import StreamBus
 from deeptutor.services.config import PROJECT_ROOT, load_config_with_main
 from deeptutor.services.llm import clean_thinking_tags
 from deeptutor.services.settings.interface_settings import get_ui_language
-
-router = APIRouter()
+router = APIRouter(dependencies=[Depends(require_admin)])
 
 # Initialize logger with config
 config = load_config_with_main("main.yaml", PROJECT_ROOT)

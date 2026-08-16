@@ -73,6 +73,8 @@ export interface SettingsCategory {
   href: string;
   /** Leaves listed on the sub-hub page (omitted for direct-leaf categories). */
   children?: SettingsLeaf[];
+  /** The category changes deployment-wide behavior and is admin-only. */
+  adminOnly?: boolean;
 }
 
 const MODEL_CHILDREN: SettingsLeaf[] = [
@@ -87,6 +89,7 @@ const MODEL_CHILDREN: SettingsLeaf[] = [
     icon: Brain,
     tile: "bg-violet-500/10 text-violet-600 dark:text-violet-400",
     service: "llm",
+    adminOnly: true,
   },
   {
     key: "embedding",
@@ -99,6 +102,7 @@ const MODEL_CHILDREN: SettingsLeaf[] = [
     icon: Database,
     tile: "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400",
     service: "embedding",
+    adminOnly: true,
   },
   {
     key: "search",
@@ -108,6 +112,7 @@ const MODEL_CHILDREN: SettingsLeaf[] = [
     icon: Search,
     tile: "bg-amber-500/10 text-amber-600 dark:text-amber-400",
     service: "search",
+    adminOnly: true,
   },
   {
     key: "tts",
@@ -120,6 +125,7 @@ const MODEL_CHILDREN: SettingsLeaf[] = [
     icon: AudioLines,
     tile: "bg-rose-500/10 text-rose-600 dark:text-rose-400",
     service: "tts",
+    adminOnly: true,
   },
   {
     key: "stt",
@@ -132,6 +138,7 @@ const MODEL_CHILDREN: SettingsLeaf[] = [
     icon: Mic,
     tile: "bg-pink-500/10 text-pink-600 dark:text-pink-400",
     service: "stt",
+    adminOnly: true,
   },
   {
     key: "imagegen",
@@ -144,6 +151,7 @@ const MODEL_CHILDREN: SettingsLeaf[] = [
     icon: ImageIcon,
     tile: "bg-fuchsia-500/10 text-fuchsia-600 dark:text-fuchsia-400",
     service: "imagegen",
+    adminOnly: true,
   },
   {
     key: "videogen",
@@ -156,6 +164,7 @@ const MODEL_CHILDREN: SettingsLeaf[] = [
     icon: Clapperboard,
     tile: "bg-indigo-500/10 text-indigo-600 dark:text-indigo-400",
     service: "videogen",
+    adminOnly: true,
   },
 ];
 
@@ -181,6 +190,7 @@ const CHAT_CHILDREN: SettingsLeaf[] = [
     },
     icon: SlidersHorizontal,
     tile: "bg-lime-500/10 text-lime-600 dark:text-lime-400",
+    adminOnly: true,
   },
   {
     key: "attachments",
@@ -299,6 +309,7 @@ export const SETTINGS_CATEGORIES: SettingsCategory[] = [
     },
     icon: Network,
     href: "/settings/network",
+    adminOnly: true,
   },
   {
     key: "models",
@@ -310,6 +321,7 @@ export const SETTINGS_CATEGORIES: SettingsCategory[] = [
     icon: Boxes,
     href: "/settings/models",
     children: MODEL_CHILDREN,
+    adminOnly: true,
   },
   {
     key: "knowledge",
@@ -317,6 +329,7 @@ export const SETTINGS_CATEGORIES: SettingsCategory[] = [
     blurb: { zh: "文档解析引擎", en: "Document parsing engine" },
     icon: Library,
     href: "/settings/document-parsing",
+    adminOnly: true,
   },
   {
     key: "chat",
@@ -339,6 +352,7 @@ export const SETTINGS_CATEGORIES: SettingsCategory[] = [
     icon: Bot,
     href: "/settings/agents",
     children: AGENT_CHILDREN,
+    adminOnly: true,
   },
   {
     key: "memory",
@@ -349,11 +363,16 @@ export const SETTINGS_CATEGORIES: SettingsCategory[] = [
     },
     icon: BrainCircuit,
     href: "/settings/memory",
+    adminOnly: true,
   },
 ];
 
 export const SETTINGS_HUB_HREF = "/settings";
 const HUB_LABEL: Lang = { zh: "设置", en: "Settings" };
+const ADMIN_ONLY_SETTINGS_ROUTE_PREFIXES = [
+  "/settings/mcp",
+  "/settings/mineru",
+] as const;
 
 /** Routes that are pure navigation (hub + sub-hubs) — no Save/Apply toolbar. */
 const NAV_ONLY_ROUTES = new Set<string>([
@@ -364,6 +383,24 @@ const NAV_ONLY_ROUTES = new Set<string>([
 
 export function isNavOnlyRoute(pathname: string): boolean {
   return NAV_ONLY_ROUTES.has(pathname);
+}
+
+/** Whether a settings hub, category, or leaf is admin-only. */
+export function isAdminOnlySettingsRoute(pathname: string): boolean {
+  return (
+    ADMIN_ONLY_SETTINGS_ROUTE_PREFIXES.some(
+      (prefix) => pathname === prefix || pathname.startsWith(`${prefix}/`),
+    ) ||
+    SETTINGS_CATEGORIES.some(
+      (category) =>
+        (category.adminOnly &&
+          (pathname === category.href ||
+            pathname.startsWith(`${category.href}/`))) ||
+        category.children?.some(
+          (leaf) => leaf.adminOnly && pathname === leaf.href,
+        ),
+    )
+  );
 }
 
 // The on-disk file (under data/user/settings/) each leaf module persists to.

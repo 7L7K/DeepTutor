@@ -23,6 +23,7 @@ import { listNotebooks, listNotebookEntries } from "@/lib/notebook-api";
 import { listPersonas } from "@/lib/personas-api";
 import { listSkills } from "@/lib/skills-api";
 import { fetchAllProgress } from "@/lib/learning-api";
+import { useAuthStatus } from "@/hooks/useAuthStatus";
 
 /**
  * Learning Space dashboard — the hub of `/space`.
@@ -189,12 +190,25 @@ const GROUPS: DashboardGroup[] = [
   },
 ];
 
-const ALL_ITEMS = GROUPS.flatMap((g) => g.items);
+const ADMIN_ONLY_ITEMS = new Set<DashKey>(["cli_apps"]);
 
 export default function SpaceDashboard() {
   const { i18n } = useTranslation();
+  const { enabled: authEnabled, isAdmin, loading: authLoading } =
+    useAuthStatus();
   const zh = i18n.language?.toLowerCase().startsWith("zh");
   const tr = useCallback((l: Lang) => (zh ? l.zh : l.en), [zh]);
+  const canSeeAdminItems = !authLoading && (!authEnabled || isAdmin);
+  const visibleGroups = useMemo(
+    () =>
+      GROUPS.map((group) => ({
+        ...group,
+        items: group.items.filter(
+          (item) => !ADMIN_ONLY_ITEMS.has(item.key) || canSeeAdminItems,
+        ),
+      })).filter((group) => group.items.length > 0),
+    [canSeeAdminItems],
+  );
 
   const [counts, setCounts] = useState<Partial<Record<DashKey, number>>>({});
 
@@ -202,7 +216,7 @@ export default function SpaceDashboard() {
     let cancelled = false;
     // Each tile loads independently so one slow/failed endpoint never blanks
     // the whole dashboard.
-    for (const item of ALL_ITEMS) {
+    for (const item of visibleGroups.flatMap((group) => group.items)) {
       item
         .load()
         .then((n) => {
@@ -215,7 +229,7 @@ export default function SpaceDashboard() {
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [visibleGroups]);
 
   return (
     <div>
@@ -232,7 +246,7 @@ export default function SpaceDashboard() {
       </header>
 
       <div className="space-y-9">
-        {GROUPS.map((group) => (
+        {visibleGroups.map((group) => (
           <section key={group.label.en}>
             <h2 className="mb-3 px-0.5 font-serif text-[16px] font-semibold tracking-tight text-[var(--foreground)]">
               {tr(group.label)}

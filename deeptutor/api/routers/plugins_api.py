@@ -14,10 +14,11 @@ import re
 import time
 from typing import Any, AsyncGenerator
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, ConfigDict, Field
 
+from deeptutor.api.routers.auth import require_admin
 from deeptutor.core.i18n import t
 from deeptutor.i18n.metadata_i18n import tool_description_i18n
 from deeptutor.logging import (
@@ -31,7 +32,7 @@ from deeptutor.runtime.registry.tool_registry import get_tool_registry
 
 logger = logging.getLogger(__name__)
 
-router = APIRouter()
+router = APIRouter(dependencies=[Depends(require_admin)])
 ANSI_ESCAPE_RE = re.compile(r"\x1B\[[0-?]*[ -/]*[@-~]")
 
 

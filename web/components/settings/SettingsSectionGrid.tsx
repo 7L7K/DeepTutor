@@ -1,11 +1,11 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback } from "react";
 import Link from "next/link";
 import { useTranslation } from "react-i18next";
 import { ArrowUpRight } from "lucide-react";
 
-import { fetchAuthStatus } from "@/lib/auth";
+import { useAuthStatus } from "@/hooks/useAuthStatus";
 import {
   serviceReadiness,
   useSettings,
@@ -35,17 +35,12 @@ export default function SettingsSectionGrid({
 
   const category = SETTINGS_CATEGORIES.find((c) => c.key === categoryKey);
 
-  const [hideAdminOnly, setHideAdminOnly] = useState(false);
-  useEffect(() => {
-    let cancelled = false;
-    fetchAuthStatus().then((authStatus) => {
-      if (cancelled || !authStatus) return;
-      setHideAdminOnly(Boolean(authStatus.enabled) && !authStatus.is_admin);
-    });
-    return () => {
-      cancelled = true;
-    };
-  }, []);
+  const { enabled: authEnabled, isAdmin, loading: authLoading } =
+    useAuthStatus();
+  // Keep restricted leaves hidden during auth resolution. Local auth-disabled
+  // runs briefly show the learner-safe view, then reveal the admin view once
+  // the local implicit-admin status is confirmed.
+  const hideAdminOnly = authLoading || (authEnabled && !isAdmin);
 
   const chipFor = useCallback(
     (

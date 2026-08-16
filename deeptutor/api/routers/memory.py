@@ -36,10 +36,11 @@ import logging
 import re
 from typing import Literal
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
+from deeptutor.api.routers.auth import require_admin
 from deeptutor.services.memory import (
     L3_SLOTS,
     SURFACES,
@@ -47,11 +48,10 @@ from deeptutor.services.memory import (
     get_memory_store,
     paths,
 )
-
 _ENTRY_ID_RE = re.compile(r"^m_[0-9A-HJKMNP-TV-Z]{26}$")
 
 logger = logging.getLogger(__name__)
-router = APIRouter()
+router = APIRouter(dependencies=[Depends(require_admin)])
 
 Layer = Literal["L2", "L3"]
 

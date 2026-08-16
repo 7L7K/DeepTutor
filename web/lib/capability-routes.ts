@@ -6,6 +6,28 @@
 export type Capability = "llm";
 
 /**
+ * Workspace surfaces that are intentionally reserved for administrators in
+ * the beta. User-scoped chat access remains available through the regular
+ * composer and assigned Partners flows; this list protects the full
+ * management workspaces and their direct URLs.
+ */
+export const ADMIN_ONLY_ROUTE_PREFIXES: ReadonlyArray<string> = [
+  "/agents",
+  "/book",
+  "/co-writer",
+  "/knowledge",
+  "/memory",
+  "/playground",
+  "/space/cli-apps",
+];
+
+export function adminOnlyForPath(pathname: string): boolean {
+  return ADMIN_ONLY_ROUTE_PREFIXES.some(
+    (prefix) => pathname === prefix || pathname.startsWith(`${prefix}/`),
+  );
+}
+
+/**
  * Single source of truth mapping a workspace feature route to the model
  * capability it needs in order to function. Features absent from this list
  * require no per-user model and are always available (Knowledge, Space,

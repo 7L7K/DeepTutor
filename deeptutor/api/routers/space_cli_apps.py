@@ -2,24 +2,17 @@
 CLI apps API
 ============
 
-Mounted at ``/api/v1/space/cli-apps``. Two audiences on one surface, split by
-method rather than by route prefix so the page has one thing to read:
+Mounted at ``/api/v1/space/cli-apps``. This is an administrator-only
+deployment-management surface:
 
-* **anyone signed in** — ``GET /apps`` (what is installed, and whether I may use
-  it), ``GET /catalog`` (what exists), ``PUT /apps/{id}/enabled`` (my own
-  preference among the apps I have been granted);
-* **administrators only** — ``POST /catalog/{id}/install`` and
-  ``DELETE /apps/{id}``.
+* **administrators only** — reading the catalog, installing or removing an app,
+  and changing the deployment's installed-app state.
 
-The admin routes are gated individually with ``Depends(require_admin)`` rather
-than by an all-router dependency, because installing is the privileged half and
-reading is not: installing runs a third-party ``setup.py`` in the application
-container, as the application user. That is the whole reason CLI apps are not
-self-service, and it is why an ordinary account's verb here is *enable*.
-
-Enabling is a preference, not a permission. The permission is
-``grant.cli_apps``, resolved server-side in ``cli_apps.provider``; an account can
-only switch off something it was granted, never switch on something it was not.
+The whole router is admin-gated because CLI Apps are an advanced deployment
+surface, not a learner-facing preference. This prevents a regular account from
+discovering the catalog or reaching the page through a direct API call. The
+chat runtime still resolves any explicitly granted app through
+``cli_apps.provider``; this change only closes the management surface.
 """
 
 from __future__ import annotations
@@ -51,7 +44,7 @@ from deeptutor.services.cli_apps.state import (
 
 logger = logging.getLogger(__name__)
 
-router = APIRouter()
+router = APIRouter(dependencies=[Depends(require_admin)])
 
 
 class EnabledPayload(BaseModel):
@@ -132,7 +125,7 @@ async def get_catalog(
     }
 
 
-@router.post("/catalog/{app_id}/install", dependencies=[Depends(require_admin)])
+@router.post("/catalog/{app_id}/install")
 async def install(app_id: str) -> dict[str, Any]:
     """Install one app for the deployment. Administrator only."""
     entry = get_entry(app_id)
@@ -159,7 +152,7 @@ async def install(app_id: str) -> dict[str, Any]:
     return state
 
 
-@router.delete("/apps/{app_id}", dependencies=[Depends(require_admin)])
+@router.delete("/apps/{app_id}")
 async def uninstall(app_id: str) -> dict[str, Any]:
     """Remove one app from the deployment. Administrator only."""
     from deeptutor.services.cli_apps.installer import uninstall_app
