@@ -22,6 +22,113 @@ URLs, archived receipts, screenshots, provenance artifacts, and fixtures that
 intentionally document legacy behavior. When in doubt, classify the occurrence
 before editing; never rename a technical contract merely to make a search clean.
 
+## Hosted VPS operating boundary
+
+When the user says **VPS** in this workspace, they mean the DigitalOcean
+TEEECHR beta deployment reached through the local SSH alias `deeptutor-vps` and
+served at `https://teeechr.gesahni.com`. The hostname and SSH alias are the
+durable operator identifiers; verify both before making an operational change.
+
+The VPS is a deployment target, not the development checkout. Its public path
+is DNS → Caddy → the `teeechr-app` Docker container. The app container carries
+the Next.js frontend and FastAPI backend; persistent runtime state is mounted
+from `/opt/teeechr/data` on the host to `/app/data` in the container. Student
+accounts, Courses, sources, attempts, provider settings, encrypted credentials,
+usage records, and logs live in that data tree and must be preserved across code
+deployments.
+
+Source, build, deployment, and runtime proof are separate claims:
+
+```text
+local feature worktree → local commit → GitHub branch/tag
+    → image tagged with the exact commit → VPS deployment receipt
+    → hosted health and behavior checks
+```
+
+Do not treat a dirty checkout, a successful local build, a healthy container, or
+an image label as proof of the other layers. Before deployment, establish the
+exact source commit, clean release boundary, image tag/digest, persistent data
+mount, rollback reference, and relevant hosted checks. Never merge or reset a
+dirty canonical checkout to make a deployment convenient.
+
+Default VPS inspection is read-only. Do not change containers, firewall, SSH,
+DNS, provider settings, credentials, runtime data, or deployment files unless
+the user explicitly authorizes that operation. Provider credentials are
+deployment-owned and encrypted; individual users must receive logical model
+access, never a provider key.
+
+Use `docs/TEEECHR_VPS_RUNBOOK.md` for the current topology and operational
+procedure, and the dated hosted-beta receipt for release-specific facts. Keep
+temporary passwords, API keys, private SSH material, and raw credential files
+out of source control and documentation.
+
+## Change and release workflow contract
+
+Use these meanings consistently:
+
+| Phrase | Meaning in this workspace |
+| --- | --- |
+| local | Files in the selected checkout/worktree on the user's computer |
+| commit | A saved local Git checkpoint; not a push, merge, or deployment |
+| GitHub | The remote source repository, normally the `7L7K/DeepTutor` fork |
+| `main` | A Git branch; changing it does not automatically change the website |
+| PR | A review request to merge one GitHub branch into another, usually `main` |
+| website / production | The live TEEECHR site at `teeechr.gesahni.com` |
+| VPS | The DigitalOcean deployment described in `docs/TEEECHR_VPS_RUNBOOK.md` |
+| deploy | Build/run an exact approved commit on the VPS and verify the hosted result |
+
+The normal path is:
+
+```text
+local feature worktree
+    → local tests and diff review
+    → local commit
+    → push feature branch to GitHub
+    → PR/review or explicit merge decision
+    → approved commit on GitHub/main or a release tag
+    → Docker image tagged with that exact SHA
+    → explicit VPS deployment
+    → hosted health and behavior checks
+```
+
+Non-negotiable boundaries:
+
+- Editing locally changes only the local files until a commit is made.
+- A commit changes only local Git history until it is pushed.
+- A push changes GitHub but does not merge or deploy.
+- A PR requests a merge; it does not deploy unless a separately authorized
+  automation exists and is explicitly part of the release contract.
+- Merging into `main` changes source control; it does not automatically change
+  the public website.
+- Deploying changes the public website; it must use an exact source commit and
+  preserve `/opt/teeechr/data`.
+- Never deploy from a dirty checkout, stage with `git add .` without reviewing
+  the boundary, reset unrelated user work, or edit production source directly.
+- Keep code changes, runtime data changes, provider changes, DNS changes, and
+  security changes as separate authorized lanes.
+
+Instruction shorthand:
+
+- “Inspect/check the VPS” means read-only inspection.
+- “Change this locally” means edit and validate; do not push or deploy.
+- “Commit this” means create a narrow local commit; do not push or deploy.
+- “Push this” means publish the named branch/commit to the intended remote; do
+  not merge or deploy.
+- “Open a PR” means push the branch if needed and prepare the review request;
+  do not merge it.
+- “Put it on main” means merge/reconcile source control; do not deploy unless
+  the user also authorizes production release.
+- “Put it on the website” or “deploy it” means resolve the exact commit, build
+  and deploy it, preserve data, and run hosted verification.
+
+When a request uses “main,” “GitHub,” “website,” or “VPS” ambiguously, state
+which boundary you are about to cross before acting. If a dirty checkout or
+uncertain source identity makes the request unsafe, stop at inspection and
+explain the smallest safe next step.
+
+Keep the ELI5 explanation and release checklist in
+`docs/TEEECHR_CHANGE_WORKFLOW.md`.
+
 ## Architecture
 
 ```

@@ -2,6 +2,17 @@
 
 ## Unreleased
 
+- Added the TEEECHR hosted VPS operating map and 2026-08-12 beta receipt,
+  documenting the DigitalOcean/Caddy/Docker topology, persistent data boundary,
+  deployment-owned provider model, source-to-release workflow, security posture,
+  qualification evidence, and remaining remote source-control closeout.
+- Added the ELI5 TEEECHR change workflow defining local edits, commits, GitHub
+  pushes, pull requests, `main`, exact-SHA deployment, hosted verification, and
+  the rules that keep those boundaries separate.
+- Documented the existing pre-commit recipe, current local-hook/CI coverage,
+  and the explicit manual production gates; future hook and deployment-workflow
+  automation remains a separate implementation lane.
+
 - Added a compatibility bridge for BlueWay observability migration `0018`.
   The bridge upgrades `0017` databases, preserves pre-observability behavior,
   and can hydrate connection rows after the full observability release has
