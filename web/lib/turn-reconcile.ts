@@ -54,7 +54,9 @@ export function latestAssistantMatchesTurn(
   if (
     assistantMessageId != null &&
     assistant.id !== assistantMessageId &&
-    !(isOptimisticId(assistant.id) && !(assistant.content ?? "").trim() && eventTurnIds.length === 0)
+    !(isOptimisticId(assistant.id) &&
+      !(assistant.content ?? "").trim() &&
+      (!turnId || eventTurnIds.length === 0 || eventTurnIds.includes(turnId)))
   ) {
     return false;
   }
@@ -93,7 +95,7 @@ export function snapshotMatchesExpectedTurn(
   expectedTurnId?: string | null,
   expectedAssistantMessageId?: number | null,
 ): boolean {
-  if (!expectedTurnId && expectedAssistantMessageId == null) return false;
+  if (!expectedTurnId && expectedAssistantMessageId == null) return true;
   const assistant = messages[messages.length - 1];
   if (!assistant || assistant.role !== "assistant") return false;
   if (expectedAssistantMessageId != null) return assistant.id === expectedAssistantMessageId;

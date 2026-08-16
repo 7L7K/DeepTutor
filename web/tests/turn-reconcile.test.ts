@@ -209,6 +209,26 @@ test("hydrates a blank assistant when the stream left no event metadata", () => 
   );
 });
 
+test("hydrates a blank optimistic assistant with non-content turn events", () => {
+  assert.equal(
+    latestAssistantNeedsHydration(
+      [
+        { id: 52, role: "user", content: "question" },
+        {
+          id: -5201,
+          role: "assistant",
+          content: "",
+          // A turn-tagged stage/tool event carries identity but no answer text.
+          events: [{ turn_id: "turn_missing" }],
+        },
+      ],
+      "turn_missing",
+      53,
+    ),
+    true,
+  );
+});
+
 test("does not rehydrate a completed turn that already has content", () => {
   assert.equal(
     latestAssistantNeedsHydration([
@@ -352,6 +372,10 @@ test("latest assistant turn guard rejects a newer local turn", () => {
       "turn_old",
     ),
     false,
+  );
+  assert.equal(
+    snapshotMatchesExpectedTurn([{ id: 85, role: "assistant", content: "answer", events: [] }]),
+    true,
   );
 });
 
