@@ -15,7 +15,6 @@ import sys
 import tempfile
 from typing import Any
 
-
 PROFILE_ID = "local-openai-env"
 MODEL_ID = "local-openai-gpt-5.6-luna"
 DEFAULT_MODEL = "gpt-5.6-luna"
