@@ -179,24 +179,22 @@ export default function CourseOverview() {
   const course = courseShell?.course;
   const [loading, setLoading] = useState(true);
   const [overview, setOverview] = useState<OverviewData>(EMPTY_OVERVIEW);
+  const courseId = course?.id;
   const disabled = course ? course.state !== "active" : true;
 
   useEffect(() => {
     let cancelled = false;
-    if (!course || disabled) {
-      setLoading(false);
-      setOverview(EMPTY_OVERVIEW);
+    if (!courseId || disabled) {
       return () => {
         cancelled = true;
       };
     }
 
-    setLoading(true);
     void Promise.all([
-      tryLoad(() => getCourseChatReadiness(course.id)),
-      tryLoad(() => loadPracticeSummary(course.id)),
-      tryLoad(() => loadMasterySummary(course.id)),
-      tryLoad(() => loadReviewSummary(course.id)),
+      tryLoad(() => getCourseChatReadiness(courseId)),
+      tryLoad(() => loadPracticeSummary(courseId)),
+      tryLoad(() => loadMasterySummary(courseId)),
+      tryLoad(() => loadReviewSummary(courseId)),
     ]).then(([readiness, practice, mastery, review]) => {
       if (cancelled) return;
       setOverview({ readiness, practice, mastery, review });
@@ -206,7 +204,7 @@ export default function CourseOverview() {
     return () => {
       cancelled = true;
     };
-  }, [course?.id, disabled]);
+  }, [courseId, disabled]);
 
   if (!course) return null;
 
