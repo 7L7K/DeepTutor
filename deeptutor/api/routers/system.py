@@ -214,9 +214,7 @@ async def test_llm_connection():
         )
 
 
-@router.post(
-    "/test/embeddings", response_model=TestResponse, dependencies=[Depends(require_admin)]
-)
+@router.post("/test/embeddings", response_model=TestResponse, dependencies=[Depends(require_admin)])
 async def test_embeddings_connection():
     """
     Test Embeddings model connection by sending a simple embedding request
