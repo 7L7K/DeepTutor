@@ -29,11 +29,11 @@ its events — older clients keep working.
 
 from __future__ import annotations
 
-from dataclasses import asdict
-from datetime import date as date_cls
 import json
 import logging
 import re
+from dataclasses import asdict
+from datetime import date as date_cls
 from typing import Literal
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -48,6 +48,7 @@ from deeptutor.services.memory import (
     get_memory_store,
     paths,
 )
+
 _ENTRY_ID_RE = re.compile(r"^m_[0-9A-HJKMNP-TV-Z]{26}$")
 
 logger = logging.getLogger(__name__)

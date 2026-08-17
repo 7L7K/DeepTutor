@@ -24,8 +24,8 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
 from deeptutor.api.routers.auth import require_admin
-from deeptutor.multi_user.context import get_current_user
 from deeptutor.knowledge.kb_types import SUBAGENT_KB_TYPE
+from deeptutor.multi_user.context import get_current_user
 from deeptutor.multi_user.knowledge_access import current_kb_manager
 from deeptutor.multi_user.partner_access import assert_partner_allowed, visible_partner_cards
 from deeptutor.services.rag.linked_kb import assert_path_allowed

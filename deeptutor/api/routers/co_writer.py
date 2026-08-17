@@ -1,11 +1,11 @@
 import asyncio
-from datetime import datetime
 import json
 import logging
 import re
 import traceback
-from typing import AsyncGenerator, Literal
 import uuid
+from datetime import datetime
+from typing import AsyncGenerator, Literal
 
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import StreamingResponse
@@ -28,6 +28,7 @@ from deeptutor.core.stream_bus import StreamBus
 from deeptutor.services.config import PROJECT_ROOT, load_config_with_main
 from deeptutor.services.llm import clean_thinking_tags
 from deeptutor.services.settings.interface_settings import get_ui_language
+
 router = APIRouter(dependencies=[Depends(require_admin)])
 
 # Initialize logger with config
