@@ -34,11 +34,19 @@ if [[ -n "$(git status --porcelain --untracked-files=no 2>/dev/null)" ]]; then
 fi
 
 compose() {
-  LOCAL_VPS_COMMIT="${commit}" \
-    LOCAL_VPS_HTTP_PORT="${HTTP_PORT}" \
-    LOCAL_VPS_HTTPS_PORT="${HTTPS_PORT}" \
-    COMPOSE_PROJECT_NAME="${PROJECT_NAME}" \
-    docker compose "${COMPOSE_ENV_FILE[@]}" -f "${COMPOSE_FILE}" "$@"
+  if (( ${#COMPOSE_ENV_FILE[@]} )); then
+    LOCAL_VPS_COMMIT="${commit}" \
+      LOCAL_VPS_HTTP_PORT="${HTTP_PORT}" \
+      LOCAL_VPS_HTTPS_PORT="${HTTPS_PORT}" \
+      COMPOSE_PROJECT_NAME="${PROJECT_NAME}" \
+      docker compose "${COMPOSE_ENV_FILE[@]}" -f "${COMPOSE_FILE}" "$@"
+  else
+    LOCAL_VPS_COMMIT="${commit}" \
+      LOCAL_VPS_HTTP_PORT="${HTTP_PORT}" \
+      LOCAL_VPS_HTTPS_PORT="${HTTPS_PORT}" \
+      COMPOSE_PROJECT_NAME="${PROJECT_NAME}" \
+      docker compose -f "${COMPOSE_FILE}" "$@"
+  fi
 }
 
 bootstrap_local_catalog() {
