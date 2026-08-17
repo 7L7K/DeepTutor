@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- Added the learner Course surfaces for local-first beta qualification: distinct
+  Overview, Practice, Flashcards, and Materials flows; Course-grounded quiz and
+  flashcard creation; editable learner cards; and admin-only navigation and
+  deployment-wide Knowledge settings. Course migration `0019` records learner
+  flashcard edits while preserving generated-card provenance.
+
 - Added the TEEECHR hosted VPS operating map and 2026-08-12 beta receipt,
   documenting the DigitalOcean/Caddy/Docker topology, persistent data boundary,
   deployment-owned provider model, source-to-release workflow, security posture,

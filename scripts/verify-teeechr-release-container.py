@@ -10,6 +10,8 @@ from tempfile import TemporaryDirectory
 from deeptutor.courses.migrations.runner import discover_migrations, ensure_course_schema
 from deeptutor.integrations.blueway.observability import emit_blueway_event
 
+REQUIRED_LATEST_COURSE_MIGRATION = 19
+
 
 def main() -> int:
     expected_version = os.environ.get("EXPECTED_RELEASE_VERSION", "").strip()
@@ -21,12 +23,14 @@ def main() -> int:
         raise RuntimeError("Release image version does not match the release tag")
 
     artifacts = discover_migrations()
-    if not artifacts or artifacts[-1].version < 18:
-        raise RuntimeError("Release image does not contain Course migration 0018")
+    if not artifacts or artifacts[-1].version != REQUIRED_LATEST_COURSE_MIGRATION:
+        raise RuntimeError(
+            "Release image does not contain the required latest Course migration 0019"
+        )
     with TemporaryDirectory(prefix="teeechr-release-") as directory:
         applied = ensure_course_schema(Path(directory) / "courses.db")
-    if 18 not in applied:
-        raise RuntimeError("Release image did not apply Course migration 0018")
+    if REQUIRED_LATEST_COURSE_MIGRATION not in applied:
+        raise RuntimeError("Release image did not apply Course migration 0019")
 
     event = emit_blueway_event(
         "blueway_connection_revoke_failed",

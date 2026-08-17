@@ -70,7 +70,7 @@ def test_verify_then_apply_covers_all_discovered_databases(
     for path in paths:
         result = module.check_database(path, apply=True, artifacts=artifacts)
         assert result.status == "migrated"
-        assert result.applied == (17, 18)
+        assert result.applied == (17, 18, 19)
         assert module.check_database(path, apply=False, artifacts=artifacts).status == "ready"
 
 

@@ -20,6 +20,7 @@ from uuid import uuid4
 from fastapi import (
     APIRouter,
     BackgroundTasks,
+    Depends,
     File,
     Form,
     HTTPException,
@@ -30,6 +31,7 @@ from fastapi import (
 from fastapi.responses import FileResponse, PlainTextResponse, StreamingResponse
 from pydantic import BaseModel
 
+from deeptutor.api.routers.auth import require_admin
 from deeptutor.api.utils.progress_broadcaster import ProgressBroadcaster
 from deeptutor.api.utils.task_id_manager import TaskIDManager
 from deeptutor.api.utils.task_log_stream import capture_task_logs, get_task_stream_manager
@@ -81,6 +83,11 @@ log_dir = config.get("paths", {}).get("user_log_dir") or config.get("logging", {
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
+
+# These endpoints read or change deployment-wide engine configuration. The
+# Knowledge Base/file routes below remain user-scoped, but shared runtime
+# settings must never be writable (or exposed) to a regular account.
+_ADMIN_ENGINE_DEPENDENCIES = [Depends(require_admin)]
 
 # Constants for byte conversions
 BYTES_PER_GB = 1024**3
@@ -992,7 +999,7 @@ async def run_upload_processing_task(
             return False
 
 
-@router.get("/health")
+@router.get("/health", dependencies=_ADMIN_ENGINE_DEPENDENCIES)
 async def health_check():
     """Health check endpoint"""
     try:
@@ -1011,7 +1018,7 @@ async def health_check():
         return {"status": "error", "error": str(e), "traceback": traceback.format_exc()}
 
 
-@router.get("/rag-providers")
+@router.get("/rag-providers", dependencies=_ADMIN_ENGINE_DEPENDENCIES)
 async def get_rag_providers():
     """Get list of available RAG providers (with the active per-engine mode)."""
     try:
@@ -1041,7 +1048,7 @@ class ProviderModeUpdate(BaseModel):
     mode: str
 
 
-@router.put("/rag-providers/{provider}/mode")
+@router.put("/rag-providers/{provider}/mode", dependencies=_ADMIN_ENGINE_DEPENDENCIES)
 async def set_rag_provider_mode(provider: str, payload: ProviderModeUpdate):
     """Persist the default retrieval mode for a mode-aware engine.
 
@@ -1086,7 +1093,7 @@ def _pageindex_config_payload() -> dict:
     }
 
 
-@router.get("/rag-pipelines/pageindex/config")
+@router.get("/rag-pipelines/pageindex/config", dependencies=_ADMIN_ENGINE_DEPENDENCIES)
 async def get_pageindex_pipeline_config():
     """Read the PageIndex credential state (key redacted to a boolean)."""
     try:
@@ -1096,7 +1103,7 @@ async def get_pageindex_pipeline_config():
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@router.put("/rag-pipelines/pageindex/config")
+@router.put("/rag-pipelines/pageindex/config", dependencies=_ADMIN_ENGINE_DEPENDENCIES)
 async def update_pageindex_pipeline_config(payload: PageIndexConfigUpdate):
     """Persist the PageIndex API key / base URL for this user's account."""
     try:
@@ -1142,7 +1149,7 @@ class LlamaIndexConfigUpdate(BaseModel):
     chunk_overlap: int | None = None
 
 
-@router.get("/rag-pipelines/llamaindex/config")
+@router.get("/rag-pipelines/llamaindex/config", dependencies=_ADMIN_ENGINE_DEPENDENCIES)
 async def get_llamaindex_pipeline_config():
     """Read the LlamaIndex engine's retrieval + chunking knobs."""
     try:
@@ -1154,7 +1161,7 @@ async def get_llamaindex_pipeline_config():
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@router.put("/rag-pipelines/llamaindex/config")
+@router.put("/rag-pipelines/llamaindex/config", dependencies=_ADMIN_ENGINE_DEPENDENCIES)
 async def update_llamaindex_pipeline_config(payload: LlamaIndexConfigUpdate):
     """Persist the LlamaIndex engine knobs.
 
@@ -1182,7 +1189,7 @@ class GraphRagConfigUpdate(BaseModel):
     dynamic_community_selection: bool | None = None
 
 
-@router.get("/rag-pipelines/graphrag/config")
+@router.get("/rag-pipelines/graphrag/config", dependencies=_ADMIN_ENGINE_DEPENDENCIES)
 async def get_graphrag_pipeline_config():
     """Read GraphRAG's query knobs (response style, community granularity)."""
     try:
@@ -1194,7 +1201,7 @@ async def get_graphrag_pipeline_config():
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@router.put("/rag-pipelines/graphrag/config")
+@router.put("/rag-pipelines/graphrag/config", dependencies=_ADMIN_ENGINE_DEPENDENCIES)
 async def update_graphrag_pipeline_config(payload: GraphRagConfigUpdate):
     """Persist GraphRAG's query knobs. Takes effect on the next query."""
     try:
@@ -1216,7 +1223,7 @@ class LightRagConfigUpdate(BaseModel):
     response_type: str | None = None
 
 
-@router.get("/rag-pipelines/lightrag/config")
+@router.get("/rag-pipelines/lightrag/config", dependencies=_ADMIN_ENGINE_DEPENDENCIES)
 async def get_lightrag_pipeline_config():
     """Read LightRAG's query knobs (top_k, response style)."""
     try:
@@ -1228,7 +1235,7 @@ async def get_lightrag_pipeline_config():
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@router.put("/rag-pipelines/lightrag/config")
+@router.put("/rag-pipelines/lightrag/config", dependencies=_ADMIN_ENGINE_DEPENDENCIES)
 async def update_lightrag_pipeline_config(payload: LightRagConfigUpdate):
     """Persist LightRAG's query knobs. Takes effect on the next query."""
     try:
@@ -1243,7 +1250,7 @@ async def update_lightrag_pipeline_config(payload: LightRagConfigUpdate):
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@router.get("/rag-pipelines/{provider}/preflight")
+@router.get("/rag-pipelines/{provider}/preflight", dependencies=_ADMIN_ENGINE_DEPENDENCIES)
 async def get_rag_pipeline_preflight(provider: str):
     """Check whether ``provider`` can run in the current environment.
 
@@ -1306,7 +1313,7 @@ def _model_options_payload(kinds: list[str]) -> dict:
     return out
 
 
-@router.get("/rag-pipelines/model-options")
+@router.get("/rag-pipelines/model-options", dependencies=_ADMIN_ENGINE_DEPENDENCIES)
 async def get_rag_model_options(kinds: str = "llm,embedding"):
     """List configured models (secret-free) for the requested model kinds."""
     try:
@@ -1327,7 +1334,7 @@ class ActiveModelUpdate(BaseModel):
     model_id: str
 
 
-@router.put("/rag-pipelines/active-model")
+@router.put("/rag-pipelines/active-model", dependencies=_ADMIN_ENGINE_DEPENDENCIES)
 async def set_rag_active_model(payload: ActiveModelUpdate):
     """Set the active model for an engine's required kind, applied immediately.
 
