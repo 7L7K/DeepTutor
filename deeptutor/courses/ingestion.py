@@ -345,7 +345,10 @@ async def run_source_operation(task: dict[str, Any]) -> None:
         from deeptutor.knowledge.initializer import KnowledgeBaseInitializer
 
         source_content_sha256 = task.get("source_content_sha256")
-        if not source_content_sha256:
+        if not source_content_sha256 and {
+            "course_id",
+            "source_id",
+        }.issubset(task):
             source_repository = CourseRepository(
                 get_personal_path_service(str(task["owner_user_id"])).get_courses_db(),
                 str(task["owner_user_id"]),
