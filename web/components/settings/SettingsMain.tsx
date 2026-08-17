@@ -5,7 +5,12 @@ import { usePathname } from "next/navigation";
 import SettingsBreadcrumb from "@/components/settings/SettingsBreadcrumb";
 import { SettingsToolbar } from "@/components/settings/SettingsToolbar";
 import { SettingsLoadStatusBanner } from "@/components/settings/SettingsLoadStatusBanner";
-import { SETTINGS_HUB_HREF, isNavOnlyRoute } from "@/lib/settings-nav";
+import AdminGate from "@/components/access/AdminGate";
+import {
+  SETTINGS_HUB_HREF,
+  isAdminOnlySettingsRoute,
+  isNavOnlyRoute,
+} from "@/lib/settings-nav";
 
 // Two-level hub: the dashboard at `/settings` is the entry; categories with
 // several settings open a sub-hub, the rest go straight to a leaf. Every page
@@ -30,8 +35,9 @@ export default function SettingsMain({
   }
 
   const showToolbar = !isNavOnlyRoute(pathname);
+  const adminOnly = isAdminOnlySettingsRoute(pathname);
 
-  return (
+  const page = (
     <div className="flex h-full min-w-0 flex-col overflow-hidden bg-[var(--background)]">
       <div className="mx-auto w-full max-w-5xl px-10 pt-5">
         <SettingsBreadcrumb />
@@ -54,4 +60,6 @@ export default function SettingsMain({
       </div>
     </div>
   );
+
+  return adminOnly ? <AdminGate>{page}</AdminGate> : page;
 }

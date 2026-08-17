@@ -8,16 +8,28 @@ const workspaceSource = readFileSync(
   "utf8",
 );
 
-test("Practice learner navigation defaults to Take and separates authoring from History", () => {
-  assert.match(workspaceSource, /type PracticeTab = "take" \| "create" \| "history"/);
+test("Practice learner navigation keeps Take and History and makes creation a Take action", () => {
+  assert.match(workspaceSource, /type PracticeTab = "take" \| "history"/);
   assert.match(workspaceSource, /useState<PracticeTab>\("take"\)/);
-  assert.match(workspaceSource, /\["take", "create", "history"\]/);
-  assert.match(workspaceSource, /tab === "take" \? "Take"/);
-  assert.match(workspaceSource, /tab === "create" \? "Create"/);
-  assert.match(workspaceSource, /: "History"/);
-  assert.match(workspaceSource, /activeTab === "create" && !attemptView && revision\?\.state === "draft"/);
-  assert.doesNotMatch(workspaceSource, /activeTab === "take"[^\n]*New Practice title/);
+  assert.match(workspaceSource, /\["take", "history"\]/);
+  assert.match(workspaceSource, /tab === "take" \? "Practice" : "History"/);
+  assert.match(workspaceSource, /<h2 id="new-practice-title" className="text-2xl font-semibold sm:text-3xl">What do you want to practice\?<\/h2>/);
+  assert.match(workspaceSource, /aria-label="Practice topic"/);
+  assert.match(workspaceSource, /<summary className="flex cursor-pointer flex-wrap items-center gap-3 py-3 text-sm font-medium">/);
+  assert.match(workspaceSource, /<span>Customize quiz<\/span>/);
+  assert.match(workspaceSource, /rounded-full border border-\[var\(--border\)\] px-2 py-1/);
+  assert.doesNotMatch(workspaceSource, /New practice<\/p>/);
+  assert.match(workspaceSource, /Enter a topic, chapter, or lesson\./);
+  assert.match(workspaceSource, /Quiz me<\/button>/);
+  assert.match(workspaceSource, /<h1 className="text-2xl font-semibold">Practice<\/h1>/);
+  assert.doesNotMatch(workspaceSource, /Create, take, and review private quizzes grounded in this Course/);
+  assert.doesNotMatch(workspaceSource, /activeTab === "create"/);
+  assert.doesNotMatch(workspaceSource, /aria-label="New Practice title"/);
+  assert.doesNotMatch(workspaceSource, /Choose a ready quiz, or use New practice above/);
+  assert.doesNotMatch(workspaceSource, /Your quizzes will appear here\./);
+  assert.match(workspaceSource, /Recent quizzes/);
   assert.match(workspaceSource, /<h2 className="text-lg font-semibold">Practice history<\/h2>/);
+  assert.match(workspaceSource, /Every attempt stays here/);
 });
 
 test("Practice single-choice uses native grouped radios and immediate option-ID autosave", () => {

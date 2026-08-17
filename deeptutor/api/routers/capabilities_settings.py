@@ -19,9 +19,11 @@ from __future__ import annotations
 
 from typing import Any
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Depends
 
-router = APIRouter()
+from deeptutor.api.routers.auth import require_admin
+
+router = APIRouter(dependencies=[Depends(require_admin)])
 
 
 @router.get("/settings")

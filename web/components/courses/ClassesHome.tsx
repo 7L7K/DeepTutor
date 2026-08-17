@@ -14,30 +14,37 @@ function CourseCard({
   course: Course;
   onOpen: () => void;
 }) {
+  const termLabel = learnerCourseTermLabel(course.term);
+
   return (
     <Link
       href={`/classes/${encodeURIComponent(course.id)}`}
       onClick={onOpen}
-      className="group flex min-h-[168px] flex-col justify-between rounded-2xl border border-[var(--border)] bg-[var(--card)] p-5 shadow-sm transition hover:-translate-y-0.5 hover:border-[var(--foreground)]/25 hover:shadow-md focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ring)]"
+      className="group flex min-h-[184px] flex-col justify-between rounded-2xl border border-[var(--border)] bg-[var(--card)] p-5 shadow-sm transition hover:-translate-y-0.5 hover:border-[var(--foreground)]/25 hover:shadow-md focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ring)]"
       data-testid={`course-card-${course.id}`}
     >
-      <div className="flex items-start justify-between gap-4">
-        <div>
+      <div className="flex items-start gap-3">
+        <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl border border-[var(--border)] bg-[var(--background)] text-[var(--muted-foreground)] transition-colors group-hover:text-[var(--foreground)]">
+          <BookOpen size={18} strokeWidth={1.8} />
+        </span>
+        <div className="min-w-0">
           <p className="text-[11px] font-medium uppercase tracking-[0.14em] text-[var(--muted-foreground)]">
-            Academic class
+            Academic course
           </p>
-          <h2 className="mt-2 text-lg font-semibold text-[var(--foreground)]">
+          <h2 className="mt-2 truncate text-xl font-semibold tracking-tight text-[var(--foreground)]">
             {course.title}
           </h2>
-          {learnerCourseTermLabel(course.term) ? (
-            <p className="mt-1 text-sm text-[var(--muted-foreground)]">
-              {learnerCourseTermLabel(course.term)}
-            </p>
+          {termLabel ? (
+            <p className="mt-1 text-sm text-[var(--muted-foreground)]">{termLabel}</p>
           ) : null}
         </div>
       </div>
-      <div className="mt-6 flex items-end justify-between gap-4">
-        <span className="text-xs text-[var(--muted-foreground)]">
+      <div className="mt-6 flex items-center justify-between gap-4 border-t border-[var(--border)]/70 pt-4">
+        <span className="inline-flex items-center gap-2 text-xs text-[var(--muted-foreground)]">
+          <span
+            className={`h-2 w-2 rounded-full ${course.state === "active" ? "bg-emerald-500" : "bg-[var(--muted-foreground)]"}`}
+            aria-hidden="true"
+          />
           {course.state === "active" ? "Active" : "Archived"}
         </span>
         <span className="inline-flex items-center gap-1.5 text-sm font-medium text-[var(--foreground)]">
@@ -110,7 +117,7 @@ function AddClassModal({
           </button>
         </div>
         <p className="mt-3 text-sm leading-6 text-[var(--muted-foreground)]">
-          Add a class by title. You can organize its materials, Practice, Review,
+          Add a class by title. You can organize its materials, Practice, Flashcards,
           and Course Chat in one place.
         </p>
         <form onSubmit={onSubmit} className="mt-5 space-y-4">
@@ -269,7 +276,7 @@ export default function ClassesHome() {
               No classes yet
             </h2>
             <p className="mx-auto mt-2 max-w-md text-sm leading-6 text-[var(--muted-foreground)]">
-              Add your first class to organize materials, Practice, Review, and
+              Add your first class to organize materials, Practice, Flashcards, and
               Course Chat in one place.
             </p>
             <button

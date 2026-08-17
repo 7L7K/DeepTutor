@@ -257,6 +257,39 @@ Source extras (.[ extra ], defined in pyproject.toml):
 .[math-animator]  — Manim addon (powers `visualize` Manim renders + `deeptutor run math_animator`)
 .[dev]            — Test / lint tooling
 .[all]            — Everything above
+
+## Migration-bound release reconciliation
+
+When two branches or PRs touch the same migration version, schema boundary, or
+release artifact:
+
+1. Identify one authoritative migration owner before merging either branch.
+2. Treat dependent branches as consumers of that migration; they must not carry
+   competing SQL artifacts, checksums, or latest-version assumptions.
+3. Record the required merge and deployment order in a release ledger.
+4. Read each PR's actual `headRefName`, `headRefOid`, and `baseRefOid` from
+   GitHub before editing or pushing. Do not infer PR ownership from similarly
+   named local or remote branches.
+5. After the migration-owner PR merges, reconcile every dependent PR against
+   the exact new base SHA before trusting earlier CI.
+6. CI from an earlier head or base is stale and cannot authorize a merge.
+7. For a one-way migration, name the minimum rollback binary before applying
+   it. Never restart an older incompatible image afterward.
+8. Build deployment artifacts only from the final merge SHA, not from a dirty
+   checkout, PR head, local branch label, or short display SHA.
+
+## Release identity and dirty-checkout boundaries
+
+Before deploying a runtime that emits release-correlated events, verify that
+its application version and environment are explicit and non-empty in the
+effective runtime configuration. Distinguish application environment from
+deployment tier when they use different labels, such as production runtime
+behavior on a beta host.
+
+A dirty canonical checkout must not be used as release source. Use an isolated
+worktree for reconciliation and a Git archive of the exact merge SHA for
+artifact construction. Preserve unrelated staged, unstaged, and untracked
+canonical changes.
 ```
 
 ## Migration-bound release reconciliation

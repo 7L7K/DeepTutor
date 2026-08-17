@@ -524,10 +524,9 @@ app.include_router(
     tags=["space-mcp"],
     dependencies=_auth,
 )
-# CLI apps. Only ``_auth`` here as well, but for a different reason: the two
-# routes that install or remove an app carry their own ``require_admin``, and
-# what is left for an ordinary account is reading the catalog and toggling its
-# own preference among apps an administrator already granted it.
+# CLI apps are an administrator-only management surface. The router carries
+# its own ``require_admin`` dependency so direct API access follows the same
+# policy as the hidden More/Learning Space navigation.
 app.include_router(
     space_cli_apps.router,
     prefix="/api/v1/space/cli-apps",

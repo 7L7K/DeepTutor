@@ -201,6 +201,18 @@ RUN groupadd --system --gid 1000 deeptutor \
     && useradd --system --uid 1000 --gid 1000 --no-create-home --shell /usr/sbin/nologin deeptutor \
     && chown -R deeptutor:deeptutor /app/data /app/web/.next
 
+# The application processes run as the unprivileged `deeptutor` user. Git only
+# tracks the executable bit, so a local checkout can legitimately contain
+# source files with owner-only read permissions; preserve runtime portability
+# by making the copied application readable by that user inside the image.
+RUN chown -R deeptutor:deeptutor \
+    /app/deeptutor \
+    /app/deeptutor_cli \
+    /app/scripts \
+    /app/requirements \
+    /app/pyproject.toml \
+    /app/requirements.txt
+
 # supervisord config is split into two files so the production and development
 # images share one daemon-level [supervisord] section instead of duplicating it:
 #   - /etc/supervisor/supervisord.conf      — daemon-level settings (shared)

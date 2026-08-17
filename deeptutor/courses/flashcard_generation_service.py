@@ -139,7 +139,7 @@ class CourseFlashcardGenerationService:
             **kwargs,
         )
         warnings = list(receipt.warnings)
-        if receipt.origin.kind == "general_chat":
+        if receipt.origin.kind in {"general_chat", "topic"}:
             return receipt.model_copy(
                 update={"warnings": list(dict.fromkeys(warnings))}
             )
@@ -170,7 +170,7 @@ class CourseFlashcardGenerationService:
         return receipt.model_copy(update={"warnings": list(dict.fromkeys(warnings))})
 
     def _resolve_material(self, operation: FlashcardGenerationOperation):
-        if operation.origin.kind == "general_chat":
+        if operation.origin.kind in {"general_chat", "topic"}:
             return []
         resolve_for_focus = getattr(self.source_text_resolver, "resolve_for_focus", None)
         if operation.origin.kind == "workspace" and callable(resolve_for_focus):

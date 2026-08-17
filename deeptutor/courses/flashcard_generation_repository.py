@@ -205,9 +205,9 @@ class CourseFlashcardGenerationRepository:
             origin or {"kind": "workspace"}
         )
         raw_source_ids = list(source_ids)
-        if generation_origin.kind == "general_chat":
+        if generation_origin.kind in {"general_chat", "topic"}:
             if raw_source_ids:
-                raise ValueError("General Chat generation cannot claim Course sources")
+                raise ValueError("Uncited generation cannot claim Course sources")
             source_ids = []
         else:
             source_ids = self._source_ids(raw_source_ids)
@@ -387,9 +387,9 @@ class CourseFlashcardGenerationRepository:
             origin or {"kind": "workspace"}
         )
         raw_source_ids = list(source_ids)
-        if generation_origin.kind == "general_chat":
+        if generation_origin.kind in {"general_chat", "topic"}:
             if raw_source_ids:
-                raise ValueError("General Chat generation cannot claim Course sources")
+                raise ValueError("Uncited generation cannot claim Course sources")
             sources = []
         else:
             sources = self._source_ids(raw_source_ids)
@@ -530,16 +530,16 @@ class CourseFlashcardGenerationRepository:
             material = {
                 (x.source_id, x.source_revision, x.content_sha256) for x in material_receipts
             }
-            conversation_generation = operation.origin.kind == "general_chat"
+            uncited_generation = operation.origin.kind in {"general_chat", "topic"}
             if (
                 len(encoded) > 48_000
                 or not output.cards
                 or len(output.cards) > operation.item_limit
                 or (
-                    not conversation_generation
+                    not uncited_generation
                     and (not material or not material.issubset(snapshot))
                 )
-                or (conversation_generation and material)
+                or (uncited_generation and material)
             ):
                 raise ValueError("Generated output is invalid")
             for card in output.cards:
@@ -547,9 +547,9 @@ class CourseFlashcardGenerationRepository:
                     raise ValueError("Generated objective is invalid")
                 if card.card_type not in operation.generation_brief.card_type_mix:
                     raise ValueError("Generated card type is invalid")
-                if conversation_generation and card.citations:
-                    raise ValueError("Conversation cards cannot claim Course citations")
-                if not conversation_generation and (
+                if uncited_generation and card.citations:
+                    raise ValueError("Uncited cards cannot claim Course citations")
+                if not uncited_generation and (
                     not card.citations
                     or any(
                         (c.source_id, c.source_revision, c.content_sha256) not in snapshot

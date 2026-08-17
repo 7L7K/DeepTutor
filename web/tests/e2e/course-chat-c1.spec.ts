@@ -111,12 +111,14 @@ test("Alice opens exact Course Chat, persists its citation, and reopens it", asy
   await page.goto(`/classes/${encodeURIComponent(proof.alice_course_id)}`);
   await expect(page.getByRole("heading", { name: "Biology 101" })).toBeVisible();
   await expect(page.getByText("Term: Fall 2026", { exact: true })).toBeVisible();
+  await expect(page.getByTestId("course-overview-dashboard")).toBeVisible();
+  await expect(page.getByTestId("course-chat-link")).toHaveCount(0);
   await page.screenshot({
     path: join(evidenceDir!, "screenshots", "course-overview-desktop.png"),
     fullPage: true,
   });
 
-  const chatLink = page.getByTestId("course-chat-link");
+  const chatLink = page.getByRole("link", { name: "Chat", exact: true });
   await tabTo(page, chatLink);
   await expect(chatLink).toBeFocused();
   await page.keyboard.press("Enter");

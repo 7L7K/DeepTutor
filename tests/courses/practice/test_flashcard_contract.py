@@ -227,6 +227,7 @@ def test_card_cas_archive_retains_history_and_blocks_new_reviews(tmp_path: Path)
         expected_deck_revision=deck.revision,
         expected_course_write_epoch=course.write_epoch,
     )
+    assert changed.edited_by_user is True
     deck = service.get_deck(course.id, deck.id, at=1_000).deck
     with pytest.raises(CourseConflictError, match="stale"):
         service.update_card(

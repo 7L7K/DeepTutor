@@ -1,0 +1,167 @@
+#!/usr/bin/env bash
+set -Eeuo pipefail
+
+SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd -- "${SCRIPT_DIR}/.." && pwd)"
+COMPOSE_FILE="${REPO_ROOT}/deploy/local-vps/compose.yml"
+LOCAL_VPS_DIR="${REPO_ROOT}/deploy/local-vps"
+LOCAL_CATALOG_PATH="${LOCAL_VPS_DIR}/data/user/settings/model_catalog.json"
+LOCAL_CATALOG_BOOTSTRAP="${SCRIPT_DIR}/bootstrap-local-vps-catalog.py"
+PROJECT_NAME="teeechr-local-vps"
+HTTP_PORT="${LOCAL_VPS_HTTP_PORT:-18080}"
+HTTPS_PORT="${LOCAL_VPS_HTTPS_PORT:-18443}"
+COMPOSE_ENV_FILE=()
+
+if [[ -f "${REPO_ROOT}/.env" ]]; then
+  # Compose resolves ${LLM_API_KEY} from this explicit file. The compose file
+  # itself passes only that one variable into the app container.
+  COMPOSE_ENV_FILE=(--env-file "${REPO_ROOT}/.env")
+fi
+
+if ! command -v docker >/dev/null 2>&1; then
+  echo "Docker is required. Start Docker Desktop and try again." >&2
+  exit 1
+fi
+
+cd "${REPO_ROOT}"
+
+commit="$(git rev-parse --short=8 HEAD 2>/dev/null || true)"
+if [[ -z "${commit}" ]]; then
+  commit="local"
+fi
+if [[ -n "$(git status --porcelain --untracked-files=no 2>/dev/null)" ]]; then
+  commit="${commit}-dirty"
+fi
+
+compose() {
+  if (( ${#COMPOSE_ENV_FILE[@]} )); then
+    LOCAL_VPS_COMMIT="${commit}" \
+      LOCAL_VPS_HTTP_PORT="${HTTP_PORT}" \
+      LOCAL_VPS_HTTPS_PORT="${HTTPS_PORT}" \
+      COMPOSE_PROJECT_NAME="${PROJECT_NAME}" \
+      docker compose "${COMPOSE_ENV_FILE[@]}" -f "${COMPOSE_FILE}" "$@"
+  else
+    LOCAL_VPS_COMMIT="${commit}" \
+      LOCAL_VPS_HTTP_PORT="${HTTP_PORT}" \
+      LOCAL_VPS_HTTPS_PORT="${HTTPS_PORT}" \
+      COMPOSE_PROJECT_NAME="${PROJECT_NAME}" \
+      docker compose -f "${COMPOSE_FILE}" "$@"
+  fi
+}
+
+bootstrap_local_catalog() {
+  python3 "${LOCAL_CATALOG_BOOTSTRAP}" "${LOCAL_CATALOG_PATH}"
+}
+
+usage() {
+  cat <<'EOF'
+Usage: scripts/vps-local <command>
+
+Commands:
+  up       Build and start the isolated local production-like stack
+  down     Stop the stack without removing its data
+  status   Show container state and health
+  logs     Follow app and proxy logs (use --no-follow to print and exit)
+  smoke    Check the same-origin version, app, and backend proxy paths
+  url      Print the local browser URL and release marker
+  reset    Delete only deploy/local-vps runtime data (requires --yes)
+
+Environment:
+  LOCAL_VPS_HTTP_PORT   HTTP port, default 18080
+  LOCAL_VPS_HTTPS_PORT  HTTPS port, default 18443
+
+The app data lives only in deploy/local-vps/data. Provider credentials are not
+copied from the VPS; configure them through the local app or an ignored local
+settings file when you want to exercise a real model request.
+EOF
+}
+
+wait_for_http() {
+  local url="$1"
+  local attempts=0
+  until curl --silent --show-error --fail --max-time 5 "${url}" >/dev/null 2>&1; do
+    attempts=$((attempts + 1))
+    if (( attempts >= 60 )); then
+      echo "Timed out waiting for ${url}" >&2
+      compose ps
+      compose logs --tail=120 app caddy >&2 || true
+      exit 1
+    fi
+    sleep 2
+  done
+}
+
+smoke() {
+  local base="http://127.0.0.1:${HTTP_PORT}"
+  wait_for_http "${base}/api/version"
+  wait_for_http "${base}/openapi.json"
+
+  echo "== release marker =="
+  marker="$(curl --silent --show-error --fail --max-time 10 "${base}/api/version")"
+  printf '%s\n' "${marker}"
+  if [[ "${marker}" != *"${commit}"* ]]; then
+    echo "Release marker does not identify ${commit}: ${marker}" >&2
+    exit 1
+  fi
+  echo
+
+  echo "== backend through Caddy =="
+  openapi="$(curl --silent --show-error --fail --max-time 10 "${base}/openapi.json")"
+  if [[ "${openapi}" != *'"openapi"'* || "${openapi}" != *'"paths"'* ]]; then
+    echo "Caddy did not return the backend OpenAPI document" >&2
+    exit 1
+  fi
+  echo "OK /openapi.json"
+
+  echo "== frontend through Caddy =="
+  html="$(curl --silent --show-error --fail --max-time 10 "${base}/")"
+  if [[ "${html}" != *"<html"* && "${html}" != *"<!DOCTYPE"* ]]; then
+    echo "Caddy did not return the frontend HTML document" >&2
+    exit 1
+  fi
+  echo "OK /"
+
+  echo "== container health =="
+  compose ps
+}
+
+case "${1:-}" in
+  up)
+    bootstrap_local_catalog
+    compose up -d --build
+    smoke
+    ;;
+  down)
+    compose down
+    ;;
+  status)
+    compose ps
+    ;;
+  logs)
+    shift
+    compose logs "$@" app caddy
+    ;;
+  smoke)
+    smoke
+    ;;
+  url)
+    echo "http://127.0.0.1:${HTTP_PORT}"
+    echo "release marker: ${commit}"
+    ;;
+  reset)
+    if [[ "${2:-}" != "--yes" ]]; then
+      echo "Refusing to remove local runtime data without: scripts/vps-local reset --yes" >&2
+      exit 2
+    fi
+    compose down
+    rm -rf -- "${LOCAL_VPS_DIR}/data" "${LOCAL_VPS_DIR}/caddy-data" "${LOCAL_VPS_DIR}/caddy-config"
+    echo "Removed only the local-VPS runtime data under ${LOCAL_VPS_DIR}."
+    ;;
+  -h|--help|help)
+    usage
+    ;;
+  *)
+    usage >&2
+    exit 2
+    ;;
+esac

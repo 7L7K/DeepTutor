@@ -31,6 +31,7 @@ import { useDevice } from "@/hooks/useDevice";
 import type { SessionSummary } from "@/lib/session-api";
 import { Tooltip } from "@/components/ui/Tooltip";
 import { useCapabilityAccess } from "@/components/access/CapabilityAccessContext";
+import { useAuthStatus } from "@/hooks/useAuthStatus";
 import type { Capability } from "@/lib/capability-routes";
 
 interface NavEntry {
@@ -40,6 +41,8 @@ interface NavEntry {
   tooltipKey?: string;
   /** Model capability this feature needs; locked when the user lacks it. */
   requires?: Capability;
+  /** Deployment-wide or advanced workspace surface reserved for admins. */
+  adminOnly?: boolean;
 }
 
 const PRIMARY_NAV: NavEntry[] = [
@@ -81,6 +84,7 @@ const MORE_NAV: NavEntry[] = [
     label: "My Agents",
     icon: Bot,
     tooltipKey: "Agents tooltip",
+    adminOnly: true,
   },
   {
     href: "/partners",
@@ -95,6 +99,7 @@ const MORE_NAV: NavEntry[] = [
     icon: PenLine,
     tooltipKey: "Co-Writer tooltip",
     requires: "llm",
+    adminOnly: true,
   },
   {
     href: "/book",
@@ -102,18 +107,21 @@ const MORE_NAV: NavEntry[] = [
     icon: Library,
     tooltipKey: "Book tooltip",
     requires: "llm",
+    adminOnly: true,
   },
   {
     href: "/memory",
     label: "Memory",
     icon: Brain,
     tooltipKey: "Memory tooltip",
+    adminOnly: true,
   },
   {
     href: "/knowledge",
     label: "Knowledge Center",
     icon: BookOpen,
     tooltipKey: "Knowledge tooltip",
+    adminOnly: true,
   },
 ];
 
@@ -157,6 +165,8 @@ export function SidebarShell({
   const router = useRouter();
   const { t } = useTranslation();
   const { has } = useCapabilityAccess();
+  const { enabled: authEnabled, isAdmin: authIsAdmin, loading: authLoading } =
+    useAuthStatus();
   const { sidebarCollapsed, setSidebarCollapsed: setCollapsed } = useAppShell();
   const { isMobile } = useDevice();
   const drawer = useSidebarDrawer();
@@ -180,7 +190,13 @@ export function SidebarShell({
   const navLocked = (item: NavEntry) =>
     item.requires ? !has(item.requires) : false;
   const lockedTooltip = t("Locked — contact your administrator to get access.");
-  const visibleMoreNav = MORE_NAV.filter((item) => !navLocked(item));
+  // Hide admin-only destinations while auth is resolving so an ordinary user
+  // never gets a clickable flash of deployment-wide controls. Auth-disabled
+  // local runs resolve as the implicit admin and keep the full menu.
+  const canSeeAdminOnly = !authLoading && (!authEnabled || authIsAdmin);
+  const visibleMoreNav = MORE_NAV.filter(
+    (item) => !navLocked(item) && (!item.adminOnly || canSeeAdminOnly),
+  );
   const isMoreActive = MORE_NAV.some((item) => pathname.startsWith(item.href));
   const renderedFooter =
     typeof footerSlot === "function" ? footerSlot(collapsed) : footerSlot;

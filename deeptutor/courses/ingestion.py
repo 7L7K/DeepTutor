@@ -344,12 +344,25 @@ async def run_source_operation(task: dict[str, Any]) -> None:
         from deeptutor.courses.deterministic_provider import enabled as deterministic_enabled
         from deeptutor.knowledge.initializer import KnowledgeBaseInitializer
 
+        source_content_sha256 = task.get("source_content_sha256")
+        if not source_content_sha256 and {
+            "course_id",
+            "source_id",
+        }.issubset(task):
+            source_repository = CourseRepository(
+                get_personal_path_service(str(task["owner_user_id"])).get_courses_db(),
+                str(task["owner_user_id"]),
+            )
+            source_content_sha256 = source_repository.get_source(
+                str(task["course_id"]), str(task["source_id"])
+            ).content_sha256
+
         if deterministic_enabled():
             await delay_ingestion_for_runtime_proof()
             provider_succeeded = build_deterministic_index(
                 Path(str(task["base_dir"])) / str(task["kb_name"]),
                 [str(item) for item in task["uploaded_paths"]],
-                source_content_sha256=str(task["source_content_sha256"]),
+                source_content_sha256=str(source_content_sha256),
             )
         elif bool(task["initialize"]):
             initializer = KnowledgeBaseInitializer(
@@ -370,15 +383,16 @@ async def run_source_operation(task: dict[str, Any]) -> None:
                 finalize_task=False,
             )
 
-            # Course Practice generation reads a small deterministic, exact-text
-            # shard in addition to the provider-specific RAG index. Keep that
-            # derived artifact in sync for normal ingestion too; previously it
-            # was created only by the explicit deterministic test provider,
-            # leaving ready Course sources unusable for grounded Practice.
+        # Course Practice generation reads a small deterministic, exact-text
+        # shard in addition to the provider-specific RAG index. Keep that
+        # derived artifact in sync for both first-time initialization and later
+        # uploads; otherwise a source can be marked ready while grounded
+        # Practice and Flashcards cannot resolve its text.
+        if not deterministic_enabled():
             build_deterministic_index(
                 Path(str(task["base_dir"])) / str(task["kb_name"]),
                 [str(item) for item in task["uploaded_paths"]],
-                source_content_sha256=str(task["source_content_sha256"]),
+                source_content_sha256=str(source_content_sha256),
             )
 
         # Providers create index shards and metadata through several legacy

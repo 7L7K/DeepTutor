@@ -79,6 +79,7 @@ import ContextReferenceTree, {
 import { AssistantActivity } from "./TracePanels";
 import { agentGlyph } from "@/components/agents/agent-icons";
 import { useConnectedAgentKinds } from "@/hooks/useConnectedAgentKinds";
+import { useAuthStatus } from "@/hooks/useAuthStatus";
 
 const MathAnimatorViewer = dynamic(
   () => import("@/components/math-animator/MathAnimatorViewer"),
@@ -1278,6 +1279,8 @@ export const ChatMessageList = memo(function ChatMessageList({
   ) => void;
 }) {
   const { t } = useTranslation();
+  const { isAdmin, loading: authLoading } = useAuthStatus();
+  const showCostSummary = !authLoading && isAdmin;
   // Visible path: when no branching has happened the result is identical
   // to the input. After an edit, sibling branches are filtered out so the
   // UI shows exactly one continuous thread, with arrow nav exposed on the
@@ -1529,10 +1532,12 @@ export const ChatMessageList = memo(function ChatMessageList({
                 }
               />
             </InlineFileCardProvider>
-            <CourseCitationList
-              events={msg.events}
-              readiness={courseReadiness}
-            />
+            {courseReadiness ? (
+              <CourseCitationList
+                events={msg.events}
+                readiness={courseReadiness}
+              />
+            ) : null}
             <GeneratedFileCards
               attachments={msg.attachments ?? []}
               events={msg.events}
@@ -1625,7 +1630,7 @@ export const ChatMessageList = memo(function ChatMessageList({
                 )}
               </div>
             ) : null}
-            {(showActions || costSummary || showDelete) && (
+            {(showActions || (showCostSummary && costSummary) || showDelete) && (
               <div className="mt-3 flex items-center">
                 {(showActions || showDelete) && (
                   <div className="flex items-center gap-1">
@@ -1658,7 +1663,7 @@ export const ChatMessageList = memo(function ChatMessageList({
                     )}
                   </div>
                 )}
-                {costSummary && (
+                {showCostSummary && costSummary && (
                   <div className="ml-auto">
                     <CostFooter
                       cost={costSummary.total_cost_usd ?? 0}

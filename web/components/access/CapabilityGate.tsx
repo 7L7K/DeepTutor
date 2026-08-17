@@ -2,8 +2,12 @@
 
 import { usePathname } from "next/navigation";
 
-import { capabilityForPath } from "@/lib/capability-routes";
+import {
+  adminOnlyForPath,
+  capabilityForPath,
+} from "@/lib/capability-routes";
 
+import AdminGate from "./AdminGate";
 import { RequireCapability } from "./RequireCapability";
 
 /**
@@ -19,6 +23,8 @@ export default function CapabilityGate({
   const pathname = usePathname() ?? "";
   const capability = capabilityForPath(pathname);
   return (
-    <RequireCapability capability={capability}>{children}</RequireCapability>
+    <AdminGate required={adminOnlyForPath(pathname)}>
+      <RequireCapability capability={capability}>{children}</RequireCapability>
+    </AdminGate>
   );
 }

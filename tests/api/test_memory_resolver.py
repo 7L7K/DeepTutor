@@ -19,6 +19,7 @@ TestClient = pytest.importorskip("fastapi.testclient").TestClient
 memory_router = importlib.import_module("deeptutor.api.routers.memory").router
 paths_mod = importlib.import_module("deeptutor.services.memory.paths")
 document_mod = importlib.import_module("deeptutor.services.memory.document")
+require_admin = importlib.import_module("deeptutor.api.routers.auth").require_admin
 
 
 @pytest.fixture
@@ -28,6 +29,9 @@ def client(tmp_path: Path, monkeypatch) -> TestClient:
     (tmp_path / "L3").mkdir()
     app = FastAPI()
     app.include_router(memory_router, prefix="/api/v1/memory")
+    # This fixture exercises the resolver's data contract; the router's admin
+    # boundary is covered structurally in test_admin_surface_auth.py.
+    app.dependency_overrides[require_admin] = lambda: None
     return TestClient(app)
 
 

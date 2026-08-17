@@ -1,7 +1,10 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 
-import { capabilityForPath } from "../lib/capability-routes";
+import {
+  adminOnlyForPath,
+  capabilityForPath,
+} from "../lib/capability-routes";
 
 // ── capabilityForPath ──────────────────────────────────────────────────
 
@@ -36,4 +39,31 @@ test("capabilityForPath returns null for ungated routes", () => {
   assert.equal(capabilityForPath("/memory"), null);
   assert.equal(capabilityForPath("/space"), null);
   assert.equal(capabilityForPath("/settings"), null);
+});
+
+test("adminOnlyForPath protects advanced workspace destinations", () => {
+  assert.equal(adminOnlyForPath("/agents"), true);
+  assert.equal(adminOnlyForPath("/co-writer/drafts"), true);
+  assert.equal(adminOnlyForPath("/book"), true);
+  assert.equal(adminOnlyForPath("/knowledge"), true);
+  assert.equal(adminOnlyForPath("/memory"), true);
+  assert.equal(adminOnlyForPath("/playground"), true);
+  assert.equal(adminOnlyForPath("/space/cli-apps"), true);
+});
+
+test("adminOnlyForPath leaves learner destinations available", () => {
+  assert.equal(adminOnlyForPath("/partners"), false);
+  assert.equal(adminOnlyForPath("/practice"), false);
+  assert.equal(adminOnlyForPath("/flashcards"), false);
+  assert.equal(adminOnlyForPath("/space"), false);
+  assert.equal(adminOnlyForPath("/space/mcp"), false);
+  assert.equal(adminOnlyForPath("/knowledge-base"), false);
+});
+
+test("adminOnlyForPath matches route segments rather than bare prefixes", () => {
+  assert.equal(adminOnlyForPath("/memory-bank"), false);
+  assert.equal(adminOnlyForPath("/booklet"), false);
+  assert.equal(adminOnlyForPath("/space/cli-appstore"), false);
+  assert.equal(adminOnlyForPath("/playground-tools"), false);
+  assert.equal(adminOnlyForPath("/space/cli-apps/details"), true);
 });

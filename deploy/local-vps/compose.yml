@@ -1,0 +1,49 @@
+name: teeechr-local-vps
+
+services:
+  app:
+    build:
+      context: ../..
+      dockerfile: Dockerfile
+      target: production
+    image: teeechr-local:${LOCAL_VPS_COMMIT:-local}
+    environment:
+      # Local-only runtime access. The secret stays in the ignored repository
+      # .env file and is never persisted in model_catalog.json.
+      LLM_API_KEY: ${LLM_API_KEY:-}
+    restart: unless-stopped
+    volumes:
+      - ./data:/app/data
+    expose:
+      - "8001"
+      - "3782"
+    networks:
+      - local-vps
+    healthcheck:
+      test: ["CMD", "python", "/app/healthcheck.py"]
+      interval: 10s
+      timeout: 5s
+      start_period: 90s
+      retries: 12
+
+  caddy:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    environment:
+      LOCAL_VPS_COMMIT: ${LOCAL_VPS_COMMIT:-local}
+    ports:
+      - "127.0.0.1:${LOCAL_VPS_HTTP_PORT:-18080}:80"
+      - "127.0.0.1:${LOCAL_VPS_HTTPS_PORT:-18443}:443"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - ./caddy-data:/data
+      - ./caddy-config:/config
+    depends_on:
+      app:
+        condition: service_healthy
+    networks:
+      - local-vps
+
+networks:
+  local-vps:
+    name: teeechr-local-vps

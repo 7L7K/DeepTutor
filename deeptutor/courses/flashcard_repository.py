@@ -130,6 +130,7 @@ class CourseFlashcardRepository:
         payload = dict(row)
         payload["objective_ids"] = json.loads(payload.pop("objective_ids_json") or "[]")
         payload["citations"] = json.loads(payload.pop("citation_json") or "[]")
+        payload["edited_by_user"] = bool(payload.get("edited_by_user", 0))
         return Flashcard.model_validate(payload)
 
     @staticmethod
@@ -353,8 +354,10 @@ class CourseFlashcardRepository:
             raise CourseConflictError("Archived Flashcard decks cannot be edited")
         if deck.revision != expected_deck_revision:
             raise CourseConflictError("Flashcard deck revision is stale")
-        if deck.mode != "manual":
-            raise CourseConflictError("Generated Flashcard cards are reserved for generation operations")
+        if deck.mode == "generated" and deck.state != "ready":
+            raise CourseConflictError(
+                "Generated Flashcard cards can be edited after the deck is ready"
+            )
         return deck
 
     def add_card(
@@ -405,7 +408,7 @@ class CourseFlashcardRepository:
             if card.revision != expected_card_revision:
                 raise CourseConflictError("Flashcard revision is stale")
             conn.execute("""UPDATE flashcards SET prompt = ?, answer = ?, objective_ids_json = ?,
-                          revision = revision + 1, updated_at = ? WHERE id = ?""", (self._clean_text(prompt, "Card prompt", maximum=12_000), self._clean_text(answer, "Card answer", maximum=12_000), self._json(objectives, field="objective_ids"), now, card_id))
+                          edited_by_user = 1, revision = revision + 1, updated_at = ? WHERE id = ?""", (self._clean_text(prompt, "Card prompt", maximum=12_000), self._clean_text(answer, "Card answer", maximum=12_000), self._json(objectives, field="objective_ids"), now, card_id))
             conn.execute("UPDATE flashcard_decks SET revision = revision + 1, write_epoch = write_epoch + 1, updated_at = ? WHERE id = ?", (now, deck_id))
             row = conn.execute("SELECT * FROM flashcards WHERE id = ?", (card_id,)).fetchone()
         assert row is not None

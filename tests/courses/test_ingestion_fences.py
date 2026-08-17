@@ -100,6 +100,7 @@ async def test_revocation_after_provider_work_still_prevents_course_commit(
             "initialize": True,
             "kb_name": "course_crs_one_src_one",
             "base_dir": "/tmp/not-used",
+            "uploaded_paths": [],
             "rag_provider": "llamaindex",
         }
     )
@@ -190,6 +191,7 @@ async def test_success_is_published_only_after_course_source_commit(
             "course_write_epoch": 0,
             "source_id": "src_one",
             "source_revision": 1,
+            "source_content_sha256": "a" * 64,
             "operation_id": "op_one",
             "kb_name": "course_crs_one_src_one",
             "base_dir": str(tmp_path),

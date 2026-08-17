@@ -9,8 +9,9 @@ import {
 
 test("study-session actions preserve the existing scheduler ratings behind learner copy", () => {
   assert.deepEqual(studySessionActions, {
-    gotIt: "good",
-    studyAgain: "again",
+    knewIt: "good",
+    almost: "hard",
+    practiceAgain: "again",
   });
 });
 
@@ -26,8 +27,8 @@ test("study-session progress is count-only and does not reveal scheduling dates"
   assert.equal(cardsLeftLabel(-4), "0 cards left");
 });
 
-test("study completion reports reviewed cards without next-review timing", () => {
-  assert.equal(completedCardsLabel(1), "You reviewed 1 card.");
-  assert.equal(completedCardsLabel(4), "You reviewed 4 cards.");
-  assert.equal(completedCardsLabel(-4), "You reviewed 0 cards.");
+test("study completion reports studied cards without scheduling timing", () => {
+  assert.equal(completedCardsLabel(1), "You studied 1 card.");
+  assert.equal(completedCardsLabel(4), "You studied 4 cards.");
+  assert.equal(completedCardsLabel(-4), "You studied 0 cards.");
 });

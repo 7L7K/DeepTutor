@@ -21,9 +21,18 @@ def test_bridge_upgrades_0017_and_restarts_after_full_candidate_write(
 
     path = tmp_path / "courses.db"
     artifacts = discover_migrations()
-    assert artifacts[-1].version == 18
+    assert (
+        next(
+            artifact.version
+            for artifact in artifacts
+            if artifact.name == "blueway_observability_trace"
+        )
+        == 18
+    )
 
-    monkeypatch.setattr(runner, "discover_migrations", lambda: artifacts[:-1])
+    through_0017 = tuple(artifact for artifact in artifacts if artifact.version <= 17)
+    assert tuple(artifact.version for artifact in through_0017) == tuple(range(18))
+    monkeypatch.setattr(runner, "discover_migrations", lambda: through_0017)
     courses_at_0017 = CourseRepository(path, "owner_one")
     connection_id = "bwc_11111111111141118111111111111111"
     now = time.time()

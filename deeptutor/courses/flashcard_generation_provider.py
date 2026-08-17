@@ -143,11 +143,15 @@ def _common_prefix_length(left: str, right: str) -> int:
 
 
 def _focus_score_terms(terms: set[str], text: str) -> int:
+    return len(_focus_match_terms(terms, text))
+
+
+def _focus_match_terms(terms: set[str], text: str) -> set[str]:
     if not terms:
-        return 0
+        return set()
     haystack = _focus_terms(text)
-    return sum(
-        1
+    return {
+        term
         for term in terms
         if term in haystack
         or any(
@@ -155,7 +159,7 @@ def _focus_score_terms(terms: set[str], text: str) -> int:
             and _common_prefix_length(term, candidate) >= 7
             for candidate in haystack
         )
-    )
+    }
 
 
 def _focus_score(focus: str | None, text: str) -> int:
@@ -336,6 +340,18 @@ class OpenAIFlashcardGenerationProvider:
 
     @staticmethod
     def _instructions(request: FlashcardGenerationInput) -> str:
+        if request.origin.kind == "topic":
+            return (
+                "You create private college-study flashcard candidates from the "
+                "learner's requested topic. Use reliable general knowledge to "
+                "teach the requested topic; do not use Course sources, browse, "
+                "call tools, or invent citations. Return an empty citations array "
+                "for every card. Follow the learner-edited brief, requested card "
+                "types, difficulty, answer length, and hint preference. Every "
+                "card must test one useful idea, stand on its own, directly answer "
+                "its question, and stay within the requested topic. Avoid duplicate "
+                "concepts and answers. Return only the required structured object."
+            )
         if request.origin.kind == "general_chat":
             return (
                 "You create private college-study flashcard candidates from a "
@@ -352,7 +368,7 @@ class OpenAIFlashcardGenerationProvider:
             )
         focus_contract = (
             "Every card must directly help the learner with the requested focus. "
-            if request.origin.kind == "workspace"
+            if request.origin.kind in {"workspace", "topic"}
             else (
                 "The brief describes why the deck was requested, not a topic keyword "
                 "that must appear in each card. Select durable concepts from the "
@@ -374,8 +390,11 @@ class OpenAIFlashcardGenerationProvider:
             "incidental dialogue, timestamps, recording metadata, or trivia. Do "
             "not ask what was mentioned in a clip, source, or recording unless "
             "the requested focus explicitly asks about that medium. Avoid "
-            "duplicate concepts and duplicate answers. Return only the required "
-            "structured object."
+            "duplicate concepts and duplicate answers. If the requested focus names "
+            "multiple topics, distribute cards across those topics and identify the "
+            "relevant topic in each prompt or answer; introduce a subtopic under its "
+            "named topic instead of assuming the citation makes that relationship "
+            "obvious. Return only the required structured object."
         )
 
     @staticmethod
@@ -526,7 +545,7 @@ class OpenAIFlashcardGenerationProvider:
             objective_schema["maxItems"] = len(request.objective_ids)
             objective_schema["items"]["enum"] = list(request.objective_ids)
         citation_properties = card_properties["citations"]["items"]["properties"]
-        if request.origin.kind == "general_chat":
+        if request.origin.kind in {"general_chat", "topic"}:
             card_properties["citations"]["minItems"] = 0
             card_properties["citations"]["maxItems"] = 0
             return schema
@@ -561,10 +580,10 @@ class OpenAIFlashcardGenerationProvider:
             raw_citations = card.get("citations")
             if not isinstance(raw_citations, list):
                 raise FlashcardGenerationProviderError("provider output is invalid")
-            if request.origin.kind == "general_chat":
+            if request.origin.kind in {"general_chat", "topic"}:
                 if raw_citations:
                     raise FlashcardGenerationProviderError(
-                        "conversation output cannot claim Course citations"
+                        "uncited output cannot claim Course citations"
                     )
                 card["citations"] = []
                 normalized.append(card)
@@ -599,7 +618,7 @@ class OpenAIFlashcardGenerationProvider:
         all_focus_terms = _focus_terms(request.generation_brief.focus)
         focus_terms = (
             all_focus_terms - _GENERIC_FOCUS_TERMS or all_focus_terms
-            if request.origin.kind == "workspace"
+            if request.origin.kind in {"workspace", "topic"}
             else set()
         )
         focus_mentions_source_medium = bool(
@@ -614,6 +633,7 @@ class OpenAIFlashcardGenerationProvider:
             "what did the lecture say",
             "what does the lecture say",
         )
+        matched_focus_terms: set[str] = set()
         for card in cards:
             surface = " ".join(
                 [
@@ -622,7 +642,14 @@ class OpenAIFlashcardGenerationProvider:
                     card.hint or "",
                 ]
             )
-            if focus_terms and _focus_score_terms(focus_terms, surface) == 0:
+            card_focus_terms = _focus_match_terms(focus_terms, surface)
+            matched_focus_terms.update(card_focus_terms)
+            # A narrow request should keep every card on-topic. A multi-topic
+            # request is different: a useful subtopic such as ribosomes or
+            # alleles may not repeat the parent phrase on every card. Require
+            # deck-level coverage of at least two requested terms instead of
+            # rejecting those grounded subtopics as unrelated.
+            if focus_terms and len(focus_terms) <= 2 and not card_focus_terms:
                 raise FlashcardGenerationProviderError(
                     "provider output does not match the requested focus"
                 )
@@ -631,6 +658,10 @@ class OpenAIFlashcardGenerationProvider:
                 phrase in normalized_prompt for phrase in meta_phrases
             ):
                 raise FlashcardGenerationProviderError("provider output contains source trivia")
+        if focus_terms and len(focus_terms) > 2 and len(matched_focus_terms) < 2:
+            raise FlashcardGenerationProviderError(
+                "provider output does not match the requested focus"
+            )
         return cards
 
     def _estimate_cost_microusd(
@@ -680,6 +711,11 @@ class OpenAIFlashcardGenerationProvider:
             ):
                 raise FlashcardGenerationProviderError(
                     "conversation generation authority is invalid"
+                )
+        elif request.origin.kind == "topic":
+            if request.source_material or request.conversation_context is not None:
+                raise FlashcardGenerationProviderError(
+                    "topic generation authority is invalid"
                 )
         elif not evidence_by_receipt or request.conversation_context is not None:
             raise FlashcardGenerationProviderError(
@@ -841,6 +877,14 @@ class DeterministicFlashcardGenerationProvider:
                     "conversation generation authority is invalid"
                 )
             digest = hashlib.sha256(conversation.text.encode("utf-8")).hexdigest()
+        elif request.origin.kind == "topic":
+            if conversation is not None or material is not None:
+                raise FlashcardGenerationProviderError(
+                    "topic generation authority is invalid"
+                )
+            digest = hashlib.sha256(
+                request.generation_brief.focus.encode("utf-8")
+            ).hexdigest()
         else:
             if material is None or conversation is not None:
                 raise FlashcardGenerationProviderError(
@@ -857,8 +901,13 @@ class DeterministicFlashcardGenerationProvider:
                         f"What conversation concept {ordinal} should be reviewed?"
                         if conversation is not None
                         else (
-                            f"What bounded fact {ordinal} is represented by source "
-                            f"{material.receipt.source_id}?"
+                            f"What is one important idea about "
+                            f"{request.generation_brief.focus} ({ordinal})?"
+                            if request.origin.kind == "topic"
+                            else (
+                                f"What bounded fact {ordinal} is represented by source "
+                                f"{material.receipt.source_id}?"
+                            )
                         )
                     ),
                     answer=f"fact-{digest[:16]}-{ordinal}",
@@ -866,7 +915,11 @@ class DeterministicFlashcardGenerationProvider:
                         (
                             "Use the selected conversation"
                             if conversation is not None
-                            else f"Use source {material.receipt.source_id}"
+                            else (
+                                f"Think about {request.generation_brief.focus}"
+                                if request.origin.kind == "topic"
+                                else f"Use source {material.receipt.source_id}"
+                            )
                         )
                         if request.generation_brief.include_hints
                         else None
@@ -875,7 +928,7 @@ class DeterministicFlashcardGenerationProvider:
                     objective_ids=request.objective_ids,
                     citations=(
                         []
-                        if conversation is not None
+                        if request.origin.kind in {"general_chat", "topic"}
                         else [FlashcardCitation(**material.receipt.model_dump())]
                     ),
                 )

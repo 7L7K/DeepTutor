@@ -66,7 +66,13 @@ class FlashcardGenerationBrief(BaseModel):
 class FlashcardGenerationOrigin(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    kind: Literal["workspace", "chat", "practice_remediation", "general_chat"]
+    kind: Literal[
+        "workspace",
+        "chat",
+        "practice_remediation",
+        "general_chat",
+        "topic",
+    ]
     session_id: str | None = Field(default=None, max_length=160)
     message_id: int | None = Field(default=None, ge=1)
     practice_attempt_id: str | None = Field(default=None, max_length=80)

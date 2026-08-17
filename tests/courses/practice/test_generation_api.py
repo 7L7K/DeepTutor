@@ -457,6 +457,44 @@ def test_flashcard_generation_brief_resolves_authority_without_allocation(
         )
 
 
+def test_topic_flashcard_generation_does_not_require_course_material(
+    generation_client: TestClient, monkeypatch
+) -> None:
+    from deeptutor.api.routers import courses as course_router
+
+    monkeypatch.setattr(
+        course_router, "_run_flashcard_generation", _leave_generation_queued
+    )
+    course = _create_course(generation_client)
+    body = _flashcard_generation_body(
+        course,
+        {"id": "unused"},
+        source_ids=[],
+        origin={"kind": "topic"},
+        focus="cellular energy",
+        item_limit=8,
+        card_type_mix=["concept"],
+    )
+    brief = generation_client.post(
+        f"/api/v1/courses/{course['id']}/flashcard-generation/brief",
+        headers=_auth("alice"),
+        json=body,
+    )
+
+    assert brief.status_code == 200, brief.text
+    assert brief.json()["origin"]["kind"] == "topic"
+    assert brief.json()["source_snapshot"] == []
+
+    created = generation_client.post(
+        f"/api/v1/courses/{course['id']}/flashcard-generation",
+        headers=_headers("alice", "topic-generation"),
+        json=body,
+    )
+    assert created.status_code == 202, created.text
+    assert created.json()["operation"]["origin"]["kind"] == "topic"
+    assert created.json()["operation"]["source_snapshot"] == []
+
+
 def test_flashcard_generation_successor_foreign_and_missing_decks_are_indistinguishable(
     generation_client: TestClient, monkeypatch
 ) -> None:

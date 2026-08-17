@@ -10,6 +10,7 @@ from __future__ import annotations
 import importlib
 import json
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -126,6 +127,48 @@ def test_connect_rejects_unknown_kind(client):
         json={"name": "X", "agent_kind": "bogus"},
     )
     assert res.status_code == 400
+
+
+def test_regular_user_cannot_connect_or_list_local_agents(client, monkeypatch):
+    # Seed a deployment-local connection as an administrator, then verify a
+    # regular account cannot discover or create another local connection.
+    created = client.post(
+        "/api/v1/subagents/connections",
+        json={"name": "AdminClaude", "agent_kind": "claude_code"},
+    )
+    assert created.status_code == 200
+
+    monkeypatch.setattr(
+        subagents_module,
+        "get_current_user",
+        lambda: SimpleNamespace(is_admin=False),
+    )
+    listed = client.get("/api/v1/subagents/connections")
+    assert listed.status_code == 200
+    assert listed.json()["connections"] == []
+
+    rejected = client.post(
+        "/api/v1/subagents/connections",
+        json={"name": "UserClaude", "agent_kind": "claude_code"},
+    )
+    assert rejected.status_code == 403
+
+
+def test_regular_user_can_connect_an_assigned_partner(client, monkeypatch):
+    _patch_partner_existence(monkeypatch, {"paul"})
+    monkeypatch.setattr(
+        subagents_module,
+        "get_current_user",
+        lambda: SimpleNamespace(is_admin=False),
+    )
+    monkeypatch.setattr(subagents_module, "assert_partner_allowed", lambda _pid: None)
+
+    created = client.post(
+        "/api/v1/subagents/connections",
+        json={"name": "Paul", "agent_kind": "partner", "partner_id": "paul"},
+    )
+    assert created.status_code == 200
+    assert created.json()["agent_kind"] == "partner"
 
 
 class _FakePartnerManagerForConnect:

@@ -195,28 +195,38 @@ export default function CourseShell({
   return (
     <CourseShellContext.Provider value={contextValue}>
       <div className="flex h-full min-h-0 min-w-0 flex-col overflow-x-hidden">
-        <header className="shrink-0 overflow-x-hidden border-b border-[var(--border)] bg-[var(--background)] px-5 py-3.5 sm:px-8 sm:py-4">
+        <header className="shrink-0 overflow-x-hidden border-b border-[var(--border)] bg-[var(--background)] px-5 py-4 sm:px-8 sm:py-5">
           <div className="mx-auto w-full max-w-6xl">
-            <div className="flex min-w-0 flex-col gap-2.5 sm:flex-row sm:items-center sm:gap-5">
+            <div className="flex min-w-0 items-center justify-between gap-4">
               <Link
                 href="/classes"
                 className="inline-flex shrink-0 items-center gap-2 text-sm text-[var(--muted-foreground)] hover:text-[var(--foreground)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ring)]"
               >
                 <ArrowLeft size={15} /> Back to Classes
               </Link>
-              <div className="flex min-w-0 flex-1 flex-wrap items-baseline gap-x-3 gap-y-1">
-                <h1 className="min-w-0 truncate text-2xl font-semibold tracking-tight text-[var(--foreground)]">
-                  {course.title}
-                </h1>
-                {termLabel ? (
-                  <span className="shrink-0 text-sm text-[var(--muted-foreground)]">
-                    {termLabel}
-                  </span>
-                ) : null}
-              </div>
               {course.state === "archived" ? (
                 <span className="shrink-0 rounded-full border border-[var(--border)] px-2.5 py-1 text-xs text-[var(--muted-foreground)]">
                   Read-only archived Course
+                </span>
+              ) : (
+                <span className="inline-flex shrink-0 items-center gap-2 text-xs text-[var(--muted-foreground)]">
+                  <span className="h-2 w-2 rounded-full bg-emerald-500" aria-hidden="true" />
+                  Active course
+                </span>
+              )}
+            </div>
+            <div className="mt-4 flex min-w-0 items-end gap-3">
+              <div className="min-w-0">
+                <p className="text-[11px] font-medium uppercase tracking-[0.14em] text-[var(--muted-foreground)]">
+                  Course
+                </p>
+                <h1 className="mt-1 truncate text-2xl font-semibold tracking-tight text-[var(--foreground)] sm:text-3xl">
+                  {course.title}
+                </h1>
+              </div>
+              {termLabel ? (
+                <span className="shrink-0 pb-1 text-sm text-[var(--muted-foreground)]">
+                  {termLabel}
                 </span>
               ) : null}
             </div>

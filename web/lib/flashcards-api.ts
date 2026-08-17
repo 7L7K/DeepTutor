@@ -41,6 +41,7 @@ export interface Flashcard {
   created_at: number;
   updated_at: number;
   archived_at: number | null;
+  edited_by_user: boolean;
 }
 
 export interface FlashcardSchedule {
@@ -146,7 +147,12 @@ export interface FlashcardGenerationBrief {
 }
 
 export interface FlashcardGenerationOrigin {
-  kind: "workspace" | "chat" | "practice_remediation" | "general_chat";
+  kind:
+    | "workspace"
+    | "chat"
+    | "practice_remediation"
+    | "general_chat"
+    | "topic";
   session_id: string | null;
   message_id: number | null;
   practice_attempt_id: string | null;
@@ -357,6 +363,31 @@ export function addFlashcard(
         expected_deck_revision: deck.revision,
         expected_course_write_epoch: courseWriteEpoch,
       }),
+    ),
+  );
+}
+
+export function updateFlashcard(
+  courseId: string,
+  deck: FlashcardDeck,
+  card: Flashcard,
+  courseWriteEpoch: number,
+  input: { prompt: string; answer: string; objective_ids: string[] },
+) {
+  return json<Flashcard>(
+    apiFetch(
+      apiUrl(
+        path(
+          courseId,
+          `/${encodeURIComponent(deck.id)}/cards/${encodeURIComponent(card.id)}`,
+        ),
+      ),
+      mutation({
+        ...input,
+        expected_deck_revision: deck.revision,
+        expected_card_revision: card.revision,
+        expected_course_write_epoch: courseWriteEpoch,
+      }, "PATCH"),
     ),
   );
 }
