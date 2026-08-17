@@ -29,11 +29,11 @@ its events — older clients keep working.
 
 from __future__ import annotations
 
+from dataclasses import asdict
+from datetime import date as date_cls
 import json
 import logging
 import re
-from dataclasses import asdict
-from datetime import date as date_cls
 from typing import Literal
 
 from fastapi import APIRouter, Depends, HTTPException
