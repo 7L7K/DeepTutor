@@ -51,6 +51,7 @@ class Flashcard(BaseModel):
     created_at: float
     updated_at: float
     archived_at: float | None = None
+    edited_by_user: bool = False
 
 
 class FlashcardReview(BaseModel):

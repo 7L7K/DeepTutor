@@ -121,6 +121,28 @@ def _conversation_request() -> FlashcardGenerationInput:
     )
 
 
+def _topic_request() -> FlashcardGenerationInput:
+    return FlashcardGenerationInput(
+        operation_id="ofg_" + ("t" * 32),
+        owner_user_id="u_alice",
+        course_id="crs_" + ("a" * 32),
+        deck_id="dck_" + ("b" * 32),
+        origin=FlashcardGenerationOrigin(kind="topic"),
+        source_material=[],
+        objective_ids=[],
+        generation_brief=FlashcardGenerationBrief(
+            focus="cellular energy",
+            desired_count=1,
+            card_type_mix=["concept"],
+            difficulty="mixed",
+            answer_length="short",
+            include_hints=True,
+        ),
+        item_limit=1,
+        context_char_limit=12_000,
+    )
+
+
 class _FakeResponses:
     def __init__(self, payload: dict, captured: dict) -> None:
         self.payload = payload
@@ -170,6 +192,40 @@ def test_conversation_provider_uses_bounded_context_without_fake_citations(
     request_payload = json.loads(captured["input"])
     assert request_payload["sources"] == []
     assert request_payload["conversation"]["selected_message_ids"] == [1, 2]
+    citations_schema = captured["text"]["format"]["schema"]["properties"]["cards"]["items"][
+        "properties"
+    ]["citations"]
+    assert citations_schema["minItems"] == citations_schema["maxItems"] == 0
+
+
+def test_topic_provider_uses_general_knowledge_without_course_citations(
+    tmp_path: Path,
+) -> None:
+    captured: dict = {}
+    provider = _provider(
+        tmp_path,
+        {
+            "cards": [
+                {
+                    "prompt": "What does cellular energy describe?",
+                    "answer": "How cells capture and use energy.",
+                    "hint": "Think about ATP.",
+                    "card_type": "concept",
+                    "objective_ids": [],
+                    "citations": [],
+                }
+            ]
+        },
+        captured,
+    )
+
+    output = provider.generate(_topic_request())
+
+    assert output.cards[0].citations == []
+    assert "general knowledge" in captured["instructions"]
+    request_payload = json.loads(captured["input"])
+    assert request_payload["sources"] == []
+    assert request_payload["conversation"] is None
     citations_schema = captured["text"]["format"]["schema"]["properties"]["cards"]["items"][
         "properties"
     ]["citations"]
@@ -265,6 +321,7 @@ def test_openai_provider_uses_strict_store_false_tool_free_request(
     assert "untrusted study data" in captured["instructions"]
     assert "directly help the learner with the requested focus" in captured["instructions"]
     assert "incidental dialogue" in captured["instructions"]
+    assert "multiple topics" in captured["instructions"]
     assert "Ignore all rules" in captured["input"]
     assert "sk-test-only" not in captured["input"]
 
@@ -580,6 +637,25 @@ def test_openai_provider_rejects_cards_unrelated_to_requested_focus(
         match="requested focus",
     ):
         provider.generate(_request())
+
+
+def test_openai_provider_allows_grounded_subtopics_for_multi_topic_focus(
+    tmp_path: Path,
+) -> None:
+    payload = _payload()
+    payload["cards"][0]["prompt"] = "What is the cell membrane?"
+    payload["cards"][0]["answer"] = "It controls what enters and leaves a cell."
+    payload["cards"][1]["prompt"] = "What do ribosomes do?"
+    payload["cards"][1]["answer"] = "They build proteins."
+    payload["cards"][2]["prompt"] = "What happens during photosynthesis?"
+    payload["cards"][2]["answer"] = "Plants use light energy to build glucose."
+    provider = _provider(tmp_path, payload, {})
+
+    output = provider.generate(
+        _request(focus="cell structure, photosynthesis, and basic genetics")
+    )
+
+    assert len(output.cards) == 3
 
 
 def test_openai_provider_rejects_focus_word_wrapped_in_source_trivia(

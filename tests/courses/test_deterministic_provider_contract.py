@@ -22,11 +22,6 @@ from deeptutor.multi_user.models import CurrentUser, UserScope
 from deeptutor.services.session.sqlite_store import SQLiteSessionStore
 
 
-def _embedding(text: str) -> list[int]:
-    digest = hashlib.sha256(text.lower().encode()).digest()
-    return [digest[0], digest[1], digest[2], digest[3]]
-
-
 @pytest.mark.asyncio
 async def test_runtime_proof_ingestion_delay_is_explicit_and_bounded(
     monkeypatch,
@@ -149,7 +144,7 @@ async def test_deterministic_provider_can_prove_unavailable_runtime_state(
 
 
 @pytest.mark.asyncio
-async def test_deterministic_course_provider_retrieval_and_provenance(
+async def test_course_source_initialization_builds_exact_text_index_and_preserves_provenance(
     monkeypatch, tmp_path
 ) -> None:
     owner = "u_deterministic"
@@ -160,6 +155,8 @@ async def test_deterministic_course_provider_retrieval_and_provenance(
     course = repo.ensure_managed_kb_ref(course.id, f"personal:kb:course_{course.id}")
     text = "Mitochondria produce ATP through cellular respiration."
     fingerprint = hashlib.sha256(text.encode()).hexdigest()
+    uploaded = tmp_path / "notes.txt"
+    uploaded.write_text(text, encoding="utf-8")
     source = repo.create_source(
         course.id,
         kind="document",
@@ -177,11 +174,6 @@ async def test_deterministic_course_provider_retrieval_and_provenance(
 
     async def deterministic_provider(initializer, _task_id, *, finalize_task):
         assert finalize_task is False
-        initializer.kb_dir.mkdir(parents=True, exist_ok=True)
-        (initializer.kb_dir / "deterministic-index.json").write_text(
-            json.dumps({"chunks": [{"text": text, "embedding": _embedding(text)}]}),
-            encoding="utf-8",
-        )
         return True
 
     monkeypatch.setattr(
@@ -220,7 +212,7 @@ async def test_deterministic_course_provider_retrieval_and_provenance(
             "operation_id": source.operation_id,
             "kb_name": source_kb_name(course.id, source.id),
             "base_dir": str(kb_root),
-            "uploaded_paths": [],
+            "uploaded_paths": [str(uploaded)],
             "rag_provider": "llamaindex",
             "initialize": True,
         }

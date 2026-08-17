@@ -45,7 +45,7 @@ test("Course navigation preserves the Course ID and marks the active destination
 
   assert.deepEqual(
     COURSE_NAVIGATION_DESTINATIONS.map((destination) => destination.label),
-    ["Overview", "Chat", "Practice", "Review", "Materials"],
+    ["Overview", "Chat", "Practice", "Flashcards", "Materials"],
   );
   assert.equal(
     courseDestinationPath("crs/bio", "/materials"),
@@ -81,6 +81,9 @@ test("CourseShell contains the mobile navigation and focus-visibility contract",
   assert.match(source, /scrollIntoView/);
   assert.match(source, /onFocus=\{revealActiveDestination\}/);
   assert.match(source, /overflow-x-hidden/);
+  assert.match(source, /Active course/);
+  assert.match(source, /Read-only archived Course/);
+  assert.match(source, /text-\[11px\].*uppercase/);
 });
 
 test("General Study keeps its label without the Course-only selector bar", () => {
@@ -113,12 +116,30 @@ test("learner shells do not expose unqualified Progress or Course scope copy", (
 
   assert.doesNotMatch(overview, /Progress and recommendations/);
   assert.doesNotMatch(overview, /Not available in this slice/);
+  assert.doesNotMatch(overview, /\{course\.title\}/);
+  assert.doesNotMatch(overview, /Term: \{course\.term\}/);
+  assert.doesNotMatch(overview, /course-chat-link|DestinationCard/);
+  assert.match(overview, /Practice performance/);
+  assert.match(overview, /Mastery progress/);
   assert.match(composer, /Course sources only/);
   assert.match(courseChat, /hideCourseBar/);
   assert.doesNotMatch(courseChat, /hideCourseScope/);
+  assert.doesNotMatch(courseChat, /readiness\.state !== "ready"/);
 });
 
-test("opening a Course enters Chat and the expanded sidebar uses TEEECHR branding", () => {
+test("Chat cost details are reserved for administrators", () => {
+  const messages = readFileSync(
+    path.join(process.cwd(), "components/chat/home/ChatMessages.tsx"),
+    "utf8",
+  );
+
+  assert.match(messages, /useAuthStatus/);
+  assert.match(messages, /const showCostSummary = !authLoading && isAdmin/);
+  assert.match(messages, /showCostSummary && costSummary/);
+  assert.match(messages, /courseReadiness \? \(/);
+});
+
+test("opening a Course enters Overview and the expanded sidebar uses TEEECHR branding", () => {
   const coursePage = readFileSync(
     path.join(process.cwd(), "app/(workspace)/classes/[courseId]/page.tsx"),
     "utf8",
@@ -128,8 +149,8 @@ test("opening a Course enters Chat and the expanded sidebar uses TEEECHR brandin
     "utf8",
   );
 
-  assert.match(coursePage, /CourseChatRoute/);
-  assert.doesNotMatch(coursePage, /CourseOverview/);
+  assert.match(coursePage, /CourseOverview/);
+  assert.doesNotMatch(coursePage, /CourseChatRoute/);
   assert.match(sidebar, />\s*TEEECHR\s*</);
   assert.doesNotMatch(sidebar, /src="\/banner\.png"/);
 });

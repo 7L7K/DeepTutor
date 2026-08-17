@@ -22,7 +22,7 @@ export const COURSE_NAVIGATION_DESTINATIONS = [
   { key: "overview", label: "Overview", suffix: "" },
   { key: "chat", label: "Chat", suffix: "/chat" },
   { key: "practice", label: "Practice", suffix: "/practice" },
-  { key: "review", label: "Review", suffix: "/review" },
+  { key: "review", label: "Flashcards", suffix: "/review" },
   { key: "materials", label: "Materials", suffix: "/materials" },
 ] as const;
 
@@ -113,8 +113,8 @@ export function courseChatReadinessPresentation(readiness: CourseChatReadiness):
     return {
       allowChat: true,
       title: "Course materials could not be prepared for Chat.",
-      body: "You can chat now with general knowledge. Review the failed material to restore Course-material grounding.",
-      action: "Review materials",
+      body: "You can chat now with general knowledge. Open the failed material to restore Course-material grounding.",
+      action: "Open materials",
     };
   }
   if (readiness.state === "partial") {

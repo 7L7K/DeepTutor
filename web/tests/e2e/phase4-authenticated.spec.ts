@@ -298,7 +298,7 @@ test("after server restart identities, quiz, learning, and cache remain isolated
   expect(browserKeys).toContain(`dt:courses:active:${state.bobIdentity}`);
 });
 
-test("manual Practice and Flashcard learner flows remain usable without a provider", async ({
+test("Practice and Flashcard learner flows remain usable without a provider", async ({
   page,
 }) => {
   test.skip(
@@ -318,87 +318,17 @@ test("manual Practice and Flashcard learner flows remain usable without a provid
       await route.continue();
     },
   );
-  // Deliberately create immediately after selection. Both dependent writes
-  // must survive the Course/auth hydration race.
+  // Deliberately inspect immediately after selection. The Practice shell must
+  // survive the Course/auth hydration race without exposing the old Create tab.
   await page.getByLabel("Active course").selectOption(state.aliceCourseId);
   await expect(page.getByText("Loading Shared Biology Practice…")).toBeVisible();
   await expect(page.getByLabel("New Practice title")).toHaveCount(0);
-  await page.getByRole("tab", { name: "Create" }).click();
-  await page.getByLabel("New Practice title").fill("Visible manual quiz");
-  const practiceCreateResponse = page.waitForResponse(
-    (response) =>
-      response.url().endsWith("/practice") &&
-      response.request().method() === "POST",
-  );
-  const revisionCreateResponse = page.waitForResponse(
-    (response) =>
-      response.url().includes("/revisions") &&
-      response.request().method() === "POST",
-  );
-  await page.getByRole("button", { name: "Create manual", exact: true }).click();
-  expect((await practiceCreateResponse).status()).toBe(200);
-  expect((await revisionCreateResponse).status()).toBe(200);
-  await expect(page.getByRole("status")).toContainText(
-    "Draft Practice set created.",
-  );
-  await page
-    .getByPlaceholder("What should the learner answer?")
-    .fill("What is two plus two?");
-  await page.getByPlaceholder("Exact accepted answer").fill("4");
-  await page
-    .getByPlaceholder("Shown after grading")
-    .fill("Two pairs make four.");
-  await page
-    .getByPlaceholder("Comma-separated objective IDs")
-    .fill("browser_manual_math");
-  await page.getByRole("button", { name: "Add question" }).click();
-  await expect(page.getByRole("status")).toContainText("Question added.");
-  await page
-    .getByPlaceholder("What should the learner answer?")
-    .fill("What color is a clear daytime sky?");
-  await page.getByPlaceholder("Exact accepted answer").fill("blue");
-  await page
-    .getByPlaceholder("Shown after grading")
-    .fill("A clear daytime sky usually appears blue.");
-  await page.getByRole("button", { name: "Add question" }).click();
-  await page.getByRole("button", { name: "Mark ready" }).click();
+  await expect(page.getByRole("tab", { name: "Take" })).toBeVisible();
+  await expect(page.getByRole("tab", { name: "History" })).toBeVisible();
+  await expect(page.getByRole("tab", { name: "Create" })).toHaveCount(0);
   await expect(
-    page.getByRole("button", { name: "Start or resume quiz" }),
+    page.getByText("AI quiz creation is unavailable right now"),
   ).toBeVisible();
-  await page.setViewportSize({ width: 390, height: 844 });
-  await page.getByRole("button", { name: "Start or resume quiz" }).click();
-  await expect(page.getByText("Question 1 of 2")).toBeVisible();
-  await expect(
-    page.getByRole("button", { name: "Archive", exact: true }),
-  ).toHaveCount(0);
-  await expect(page.getByLabel("Answer for question 1")).toBeFocused();
-  await page.getByLabel("Answer for question 1").fill("4");
-  await page.keyboard.press("Enter");
-  await expect(page.getByRole("button", { name: "Go to question 1, answered" })).toBeVisible();
-  await expect(page.getByText("Question 2 of 2")).toBeVisible();
-  await expect(page.getByLabel("Answer for question 2")).toBeFocused();
-  await page.getByLabel("Answer for question 2").fill("BLUE");
-  await page.getByRole("button", { name: "Save answer" }).click();
-  const answerBox = await page.getByLabel("Answer for question 2").boundingBox();
-  expect(answerBox).not.toBeNull();
-  expect((answerBox?.x ?? 0) + (answerBox?.width ?? 0)).toBeLessThanOrEqual(390);
-  await expect(page.getByRole("button", { name: "Submit quiz" })).toBeVisible();
-  await page.getByRole("button", { name: "Submit quiz" }).click();
-  const gradeResponsePromise = page.waitForResponse(
-    (response) =>
-      response.url().endsWith("/grade") &&
-      response.request().method() === "POST",
-  );
-  await page.getByRole("button", { name: "Grade quiz" }).click();
-  const gradeResponse = await gradeResponsePromise;
-  expect(gradeResponse.status()).toBe(200);
-  expect((await gradeResponse.json()).score).toEqual({
-    correct: 2,
-    total: 2,
-    fraction: 1,
-  });
-  await expect(page.getByText("2 correct out of 2")).toBeVisible();
-  await expect(page.getByText("You got every question correct.")).toBeVisible();
 
   await page.goto("/flashcards");
   await expect(page.getByLabel("Active course")).toHaveValue(
@@ -435,7 +365,8 @@ test("manual Practice and Flashcard learner flows remain usable without a provid
   await page.getByRole("button", { name: "Study", exact: true }).click();
   await page.getByRole("button", { name: "Start studying" }).click();
   await expect(page.getByText("Mitochondria", { exact: true })).toBeVisible();
-  await page.getByRole("button", { name: "Show answer" }).click();
+  await expect(page.getByRole("button", { name: "History", exact: true })).toHaveCount(0);
+  await page.getByRole("button", { name: "Reveal answer" }).click();
   await expect(
     page.getByText("Produces cellular energy", { exact: true }),
   ).toBeVisible();
@@ -555,7 +486,7 @@ test("phase5 confirms in a modal and opens the first grounded card", async ({
     ),
   ).toBeVisible();
   await page.getByRole("button", { name: "Create 3 cards with AI" }).click();
-  await expect(page.getByRole("button", { name: "Show answer" })).toBeVisible({
+  await expect(page.getByRole("button", { name: "Reveal answer" })).toBeVisible({
     timeout: 15_000,
   });
   await expect(
@@ -785,7 +716,7 @@ test("phase5 General Chat confirms once and opens the first conversation card", 
   await page.getByRole("button", { name: "Create 3 cards with AI" }).click();
   await expect.poll(() => generationPosts).toBe(1);
   expect(generationCourseIds).toEqual([state.aliceCourseId]);
-  await expect(page.getByRole("button", { name: "Show answer" })).toBeVisible({
+  await expect(page.getByRole("button", { name: "Reveal answer" })).toBeVisible({
     timeout: 15_000,
   });
   await expect(
@@ -864,18 +795,15 @@ test("phase6 reviews once, generates a grounded quiz, survives reload, and shows
   ]);
   await page.reload();
   await courseUiReady;
-  await page.getByRole("tab", { name: "Create" }).click();
   await page
-    .getByLabel("Generated quiz title")
-    .fill("Phase 6 grounded quiz");
-  await page
-    .getByLabel("Quiz focus")
+    .getByLabel("Practice topic")
     .fill("Review cellular energy from the selected Course notes");
+  await page.getByText("Optional settings", { exact: true }).click();
   await page.getByLabel("Question count").fill("1");
   await page.getByLabel("Quiz difficulty").selectOption("mixed");
   await page.getByLabel("Quiz timing").selectOption("practice_timer");
 
-  await page.getByRole("button", { name: "Review quiz plan" }).click();
+  await page.getByRole("button", { name: "Create quiz", exact: true }).click();
   await expect(
     page.getByRole("heading", { name: "Ready to create your quiz?" }),
   ).toBeVisible();
@@ -909,15 +837,15 @@ test("phase6 reviews once, generates a grounded quiz, survives reload, and shows
   expect(
     plansBeforeConfirmation.plans.filter(
       (plan) =>
-        plan.state === "draft" && plan.title === "Phase 6 grounded quiz",
+        plan.state === "draft" &&
+        plan.title ===
+          "Practice: Review cellular energy from the selected Course notes",
     ),
   ).toHaveLength(1);
 
   await page.getByRole("button", { name: "Keep editing" }).click();
-  await expect(
-    page.getByRole("button", { name: "Review quiz plan" }),
-  ).toBeFocused();
-  await page.getByLabel("Quiz focus").fill(
+  await expect(page.getByRole("button", { name: "Create quiz", exact: true })).toBeFocused();
+  await page.getByLabel("Practice topic").fill(
     "Review ATP and cellular energy from the selected Course notes",
   );
   const planUpdateResponse = page.waitForResponse(
@@ -925,7 +853,7 @@ test("phase6 reviews once, generates a grounded quiz, survives reload, and shows
       response.request().method() === "PATCH" &&
       response.url().includes("/practice-generation/plans/"),
   );
-  await page.getByRole("button", { name: "Review quiz plan" }).click();
+  await page.getByRole("button", { name: "Create quiz", exact: true }).click();
   const updatedPlanResponse = await planUpdateResponse;
   if (!updatedPlanResponse.ok()) {
     throw new Error(
@@ -951,7 +879,9 @@ test("phase6 reviews once, generates a grounded quiz, survives reload, and shows
     };
   }, state.aliceCourseId);
   const matchingPlans = plansAfterEdit.plans.filter(
-    (plan) => plan.title === "Phase 6 grounded quiz",
+    (plan) =>
+      plan.title ===
+      "Practice: Review cellular energy from the selected Course notes",
   );
   expect(matchingPlans).toHaveLength(1);
   expect(matchingPlans[0]?.revision).toBeGreaterThanOrEqual(1);
@@ -959,9 +889,16 @@ test("phase6 reviews once, generates a grounded quiz, survives reload, and shows
     "Review ATP and cellular energy from the selected Course notes",
   );
 
-  await page.getByRole("button", { name: "Create quiz" }).click();
+  await page
+    .getByRole("dialog")
+    .getByRole("button", { name: "Create quiz", exact: true })
+    .click();
   await expect.poll(() => confirmPosts).toBe(1);
   expect(legacyGenerationPosts).toBe(0);
+  await expect(
+    page.getByText("Your quiz is ready. Start it when you are ready."),
+  ).toBeVisible({ timeout: 15_000 });
+  await page.getByRole("button", { name: "Start quiz", exact: true }).click();
   await expect(page.getByRole("timer")).toContainText("advisory only", {
     timeout: 15_000,
   });
@@ -992,7 +929,7 @@ test("phase6 reviews once, generates a grounded quiz, survives reload, and shows
   ).toBeVisible();
 });
 
-test("phase6 source choices distinguish multiple materials from manual-only fallback", async ({
+test("phase6 source choices distinguish multiple materials and block ungrounded quizzes", async ({
   page,
 }) => {
   test.skip(
@@ -1030,19 +967,20 @@ test("phase6 source choices distinguish multiple materials from manual-only fall
   );
   await page.goto("/practice");
   await page.getByLabel("Active course").selectOption(state.aliceCourseId);
-  await page.getByRole("tab", { name: "Create" }).click();
+  await page.getByText("Optional settings", { exact: true }).click();
   await expect(page.getByRole("group", { name: "Course materials" })).toBeVisible();
   await expect(page.getByRole("checkbox")).toHaveCount(2);
   await expect(page.getByText("Second Course handout")).toBeVisible();
 
   sourceMode = "empty";
   await page.reload();
-  await page.getByRole("tab", { name: "Create" }).click();
   await expect(
-    page.getByText("Attach a ready Course source before generating a quiz."),
+    page.getByText(
+      "No ready Course materials are attached yet. Add one to create a grounded Practice quiz.",
+    ),
   ).toBeVisible();
-  await expect(page.getByRole("button", { name: "Review quiz plan" })).toBeDisabled();
-  await expect(page.getByRole("button", { name: "Create manually" })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Create quiz" })).toBeDisabled();
+  await expect(page.getByRole("button", { name: "Create manually" })).toHaveCount(0);
 });
 
 test("phase6 Course Chat opens the same provider-free editable quiz plan", async ({
@@ -1104,6 +1042,6 @@ test("phase6 Course Chat opens the same provider-free editable quiz plan", async
     "Questions are generated only after you confirm.",
   );
   await page.getByRole("button", { name: "Keep editing" }).click();
-  await expect(page.getByLabel("Quiz focus")).toBeEditable();
+  await expect(page.getByLabel("Practice topic")).toBeEditable();
   expect(confirmationPosts).toBe(0);
 });

@@ -1,10 +1,10 @@
-import CourseChatRoute from "@/components/courses/CourseChatRoute";
+import CourseOverview from "@/components/courses/CourseOverview";
 import CourseScopedWorkspace from "@/components/courses/CourseScopedWorkspace";
 
 export default function CoursePage() {
   return (
     <CourseScopedWorkspace>
-      <CourseChatRoute />
+      <CourseOverview />
     </CourseScopedWorkspace>
   );
 }

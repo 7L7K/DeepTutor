@@ -13,6 +13,7 @@ import pytest
 from deeptutor.courses.flashcard_generation_models import (
     FlashcardCandidatePublication,
     FlashcardCitation,
+    FlashcardGenerationOrigin,
     FlashcardSourceReceipt,
     GeneratedFlashcard,
     GeneratedFlashcardOutput,
@@ -27,6 +28,8 @@ from deeptutor.courses.flashcard_generation_repository import (
 from deeptutor.courses.flashcard_generation_service import (
     CourseFlashcardGenerationService,
 )
+from deeptutor.courses.flashcard_repository import CourseFlashcardRepository
+from deeptutor.courses.flashcard_service import CourseFlashcardService
 from deeptutor.courses.repository import CourseConflictError, CourseNotFoundError, CourseRepository
 
 
@@ -195,6 +198,71 @@ def test_system_proposals_use_owned_material_without_wrapper_focus_blocking(
     assert provider.calls == 1
 
 
+def test_topic_generation_can_run_without_course_material(tmp_path: Path) -> None:
+    _courses, course, source, repository = _setup(tmp_path / "topic-only.db")
+    request = repository.create_generated_deck(
+        course.id,
+        title="Cellular energy",
+        source_ids=[],
+        idempotency_key="topic-only",
+        expected_course_write_epoch=course.write_epoch,
+        origin={"kind": "topic"},
+        generation_brief={
+            "focus": "cellular energy",
+            "desired_count": 2,
+            "card_type_mix": ["concept"],
+            "difficulty": "mixed",
+            "answer_length": "short",
+            "include_hints": True,
+        },
+        item_limit=2,
+    )
+
+    class CountingProvider:
+        calls = 0
+
+        def generate(self, generation_input):
+            self.calls += 1
+            assert generation_input.origin.kind == "topic"
+            assert generation_input.source_material == []
+            assert generation_input.conversation_context is None
+            return GeneratedFlashcardOutput(
+                provider_label="deterministic-local",
+                cards=[
+                    GeneratedFlashcard(
+                        prompt=f"What is cellular energy? {ordinal}",
+                        answer=f"A cell energy concept {ordinal}.",
+                        card_type="concept",
+                        citations=[],
+                    )
+                    for ordinal in range(2)
+                ],
+            )
+
+    provider = CountingProvider()
+    service = CourseFlashcardGenerationService(
+        repository,
+        provider=provider,
+        source_text_resolver=object(),
+        account_active=lambda _owner: True,
+        identity_lock=lambda: nullcontext(),
+    )
+
+    result = service.run_operation(course.id, request.operation.id)
+
+    assert result.state == "awaiting_review"
+    assert provider.calls == 1
+    with pytest.raises(ValueError, match="cannot claim Course sources"):
+        repository.create_generated_deck(
+            course.id,
+            title="Invalid topic",
+            source_ids=[source.id],
+            idempotency_key="topic-with-source",
+            expected_course_write_epoch=course.write_epoch,
+            origin=FlashcardGenerationOrigin(kind="topic"),
+        )
+
+
 def _complete(repo, course, source, request):
     operation, claimed = repo.claim_operation(course.id, request.operation.id)
     assert claimed
@@ -221,6 +289,48 @@ def _complete(repo, course, source, request):
             expected_candidate_revision=staged.candidate_revision,
         ),
         account_active=True,
+    )
+
+
+def test_ready_generated_deck_accepts_user_edits_and_additions(tmp_path: Path) -> None:
+    courses, course, source, repository = _setup(tmp_path / "generated-edits.db")
+    request = repository.create_generated_deck(
+        course.id,
+        title="Terms",
+        source_ids=[source.id],
+        idempotency_key="generated-edits",
+        expected_course_write_epoch=course.write_epoch,
+    )
+    assert _complete(repository, course, source, request).state == "completed"
+
+    flashcards = CourseFlashcardService(CourseFlashcardRepository(courses))
+    view = flashcards.get_deck(course.id, request.deck_id)
+    card = view.cards[0]
+    changed = flashcards.update_card(
+        course.id,
+        request.deck_id,
+        card.id,
+        prompt="What is ATP?",
+        answer="The cell's usable energy currency.",
+        objective_ids=("cell_energy",),
+        expected_card_revision=card.revision,
+        expected_deck_revision=view.deck.revision,
+        expected_course_write_epoch=course.write_epoch,
+    )
+
+    assert changed.edited_by_user is True
+    after_edit = flashcards.get_deck(course.id, request.deck_id)
+    added = flashcards.add_card(
+        course.id,
+        request.deck_id,
+        prompt="What does ATP power?",
+        answer="Cellular work.",
+        expected_deck_revision=after_edit.deck.revision,
+        expected_course_write_epoch=course.write_epoch,
+    )
+    assert added.edited_by_user is False
+    assert flashcards.get_deck(course.id, request.deck_id).cards[-1].prompt == (
+        "What does ATP power?"
     )
 
 

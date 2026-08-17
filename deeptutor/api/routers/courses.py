@@ -314,6 +314,32 @@ async def _authoritative_flashcard_generation_arguments(
             include_hints=body.include_hints,
             context_char_limit=body.context_char_limit,
         )
+    if parsed.kind == "topic":
+        if not allow_system_origin:
+            raise HTTPException(
+                status_code=422,
+                detail="Successor generation requires a workspace request",
+            )
+        if body.source_ids:
+            raise HTTPException(
+                status_code=422,
+                detail="Topic generation cannot claim Course sources",
+            )
+        destination = _service().get(course_id)
+        if destination.state != "active" or destination.workspace_kind != "academic_course":
+            raise HTTPException(status_code=404, detail="Flashcard workspace not found")
+        return arguments(
+            origin=parsed,
+            source_ids=[],
+            objective_ids=body.objective_ids,
+            focus=body.focus,
+            item_limit=body.item_limit,
+            card_type_mix=list(body.card_type_mix),
+            difficulty=body.difficulty,
+            answer_length=body.answer_length,
+            include_hints=body.include_hints,
+            context_char_limit=body.context_char_limit,
+        )
     if not allow_system_origin:
         raise HTTPException(
             status_code=422,

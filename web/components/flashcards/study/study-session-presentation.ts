@@ -1,14 +1,19 @@
 import type { FlashcardRating } from "../../../lib/flashcards-api";
 
-/** The only learner-facing review choices in a focused study session. */
-export type StudySessionRating = Extract<FlashcardRating, "again" | "good">;
+/** The only learner-facing study choices in a focused flashcard session. */
+export type StudySessionRating = Extract<
+  FlashcardRating,
+  "again" | "hard" | "good"
+>;
 
 export const studySessionActions: Readonly<{
-  gotIt: StudySessionRating;
-  studyAgain: StudySessionRating;
+  knewIt: StudySessionRating;
+  almost: StudySessionRating;
+  practiceAgain: StudySessionRating;
 }> = {
-  gotIt: "good",
-  studyAgain: "again",
+  knewIt: "good",
+  almost: "hard",
+  practiceAgain: "again",
 };
 
 export function cardsLeftLabel(cardsLeft: number): string {
@@ -16,9 +21,9 @@ export function cardsLeftLabel(cardsLeft: number): string {
   return `${safeCardsLeft} ${safeCardsLeft === 1 ? "card" : "cards"} left`;
 }
 
-export function completedCardsLabel(reviewedCards: number): string {
-  const safeReviewedCards = Math.max(0, Math.floor(reviewedCards));
-  return `You reviewed ${safeReviewedCards} ${safeReviewedCards === 1 ? "card" : "cards"}.`;
+export function completedCardsLabel(studiedCards: number): string {
+  const safeStudiedCards = Math.max(0, Math.floor(studiedCards));
+  return `You studied ${safeStudiedCards} ${safeStudiedCards === 1 ? "card" : "cards"}.`;
 }
 
 /** Find the next unfinished card after an arbitrary learner navigation jump. */

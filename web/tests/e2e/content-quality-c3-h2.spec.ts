@@ -162,8 +162,9 @@ test("owner completes the hermetic bounded mixed assessment", async ({ page }) =
   await signIn(page, "c3_h2_owner", ownerPassword!);
 
   await page.goto(`/classes/${encodeURIComponent(proof.course_id)}/practice`);
-  await expect(page.getByRole("heading", { name: "Practice", exact: true })).toBeVisible();
-  await expect(page.getByText(`Active Course: ${proof.course_title}`)).toBeVisible();
+  await expect(page.getByRole("tab", { name: "Take", exact: true })).toBeVisible();
+  await expect(page.getByRole("region", { name: "Create a quiz" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: proof.course_title, exact: true })).toBeVisible();
   await expect(page.getByRole("heading", { name: proof.practice_title })).toBeVisible();
 
   const preGrade = await page.evaluate(
