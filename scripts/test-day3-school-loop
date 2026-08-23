@@ -538,6 +538,9 @@ run_browser() {
   playwright_pid=$!
   assert_owned_group "$playwright_pid"
   if ! wait "$playwright_pid"; then
+    cp "$playwright_log" "$evidence_dir/playwright-$phase.failed.log"
+    chmod 600 "$evidence_dir/playwright-$phase.failed.log"
+    append_runtime "failed_phase=$phase"
     sed -n '1,360p' "$playwright_log" >&2
     return 1
   fi

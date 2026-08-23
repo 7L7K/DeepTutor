@@ -825,8 +825,8 @@ test("cold restart preserves two private learner loops without an ID oracle", as
   ]);
   expect(evidence.consoleErrors).toEqual([]);
   expect(evidence.pageErrors).toEqual([]);
-  expect(evidence.requests.some((item) => item.failure)).toBe(false);
   expectNetworkClean(evidence);
+  expect(evidence.requests.filter((item) => item.failure)).toEqual([]);
   const path = join(evidenceDir!, "day3-school-loop.post.json");
   writeFileSync(path, JSON.stringify(evidence, null, 2), { encoding: "utf8", mode: 0o600 });
   chmodSync(path, 0o600);

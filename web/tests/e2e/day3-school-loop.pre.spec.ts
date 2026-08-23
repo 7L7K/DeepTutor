@@ -631,6 +631,7 @@ async function uploadReadySource(
   await page.reload();
   await expect(page.getByText(displayName, { exact: true })).toBeVisible();
   await expect(page.getByText("Available to Course Chat and Practice", { exact: true })).toBeVisible();
+  await page.waitForLoadState("networkidle");
   return {
     id: source.id,
     displayName,
@@ -690,6 +691,7 @@ async function proveGroundedChatUi(
   expect(persisted.status).toBe(200);
   expect(persisted.body).toMatchObject({ course_id: courseId });
   expect(JSON.stringify(persisted.body)).toContain(sourceId);
+  await page.waitForLoadState("networkidle");
   return {
     sessionId,
     groundedCitationSourceId: sourceId,
@@ -1060,7 +1062,9 @@ async function verifyChatIsolation(
     own.chat.foreignMarkerAbsent = true;
     own.chat.foreignSourceAbsent = true;
     own.chat.foreignCitationAbsent = true;
-    await page.goto("/classes");
+    if (new URL(page.url()).pathname !== "/classes") {
+      await page.goto("/classes");
+    }
     await expect(page.getByRole("heading", { name: "Classes", exact: true })).toBeVisible();
     await page.waitForLoadState("networkidle");
   } finally {
@@ -1133,8 +1137,8 @@ if (phase === "repair") {
     evidence.uiProofs.learnerSafeNavigation = { learner_a: true, learner_b: true };
     expect(evidence.consoleErrors).toEqual([]);
     expect(evidence.pageErrors).toEqual([]);
-    expect(evidence.requests.some((item) => item.failure)).toBe(false);
     expectNetworkClean(evidence);
+    expect(evidence.requests.filter((item) => item.failure)).toEqual([]);
     const path = join(evidenceDir!, "day3-school-loop.repair.json");
     writeFileSync(path, JSON.stringify(evidence, null, 2), {
       encoding: "utf8",
@@ -1235,8 +1239,8 @@ if (phase === "repair") {
     evidence.generationOperationCounts.learner_b = { practice: 0, flashcards: 0 };
     expect(evidence.consoleErrors).toEqual([]);
     expect(evidence.pageErrors).toEqual([]);
-    expect(evidence.requests.some((item) => item.failure)).toBe(false);
     expectNetworkClean(evidence);
+    expect(evidence.requests.filter((item) => item.failure)).toEqual([]);
     for (const actor of ["learner_a", "learner_b"] as const) {
       expect(
         evidence.websockets.some((socket) => socket.actor === actor && socket.path === "/api/v1/ws"),
@@ -1345,8 +1349,8 @@ if (phase === "repair") {
     evidence.sources = { learner_a: sourceA, learner_b: sourceB };
     expect(evidence.consoleErrors).toEqual([]);
     expect(evidence.pageErrors).toEqual([]);
-    expect(evidence.requests.some((item) => item.failure)).toBe(false);
     expectNetworkClean(evidence);
+    expect(evidence.requests.filter((item) => item.failure)).toEqual([]);
     const path = join(evidenceDir!, "day3-school-loop.interrupt.json");
     writeFileSync(path, JSON.stringify(evidence, null, 2), { encoding: "utf8", mode: 0o600 });
     chmodSync(path, 0o600);
