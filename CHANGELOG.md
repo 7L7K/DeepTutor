@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- Kept normal learner chat from requesting deployment-wide subagent settings.
+  The composer now reads only an authenticated, learner-safe consult-budget
+  projection while backend models, prompts, and execution permissions remain
+  admin-only.
+
 - Added the learner Course surfaces for local-first beta qualification: distinct
   Overview, Practice, Flashcards, and Materials flows; Course-grounded quiz and
   flashcard creation; editable learner cards; and admin-only navigation and

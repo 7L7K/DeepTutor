@@ -94,7 +94,7 @@ import {
   type OutlineItem,
 } from '@/lib/research-types'
 import { listKnowledgeBases } from '@/lib/knowledge-api'
-import { getSubagentSettings } from '@/lib/subagents-api'
+import { getSubagentConsultSettings } from '@/lib/subagents-api'
 import { listLLMOptions, type LLMOption } from '@/lib/llm-options'
 import { getEnabledOptionalTools, invalidateEnabledOptionalToolsCache } from '@/lib/tools-settings'
 import { downloadChatMarkdown } from '@/lib/chat-export'
@@ -1557,10 +1557,11 @@ export default function UnifiedChatPage({
     [state.knowledgeBases, agentNameSet]
   )
   // How many times TEEECHR may consult the selected agent this turn. Seeded
-  // from the configured default; the composer's stepper overrides it per turn.
+  // from the learner-safe configured default; deployment-wide backend models,
+  // prompts, and permissions remain behind the separate admin settings route.
   const [subagentBudget, setSubagentBudget] = useState<number | null>(null)
   useEffect(() => {
-    void getSubagentSettings()
+    void getSubagentConsultSettings()
       .then(settings => setSubagentBudget(settings.consult_budget))
       .catch(() => undefined)
   }, [])

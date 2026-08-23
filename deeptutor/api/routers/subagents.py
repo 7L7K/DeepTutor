@@ -23,7 +23,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
-from deeptutor.api.routers.auth import require_admin
+from deeptutor.api.routers.auth import require_admin, require_auth
 from deeptutor.knowledge.kb_types import SUBAGENT_KB_TYPE
 from deeptutor.multi_user.context import get_current_user
 from deeptutor.multi_user.knowledge_access import current_kb_manager
@@ -315,6 +315,17 @@ async def message_connection(name: str, payload: SubagentMessageRequest):
 async def get_settings():
     """Read the consult budget and per-backend run config."""
     return load_subagent_settings().to_dict()
+
+
+@router.get("/consult-settings")
+async def get_consult_settings(_: object = Depends(require_auth)):
+    """Return the learner-safe per-turn consult default.
+
+    Backend models, permissions, prompts, and execution controls remain
+    deployment-wide admin settings. Learner chat needs only the bounded
+    consult budget so an assigned partner can retain its per-turn selector.
+    """
+    return {"consult_budget": load_subagent_settings().consult_budget}
 
 
 @router.put("/settings", dependencies=[Depends(require_admin)])

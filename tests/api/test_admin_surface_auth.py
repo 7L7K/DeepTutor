@@ -3,12 +3,13 @@
 from __future__ import annotations
 
 import importlib
+from types import SimpleNamespace
 
 from fastapi import FastAPI, HTTPException
 from fastapi.testclient import TestClient
 import pytest
 
-from deeptutor.api.routers.auth import require_admin
+from deeptutor.api.routers.auth import require_admin, require_auth
 
 
 @pytest.mark.parametrize(
@@ -35,11 +36,44 @@ def test_subagent_management_routes_are_admin_only_but_partner_routes_are_not() 
         route = routes[path]
         assert any(dependency.call is require_admin for dependency in route.dependant.dependencies)
 
-    for path in ("/partners", "/connections"):
+    for path in ("/partners", "/connections", "/consult-settings"):
         route = routes[path]
         assert all(
             dependency.call is not require_admin for dependency in route.dependant.dependencies
         )
+
+    consult_settings = routes["/consult-settings"]
+    assert any(
+        dependency.call is require_auth
+        for dependency in consult_settings.dependant.dependencies
+    )
+
+
+def test_regular_learner_can_read_consult_budget_but_not_admin_settings(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    module = importlib.import_module("deeptutor.api.routers.subagents")
+    monkeypatch.setattr(
+        module,
+        "load_subagent_settings",
+        lambda: SimpleNamespace(consult_budget=5),
+    )
+
+    app = FastAPI()
+    app.include_router(module.router, prefix="/api/v1/subagents")
+    app.dependency_overrides[require_auth] = lambda: object()
+
+    async def reject_regular_user() -> None:
+        raise HTTPException(status_code=403, detail="Admin access required")
+
+    app.dependency_overrides[require_admin] = reject_regular_user
+    with TestClient(app) as client:
+        consult_response = client.get("/api/v1/subagents/consult-settings")
+        admin_response = client.get("/api/v1/subagents/settings")
+
+    assert consult_response.status_code == 200
+    assert consult_response.json() == {"consult_budget": 5}
+    assert admin_response.status_code == 403
 
 
 def test_provider_connection_tests_are_admin_only() -> None:

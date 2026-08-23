@@ -397,3 +397,23 @@ def test_settings_put_merges_per_field_and_backend(client):
     body = r4.json()
     assert body["consult_budget"] == 7
     assert body["backends"]["claude_code"]["model"] == "opus"
+
+
+def test_consult_settings_returns_only_the_learner_safe_budget(client):
+    updated = client.put(
+        "/api/v1/subagents/settings",
+        json={
+            "consult_budget": 7,
+            "backends": {
+                "codex": {
+                    "model": "private-admin-model",
+                    "system_prompt": "deployment-only instructions",
+                }
+            },
+        },
+    )
+    assert updated.status_code == 200
+
+    response = client.get("/api/v1/subagents/consult-settings")
+    assert response.status_code == 200
+    assert response.json() == {"consult_budget": 7}

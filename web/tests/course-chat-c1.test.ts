@@ -139,6 +139,24 @@ test("Chat cost details are reserved for administrators", () => {
   assert.match(messages, /courseReadiness \? \(/);
 });
 
+test("learner chat reads only the learner-safe subagent consult projection", () => {
+  const chat = readFileSync(
+    path.join(process.cwd(), "components/chat/home/UnifiedChatPage.tsx"),
+    "utf8",
+  );
+  const api = readFileSync(
+    path.join(process.cwd(), "lib/subagents-api.ts"),
+    "utf8",
+  );
+
+  assert.match(chat, /getSubagentConsultSettings/);
+  assert.doesNotMatch(chat, /getSubagentSettings/);
+  assert.match(
+    api,
+    /apiUrl\("\/api\/v1\/subagents\/consult-settings"\)/,
+  );
+});
+
 test("opening a Course enters Overview and the expanded sidebar uses TEEECHR branding", () => {
   const coursePage = readFileSync(
     path.join(process.cwd(), "app/(workspace)/classes/[courseId]/page.tsx"),
