@@ -62,12 +62,18 @@ append_runtime() {
 
 port_closed() {
   "$python_bin" - "$1" <<'PY'
+import errno
 import socket
 import sys
 with socket.socket() as probe:
     probe.settimeout(0.2)
-    if probe.connect_ex(("127.0.0.1", int(sys.argv[1]))) == 0:
+    result = probe.connect_ex(("127.0.0.1", int(sys.argv[1])))
+    if result == 0:
         raise SystemExit(f"Port still open: {sys.argv[1]}")
+    if result != errno.ECONNREFUSED:
+        raise SystemExit(
+            f"Could not prove port {sys.argv[1]} closed: connect_ex errno={result}"
+        )
 PY
 }
 
@@ -84,18 +90,30 @@ try:
     os.killpg(pgid, 0)
 except ProcessLookupError:
     raise SystemExit(0)
-os.killpg(pgid, signal.SIGTERM)
+except PermissionError as error:
+    raise SystemExit(f"Owned process group {pgid} existed but was unsignalable: {error}")
+try:
+    os.killpg(pgid, signal.SIGTERM)
+except ProcessLookupError:
+    raise SystemExit(0)
+except PermissionError as error:
+    raise SystemExit(f"Owned process group {pgid} rejected SIGTERM: {error}")
 deadline = time.monotonic() + 3
 while time.monotonic() < deadline:
     try:
         os.killpg(pgid, 0)
     except ProcessLookupError:
         raise SystemExit(0)
+    except PermissionError:
+        time.sleep(0.05)
+        continue
     time.sleep(0.05)
 try:
     os.killpg(pgid, signal.SIGKILL)
 except ProcessLookupError:
     pass
+except PermissionError as error:
+    raise SystemExit(f"Owned process group {pgid} remained but was unsignalable: {error}")
 PY
 }
 
@@ -127,14 +145,26 @@ try:
     os.killpg(int(sys.argv[1]), 0)
 except ProcessLookupError:
     raise SystemExit(0)
+except PermissionError as error:
+    raise SystemExit(
+        f"Owned process group {sys.argv[1]} existed but was unsignalable: {error}"
+    )
 raise SystemExit(f"Owned process group {sys.argv[1]} remained")
 PY
 }
 
 stop_group() {
   local pgid="$1"
+  local terminate_status=0
   [ -n "$pgid" ] || return 0
-  terminate_group "$pgid"
+  terminate_group "$pgid" || terminate_status=$?
+  if [ "$terminate_status" -ne 0 ]; then
+    if group_closed "$pgid"; then
+      wait "$pgid" 2>/dev/null || true
+      return 0
+    fi
+    return "$terminate_status"
+  fi
   wait "$pgid" 2>/dev/null || true
   group_closed "$pgid"
 }
@@ -161,13 +191,13 @@ cleanup() {
   if port_closed "$frontend_port"; then
     append_runtime "cleanup_frontend_port=closed"
   else
-    append_runtime "cleanup_frontend_port=listener_remained"
+    append_runtime "cleanup_frontend_port=not_proven_closed"
     cleanup_failed=true
   fi
   if port_closed "$backend_port"; then
     append_runtime "cleanup_backend_port=closed"
   else
-    append_runtime "cleanup_backend_port=listener_remained"
+    append_runtime "cleanup_backend_port=not_proven_closed"
     cleanup_failed=true
   fi
   case "$runtime_root" in

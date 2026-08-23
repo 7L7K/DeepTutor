@@ -353,6 +353,16 @@ async function signIn(page: Page, username: string, password: string) {
   expect((await authReady).status()).toBe(200);
   await page.getByLabel("Email or username").fill(username);
   await page.getByLabel("Password", { exact: true }).fill(password);
+  const sessionsReady = page.waitForResponse((response) => {
+    const url = new URL(response.url());
+    return (
+      url.pathname === "/api/v1/sessions" &&
+      url.searchParams.get("limit") === "50" &&
+      url.searchParams.get("offset") === "0" &&
+      response.request().method() === "GET"
+    );
+  });
+  void sessionsReady.catch(() => undefined);
   const login = page.waitForResponse(
     (response) =>
       new URL(response.url()).pathname === "/api/v1/auth/login" &&
@@ -365,7 +375,8 @@ async function signIn(page: Page, username: string, password: string) {
       (await page.context().cookies()).some((cookie) => cookie.name === "dt_token"),
     )
     .toBe(true);
-  await page.waitForURL((url) => !url.pathname.startsWith("/login"));
+  await page.waitForURL((url) => url.pathname === "/classes");
+  expect((await sessionsReady).status()).toBe(200);
 }
 
 type BrowserRequestInit = {
