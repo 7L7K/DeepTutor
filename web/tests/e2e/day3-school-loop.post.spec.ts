@@ -352,7 +352,7 @@ async function signIn(page: Page, username: string, password: string) {
   await page.goto("/login");
   expect((await authReady).status()).toBe(200);
   await page.getByLabel("Email or username").fill(username);
-  await page.getByLabel("Password").fill(password);
+  await page.getByLabel("Password", { exact: true }).fill(password);
   const login = page.waitForResponse(
     (response) =>
       new URL(response.url()).pathname === "/api/v1/auth/login" &&
