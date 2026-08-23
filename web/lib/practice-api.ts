@@ -24,11 +24,32 @@ export interface PracticeSet {
   mode: "manual" | "generated";
   state: PracticeSetState;
   current_revision_id: string | null;
+  draft_revision_id?: string | null;
   revision: number;
   write_epoch: number;
   created_at: number;
   updated_at: number;
   archived_at: number | null;
+}
+
+/** Prefer the published revision, otherwise recover its durable editable draft. */
+export function practiceSetRevisionId(practiceSet: PracticeSet): string | null {
+  return practiceSet.current_revision_id ?? practiceSet.draft_revision_id ?? null;
+}
+
+export type PracticeDetailState = "idle" | "loading" | "loaded" | "error";
+
+/** A new draft may start only after a settled, revision-free manual-set read. */
+export function canStartManualPracticeDraft(
+  practiceSet: PracticeSet,
+  detailState: PracticeDetailState,
+): boolean {
+  return (
+    practiceSet.mode === "manual" &&
+    practiceSet.state !== "archived" &&
+    practiceSetRevisionId(practiceSet) === null &&
+    detailState === "loaded"
+  );
 }
 
 export interface PracticeRevision {

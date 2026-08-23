@@ -6,7 +6,7 @@ import time
 
 import pytest
 
-from deeptutor.services.cron.service import CronService
+from deeptutor.services.cron.service import CronOwner, CronService
 from deeptutor.tools.cron_tool import run_cron_action
 
 
@@ -37,6 +37,23 @@ class TestCronTool:
         outcome = run_cron_action({"action": "schedule", "message": "x", "every_seconds": 60})
         assert outcome.ok is False
         assert "not available" in outcome.text
+
+    def test_delegated_partner_cannot_touch_shared_cron_store(self, cron_service):
+        from deeptutor.tools.partner_memory import delegated_partner_call
+
+        with delegated_partner_call("u_learner"):
+            outcome = run_cron_action(
+                {
+                    "action": "schedule",
+                    "message": "run later as owner",
+                    "every_seconds": 60,
+                    "_cron_owner": PARTNER_OWNER,
+                }
+            )
+
+        assert outcome.ok is False
+        assert "assigned Partner" in outcome.text
+        assert cron_service.list_jobs() == []
 
     def test_schedule_every_and_list_and_cancel(self, cron_service):
         outcome = run_cron_action(
@@ -169,6 +186,33 @@ class TestRegistryIntegration:
 
 
 class TestExecutorRouting:
+    @pytest.mark.asyncio
+    async def test_delegated_partner_job_never_replays_as_owner(self, monkeypatch):
+        from deeptutor.services.cron import executor
+        from deeptutor.services.cron.service import CronJob, CronSchedule
+
+        class ForbiddenManager:
+            def get_partner(self, _partner_id):
+                raise AssertionError("delegated cron must stop before Partner manager lookup")
+
+        import deeptutor.services.partners as partners_mod
+
+        monkeypatch.setattr(partners_mod, "get_partner_manager", lambda: ForbiddenManager())
+        job = CronJob(
+            id="delegated",
+            name="unsafe",
+            message="run later",
+            schedule=CronSchedule(kind="every", every_seconds=60),
+            owner=CronOwner(
+                kind="partner", partner_id="ada", delegated_user_id="u_learner"
+            ),
+        )
+
+        status, error = await executor.execute_job(job)
+
+        assert status == "skipped"
+        assert "assigned Partner" in (error or "")
+
     @pytest.mark.asyncio
     async def test_partner_job_runs_and_publishes_outbound(self, monkeypatch):
         from deeptutor.services.cron import executor

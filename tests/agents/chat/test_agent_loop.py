@@ -1038,6 +1038,125 @@ def test_compose_enabled_tools_injects_rag_when_kb_selected(
     assert "web_search" in pipeline._compose_enabled_tools(context)
 
 
+def test_two_delegated_learners_cannot_mount_partner_or_admin_memory_tools(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from deeptutor.agents.chat import agentic_pipeline
+    from deeptutor.tools.partner_memory import PARTNER_BUILTIN_TOOL_NAMES
+
+    assert agentic_pipeline._DELEGATED_PARTNER_ALLOWED_TOOLS == frozenset(
+        {
+            "ask_user",
+            "brainstorm",
+            "kb_files",
+            "rag",
+            "read_skill",
+            "read_source",
+            "reason",
+        }
+    )
+
+    pipeline = AgenticChatPipeline(language="en")
+    pipeline._exec_enabled = True
+    pipeline._deferred_loader = object()
+    monkeypatch.setattr(agentic_pipeline, "user_has_memory", lambda: True)
+    monkeypatch.setattr(agentic_pipeline, "user_has_notebooks", lambda: False)
+
+    owner_tools = pipeline._compose_enabled_tools(
+        UnifiedContext(user_message="owner", metadata={"source": "partner"})
+    )
+    assert set(PARTNER_BUILTIN_TOOL_NAMES).issubset(owner_tools)
+
+    for learner_id in ("u_alice", "u_bob"):
+        delegated_tools = pipeline._compose_enabled_tools(
+            UnifiedContext(
+                user_message="learner",
+                enabled_tools=[
+                    "brainstorm",
+                    "web_search",
+                    "paper_search",
+                    "reason",
+                    "imagegen",
+                    "videogen",
+                ],
+                skills_manifest="safe Partner skill",
+                metadata={
+                    "source": "partner",
+                    "_delegated_partner_call": True,
+                    "_delegated_user_id": learner_id,
+                },
+            )
+        )
+        assert not set(PARTNER_BUILTIN_TOOL_NAMES).intersection(delegated_tools)
+        assert "read_memory" not in delegated_tools
+        assert "write_memory" not in delegated_tools
+        assert {
+            "cron",
+            "exec",
+            "code_execution",
+            "github",
+            "list_notebook",
+            "write_note",
+            "load_tools",
+            "imagegen",
+            "videogen",
+            "paper_search",
+            "web_fetch",
+            "web_search",
+        }.isdisjoint(delegated_tools)
+        assert {
+            "ask_user",
+            "brainstorm",
+            "read_skill",
+            "reason",
+        }.issubset(delegated_tools)
+
+
+@pytest.mark.asyncio
+async def test_delegated_partner_skips_mcp_cli_and_exec_authority(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from deeptutor.agents.chat import agentic_pipeline
+
+    pipeline = AgenticChatPipeline(language="en")
+    context = UnifiedContext(
+        user_message="learner",
+        metadata={"source": "partner", "_delegated_partner_call": True},
+    )
+
+    def forbidden_pageindex(_context):
+        raise AssertionError("delegated turn must not inspect MCP-backed PageIndex bindings")
+
+    async def forbidden_provider_view(**_kwargs):
+        raise AssertionError("delegated turn must not initialize MCP or CLI providers")
+
+    monkeypatch.setattr(pipeline, "_pageindex_doc_maps", forbidden_pageindex)
+    monkeypatch.setattr(agentic_pipeline, "build_tool_view", forbidden_provider_view)
+
+    await pipeline._prepare_deferred_tools(context)
+
+    assert pipeline._deferred_loader is None
+    assert pipeline._deferred_pool == []
+    assert await pipeline._exec_allowed(context) is False
+
+
+@pytest.mark.parametrize(
+    "tool_name",
+    ["cron", "exec", "code_execution", "github", "write_note", "mcp_admin_secret"],
+)
+def test_delegated_partner_dispatch_rejects_unsafe_tool_before_workspace(
+    tool_name: str,
+) -> None:
+    pipeline = AgenticChatPipeline(language="en")
+    context = UnifiedContext(
+        user_message="learner",
+        metadata={"source": "partner", "_delegated_partner_call": True},
+    )
+
+    with pytest.raises(PermissionError, match="assigned Partner"):
+        pipeline._augment_tool_kwargs(tool_name, {}, context)
+
+
 def test_compose_enabled_tools_mounts_mastery_plugin_only_in_mastery_mode(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

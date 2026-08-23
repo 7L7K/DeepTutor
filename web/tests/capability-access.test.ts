@@ -89,6 +89,32 @@ test("optional admin gates never redirect learner-safe routes", () => {
   );
 });
 
+test("capability presentation fails closed and reports a recoverable probe failure", () => {
+  const source = readFileSync(
+    path.join(
+      process.cwd(),
+      "components/access/CapabilityAccessContext.tsx",
+    ),
+    "utf8",
+  );
+
+  assert.match(source, /isAdmin: false/);
+  assert.match(source, /hasLlm: false/);
+  assert.match(source, /has: \(\) => false/);
+  assert.match(source, /known: false/);
+  assert.match(source, /refreshing: false/);
+  assert.match(source, /const isBackgroundRefresh = knownRef\.current/);
+  assert.match(source, /if \(isBackgroundRefresh\) setRefreshing\(true\)/);
+  assert.doesNotMatch(source, /setHasLlm\(false\)/);
+  assert.match(source, /listLLMOptions\(\{ force: true \}\)/);
+  assert.match(source, /setError\("Could not verify feature access\. Try again\."\)/);
+  assert.match(source, /if \(!known\) return false/);
+  assert.match(
+    source,
+    /value=\{\{ known, loading, refreshing, isAdmin, hasLlm, error, has, refresh \}\}/,
+  );
+});
+
 test("adminOnlyForPath matches route segments rather than bare prefixes", () => {
   assert.equal(adminOnlyForPath("/memory-bank"), false);
   assert.equal(adminOnlyForPath("/booklet"), false);

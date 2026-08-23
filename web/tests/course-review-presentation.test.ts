@@ -2,6 +2,16 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import path from "node:path";
 import test from "node:test";
+import {
+  isFlashcardDeckLibraryEligible,
+  resolveFlashcardDeckDetailPresentation,
+  resolveFlashcardGenerationSupportPresentation,
+} from "../components/flashcards/FlashcardsWorkspace";
+import {
+  isCurrentFlashcardResponse,
+  type FlashcardDeck,
+  type FlashcardRequestScope,
+} from "../lib/flashcards-api";
 
 const workspaceSource = readFileSync(
   path.join(process.cwd(), "components", "flashcards", "FlashcardsWorkspace.tsx"),
@@ -81,6 +91,185 @@ test("Course Flashcards defaults to the deck workspace and keeps History seconda
   assert.doesNotMatch(workspaceSource, /t\("Review decks"\)/);
   assert.doesNotMatch(workspaceSource, /t\("Create review cards"\)/);
   assert.match(workspaceSource, /reviewMode=\{Boolean\(courseShell\)\}/);
+});
+
+test("Flashcard decks stay authoritative when generation support cannot load", () => {
+  assert.match(
+    workspaceSource,
+    /activeCourse: sharedActiveCourse[\s\S]*?const activeCourse =\s*courseShell\?\.course \?\? sharedActiveCourse/,
+  );
+  assert.match(
+    workspaceSource,
+    /listed = await listFlashcardDecks\(scope\.courseId\)[\s\S]*?setDecks\(listed\)[\s\S]*?setCourseLoaded\(true\)/,
+  );
+  assert.match(workspaceSource, /Promise\.allSettled\(\[/);
+  assert.match(workspaceSource, /setGenerationAvailable\(false\)/);
+  assert.match(
+    workspaceSource,
+    /Your decks are ready, but generated Flashcard tools could not load\./,
+  );
+  assert.match(workspaceSource, /onClick=\{retryGenerationSupport\}/);
+  assert.match(workspaceSource, /t\("Retry generation tools"\)/);
+  assert.match(workspaceSource, /onClick=\{retryCourseLoad\}/);
+  assert.match(workspaceSource, /t\("Retry decks"\)/);
+  assert.match(
+    workspaceSource,
+    /courseLoadError[\s\S]*?role="alert"[\s\S]*?retryCourseLoad/,
+  );
+  assert.match(
+    workspaceSource,
+    /generationLoadError[\s\S]*?role="alert"[\s\S]*?retryGenerationSupport/,
+  );
+});
+
+test("Flashcard library fails closed for unpublished generated shells without hiding manual drafts", () => {
+  const deck = (overrides: Partial<FlashcardDeck>): FlashcardDeck => ({
+    id: "dck_1",
+    owner_user_id: "usr_alice",
+    course_id: "crs_biology",
+    title: "Review deck",
+    mode: "manual",
+    state: "draft",
+    source_snapshot: [],
+    generation_receipt: null,
+    revision: 1,
+    write_epoch: 1,
+    created_at: 1,
+    updated_at: 1,
+    ready_at: null,
+    archived_at: null,
+    ...overrides,
+  });
+
+  assert.equal(isFlashcardDeckLibraryEligible(deck({})), true);
+  assert.equal(
+    isFlashcardDeckLibraryEligible(
+      deck({ mode: "generated", generation_receipt: { operation_id: "fgo_1" } }),
+    ),
+    false,
+  );
+  assert.equal(
+    isFlashcardDeckLibraryEligible(
+      deck({
+        mode: "generated",
+        state: "archived",
+        generation_receipt: { operation_id: "fgo_failed" },
+        archived_at: 2,
+      }),
+    ),
+    false,
+  );
+  assert.equal(
+    isFlashcardDeckLibraryEligible(
+      deck({
+        mode: "generated",
+        state: "ready",
+        generation_receipt: { operation_id: "fgo_completed" },
+        ready_at: 2,
+      }),
+    ),
+    true,
+  );
+  assert.equal(
+    isFlashcardDeckLibraryEligible(
+      deck({
+        mode: "generated",
+        state: "archived",
+        generation_receipt: { operation_id: "fgo_completed" },
+        ready_at: 2,
+        archived_at: 3,
+      }),
+    ),
+    true,
+  );
+  assert.match(
+    workspaceSource,
+    /const first =[\s\S]*?listed\.find\(\s*\(deck\) =>[\s\S]*?isFlashcardDeckLibraryEligible\(deck\)/,
+  );
+});
+
+test("late generation intent cannot replace a deck selected after support loading began", () => {
+  const supportRequest: FlashcardRequestScope = {
+    identity: "usr_alice",
+    courseId: "crs_biology",
+    epoch: 4,
+    viewEpoch: 0,
+  };
+  const learnerSelectedDeck: FlashcardRequestScope = {
+    ...supportRequest,
+    viewEpoch: 1,
+  };
+
+  assert.equal(
+    isCurrentFlashcardResponse(supportRequest, learnerSelectedDeck),
+    false,
+  );
+  assert.match(
+    workspaceSource,
+    /setGenerationUnavailableReason\([\s\S]*?if \(!current\(scope\)\) return;[\s\S]*?const pendingRemediation = operations\.find/,
+  );
+  assert.match(
+    workspaceSource,
+    /if \(!current\(scope\)\) return;[\s\S]*?consumeFlashcardProposal\(/,
+  );
+});
+
+test("Flashcard detail presentation never turns a selected pending deck into an empty workspace", () => {
+  assert.equal(
+    resolveFlashcardDeckDetailPresentation(false, false, "idle"),
+    "empty",
+  );
+  assert.equal(
+    resolveFlashcardDeckDetailPresentation(true, false, "idle"),
+    "opening",
+  );
+  assert.equal(
+    resolveFlashcardDeckDetailPresentation(true, false, "loading"),
+    "opening",
+  );
+  assert.equal(
+    resolveFlashcardDeckDetailPresentation(true, false, "error"),
+    "error",
+  );
+  assert.equal(
+    resolveFlashcardDeckDetailPresentation(true, true, "error"),
+    "ready",
+  );
+  assert.match(
+    workspaceSource,
+    /deckDetailPresentation === "opening"[\s\S]*?t\("Opening deck…"\)/,
+  );
+  assert.match(
+    workspaceSource,
+    /deckDetailPresentation === "error"[\s\S]*?t\("Retry opening deck"\)/,
+  );
+});
+
+test("Flashcard generation presentation reserves provider-off copy for confirmed support", () => {
+  assert.equal(
+    resolveFlashcardGenerationSupportPresentation("checking", false),
+    "checking",
+  );
+  assert.equal(
+    resolveFlashcardGenerationSupportPresentation("error", false),
+    "error",
+  );
+  assert.equal(
+    resolveFlashcardGenerationSupportPresentation("ready", false),
+    "unavailable",
+  );
+  assert.equal(
+    resolveFlashcardGenerationSupportPresentation("ready", true),
+    "available",
+  );
+  assert.match(
+    workspaceSource,
+    /generationSupportPresentation === "checking"[\s\S]*?t\("Checking generation tools…"\)/,
+  );
+  assert.match(
+    workspaceSource,
+    /generationSupportPresentation === "available"[\s\S]*?Card generation is unavailable right now/,
+  );
 });
 
 test("Flashcard completion copy is presentation-only and keeps study compatibility", () => {

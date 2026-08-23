@@ -78,6 +78,158 @@ async function tabTo(page: Page, locator: Locator, attempts = 100) {
   throw new Error(`Keyboard focus did not reach ${await locator.getAttribute("data-testid")}`);
 }
 
+type CapabilityProbeFixture = {
+  failSettings: boolean;
+  settingsDelayMs: number;
+  settingsCalls: number;
+};
+
+async function mockCapabilityProbeShell(
+  page: Page,
+  probe: CapabilityProbeFixture,
+) {
+  await page.route("**/api/**", async (route) => {
+    const pathname = new URL(route.request().url()).pathname;
+    const fulfill = (body: unknown, status = 200) =>
+      route.fulfill({
+        status,
+        contentType: "application/json",
+        body: JSON.stringify(body),
+      });
+
+    if (pathname === "/api/v1/settings") {
+      probe.settingsCalls += 1;
+      if (probe.settingsDelayMs) {
+        await new Promise((resolve) => setTimeout(resolve, probe.settingsDelayMs));
+      }
+      return probe.failSettings
+        ? fulfill({ detail: "probe unavailable" }, 503)
+        : fulfill({});
+    }
+    if (pathname === "/api/v1/settings/llm-options") {
+      return fulfill({
+        active: { profile_id: "school", model_id: "test-model" },
+        options: [
+          {
+            profile_id: "school",
+            model_id: "test-model",
+            profile_name: "School",
+            model_name: "Test model",
+            model: "test-model",
+            provider: "local",
+            is_active_default: true,
+          },
+        ],
+      });
+    }
+    if (pathname === "/api/v1/auth/status") {
+      return fulfill({
+        enabled: false,
+        authenticated: false,
+        user_id: null,
+        username: null,
+        role: null,
+      });
+    }
+    if (pathname === "/api/v1/courses") {
+      return fulfill({
+        courses: [],
+        capabilities: {
+          grounded_generation: false,
+          practice_generation: false,
+          flashcard_generation: false,
+          flashcard_generation_reason: null,
+          grounded_generation_reason: null,
+        },
+      });
+    }
+    if (pathname === "/api/v1/sessions") return fulfill({ sessions: [] });
+    if (pathname === "/api/v1/knowledge/list") {
+      return fulfill({ knowledge_bases: [] });
+    }
+    if (pathname === "/api/v1/tools") {
+      return fulfill({ enabled_optional_tools: [] });
+    }
+    if (pathname === "/api/v1/subagents/partners") {
+      return fulfill({ partners: [] });
+    }
+    if (pathname === "/api/v1/subagents/connections") {
+      return fulfill({ connections: [] });
+    }
+    if (pathname === "/api/v1/subagents/consult-settings") {
+      return fulfill({ consult_budget: 1 });
+    }
+    if (pathname === "/api/v1/settings/chat-attachments") {
+      return fulfill({
+        effective: { max_file_bytes: 1024, max_total_bytes: 4096 },
+      });
+    }
+    return fulfill({});
+  });
+}
+
+test("initial capability probe failure renders Retry instead of a missing-grant notice", async ({
+  page,
+}) => {
+  const probe: CapabilityProbeFixture = {
+    failSettings: true,
+    settingsDelayMs: 0,
+    settingsCalls: 0,
+  };
+  await mockCapabilityProbeShell(page, probe);
+
+  await page.goto("/home");
+  const failure = page.getByRole("alert").filter({
+    hasText: "Feature access could not be verified",
+  });
+  await expect(failure).toBeVisible();
+  await expect(
+    page.getByText(/Chat and regeneration require an assigned LLM model/),
+  ).toHaveCount(0);
+
+  probe.failSettings = false;
+  await failure.getByRole("button", { name: "Retry" }).click();
+  await expect(page.locator("textarea").last()).toBeVisible();
+  expect(probe.settingsCalls).toBeGreaterThanOrEqual(2);
+});
+
+test("failed focus refresh preserves the mounted composer draft and Retry recovers", async ({
+  page,
+}) => {
+  const probe: CapabilityProbeFixture = {
+    failSettings: false,
+    settingsDelayMs: 0,
+    settingsCalls: 0,
+  };
+  await mockCapabilityProbeShell(page, probe);
+  await page.goto("/home");
+
+  const composer = page.locator("textarea").last();
+  await expect(composer).toBeVisible();
+  await composer.fill("Keep this unsent school draft");
+
+  probe.failSettings = true;
+  probe.settingsDelayMs = 250;
+  await page.evaluate(() => window.dispatchEvent(new Event("focus")));
+  await page.waitForTimeout(75);
+  await expect(composer).toBeVisible();
+  await expect(composer).toHaveValue("Keep this unsent school draft");
+
+  const failure = page.getByRole("alert").filter({
+    hasText: "Feature access could not be verified",
+  });
+  await expect(failure).toBeVisible();
+  await expect(composer).toHaveValue("Keep this unsent school draft");
+
+  probe.failSettings = false;
+  probe.settingsDelayMs = 150;
+  await failure.getByRole("button", { name: "Retry" }).click();
+  await expect(composer).toBeVisible();
+  await expect(composer).toHaveValue("Keep this unsent school draft");
+  await expect(failure).toHaveCount(0);
+  await expect(composer).toHaveValue("Keep this unsent school draft");
+});
+
 test("Alice opens exact Course Chat, persists its citation, and reopens it", async ({
   page,
 }) => {

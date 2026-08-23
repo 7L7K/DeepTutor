@@ -690,8 +690,11 @@ async def test_detect_all_excludes_partner_backend() -> None:
 
 
 class _FakePartnerInstance:
-    def __init__(self, running: bool = True) -> None:
+    def __init__(self, running: bool = True, config=None) -> None:
         self.running = running
+        self.config = config or type(
+            "PartnerConfig", (), {"llm_selection": None, "backup_llm_selection": None}
+        )()
 
 
 class _FakePartnerManager:
@@ -721,14 +724,32 @@ class _FakePartnerManager:
         self._running = True
         return _FakePartnerInstance(True)
 
-    async def send_message(self, pid, content, *, session_key, media=None, on_event=None):
+    async def send_message(
+        self,
+        pid,
+        content,
+        *,
+        session_key,
+        media=None,
+        on_event=None,
+        delegated_user_id=None,
+    ):
         self.sent.append(
-            {"pid": pid, "content": content, "session_key": session_key, "media": media or []}
+            {
+                "pid": pid,
+                "content": content,
+                "session_key": session_key,
+                "media": media or [],
+                "delegated_user_id": delegated_user_id,
+            }
         )
         if on_event is not None:
             for ev in self._trace:
                 await on_event(ev)
         return self._reply
+
+    def load_config(self, pid: str):
+        return _FakePartnerInstance().config
 
 
 def _patch_manager(monkeypatch, manager) -> None:
@@ -795,6 +816,53 @@ async def test_partner_consult_resumes_given_session(monkeypatch) -> None:
     # A remembered key is reused verbatim — the partner session continues.
     assert result.session_id == "dt-abc123"
     assert manager.sent[0]["session_key"] == "dt-abc123"
+
+
+@pytest.mark.asyncio
+async def test_partner_consult_retains_each_delegated_learner_identity(
+    tmp_path, monkeypatch
+) -> None:
+    from deeptutor.multi_user import model_access, partner_access
+    from deeptutor.multi_user.context import reset_current_user, set_current_user
+    from deeptutor.multi_user.models import CurrentUser, UserScope
+    from deeptutor.services.subagent.partner import PartnerBackend
+
+    manager = _FakePartnerManager()
+    _patch_manager(monkeypatch, manager)
+    monkeypatch.setattr(partner_access, "assert_partner_allowed", lambda _partner_id: None)
+    monkeypatch.setattr(
+        model_access,
+        "admin_catalog",
+        lambda: {
+            "services": {
+                "llm": {
+                    "active_profile_id": "shared",
+                    "profiles": [{"id": "shared", "models": [{"id": "model"}]}],
+                }
+            }
+        },
+    )
+
+    async def on_event(_event):
+        return None
+
+    for user_id in ("u_alice", "u_bob"):
+        learner = CurrentUser(
+            id=user_id,
+            username=user_id,
+            role="user",
+            scope=UserScope(kind="user", user_id=user_id, root=tmp_path / user_id),
+        )
+        token = set_current_user(learner)
+        try:
+            result = await PartnerBackend().consult(
+                "hello", on_event=on_event, partner_id="paul"
+            )
+        finally:
+            reset_current_user(token)
+        assert result.success is True
+
+    assert [call["delegated_user_id"] for call in manager.sent] == ["u_alice", "u_bob"]
 
 
 @pytest.mark.asyncio

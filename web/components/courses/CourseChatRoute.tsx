@@ -152,6 +152,41 @@ export default function CourseChatRoute() {
 
   return (
     <main className="flex min-h-[520px] min-h-0 flex-1 flex-col" data-testid="course-chat-route">
+      {readiness.state !== "ready" ? (
+        <section
+          aria-labelledby="course-chat-readiness-title"
+          data-testid="course-chat-readiness-banner"
+          className="shrink-0 border-b border-[var(--border)] bg-[var(--muted)]/25 px-5 py-3 sm:px-8"
+        >
+          <div className="mx-auto flex w-full max-w-5xl flex-wrap items-start gap-3">
+            <div role="status" className="flex min-w-0 flex-1 items-start gap-3">
+              <MessageSquare
+                aria-hidden="true"
+                className="mt-0.5 h-4 w-4 shrink-0 text-[var(--muted-foreground)]"
+              />
+              <div className="min-w-0">
+                <h2
+                  id="course-chat-readiness-title"
+                  className="text-sm font-medium text-[var(--foreground)]"
+                >
+                  {presentation.title}
+                </h2>
+                <p className="mt-1 text-xs leading-5 text-[var(--muted-foreground)]">
+                  {presentation.body}
+                </p>
+              </div>
+            </div>
+            {presentation.action ? (
+              <Link
+                href={materialsPath}
+                className="inline-flex shrink-0 items-center gap-2 rounded-lg border border-[var(--border)] bg-[var(--card)] px-3 py-2 text-xs font-medium text-[var(--foreground)] hover:bg-[var(--muted)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ring)]"
+              >
+                <BookOpen size={14} /> {presentation.action}
+              </Link>
+            ) : null}
+          </div>
+        </section>
+      ) : null}
       <div className="min-h-0 flex-1">
         <UnifiedChatPage
           routeCourseId={course.id}

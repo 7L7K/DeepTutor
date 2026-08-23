@@ -2,6 +2,30 @@
 
 ## Unreleased
 
+- Hardened the school-ready learner Course loop for provider-off use. Active
+  Course Chat now discloses when answers are general, processing, failed, or
+  partially grounded without hiding the Chat surface. A learner can create and
+  recover the first manual Practice draft, including after reload or an
+  ambiguous revision-creation response; known revisions must finish opening or
+  expose Retry before draft recovery is offered. Materials polling is
+  serialized, preserves actionable failures, and rejects stale responses.
+  Flashcards keeps manual decks usable when optional generation support or deck
+  details fail, hides unpublished generated shells, and prevents stale support
+  responses from stealing a newer deck selection. Capability checks now fail
+  closed initially, preserve confirmed access during background refresh, expose
+  retryable failures, and do not discard an unsent Chat draft.
+
+- Restricted assigned-learner Partner consultations to a fail-closed delegated
+  boundary. Caller provenance, live assignment, model shareability, and
+  per-learner session identity are revalidated before Partner work; owner-bound
+  model profiles and owner/global memory, management commands, host execution,
+  cron, GitHub, notebooks, MCP/deferred tools, and other unreviewed capabilities
+  are unavailable to assignees while direct owner behavior remains compatible.
+  Added a disposable Day 3 browser campaign for two-user Course/source/study
+  isolation, provider-off repair presentation, deterministic-local grounding,
+  cold process restart, zero paid-provider usage, source identity, and
+  cleanup-before-sentinel evidence.
+
 - Kept normal learner chat from requesting deployment-wide subagent settings.
   The composer now reads only an authenticated, learner-safe consult-budget
   projection while backend models, prompts, and execution permissions remain

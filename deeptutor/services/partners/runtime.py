@@ -36,7 +36,7 @@ from deeptutor.multi_user.paths import user_context
 from deeptutor.partners.bus.events import InboundMessage, OutboundMessage
 from deeptutor.partners.bus.queue import MessageBus
 from deeptutor.partners.helpers import detect_image_mime
-from deeptutor.services.partners.commands import PartnerCommandHandler
+from deeptutor.services.partners.commands import PartnerCommandHandler, looks_like_partner_command
 from deeptutor.services.partners.scope import partner_user
 from deeptutor.services.partners.sessions import PartnerSessionStore
 from deeptutor.services.partners.workspace import ensure_partner_workspace, read_soul
@@ -149,6 +149,30 @@ class PartnerRunner:
         """
         session_key = msg.session_key
         async with self._lock_for(session_key):
+            delegated_user_id = self._delegated_user_id(msg)
+            if delegated_user_id:
+                # Recheck at the final runtime boundary as well as in the
+                # subagent backend.  This closes config-change races and keeps a
+                # future direct manager caller from reaching commands, session
+                # persistence, or provider activation with an owner-bound model.
+                from deeptutor.multi_user.model_access import (
+                    assert_delegated_partner_models_shareable,
+                )
+                from deeptutor.multi_user.partner_access import (
+                    assert_partner_assigned_to_user,
+                )
+
+                assert_partner_assigned_to_user(self.partner_id, delegated_user_id)
+                assert_delegated_partner_models_shareable(self.config)
+                if looks_like_partner_command(msg.content):
+                    # Partner commands operate on the process-wide Partner:
+                    # /sessions and /delete cross session boundaries, while
+                    # /tool mutates configuration shared by every caller.  The
+                    # assigned-user surface is consultation only; management
+                    # remains an owner/admin and direct-IM compatibility path.
+                    return (
+                        "Partner management commands are unavailable in an assigned conversation."
+                    )
             command = PartnerCommandHandler(
                 partner_id=self.partner_id,
                 config=self.config,
@@ -285,7 +309,12 @@ class PartnerRunner:
             # writes only the partner's own. Chat's read_memory / write_memory
             # are suppressed on partner turns, so no admin memory override is
             # needed here (and the partner can never write the owner's memory).
-            with user_context(partner_user(self.partner_id, name=self.config.name)):
+            from deeptutor.tools.partner_memory import delegated_partner_call
+
+            with (
+                delegated_partner_call(self._delegated_user_id(msg)),
+                user_context(partner_user(self.partner_id, name=self.config.name)),
+            ):
                 orchestrator = ChatOrchestrator()
                 async for event in orchestrator.handle(context):
                     if on_event is not None:
@@ -396,6 +425,12 @@ class PartnerRunner:
             # NOTE: no ``wait_for_user_reply`` — an ask_user pause makes
             # the pending question the turn's reply (IM semantics).
         }
+        delegated_user_id = self._delegated_user_id(msg)
+        if delegated_user_id:
+            # Internal authorization/provenance fields.  The leading underscore
+            # also keeps them out of channel_metadata below.
+            metadata["_delegated_partner_call"] = True
+            metadata["_delegated_user_id"] = delegated_user_id
         channel_meta: dict[str, Any] = {}
         for key, value in (msg.metadata or {}).items():
             key_text = str(key)
@@ -432,6 +467,10 @@ class PartnerRunner:
             source_manifest=source_manifest,
             metadata=metadata,
         )
+
+    @staticmethod
+    def _delegated_user_id(msg: InboundMessage) -> str:
+        return str((msg.metadata or {}).get("_delegated_user_id") or "").strip()
 
     def _resolved_enabled_tools(self) -> list[str]:
         """The partner's user-toggleable tool whitelist.

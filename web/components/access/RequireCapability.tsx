@@ -7,6 +7,52 @@ import { CAPABILITY_LABEL, type Capability } from "@/lib/capability-routes";
 
 import { useCapabilityAccess } from "./CapabilityAccessContext";
 
+export function CapabilityCheckingNotice() {
+  const { t } = useTranslation();
+  return (
+    <div
+      role="status"
+      className="flex min-h-[40vh] items-center justify-center text-[13px] text-[var(--muted-foreground)]"
+    >
+      {t("Checking feature access…")}
+    </div>
+  );
+}
+
+export function CapabilityProbeFailureNotice({
+  onRetry,
+  compact = false,
+}: {
+  onRetry: () => void;
+  compact?: boolean;
+}) {
+  const { t } = useTranslation();
+  return (
+    <div
+      role="alert"
+      className={
+        compact
+          ? "mx-auto mb-3 flex w-full max-w-3xl items-center justify-between gap-4 rounded-xl border border-red-300/60 bg-red-50/60 px-4 py-3 text-sm text-red-900 dark:border-red-900/60 dark:bg-red-950/20 dark:text-red-200"
+          : "mx-auto flex min-h-[40vh] max-w-md flex-col items-center justify-center px-6 text-center"
+      }
+    >
+      <div>
+        <div className="font-medium">{t("Feature access could not be verified")}</div>
+        <p className="mt-1 text-sm opacity-80">
+          {t("Check your connection and try again.")}
+        </p>
+      </div>
+      <button
+        type="button"
+        onClick={onRetry}
+        className="mt-4 shrink-0 rounded-lg border border-current px-3 py-2 text-sm font-medium hover:opacity-80"
+      >
+        {t("Retry")}
+      </button>
+    </div>
+  );
+}
+
 /**
  * Full-surface "this feature is locked" notice. Shown in place of a feature
  * page when the current user lacks the required model capability. Never hides
@@ -51,9 +97,23 @@ export function RequireCapability({
   capability: Capability | null;
   children: React.ReactNode;
 }) {
-  const { has } = useCapabilityAccess();
-  if (capability && !has(capability)) {
-    return <LockedFeatureNotice capability={capability} />;
+  const { known, loading, error, has, refresh } = useCapabilityAccess();
+  if (!capability) return <>{children}</>;
+  if (!known && loading) return <CapabilityCheckingNotice />;
+  if (!known && error) {
+    return <CapabilityProbeFailureNotice onRetry={() => void refresh()} />;
   }
-  return <>{children}</>;
+  if (!known) return <CapabilityCheckingNotice />;
+  const granted = has(capability);
+  return (
+    <>
+      {error ? (
+        <CapabilityProbeFailureNotice
+          compact
+          onRetry={() => void refresh()}
+        />
+      ) : null}
+      {granted ? children : <LockedFeatureNotice capability={capability} />}
+    </>
+  );
 }

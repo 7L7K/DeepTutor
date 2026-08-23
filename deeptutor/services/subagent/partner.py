@@ -7,14 +7,14 @@ The partner answers with its own chat loop — its soul, library and skills — 
 streams its native trace back, which we map onto the coarse subagent event
 channels so the sidebar renders it like any other consulted agent.
 
-Session continuity is the whole point of the design. ``session_id`` here IS the
-*partner session key*. The first consult of a DeepTutor chat session has none,
-so we mint a fresh ``dt-…`` key and return it; the cross-turn registry
+Session continuity is the whole point of the design. ``session_id`` here is the
+caller-visible raw Partner session id. The first consult of a DeepTutor chat
+session has none, so we mint a fresh ``dt-…`` id and return it; the cross-turn registry
 (:mod:`deeptutor.services.subagent.sessions`) remembers it against
 (chat session, connection), so every later consult in the same DeepTutor chat —
-within one turn or across turns — resumes the SAME partner session. The partner
-page then sees one complete history session per DeepTutor chat, titled from the
-first consult's question.
+within one turn or across turns — resumes the SAME partner session. The manager
+namespaces delegated storage by caller identity so equal raw ids cannot merge
+two learners' history.
 """
 
 from __future__ import annotations
@@ -88,10 +88,12 @@ class PartnerBackend(SubagentBackend):
         # grant was revoked.
         from fastapi import HTTPException
 
-        from deeptutor.multi_user.context import MissingCurrentUserContext
+        from deeptutor.multi_user.context import MissingCurrentUserContext, get_current_user
+        from deeptutor.multi_user.model_access import assert_delegated_partner_models_shareable
         from deeptutor.multi_user.partner_access import assert_partner_allowed
 
         try:
+            caller = get_current_user()
             assert_partner_allowed(pid)
         except HTTPException as exc:
             return ConsultResult(success=False, error=str(exc.detail))
@@ -104,6 +106,18 @@ class PartnerBackend(SubagentBackend):
         if not manager.partner_exists(pid):
             return ConsultResult(success=False, error=f"Partner '{pid}' no longer exists.")
 
+        # Assigned learners deliberately use the Partner's deployment-owned
+        # model instead of needing a personal LLM grant.  Validate the running
+        # instance's exact config (or the persisted config before startup) so
+        # that delegation can never lend an operator-bound OAuth identity.
+        if not caller.is_admin:
+            instance = manager.get_partner(pid)
+            partner_config = instance.config if instance is not None else manager.load_config(pid)
+            try:
+                assert_delegated_partner_models_shareable(partner_config)
+            except PermissionError as exc:
+                return ConsultResult(success=False, error=str(exc))
+
         # Bring the partner online if it isn't already (auto-start partners are).
         instance = manager.get_partner(pid)
         if instance is None or not instance.running:
@@ -113,9 +127,9 @@ class PartnerBackend(SubagentBackend):
                 logger.warning("Failed to start partner %s for consult: %s", pid, exc)
                 return ConsultResult(success=False, error=f"Could not start partner '{pid}': {exc}")
 
-        # ``session_id`` is the partner session key. None on the first consult of
-        # a DeepTutor chat → mint a stable, colon-free key; the registry threads
-        # it through every later consult so they all land in one partner session.
+        # ``session_id`` is the caller-visible raw Partner session id. None on
+        # the first consult of a DeepTutor chat → mint a stable, colon-free id;
+        # the manager namespaces it internally for delegated persistence.
         session_key = str(session_id or "").strip() or f"dt-{uuid.uuid4().hex[:12]}"
 
         events = 0
@@ -142,13 +156,17 @@ class PartnerBackend(SubagentBackend):
                 await on_event(out)
 
         try:
-            reply = await manager.send_message(
-                pid,
-                question,
-                session_key=session_key,
-                media=list(images or []),
-                on_event=relay,
-            )
+            send_kwargs = {
+                "session_key": session_key,
+                "media": list(images or []),
+                "on_event": relay,
+            }
+            if not caller.is_admin:
+                # Private provenance: the manager converts this into an inbound
+                # sender id plus private metadata before the synthetic Partner
+                # user scope replaces the authenticated request principal.
+                send_kwargs["delegated_user_id"] = caller.id
+            reply = await manager.send_message(pid, question, **send_kwargs)
         except Exception as exc:  # pragma: no cover - defensive: surface, don't crash the turn
             logger.warning("Partner consult failed (%s): %s", pid, exc, exc_info=True)
             return ConsultResult(

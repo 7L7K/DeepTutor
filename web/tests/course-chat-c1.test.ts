@@ -124,7 +124,8 @@ test("learner shells do not expose unqualified Progress or Course scope copy", (
   assert.match(composer, /Course sources only/);
   assert.match(courseChat, /hideCourseBar/);
   assert.doesNotMatch(courseChat, /hideCourseScope/);
-  assert.doesNotMatch(courseChat, /readiness\.state !== "ready"/);
+  assert.match(courseChat, /readiness\.state !== "ready"/);
+  assert.match(courseChat, /course-chat-readiness-banner/);
 });
 
 test("Chat cost details are reserved for administrators", () => {
@@ -202,21 +203,31 @@ test("readiness presentation keeps Chat usable without ready materials", async (
       action: "Add materials",
     },
   );
-  assert.equal(
+  assert.deepEqual(
     courseChatReadinessPresentation({
       state: "processing",
       counts: { ready: 0, processing: 1, failed: 0, unavailable: 1, total: 1 },
       ready_sources: [],
-    }).allowChat,
-    true,
+    }),
+    {
+      allowChat: true,
+      title: "Course materials are still processing.",
+      body: "You can chat now with general knowledge. Course-material grounding will be available when a material is ready.",
+      action: "View materials",
+    },
   );
-  assert.equal(
+  assert.deepEqual(
     courseChatReadinessPresentation({
       state: "failed",
       counts: { ready: 0, processing: 0, failed: 2, unavailable: 2, total: 2 },
       ready_sources: [],
-    }).allowChat,
-    true,
+    }),
+    {
+      allowChat: true,
+      title: "Course materials could not be prepared for Chat.",
+      body: "You can chat now with general knowledge. Open the failed material to restore Course-material grounding.",
+      action: "Open materials",
+    },
   );
 });
 
@@ -229,10 +240,40 @@ test("mixed readiness allows Chat and discloses unavailable materials", async ()
     ready_sources: [READY_SOURCE, { ...READY_SOURCE, source_id: "src_slides" }],
   });
 
-  assert.equal(presentation.allowChat, true);
-  assert.equal(
-    presentation.body,
-    "This answer uses 2 ready Course materials. Two other materials are not currently available.",
+  assert.deepEqual(presentation, {
+    allowChat: true,
+    title: "Course Chat is using the ready materials.",
+    body: "This answer uses 2 ready Course materials. Two other materials are not currently available.",
+    action: "View materials",
+  });
+});
+
+test("ready Course Chat stays quiet while archived Courses remain blocked", async () => {
+  const { courseChatReadinessPresentation } = await import("../lib/course-chat");
+  const courseChat = readFileSync(
+    path.join(process.cwd(), "components/courses/CourseChatRoute.tsx"),
+    "utf8",
+  );
+
+  assert.deepEqual(
+    courseChatReadinessPresentation({
+      state: "ready",
+      counts: { ready: 1, processing: 0, failed: 0, unavailable: 0, total: 1 },
+      ready_sources: [READY_SOURCE],
+    }),
+    {
+      allowChat: true,
+      title: "Course materials are ready.",
+      body: "1 Course material is available for grounded answers.",
+      action: null,
+    },
+  );
+  assert.match(courseChat, /readiness\.state !== "ready"/);
+  assert.match(courseChat, /course\.state !== "active"/);
+  assert.match(courseChat, /This archived Course is read-only\./);
+  assert.match(
+    courseChat,
+    /Restore the Course from Classes before starting a grounded Chat\./,
   );
 });
 

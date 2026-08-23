@@ -61,5 +61,23 @@ export default defineConfig({
         screenshot: "off",
       },
     },
+    {
+      // The Day 3 wrapper owns disposable credentials, data, and evidence.
+      // Browser artifacts stay off so no cookie or typed password can escape
+      // the private evidence root.
+      name: "day3-school-loop",
+      testMatch: [
+        "**/day3-school-loop.pre.spec.ts",
+        "**/day3-school-loop.post.spec.ts",
+      ],
+      retries: 0,
+      use: {
+        ...devices["Desktop Chrome"],
+        channel: "chrome",
+        trace: "off",
+        video: "off",
+        screenshot: "off",
+      },
+    },
   ],
 });

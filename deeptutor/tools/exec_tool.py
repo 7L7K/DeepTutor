@@ -78,6 +78,13 @@ class ExecTool(BaseTool):
         )
 
     async def execute(self, **kwargs: Any) -> ToolResult:
+        from deeptutor.tools.partner_memory import is_delegated_partner_call
+
+        if is_delegated_partner_call():
+            return ToolResult(
+                content="exec is unavailable in an assigned Partner conversation.",
+                success=False,
+            )
         command = str(kwargs.get("command") or "").strip()
         if not command:
             raise ValueError("exec requires a non-empty command.")

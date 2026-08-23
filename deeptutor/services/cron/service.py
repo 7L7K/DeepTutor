@@ -61,6 +61,7 @@ class CronOwner:
     chat_id: str = ""  # partner: originating chat
     session_key: str = ""  # partner: conversation key
     channel_meta: dict[str, Any] = field(default_factory=dict)  # partner: thread/reply metadata
+    delegated_user_id: str = ""  # partner: deny execution outside a live delegated request
 
     @property
     def key(self) -> str:

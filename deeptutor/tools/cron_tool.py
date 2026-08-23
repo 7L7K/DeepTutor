@@ -74,6 +74,13 @@ def _build_schedule(kwargs: dict[str, Any]) -> CronSchedule:
 
 
 def run_cron_action(kwargs: dict[str, Any]) -> CronActionOutcome:
+    from deeptutor.tools.partner_memory import is_delegated_partner_call
+
+    if is_delegated_partner_call():
+        return CronActionOutcome(
+            ok=False,
+            text="Scheduling is unavailable in an assigned Partner conversation.",
+        )
     owner_raw = kwargs.get("_cron_owner")
     if not isinstance(owner_raw, dict) or not owner_raw.get("kind"):
         return CronActionOutcome(

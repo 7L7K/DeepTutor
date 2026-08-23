@@ -226,6 +226,55 @@ def test_ready_transition_is_atomic_when_the_draft_is_not_publishable(tmp_path: 
     assert service.get_practice_set(course.id, practice_set.id).current_revision_id is None
 
 
+def test_draft_identity_survives_service_reconstruction_and_creation_retry(
+    tmp_path: Path,
+) -> None:
+    db_path = tmp_path / "courses.db"
+    courses, service = _service(db_path, "u_alice")
+    course = courses.create_course("Biology")
+    practice_set = service.create_practice_set(
+        course.id,
+        title="Reload-safe draft",
+        expected_course_write_epoch=course.write_epoch,
+    )
+
+    created = service.create_draft_revision(
+        course.id,
+        practice_set.id,
+        objective_ids=("obj_cells",),
+        expected_course_write_epoch=course.write_epoch,
+    )
+    retried = service.create_draft_revision(
+        course.id,
+        practice_set.id,
+        objective_ids=("obj_cells",),
+        expected_course_write_epoch=course.write_epoch,
+    )
+    assert retried.id == created.id
+
+    reconstructed_courses = CourseRepository(db_path, "u_alice")
+    reconstructed = CoursePracticeService(
+        CoursePracticeRepository(reconstructed_courses)
+    )
+    listed = reconstructed.list_practice_sets(course.id)
+    fetched = reconstructed.get_practice_set(course.id, practice_set.id)
+
+    assert listed[0].id == practice_set.id
+    assert listed[0].current_revision_id is None
+    assert listed[0].draft_revision_id == created.id
+    assert fetched.current_revision_id is None
+    assert fetched.draft_revision_id == created.id
+    assert reconstructed.get_revision(course.id, practice_set.id, created.id).state == "draft"
+
+    with pytest.raises(CourseConflictError, match="different authoring scope"):
+        reconstructed.create_draft_revision(
+            course.id,
+            practice_set.id,
+            objective_ids=("obj_other",),
+            expected_course_write_epoch=course.write_epoch,
+        )
+
+
 def test_database_rejects_question_insert_after_revision_is_ready(tmp_path: Path) -> None:
     courses, service = _service(tmp_path / "courses.db", "u_alice")
     course = courses.create_course("Geology")

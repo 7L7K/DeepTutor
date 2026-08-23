@@ -16,12 +16,19 @@ from deeptutor.services.sandbox.spec import ExecResult
 from deeptutor.tools.builtin import (
     BrainstormTool,
     CodeExecutionTool,
+    CronTool,
     ExecTool,
     GeoGebraAnalysisTool,
+    GithubTool,
+    ListNotebookTool,
     PaperSearchToolWrapper,
     RAGTool,
+    ReadMemoryTool,
     ReasonTool,
+    WebFetchTool,
     WebSearchTool,
+    WriteMemoryTool,
+    WriteNoteTool,
 )
 
 
@@ -314,6 +321,77 @@ async def test_code_execution_tool_rejects_bad_input() -> None:
         await tool.execute(language="ruby", code="puts 1")
     with pytest.raises(ValueError, match="non-empty 'code'"):
         await tool.execute(language="python", code="   ")
+
+
+@pytest.mark.asyncio
+async def test_delegated_partner_sink_guards_deny_host_and_persistence_tools(
+    tmp_path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from deeptutor.tools.partner_memory import delegated_partner_call
+
+    calls: list[str] = []
+
+    class ForbiddenSandbox:
+        async def run(self, *_args, **_kwargs):
+            calls.append("sandbox")
+            raise AssertionError("delegated Partner must not execute a process")
+
+    import deeptutor.services.sandbox as sandbox_pkg
+    import deeptutor.tools.cron_tool as cron_tool
+    import deeptutor.tools.github_query as github_query
+    import deeptutor.tools.list_notebook as list_notebook
+    import deeptutor.tools.write_note as write_note
+
+    monkeypatch.setattr(sandbox_pkg, "get_sandbox_service", lambda: ForbiddenSandbox())
+    monkeypatch.setattr(
+        cron_tool,
+        "get_cron_service",
+        lambda: (_ for _ in ()).throw(AssertionError("cron store must stay untouched")),
+    )
+    monkeypatch.setattr(
+        github_query,
+        "run_github_query",
+        lambda **_kwargs: (_ for _ in ()).throw(AssertionError("gh must not run")),
+    )
+    monkeypatch.setattr(
+        list_notebook,
+        "list_notebooks_or_records",
+        lambda **_kwargs: (_ for _ in ()).throw(AssertionError("notebooks must not be read")),
+    )
+    monkeypatch.setattr(
+        write_note,
+        "write_note",
+        lambda **_kwargs: (_ for _ in ()).throw(AssertionError("notebooks must not be written")),
+    )
+
+    with delegated_partner_call("u_learner"):
+        results = [
+            await ExecTool().execute(command="true"),
+            await CodeExecutionTool().execute(
+                language="python",
+                code="print('unsafe')",
+                _sandbox_workdir=str(tmp_path / "code"),
+            ),
+            await GithubTool().execute(query_type="repo", target="owner/private"),
+            await ListNotebookTool().execute(),
+            await WriteNoteTool().execute(mode="append", notebook_id="shared"),
+            await CronTool().execute(
+                action="schedule",
+                message="later owner action",
+                every_seconds=60,
+                _cron_owner={"kind": "partner", "partner_id": "ada"},
+            ),
+            await WebSearchTool().execute(query="billed external search"),
+            await PaperSearchToolWrapper().execute(query="billed paper search"),
+            await WebFetchTool().execute(url="http://127.0.0.1/private"),
+            await ReadMemoryTool().execute(),
+            await WriteMemoryTool().execute(op="add", text="private preference"),
+        ]
+
+    assert calls == []
+    assert all(result.success is False for result in results)
+    assert all("assigned Partner conversation" in result.content for result in results)
+    assert not (tmp_path / "code").exists()
 
 
 @pytest.mark.asyncio

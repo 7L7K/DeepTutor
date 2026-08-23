@@ -20,6 +20,7 @@ from deeptutor.tools.partner_memory import (
     PartnerMemorizeTool,
     PartnerReadTool,
     PartnerSearchTool,
+    delegated_partner_call,
 )
 
 PID = "alice"
@@ -71,6 +72,34 @@ def test_read_concats_owner_and_own(partners_root: Path) -> None:
     assert "alice likes calculus examples" in result.content
     assert result.metadata["has_shared"] is True
     assert result.metadata["has_own"] is True
+
+
+def test_delegated_learners_cannot_invoke_any_global_partner_memory_tool(
+    partners_root: Path, monkeypatch
+) -> None:
+    """Sink-level guard: no admin memory, shared notes, or other sessions."""
+    import deeptutor.multi_user.paths as paths
+
+    synthetic_partner = partner_user(PID, name="Alice")
+    own_pref = get_partner_workspace(PID) / "memory" / "L3" / "preferences.md"
+
+    def admin_memory_must_not_be_resolved():
+        raise AssertionError("delegated learner must never resolve admin memory")
+
+    monkeypatch.setattr(paths, "get_admin_path_service", admin_memory_must_not_be_resolved)
+    with (
+        user_context(synthetic_partner),
+        delegated_partner_call("u_learner"),
+    ):
+        results = [
+            _run(PartnerReadTool().execute()),
+            _run(PartnerMemorizeTool().execute(op="add", text="poison")),
+            _run(PartnerSearchTool().execute(query="another learner")),
+        ]
+
+    assert all(result.success is False for result in results)
+    assert all("assigned Partner conversation" in result.content for result in results)
+    assert not own_pref.exists()
 
 
 def test_read_labels_empty_layers(partners_root: Path) -> None:

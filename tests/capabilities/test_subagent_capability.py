@@ -532,6 +532,77 @@ async def test_revoked_partner_spec_refuses_before_backend_or_budget(
 
 
 @pytest.mark.asyncio
+async def test_owner_bound_partner_spec_refuses_before_backend_or_budget(
+    monkeypatch,
+    tmp_path,
+) -> None:
+    from types import SimpleNamespace
+
+    from deeptutor.multi_user import model_access, partner_access
+    from deeptutor.multi_user.context import reset_current_user, set_current_user
+    from deeptutor.multi_user.models import CurrentUser, UserScope
+
+    config = SimpleNamespace(llm_selection=None, backup_llm_selection=None)
+
+    class UnsafeManager:
+        def partner_exists(self, _partner_id):
+            return True
+
+        def get_partner(self, _partner_id):
+            return SimpleNamespace(config=config)
+
+    monkeypatch.setattr(
+        partner_access, "load_grant", lambda _uid: {"partners": [{"partner_id": "paul"}]}
+    )
+    monkeypatch.setattr(
+        model_access,
+        "admin_catalog",
+        lambda: {
+            "services": {
+                "llm": {
+                    "active_profile_id": "owner",
+                    "profiles": [{"id": "owner", "owner_bound": True}],
+                }
+            }
+        },
+    )
+    monkeypatch.setattr(
+        "deeptutor.services.partners.get_partner_manager", lambda: UnsafeManager()
+    )
+
+    def should_not_resolve_backend(_kind: str):
+        raise AssertionError("owner-bound Partner must fail before backend resolution")
+
+    monkeypatch.setattr("deeptutor.services.subagent.get_backend", should_not_resolve_backend)
+    learner = CurrentUser(
+        id="u_learner",
+        username="learner",
+        role="user",
+        scope=UserScope(kind="user", user_id="u_learner", root=tmp_path / "learner"),
+    )
+    token = set_current_user(learner)
+    state = {"count": 0, "session_id": None, "name": "Paul"}
+    try:
+        result = await ConsultSubagentTool().execute(
+            question="hello",
+            _subagent={
+                "kind": "partner",
+                "partner_id": "paul",
+                "name": "Paul",
+                "budget": 2,
+                "config": BackendConfig(),
+                "state": state,
+            },
+        )
+    finally:
+        reset_current_user(token)
+
+    assert result.success is False
+    assert "owner-bound" in result.content
+    assert state == {"count": 0, "session_id": None, "name": "Paul"}
+
+
+@pytest.mark.asyncio
 async def test_consult_without_spec_is_graceful() -> None:
     res = await ConsultSubagentTool().execute(question="hi")
     assert res.success is False and "no subagent" in res.content.lower()

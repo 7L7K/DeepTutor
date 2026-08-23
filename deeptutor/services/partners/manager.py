@@ -758,6 +758,16 @@ class PartnerManager:
             return f"web:{normalized_chat}"
         return f"partner:{partner_id}"
 
+    @staticmethod
+    def delegated_session_key(user_id: str, session_key: str) -> str:
+        """Namespace delegated persistence by stable caller identity.
+
+        The subagent protocol continues to expose the caller's raw session id;
+        only the Partner's internal lock and storage key is namespaced.
+        """
+        caller_namespace = hashlib.sha256(user_id.encode("utf-8")).hexdigest()
+        return f"delegated:{caller_namespace}:{session_key}"
+
     def get_history(
         self, partner_id: str, *, session_key: str | None = None, limit: int = 100
     ) -> list[dict[str, Any]]:
@@ -801,12 +811,15 @@ class PartnerManager:
         media: list[str] | None = None,
         on_event: Callable[[Any], Awaitable[None]] | None = None,
         session_key: str | None = None,
+        delegated_user_id: str | None = None,
     ) -> str:
         """Send a web message to a running partner and return the reply.
 
-        ``session_key``, when given, is used verbatim (the web app drives a
-        stable, colon-free key it persists locally); otherwise it is derived
-        from ``session_id`` / ``chat_id`` via :meth:`web_session_key`.
+        ``session_key``, when given, is used as the caller-visible raw key (the
+        web app drives a stable, colon-free key it persists locally); otherwise
+        it is derived from ``session_id`` / ``chat_id`` via
+        :meth:`web_session_key`. Delegated calls namespace that key internally
+        by caller identity before locking or persistence.
         """
         instance = self._partners.get(partner_id)
         if not instance or not instance.running or not instance.runner:
@@ -819,12 +832,20 @@ class PartnerManager:
             if session_key
             else self.web_session_key(partner_id, chat_id=chat_id, session_id=session_id)
         )
+        delegated_id = str(delegated_user_id or "").strip()
+        if delegated_id:
+            resolved_key = self.delegated_session_key(delegated_id, resolved_key)
         msg = InboundMessage(
             channel="web",
-            sender_id="web",
+            sender_id=delegated_id or "web",
             chat_id=session_id or chat_id,
             content=content,
             media=media or [],
+            metadata=(
+                {"_delegated_user_id": delegated_id}
+                if delegated_id
+                else {}
+            ),
             session_key_override=resolved_key,
         )
         return await instance.runner.process_message(msg, on_event=on_event)

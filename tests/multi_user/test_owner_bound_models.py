@@ -89,3 +89,68 @@ def test_ordinary_shared_profiles_stay_grantable(tmp_path, monkeypatch):
         ) == {"profile_id": CODEX_PROFILE, "model_id": "m-sol"}
     finally:
         reset_current_user(token)
+
+
+@pytest.mark.parametrize(
+    ("primary", "backup", "active_profile_id"),
+    [
+        ({"profile_id": CODEX_PROFILE, "model_id": "m-sol"}, None, "p-shared"),
+        (
+            {"profile_id": "p-shared", "model_id": "m-shared"},
+            {"profile_id": CODEX_PROFILE, "model_id": "m-sol"},
+            "p-shared",
+        ),
+        (None, None, CODEX_PROFILE),
+    ],
+    ids=("primary", "backup", "implicit-default"),
+)
+def test_delegated_partner_rejects_every_owner_bound_model_path(
+    monkeypatch, primary, backup, active_profile_id
+):
+    catalog = {
+        "services": {
+            "llm": {
+                "active_profile_id": active_profile_id,
+                "profiles": [
+                    {
+                        "id": "p-shared",
+                        "models": [{"id": "m-shared", "model": "gpt-shared"}],
+                    },
+                    {
+                        "id": CODEX_PROFILE,
+                        "owner_bound": True,
+                        "models": [{"id": "m-sol", "model": "gpt-5.6-sol"}],
+                    },
+                ],
+            }
+        }
+    }
+    monkeypatch.setattr(model_access, "admin_catalog", lambda: catalog)
+    config = SimpleNamespace(
+        llm_selection=primary,
+        backup_llm_selection=backup,
+    )
+
+    with pytest.raises(PermissionError, match="owner-bound"):
+        model_access.assert_delegated_partner_models_shareable(config)
+
+
+def test_delegated_partner_allows_deployment_owned_primary_and_backup(monkeypatch):
+    catalog = {
+        "services": {
+            "llm": {
+                "active_profile_id": "p-primary",
+                "profiles": [
+                    {"id": "p-primary", "models": [{"id": "m-primary"}]},
+                    {"id": "p-backup", "models": [{"id": "m-backup"}]},
+                ],
+            }
+        }
+    }
+    monkeypatch.setattr(model_access, "admin_catalog", lambda: catalog)
+    config = SimpleNamespace(
+        llm_selection={"profile_id": "p-primary", "model_id": "m-primary"},
+        backup_llm_selection={"profile_id": "p-backup", "model_id": "m-backup"},
+    )
+
+    model_access.assert_delegated_partner_models_shareable(config)

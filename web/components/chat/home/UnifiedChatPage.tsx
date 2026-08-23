@@ -33,6 +33,10 @@ import { TurnNavigator } from '@/components/chat/home/TurnNavigator'
 import SessionLoadingView from '@/components/chat/home/SessionLoadingView'
 import { CourseBar } from '@/components/courses/CourseBar'
 import { useCapabilityAccess } from '@/components/access/CapabilityAccessContext'
+import {
+  CapabilityCheckingNotice,
+  CapabilityProbeFailureNotice,
+} from '@/components/access/RequireCapability'
 import { useCourses } from '@/context/CourseContext'
 import { courseIdForChatSession, resolveSessionCourseView } from '@/lib/course-selection'
 import { getCourseCapabilities } from '@/lib/course-api'
@@ -332,7 +336,14 @@ export default function UnifiedChatPage({
   const params = useParams<{ sessionId?: string[] }>()
   const router = useRouter()
   const { t } = useTranslation()
-  const { hasLlm } = useCapabilityAccess()
+  const {
+    known: llmAccessKnown,
+    loading: llmAccessLoading,
+    error: llmAccessError,
+    hasLlm,
+    refresh: refreshLlmAccess,
+  } = useCapabilityAccess()
+  const canUseLlm = llmAccessKnown && hasLlm
   const sessionIdParam =
     routeSessionId !== undefined ? routeSessionId : params.sessionId?.[0] ?? null
   const { setActiveSessionId, language: appLanguage } = useAppShell()
@@ -1568,7 +1579,7 @@ export default function UnifiedChatPage({
 
   const handleSend = useCallback(
     async (content: string) => {
-      if (courseSessionReadOnly || !hasLlm) return
+      if (courseSessionReadOnly || !canUseLlm) return
       if (
         (!content &&
           !attachments.length &&
@@ -1656,7 +1667,7 @@ export default function UnifiedChatPage({
       attachments,
       courseMode,
       courseSessionReadOnly,
-      hasLlm,
+      canUseLlm,
       bookReferencesPayload,
       historyReferencesPayload,
       isQuizMode,
@@ -2169,13 +2180,13 @@ export default function UnifiedChatPage({
                       onEditMessage={editMessage}
                       onSwitchBranch={switchBranch}
                       onSubmitUserReply={submitUserReply}
-                      modelActionsEnabled={hasLlm}
+                      modelActionsEnabled={canUseLlm}
                       courseActionsEnabled={
                         !disableCourseLearnerActions &&
                         courseMode &&
                         !courseSessionReadOnly &&
                         Boolean(actionCourse) &&
-                        hasLlm
+                        canUseLlm
                       }
                       courseReadiness={courseReadiness}
                       generalFlashcardsEnabled={
@@ -2227,19 +2238,43 @@ export default function UnifiedChatPage({
                   </button>
                 ) : null}
               </div>
-            ) : !hasLlm ? (
-              <div className="mx-auto mb-5 w-full max-w-3xl rounded-2xl border border-[var(--border)] bg-[var(--muted)]/35 px-4 py-3 text-sm">
-                <div className="font-medium text-[var(--foreground)]">
-                  {t('Course organization and learning remain available.')}
+            ) : !llmAccessKnown && llmAccessLoading ? (
+              <CapabilityCheckingNotice />
+            ) : !llmAccessKnown && llmAccessError ? (
+              <CapabilityProbeFailureNotice
+                compact
+                onRetry={() => void refreshLlmAccess()}
+              />
+            ) : !llmAccessKnown ? (
+              <CapabilityCheckingNotice />
+            ) : !canUseLlm ? (
+              <>
+                {llmAccessError ? (
+                  <CapabilityProbeFailureNotice
+                    compact
+                    onRetry={() => void refreshLlmAccess()}
+                  />
+                ) : null}
+                <div className="mx-auto mb-5 w-full max-w-3xl rounded-2xl border border-[var(--border)] bg-[var(--muted)]/35 px-4 py-3 text-sm">
+                  <div className="font-medium text-[var(--foreground)]">
+                    {t('Course organization and learning remain available.')}
+                  </div>
+                  <div className="mt-1 text-xs text-[var(--muted-foreground)]">
+                    {t(
+                      'Chat and regeneration require an assigned LLM model. Contact your administrator for model access.'
+                    )}
+                  </div>
                 </div>
-                <div className="mt-1 text-xs text-[var(--muted-foreground)]">
-                  {t(
-                    'Chat and regeneration require an assigned LLM model. Contact your administrator for model access.'
-                  )}
-                </div>
-              </div>
+              </>
             ) : (
-              <ChatComposer
+              <>
+                {llmAccessError ? (
+                  <CapabilityProbeFailureNotice
+                    compact
+                    onRetry={() => void refreshLlmAccess()}
+                  />
+                ) : null}
+                <ChatComposer
                 composerRef={composerRef}
                 capMenuRef={capMenuRef}
                 capBtnRef={capBtnRef}
@@ -2316,7 +2351,8 @@ export default function UnifiedChatPage({
                 prefillInputRef={prefillInputRef}
                 courseMode={courseMode}
                 hideCourseScope={hideCourseScope}
-              />
+                />
+              </>
             )}
             <div
               aria-hidden="true"

@@ -13,6 +13,50 @@ import {
 
 type MaterialState = CourseSource["state"];
 
+export interface MaterialErrorState {
+  load: string | null;
+  action: string | null;
+}
+
+export type MaterialErrorEvent =
+  | { type: "load-started" | "load-succeeded" }
+  | { type: "load-failed"; message: string }
+  | { type: "action-started" }
+  | { type: "action-failed"; message: string };
+
+export function reduceMaterialErrors(
+  current: MaterialErrorState,
+  event: MaterialErrorEvent,
+): MaterialErrorState {
+  switch (event.type) {
+    case "load-started":
+    case "load-succeeded":
+      return { ...current, load: null };
+    case "load-failed":
+      return { ...current, load: event.message };
+    case "action-started":
+      return { ...current, action: null };
+    case "action-failed":
+      return { ...current, action: event.message };
+  }
+}
+
+export function isCurrentMaterialRefresh(
+  requestEpoch: number,
+  latestEpoch: number,
+): boolean {
+  return requestEpoch === latestEpoch;
+}
+
+export async function runSerializedMaterialPollCycle(
+  refresh: () => Promise<void>,
+  rearm: () => void,
+  isActive: () => boolean,
+): Promise<void> {
+  await refresh();
+  if (isActive()) rearm();
+}
+
 function materialStateLabel(state: MaterialState): string {
   switch (state) {
     case "processing":
@@ -39,24 +83,38 @@ export default function CourseMaterials() {
   const courseId = params.courseId;
   const courseShell = useCourseShell();
   const fileRef = useRef<HTMLInputElement | null>(null);
+  const refreshEpochRef = useRef(0);
   const [sources, setSources] = useState<CourseSource[]>([]);
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const [errors, setErrors] = useState<MaterialErrorState>({ load: null, action: null });
   const [status, setStatus] = useState<string | null>(null);
   const [replacementSourceId, setReplacementSourceId] = useState<string | null>(null);
   const [showArchived, setShowArchived] = useState(false);
+  const hasProcessingSources = sources.some((source) => source.state === "processing");
 
-  const refresh = useCallback(async () => {
+  const refresh = useCallback(async ({ silent = false }: { silent?: boolean } = {}) => {
     if (!courseShell) return;
-    setLoading(true);
-    setError(null);
+    const requestEpoch = ++refreshEpochRef.current;
+    if (!silent) {
+      setLoading(true);
+      setErrors((current) => reduceMaterialErrors(current, { type: "load-started" }));
+    }
     try {
-      setSources(await listCourseSources(courseId));
+      const loadedSources = await listCourseSources(courseId);
+      if (!isCurrentMaterialRefresh(requestEpoch, refreshEpochRef.current)) return;
+      setSources(loadedSources);
+      setErrors((current) => reduceMaterialErrors(current, { type: "load-succeeded" }));
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : "Could not load Course materials");
+      if (!isCurrentMaterialRefresh(requestEpoch, refreshEpochRef.current)) return;
+      setErrors((current) => reduceMaterialErrors(current, {
+        type: "load-failed",
+        message: cause instanceof Error ? cause.message : "Could not load Course materials",
+      }));
     } finally {
-      setLoading(false);
+      if (!silent && isCurrentMaterialRefresh(requestEpoch, refreshEpochRef.current)) {
+        setLoading(false);
+      }
     }
   }, [courseId, courseShell]);
 
@@ -65,24 +123,48 @@ export default function CourseMaterials() {
   }, [refresh]);
 
   useEffect(() => {
-    if (!sources.some((source) => source.state === "processing")) return;
-    const timer = window.setInterval(() => void refresh(), 2_000);
-    return () => window.clearInterval(timer);
-  }, [refresh, sources]);
+    if (busy || loading || !hasProcessingSources) return;
+    let cancelled = false;
+    let timer: number | null = null;
+
+    const rearm = () => {
+      if (cancelled) return;
+      timer = window.setTimeout(() => {
+        void runSerializedMaterialPollCycle(
+          () => refresh({ silent: true }),
+          rearm,
+          () => !cancelled,
+        );
+      }, 2_000);
+    };
+
+    rearm();
+    return () => {
+      cancelled = true;
+      if (timer !== null) window.clearTimeout(timer);
+    };
+  }, [busy, hasProcessingSources, loading, refresh]);
 
   async function attach(file: File | undefined) {
     const course = courseShell?.course;
     if (!file || !course || course.state !== "active") return;
     const supersedesSourceId = replacementSourceId;
+    refreshEpochRef.current += 1;
+    setLoading(false);
     setBusy(true);
     setStatus(null);
+    setErrors((current) => reduceMaterialErrors(current, { type: "action-started" }));
     try {
       const source = await attachCourseSource(course.id, file, supersedesSourceId);
+      refreshEpochRef.current += 1;
       setSources((current) => [source, ...current.filter((item) => item.id !== source.id)]);
       setReplacementSourceId(null);
       setStatus(`${file.name} is preparing`);
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : "Could not attach source");
+      setErrors((current) => reduceMaterialErrors(current, {
+        type: "action-failed",
+        message: cause instanceof Error ? cause.message : "Could not attach source",
+      }));
     } finally {
       setBusy(false);
       setReplacementSourceId(null);
@@ -93,14 +175,21 @@ export default function CourseMaterials() {
   async function archiveSource(source: CourseSource) {
     const course = courseShell?.course;
     if (!course || source.state === "archived") return;
+    refreshEpochRef.current += 1;
+    setLoading(false);
     setBusy(true);
     setStatus(null);
+    setErrors((current) => reduceMaterialErrors(current, { type: "action-started" }));
     try {
       const updated = await archiveCourseSource(course.id, source);
+      refreshEpochRef.current += 1;
       setSources((current) => current.map((item) => (item.id === updated.id ? updated : item)));
       setStatus(`${source.display_name} archived`);
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : "Could not archive source");
+      setErrors((current) => reduceMaterialErrors(current, {
+        type: "action-failed",
+        message: cause instanceof Error ? cause.message : "Could not archive source",
+      }));
     } finally {
       setBusy(false);
     }
@@ -180,9 +269,14 @@ export default function CourseMaterials() {
           </div>
         </header>
 
-        {error ? (
+        {errors.action ? (
           <div role="alert" className="mt-6 rounded-xl border border-red-300/60 bg-red-50/60 px-4 py-3 text-sm text-red-900 dark:border-red-900/60 dark:bg-red-950/20 dark:text-red-200">
-            {error}
+            {errors.action}
+          </div>
+        ) : null}
+        {errors.load ? (
+          <div role="alert" className="mt-6 rounded-xl border border-red-300/60 bg-red-50/60 px-4 py-3 text-sm text-red-900 dark:border-red-900/60 dark:bg-red-950/20 dark:text-red-200">
+            {errors.load}
           </div>
         ) : null}
         {status ? (

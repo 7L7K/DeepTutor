@@ -235,6 +235,7 @@ class PracticeSet(BaseModel):
     mode: PracticeMode
     state: PracticeSetState = "draft"
     current_revision_id: str | None = None
+    draft_revision_id: str | None = None
     revision: int = Field(ge=1)
     write_epoch: int = Field(ge=1)
     created_at: float

@@ -49,6 +49,53 @@ def is_owner_bound(profile: dict[str, Any]) -> bool:
     return bool(profile.get("owner_bound"))
 
 
+def _effective_profile_for_selection(
+    catalog: dict[str, Any], selection: dict[str, Any] | None
+) -> dict[str, Any] | None:
+    """Resolve the catalog profile a Partner selection would activate.
+
+    ``None`` is the Partner's implicit system-default selection.  Match the
+    model catalog service's fallback exactly: use ``active_profile_id`` when it
+    resolves, otherwise the first configured profile.
+    """
+    service = catalog.get("services", {}).get("llm", {})
+    profiles = service.get("profiles", []) or []
+    profile_id = str((selection or {}).get("profile_id") or "").strip()
+    if not profile_id:
+        profile_id = str(service.get("active_profile_id") or "").strip()
+    if profile_id:
+        for profile in profiles:
+            if str(profile.get("id") or "") == profile_id:
+                return profile
+    return profiles[0] if not selection and profiles else None
+
+
+def assert_delegated_partner_models_shareable(partner_config: Any) -> None:
+    """Reject owner-bound model profiles before a learner drives a Partner.
+
+    A Partner uses deployment model configuration rather than the learner's
+    personal LLM grant.  That delegation may use deployment-owned API-key or
+    local profiles, but it must never lend the operator's owner-bound OAuth
+    identity.  Check every model the turn can reach up front: the primary
+    selection (including the implicit system default) and the optional backup.
+    """
+    catalog = admin_catalog()
+    primary = getattr(partner_config, "llm_selection", None) if partner_config else None
+    backup = (
+        getattr(partner_config, "backup_llm_selection", None) if partner_config else None
+    )
+    candidates: tuple[dict[str, Any] | None, ...] = (
+        primary or None,
+        *((backup,) if backup else ()),
+    )
+    for selection in candidates:
+        profile = _effective_profile_for_selection(catalog, selection)
+        if profile is not None and is_owner_bound(profile):
+            raise PermissionError(
+                "Assigned Partner cannot use an owner-bound model profile."
+            )
+
+
 def redacted_model_access(user_id: str | None = None) -> dict[str, list[dict[str, Any]]]:
     user = get_current_user()
     if user_id is None:

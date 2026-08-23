@@ -20,10 +20,20 @@ from deeptutor.tools.partner_memory import (
     PartnerMemorizeTool,
     PartnerReadTool,
     PartnerSearchTool,
+    is_delegated_partner_call,
 )
 from deeptutor.tools.prompting import load_prompt_hints
 
 logger = logging.getLogger(__name__)
+
+
+def _delegated_partner_tool_denial(tool_name: str) -> ToolResult | None:
+    if not is_delegated_partner_call():
+        return None
+    return ToolResult(
+        content=f"{tool_name} is unavailable in an assigned Partner conversation.",
+        success=False,
+    )
 
 
 def _unique_run_token() -> str:
@@ -242,6 +252,8 @@ class WebSearchTool(_PromptHintsMixin, BaseTool):
         )
 
     async def execute(self, **kwargs: Any) -> ToolResult:
+        if denial := _delegated_partner_tool_denial("web_search"):
+            return denial
         from deeptutor.tools.web_search import web_search
 
         query = kwargs.get("query", "")
@@ -345,6 +357,8 @@ class CodeExecutionTool(_PromptHintsMixin, BaseTool):
         return name
 
     async def execute(self, **kwargs: Any) -> ToolResult:
+        if denial := _delegated_partner_tool_denial("code_execution"):
+            return denial
         from pathlib import Path
 
         from deeptutor.services.sandbox import (
@@ -518,6 +532,8 @@ class PaperSearchToolWrapper(_PromptHintsMixin, BaseTool):
         )
 
     async def execute(self, **kwargs: Any) -> ToolResult:
+        if denial := _delegated_partner_tool_denial("paper_search"):
+            return denial
         from deeptutor.tools.paper_search_tool import ArxivSearchTool
 
         try:
@@ -759,6 +775,8 @@ class ReadMemoryTool(_PromptHintsMixin, BaseTool):
         )
 
     async def execute(self, **kwargs: Any) -> ToolResult:
+        if denial := _delegated_partner_tool_denial("read_memory"):
+            return denial
         from deeptutor.services.memory import get_memory_store
 
         text = get_memory_store().read_l3_concat()
@@ -815,6 +833,8 @@ class WriteMemoryTool(_PromptHintsMixin, BaseTool):
         )
 
     async def execute(self, **kwargs: Any) -> ToolResult:
+        if denial := _delegated_partner_tool_denial("write_memory"):
+            return denial
         from deeptutor.services.memory import get_memory_store
         from deeptutor.services.memory.trace import TraceEvent
 
@@ -906,6 +926,8 @@ class WebFetchTool(_PromptHintsMixin, BaseTool):
         )
 
     async def execute(self, **kwargs: Any) -> ToolResult:
+        if denial := _delegated_partner_tool_denial("web_fetch"):
+            return denial
         from deeptutor.tools.web_fetch import (
             DEFAULT_MAX_CHARS,
             fetch_url_as_markdown,
@@ -974,6 +996,8 @@ class ListNotebookTool(_PromptHintsMixin, BaseTool):
         )
 
     async def execute(self, **kwargs: Any) -> ToolResult:
+        if denial := _delegated_partner_tool_denial("list_notebook"):
+            return denial
         from deeptutor.tools.list_notebook import list_notebooks_or_records
 
         outcome = list_notebooks_or_records(
@@ -1084,6 +1108,8 @@ class WriteNoteTool(_PromptHintsMixin, BaseTool):
         )
 
     async def execute(self, **kwargs: Any) -> ToolResult:
+        if denial := _delegated_partner_tool_denial("write_note"):
+            return denial
         from deeptutor.tools.write_note import write_note
 
         outcome = write_note(
@@ -1148,6 +1174,8 @@ class GithubTool(_PromptHintsMixin, BaseTool):
         )
 
     async def execute(self, **kwargs: Any) -> ToolResult:
+        if denial := _delegated_partner_tool_denial("github"):
+            return denial
         from deeptutor.tools.github_query import run_github_query
 
         outcome = await run_github_query(
@@ -1553,6 +1581,8 @@ class CronTool(_PromptHintsMixin, BaseTool):
         )
 
     async def execute(self, **kwargs: Any) -> ToolResult:
+        if denial := _delegated_partner_tool_denial("cron"):
+            return denial
         from deeptutor.tools.cron_tool import run_cron_action
 
         outcome = run_cron_action(kwargs)

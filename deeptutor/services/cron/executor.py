@@ -79,6 +79,12 @@ async def _execute_partner_job(job: CronJob) -> tuple[str, str | None]:
     from deeptutor.partners.bus.events import InboundMessage
     from deeptutor.services.partners import get_partner_manager
 
+    # Provenance-free legacy jobs cannot be distinguished from legitimate
+    # owner jobs in code. Deployments upgrading from delegated-cron builds must
+    # remove or migrate those records before enabling the scheduler.
+    if job.owner.delegated_user_id:
+        return "skipped", "assigned Partner scheduled jobs are disabled"
+
     instance = get_partner_manager().get_partner(job.owner.partner_id)
     if not instance or not instance.running or not instance.runner:
         return "skipped", "partner not running"
