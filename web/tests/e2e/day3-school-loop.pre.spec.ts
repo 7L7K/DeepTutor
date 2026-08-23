@@ -263,6 +263,8 @@ async function observePage(
   const allowedHttpOrigins = new Set(evidence.networkPolicy.httpOrigins);
   const allowedSocketOrigins = new Set(evidence.networkPolicy.websocketOrigins);
   const activelyBlockedRequests = new WeakSet<object>();
+  const inFlightHttpRequests = new Map<object, { method: string; url: string }>();
+  let lastHttpActivityAt = Date.now();
   let intentionalShutdown = false;
   const allowedNetworkUrl = (rawUrl: string) => {
     const url = new URL(rawUrl);
@@ -324,6 +326,15 @@ async function observePage(
     }
     window.WebSocket = ObservedWebSocket;
   }, "__d3RecordWebSocketClose");
+  page.on("request", (request) => {
+    const url = new URL(request.url());
+    if (!["http:", "https:"].includes(url.protocol) || !allowedHttpOrigins.has(url.origin)) return;
+    inFlightHttpRequests.set(request, { method: request.method(), url: request.url() });
+    lastHttpActivityAt = Date.now();
+  });
+  page.on("requestfinished", (request) => {
+    if (inFlightHttpRequests.delete(request)) lastHttpActivityAt = Date.now();
+  });
   page.on("response", (response) => {
     const url = new URL(response.url());
     if (!url.pathname.startsWith("/api/v1/")) return;
@@ -336,6 +347,7 @@ async function observePage(
     });
   });
   page.on("requestfailed", (request) => {
+    if (inFlightHttpRequests.delete(request)) lastHttpActivityAt = Date.now();
     const url = new URL(request.url());
     const failure = request.failure()?.errorText || "request failed";
     if (activelyBlockedRequests.has(request) && /blocked_by_client/i.test(failure)) {
@@ -382,10 +394,71 @@ async function observePage(
     evidence.pageErrors.push({ actor, text: error.message });
   });
   return {
+    async waitForHttpQuiescence({
+      quietMs = 750,
+      timeoutMs = 12_000,
+    }: { quietMs?: number; timeoutMs?: number } = {}) {
+      const startedAt = Date.now();
+      const deadline = startedAt + timeoutMs;
+      while (Date.now() < deadline) {
+        const now = Date.now();
+        if (
+          inFlightHttpRequests.size === 0 &&
+          now - Math.max(startedAt, lastHttpActivityAt) >= quietMs
+        ) {
+          return;
+        }
+        await new Promise<void>((resolve) => setTimeout(resolve, 50));
+      }
+      const pending = [...inFlightHttpRequests.values()].sort((left, right) =>
+        (left.method + " " + left.url).localeCompare(right.method + " " + right.url),
+      );
+      throw new Error(
+        `Local HTTP did not quiesce for ${actor} within ${timeoutMs}ms; pending=${JSON.stringify(pending)}`,
+      );
+    },
     markIntentionalShutdown() {
       intentionalShutdown = true;
     },
   };
+}
+
+type PageObservation = Awaited<ReturnType<typeof observePage>>;
+
+function createObservedTransitions(page: Page, observation: PageObservation) {
+  return {
+    settle: observation.waitForHttpQuiescence,
+    async goto(path: string) {
+      await observation.waitForHttpQuiescence();
+      await page.goto(path);
+    },
+    async reload() {
+      await observation.waitForHttpQuiescence();
+      await page.reload();
+    },
+  };
+}
+
+type ObservedTransitions = ReturnType<typeof createObservedTransitions>;
+
+async function closeObservedContext(
+  context: BrowserContext,
+  observation: PageObservation,
+  hadPrimaryFailure: boolean,
+) {
+  let cleanupFailure: unknown;
+  try {
+    await observation.waitForHttpQuiescence({ quietMs: 250, timeoutMs: 2_000 });
+  } catch (error) {
+    cleanupFailure = error;
+  }
+  observation.markIntentionalShutdown();
+  try {
+    await context.close();
+  } catch (error) {
+    cleanupFailure ??= error;
+  }
+  if (!hadPrimaryFailure && cleanupFailure) throw cleanupFailure;
 }
 
 async function signIn(page: Page, username: string, password: string) {
@@ -442,9 +515,9 @@ async function authProjection(page: Page) {
   });
 }
 
-async function proveLearnerSafeNavigation(page: Page) {
+async function proveLearnerSafeNavigation(page: Page, transitions: ObservedTransitions) {
   if (new URL(page.url()).pathname !== "/classes") {
-    await page.goto("/classes");
+    await transitions.goto("/classes");
   }
   await expect(page.getByRole("heading", { name: "Classes", exact: true })).toBeVisible();
   const forbiddenLinks = page.locator(
@@ -454,9 +527,13 @@ async function proveLearnerSafeNavigation(page: Page) {
   await expect(page.getByRole("link", { name: /Admin|User management|Deploy/i })).toHaveCount(0);
 }
 
-async function createCourseThroughUi(page: Page, title: string) {
+async function createCourseThroughUi(
+  page: Page,
+  title: string,
+  transitions: ObservedTransitions,
+) {
   if (new URL(page.url()).pathname !== "/classes") {
-    await page.goto("/classes");
+    await transitions.goto("/classes");
   }
   await expect(page.getByRole("heading", { name: "Classes", exact: true })).toBeVisible();
   await page.getByRole("button", { name: "Add class", exact: true }).first().click();
@@ -479,8 +556,12 @@ async function createCourseThroughUi(page: Page, title: string) {
   return course;
 }
 
-async function proveManualPracticeUi(page: Page, courseId: string) {
-  await page.goto("/classes/" + encodeURIComponent(courseId) + "/practice");
+async function proveManualPracticeUi(
+  page: Page,
+  courseId: string,
+  transitions: ObservedTransitions,
+) {
+  await transitions.goto("/classes/" + encodeURIComponent(courseId) + "/practice");
   await expect(
     page.getByRole("heading", { name: "Create a manual Practice quiz", exact: true }),
   ).toBeVisible();
@@ -503,8 +584,12 @@ async function proveManualPracticeUi(page: Page, courseId: string) {
   return practiceSet.id;
 }
 
-async function proveNonReadyChatUi(page: Page, courseId: string) {
-  await page.goto("/classes/" + encodeURIComponent(courseId) + "/chat");
+async function proveNonReadyChatUi(
+  page: Page,
+  courseId: string,
+  transitions: ObservedTransitions,
+) {
+  await transitions.goto("/classes/" + encodeURIComponent(courseId) + "/chat");
   await expect(page.getByTestId("course-chat-route")).toBeVisible();
   await expect(page.getByTestId("course-chat-readiness-banner")).toBeVisible();
   await expect(page.getByTestId("course-chat-readiness-banner")).toContainText(
@@ -523,6 +608,8 @@ async function repairActorFlow(
   const context = await browser.newContext();
   const page = await context.newPage();
   const observation = await observePage(page, actor, evidence);
+  const transitions = createObservedTransitions(page, observation);
+  let hadPrimaryFailure = false;
   try {
     await signIn(page, username, password);
     const auth = await authProjection(page);
@@ -536,21 +623,29 @@ async function repairActorFlow(
       role: auth.body.role,
       isAdmin: auth.body.is_admin,
     });
-    await proveLearnerSafeNavigation(page);
-    const course = await createCourseThroughUi(page, "Day 3 Shared Biology");
-    await proveNonReadyChatUi(page, course.id);
+    await proveLearnerSafeNavigation(page, transitions);
+    const course = await createCourseThroughUi(page, "Day 3 Shared Biology", transitions);
+    await proveNonReadyChatUi(page, course.id, transitions);
     let manualPracticeSetId: string | undefined;
     if (actor === "learner_a") {
-      manualPracticeSetId = await proveManualPracticeUi(page, course.id);
+      manualPracticeSetId = await proveManualPracticeUi(page, course.id, transitions);
     }
     const marker = "private-" + actor + "-" + runId;
     const study = await createManualStudyLoop(page, course.id, marker);
-    const practice = await completePracticeUi(page, course.id, study.practice, marker);
+    const practice = await completePracticeUi(
+      page,
+      course.id,
+      study.practice,
+      marker,
+      transitions,
+    );
     const flashcards = await completeFlashcardReviewUi(
       page,
       course.id,
       study.flashcards,
+      transitions,
     );
+    await observation.waitForHttpQuiescence();
     return {
       id: course.id,
       title: course.title,
@@ -562,9 +657,11 @@ async function repairActorFlow(
         flashcards,
       },
     };
+  } catch (error) {
+    hadPrimaryFailure = true;
+    throw error;
   } finally {
-    observation.markIntentionalShutdown();
-    await context.close();
+    await closeObservedContext(context, observation, hadPrimaryFailure);
   }
 }
 
@@ -573,10 +670,11 @@ async function uploadReadySource(
   courseId: string,
   actor: Actor,
   content: string,
+  transitions: ObservedTransitions,
 ) {
   const displayName = "shared-day3-notes.txt";
   const fileSha256 = sha256(Buffer.from(content, "utf8"));
-  await page.goto("/classes/" + encodeURIComponent(courseId) + "/materials");
+  await transitions.goto("/classes/" + encodeURIComponent(courseId) + "/materials");
   await expect(page.getByRole("heading", { name: "Materials", exact: true })).toBeVisible();
   const uploadResponse = page.waitForResponse(
     (response) =>
@@ -628,10 +726,9 @@ async function uploadReadySource(
   expect(source.manifest[0]?.sha256).toBe(fileSha256);
   const manifestFingerprint = sha256(stableJson(source.manifest));
   expect(source.content_sha256).toBe(manifestFingerprint);
-  await page.reload();
+  await transitions.reload();
   await expect(page.getByText(displayName, { exact: true })).toBeVisible();
   await expect(page.getByText("Available to Course Chat and Practice", { exact: true })).toBeVisible();
-  await page.waitForLoadState("networkidle");
   return {
     id: source.id,
     displayName,
@@ -649,6 +746,7 @@ async function proveGroundedChatUi(
   courseId: string,
   sourceId: string,
   marker: string,
+  transitions: ObservedTransitions,
 ) {
   let terminalProvider = "";
   page.on("websocket", (socket) => {
@@ -667,11 +765,25 @@ async function proveGroundedChatUi(
       }
     });
   });
-  await page.goto("/classes/" + encodeURIComponent(courseId) + "/chat");
+  await transitions.goto("/classes/" + encodeURIComponent(courseId) + "/chat");
   await expect(page.getByTestId("course-chat-route")).toBeVisible();
   const composer = page.locator("textarea").last();
   await expect(composer).toBeVisible();
   await composer.fill("Repeat the private marker from this Course material.");
+  const nestedReadiness = page.waitForResponse((response) => {
+    const url = new URL(response.url());
+    return (
+      url.pathname ===
+        "/api/v1/courses/" + encodeURIComponent(courseId) + "/chat-readiness" &&
+      response.request().method() === "GET"
+    );
+  });
+  const nestedSession = page.waitForResponse((response) => {
+    const url = new URL(response.url());
+    return url.pathname.startsWith("/api/v1/sessions/") && response.request().method() === "GET";
+  });
+  void nestedReadiness.catch(() => undefined);
+  void nestedSession.catch(() => undefined);
   await composer.press("Enter");
   await expect(page.getByText(new RegExp("Deterministic course answer:.*" + marker))).toBeVisible({
     timeout: 30_000,
@@ -681,6 +793,15 @@ async function proveGroundedChatUi(
   await expect(page).toHaveURL(new RegExp("/classes/" + courseId + "/chat/[^/]+$"));
   const sessionId = decodeURIComponent(new URL(page.url()).pathname.split("/").at(-1) || "");
   expect(sessionId).not.toBe("");
+  const [readinessResponse, sessionResponse] = await Promise.all([
+    nestedReadiness,
+    nestedSession,
+  ]);
+  expect(readinessResponse.status()).toBe(200);
+  expect(sessionResponse.status()).toBe(200);
+  expect(new URL(sessionResponse.url()).pathname).toBe(
+    "/api/v1/sessions/" + encodeURIComponent(sessionId),
+  );
   const persisted = await page.evaluate(async (id) => {
     const response = await fetch("/api/v1/sessions/" + encodeURIComponent(id), {
       cache: "no-store",
@@ -691,7 +812,6 @@ async function proveGroundedChatUi(
   expect(persisted.status).toBe(200);
   expect(persisted.body).toMatchObject({ course_id: courseId });
   expect(JSON.stringify(persisted.body)).toContain(sourceId);
-  await page.waitForLoadState("networkidle");
   return {
     sessionId,
     groundedCitationSourceId: sourceId,
@@ -860,6 +980,7 @@ async function completePracticeUi(
   courseId: string,
   practice: { setId: string; revisionId: string; questionId: string; attemptId: string },
   marker: string,
+  transitions: ObservedTransitions,
 ): Promise<ResourceState["practice"]> {
   const attemptPath =
     "/classes/" +
@@ -868,7 +989,7 @@ async function completePracticeUi(
     encodeURIComponent(practice.setId) +
     "/attempts/" +
     encodeURIComponent(practice.attemptId);
-  await page.goto(attemptPath);
+  await transitions.goto(attemptPath);
   const answer = page.getByLabel("Answer for question 1");
   await expect(answer).toBeVisible();
   const savedResponse = page.waitForResponse(
@@ -880,7 +1001,7 @@ async function completePracticeUi(
   const saved = await savedResponse;
   expect(saved.status()).toBe(200);
   await expect(page.getByRole("status").filter({ hasText: "Saved" })).toBeVisible();
-  await page.reload();
+  await transitions.reload();
   await expect(page.getByLabel("Answer for question 1")).toHaveValue(marker);
   const submit = page.waitForResponse(
     (response) =>
@@ -910,7 +1031,7 @@ async function completePracticeUi(
   await expect(resultArticle.getByText("Your answer:", { exact: true })).toBeVisible();
   await expect(resultArticle.getByText("Correct answer:", { exact: true })).toBeVisible();
   await expect(resultArticle).toContainText(marker);
-  await page.reload();
+  await transitions.reload();
   await expect(page.getByRole("heading", { name: "Results", exact: true })).toBeVisible();
   return {
     ...practice,
@@ -935,8 +1056,9 @@ async function completeFlashcardReviewUi(
     cardRevision: number;
     state: "ready";
   },
+  transitions: ObservedTransitions,
 ): Promise<ResourceState["flashcards"]> {
-  await page.goto("/classes/" + encodeURIComponent(courseId) + "/review");
+  await transitions.goto("/classes/" + encodeURIComponent(courseId) + "/review");
   await page.getByText("Day 3 manual flashcards", { exact: true }).first().click();
   await expect(page.getByRole("heading", { name: "Day 3 manual flashcards", exact: true })).toBeVisible();
   await page.getByRole("button", { name: "Start studying", exact: true }).click();
@@ -978,6 +1100,8 @@ async function actorFlow(
   const context: BrowserContext = await browser.newContext();
   const page = await context.newPage();
   const observation = await observePage(page, actor, evidence);
+  const transitions = createObservedTransitions(page, observation);
+  let hadPrimaryFailure = false;
   try {
     await signIn(page, username, password);
     const auth = await authProjection(page);
@@ -999,14 +1123,24 @@ async function actorFlow(
       isAdmin: auth.body.is_admin,
     });
 
+    await transitions.settle();
     const marker = "private-" + actor + "-" + runId;
     const source = await uploadReadySource(
       page,
       seededCourse.id,
       actor,
       "Synthetic Day 3 material for " + marker + ".\n",
+      transitions,
     );
-    const chat = await proveGroundedChatUi(page, seededCourse.id, source.id, marker);
+    await transitions.settle({ quietMs: 2_500 });
+    const chat = await proveGroundedChatUi(
+      page,
+      seededCourse.id,
+      source.id,
+      marker,
+      transitions,
+    );
+    await transitions.settle();
     const study = seededCourse.study;
     expect(study.generationCounts).toEqual({ practice: 0, flashcards: 0 });
     return {
@@ -1029,9 +1163,11 @@ async function actorFlow(
       flashcards: study.flashcards,
       privateMarkerSha256: sha256(marker),
     } satisfies ResourceState;
+  } catch (error) {
+    hadPrimaryFailure = true;
+    throw error;
   } finally {
-    observation.markIntentionalShutdown();
-    await context.close();
+    await closeObservedContext(context, observation, hadPrimaryFailure);
   }
 }
 
@@ -1047,6 +1183,8 @@ async function verifyChatIsolation(
   const context = await browser.newContext();
   const page = await context.newPage();
   const observation = await observePage(page, actor, evidence);
+  const transitions = createObservedTransitions(page, observation);
+  let hadPrimaryFailure = false;
   try {
     await signIn(page, username, password);
     const session = await page.evaluate(async (sessionId) => {
@@ -1063,13 +1201,15 @@ async function verifyChatIsolation(
     own.chat.foreignSourceAbsent = true;
     own.chat.foreignCitationAbsent = true;
     if (new URL(page.url()).pathname !== "/classes") {
-      await page.goto("/classes");
+      await transitions.goto("/classes");
     }
     await expect(page.getByRole("heading", { name: "Classes", exact: true })).toBeVisible();
-    await page.waitForLoadState("networkidle");
+    await transitions.settle();
+  } catch (error) {
+    hadPrimaryFailure = true;
+    throw error;
   } finally {
-    observation.markIntentionalShutdown();
-    await context.close();
+    await closeObservedContext(context, observation, hadPrimaryFailure);
   }
 }
 
@@ -1135,10 +1275,10 @@ if (phase === "repair") {
     evidence.uiProofs.nonReadyChatBanner = { learner_a: true, learner_b: true };
     evidence.uiProofs.chatShellPresent = { learner_a: true, learner_b: true };
     evidence.uiProofs.learnerSafeNavigation = { learner_a: true, learner_b: true };
-    expect(evidence.consoleErrors).toEqual([]);
-    expect(evidence.pageErrors).toEqual([]);
     expectNetworkClean(evidence);
     expect(evidence.requests.filter((item) => item.failure)).toEqual([]);
+    expect(evidence.consoleErrors).toEqual([]);
+    expect(evidence.pageErrors).toEqual([]);
     const path = join(evidenceDir!, "day3-school-loop.repair.json");
     writeFileSync(path, JSON.stringify(evidence, null, 2), {
       encoding: "utf8",
@@ -1237,10 +1377,10 @@ if (phase === "repair") {
     evidence.resources.learner_b = resourceB;
     evidence.generationOperationCounts.learner_a = { practice: 0, flashcards: 0 };
     evidence.generationOperationCounts.learner_b = { practice: 0, flashcards: 0 };
-    expect(evidence.consoleErrors).toEqual([]);
-    expect(evidence.pageErrors).toEqual([]);
     expectNetworkClean(evidence);
     expect(evidence.requests.filter((item) => item.failure)).toEqual([]);
+    expect(evidence.consoleErrors).toEqual([]);
+    expect(evidence.pageErrors).toEqual([]);
     for (const actor of ["learner_a", "learner_b"] as const) {
       expect(
         evidence.websockets.some((socket) => socket.actor === actor && socket.path === "/api/v1/ws"),
@@ -1284,6 +1424,8 @@ if (phase === "repair") {
       const context = await browser.newContext();
       const page = await context.newPage();
       const observation = await observePage(page, actor, evidence);
+      const transitions = createObservedTransitions(page, observation);
+      let hadPrimaryFailure = false;
       try {
         await signIn(page, username, password);
         const auth = await authProjection(page);
@@ -1318,6 +1460,7 @@ if (phase === "repair") {
         );
         expect(receipt.status).toBe(202);
         expect(receipt.body).toMatchObject({ id: expect.any(String), state: "processing" });
+        await transitions.settle();
         return {
           courseId,
           id: String((receipt.body as { id: string }).id),
@@ -1325,9 +1468,11 @@ if (phase === "repair") {
           state: "processing" as const,
           fileSha256: sha256(content),
         };
+      } catch (error) {
+        hadPrimaryFailure = true;
+        throw error;
       } finally {
-        observation.markIntentionalShutdown();
-        await context.close();
+        await closeObservedContext(context, observation, hadPrimaryFailure);
       }
     }
     const [sourceA, sourceB] = await Promise.all([
@@ -1347,10 +1492,10 @@ if (phase === "repair") {
     expect(sourceA.id).not.toBe(sourceB.id);
     expect(sourceA.fileSha256).not.toBe(sourceB.fileSha256);
     evidence.sources = { learner_a: sourceA, learner_b: sourceB };
-    expect(evidence.consoleErrors).toEqual([]);
-    expect(evidence.pageErrors).toEqual([]);
     expectNetworkClean(evidence);
     expect(evidence.requests.filter((item) => item.failure)).toEqual([]);
+    expect(evidence.consoleErrors).toEqual([]);
+    expect(evidence.pageErrors).toEqual([]);
     const path = join(evidenceDir!, "day3-school-loop.interrupt.json");
     writeFileSync(path, JSON.stringify(evidence, null, 2), { encoding: "utf8", mode: 0o600 });
     chmodSync(path, 0o600);

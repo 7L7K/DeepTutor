@@ -1,4 +1,4 @@
-import { expect, test, type Browser, type Page } from "@playwright/test";
+import { expect, test, type Browser, type BrowserContext, type Page } from "@playwright/test";
 import { chmodSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
@@ -222,6 +222,8 @@ async function observePage(page: Page, actor: Actor, evidence: PostEvidence) {
   const allowedHttpOrigins = new Set(evidence.networkPolicy.httpOrigins);
   const allowedSocketOrigins = new Set(evidence.networkPolicy.websocketOrigins);
   const activelyBlockedRequests = new WeakSet<object>();
+  const inFlightHttpRequests = new Map<object, { method: string; url: string }>();
+  let lastHttpActivityAt = Date.now();
   let intentionalShutdown = false;
   const allowedNetworkUrl = (rawUrl: string) => {
     const url = new URL(rawUrl);
@@ -283,6 +285,15 @@ async function observePage(page: Page, actor: Actor, evidence: PostEvidence) {
     }
     window.WebSocket = ObservedWebSocket;
   }, "__d3RecordWebSocketClose");
+  page.on("request", (request) => {
+    const url = new URL(request.url());
+    if (!["http:", "https:"].includes(url.protocol) || !allowedHttpOrigins.has(url.origin)) return;
+    inFlightHttpRequests.set(request, { method: request.method(), url: request.url() });
+    lastHttpActivityAt = Date.now();
+  });
+  page.on("requestfinished", (request) => {
+    if (inFlightHttpRequests.delete(request)) lastHttpActivityAt = Date.now();
+  });
   page.on("response", (response) => {
     const path = new URL(response.url()).pathname;
     if (!path.startsWith("/api/v1/")) return;
@@ -295,6 +306,7 @@ async function observePage(page: Page, actor: Actor, evidence: PostEvidence) {
     });
   });
   page.on("requestfailed", (request) => {
+    if (inFlightHttpRequests.delete(request)) lastHttpActivityAt = Date.now();
     const url = new URL(request.url());
     const failure = request.failure()?.errorText || "request failed";
     if (activelyBlockedRequests.has(request) && /blocked_by_client/i.test(failure)) {
@@ -337,10 +349,55 @@ async function observePage(page: Page, actor: Actor, evidence: PostEvidence) {
   });
   page.on("pageerror", (error) => evidence.pageErrors.push({ actor, text: error.message }));
   return {
+    async waitForHttpQuiescence({
+      quietMs = 750,
+      timeoutMs = 12_000,
+    }: { quietMs?: number; timeoutMs?: number } = {}) {
+      const startedAt = Date.now();
+      const deadline = startedAt + timeoutMs;
+      while (Date.now() < deadline) {
+        const now = Date.now();
+        if (
+          inFlightHttpRequests.size === 0 &&
+          now - Math.max(startedAt, lastHttpActivityAt) >= quietMs
+        ) {
+          return;
+        }
+        await new Promise<void>((resolve) => setTimeout(resolve, 50));
+      }
+      const pending = [...inFlightHttpRequests.values()].sort((left, right) =>
+        (left.method + " " + left.url).localeCompare(right.method + " " + right.url),
+      );
+      throw new Error(
+        `Local HTTP did not quiesce for ${actor} within ${timeoutMs}ms; pending=${JSON.stringify(pending)}`,
+      );
+    },
     markIntentionalShutdown() {
       intentionalShutdown = true;
     },
   };
+}
+
+type PageObservation = Awaited<ReturnType<typeof observePage>>;
+
+async function closeObservedContext(
+  context: BrowserContext,
+  observation: PageObservation,
+  hadPrimaryFailure: boolean,
+) {
+  let cleanupFailure: unknown;
+  try {
+    await observation.waitForHttpQuiescence({ quietMs: 250, timeoutMs: 2_000 });
+  } catch (error) {
+    cleanupFailure = error;
+  }
+  observation.markIntentionalShutdown();
+  try {
+    await context.close();
+  } catch (error) {
+    cleanupFailure ??= error;
+  }
+  if (!hadPrimaryFailure && cleanupFailure) throw cleanupFailure;
 }
 
 async function signIn(page: Page, username: string, password: string) {
@@ -454,6 +511,11 @@ async function actorFlow(
   const context = await browser.newContext();
   const page = await context.newPage();
   const observation = await observePage(page, actor, evidence);
+  const navigate = async (path: string) => {
+    await observation.waitForHttpQuiescence();
+    await page.goto(path);
+  };
+  let hadPrimaryFailure = false;
   try {
     await signIn(page, username, password);
     const authReceipt = await getOk(page, "/api/v1/auth/status");
@@ -598,15 +660,15 @@ async function actorFlow(
     };
     expect(evidence.generationOperationCounts[actor]).toEqual({ practice: 0, flashcards: 0 });
 
-    await page.goto("/classes/" + encodeURIComponent(own.course.id));
+    await navigate("/classes/" + encodeURIComponent(own.course.id));
     await expect(page.getByTestId("course-overview-dashboard")).toBeVisible();
     await expect(page.getByRole("heading", { name: "Course Overview", exact: true })).toBeVisible();
-    await page.goto("/classes/" + encodeURIComponent(own.course.id) + "/materials");
+    await navigate("/classes/" + encodeURIComponent(own.course.id) + "/materials");
     await expect(page.getByText(own.source.displayName, { exact: true })).toBeVisible();
     await expect(page.getByText("Available to Course Chat and Practice", { exact: true })).toBeVisible();
     await expect(page.getByText(interrupted.displayName, { exact: true })).toBeVisible();
     await expect(page.getByText("This material could not be processed.", { exact: true })).toBeVisible();
-    await page.goto(
+    await navigate(
       "/classes/" +
         encodeURIComponent(own.course.id) +
         "/chat/" +
@@ -618,9 +680,9 @@ async function actorFlow(
       ),
     ).toBeVisible();
     await expect(page.getByTestId("course-citation-" + own.source.id)).toBeVisible();
-    await page.goto("/classes/" + encodeURIComponent(own.course.id) + "/practice");
+    await navigate("/classes/" + encodeURIComponent(own.course.id) + "/practice");
     await expect(page.getByText("Day 3 manual practice", { exact: true }).first()).toBeVisible();
-    await page.goto(
+    await navigate(
       "/classes/" +
         encodeURIComponent(own.course.id) +
         "/practice/" +
@@ -629,9 +691,10 @@ async function actorFlow(
         encodeURIComponent(own.practice.attemptId),
     );
     await expect(page.getByRole("heading", { name: "Results", exact: true })).toBeVisible();
-    await page.goto("/classes/" + encodeURIComponent(own.course.id) + "/review");
+    await navigate("/classes/" + encodeURIComponent(own.course.id) + "/review");
     await page.getByText("Day 3 manual flashcards", { exact: true }).first().click();
     await expect(page.getByText("You are caught up", { exact: true })).toBeVisible();
+    await observation.waitForHttpQuiescence();
     await page.reload();
     await page.getByText("Day 3 manual flashcards", { exact: true }).first().click();
     await expect(page.getByText("You are caught up", { exact: true })).toBeVisible();
@@ -764,9 +827,12 @@ async function actorFlow(
       browserFlashcards: true,
       browserReviewReload: true,
     };
+    await observation.waitForHttpQuiescence();
+  } catch (error) {
+    hadPrimaryFailure = true;
+    throw error;
   } finally {
-    observation.markIntentionalShutdown();
-    await context.close();
+    await closeObservedContext(context, observation, hadPrimaryFailure);
   }
 }
 
@@ -823,10 +889,10 @@ test("cold restart preserves two private learner loops without an ID oracle", as
       evidence,
     ),
   ]);
-  expect(evidence.consoleErrors).toEqual([]);
-  expect(evidence.pageErrors).toEqual([]);
   expectNetworkClean(evidence);
   expect(evidence.requests.filter((item) => item.failure)).toEqual([]);
+  expect(evidence.consoleErrors).toEqual([]);
+  expect(evidence.pageErrors).toEqual([]);
   const path = join(evidenceDir!, "day3-school-loop.post.json");
   writeFileSync(path, JSON.stringify(evidence, null, 2), { encoding: "utf8", mode: 0o600 });
   chmodSync(path, 0o600);
