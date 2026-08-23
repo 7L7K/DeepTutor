@@ -390,13 +390,15 @@ PY
 provider_preflight() {
   local expected="$1"
   local output="$2"
-  env -i \
-    PATH="$(dirname "$python_bin"):/usr/bin:/bin" \
-    TMPDIR="$runtime_root/tmp" XDG_CONFIG_HOME="$runtime_root/xdg-config" \
-    XDG_CACHE_HOME="$runtime_root/xdg-cache" DEEPTUTOR_HOME="$runtime_root" \
-    DEEPTUTOR_IGNORE_PROCESS_ENV_OVERRIDES=true \
-    TEEECHR_TEST_DETERMINISTIC_PROVIDER="$expected" \
-    "$python_bin" - "$expected" "$output" <<'PY'
+  (
+    cd "$repo_root"
+    env -i \
+      PATH="$(dirname "$python_bin"):/usr/bin:/bin" \
+      TMPDIR="$runtime_root/tmp" XDG_CONFIG_HOME="$runtime_root/xdg-config" \
+      XDG_CACHE_HOME="$runtime_root/xdg-cache" DEEPTUTOR_HOME="$runtime_root" \
+      DEEPTUTOR_IGNORE_PROCESS_ENV_OVERRIDES=true \
+      TEEECHR_TEST_DETERMINISTIC_PROVIDER="$expected" \
+      "$python_bin" - "$expected" "$output" <<'PY'
 import json
 import sys
 from pathlib import Path
@@ -464,6 +466,7 @@ path = Path(sys.argv[2])
 path.write_text(json.dumps(payload, sort_keys=True), encoding="utf-8")
 path.chmod(0o600)
 PY
+  )
 }
 
 start_backend() {
