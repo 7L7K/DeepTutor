@@ -36,6 +36,8 @@ interface KnowledgeHomeProps {
   onCreate: () => void;
   /** Open the create flow pre-set to link an Obsidian vault. */
   onConnectObsidian: () => void;
+  /** Whether deployment-owned engines and host connectors may be managed. */
+  canManageInfrastructure: boolean;
 }
 
 const ENGINE_ICONS: Record<string, LucideIcon> = {
@@ -101,6 +103,7 @@ export default function KnowledgeHome({
   onOpenEngine,
   onCreate,
   onConnectObsidian,
+  canManageInfrastructure,
 }: KnowledgeHomeProps) {
   const { t } = useTranslation();
   const [query, setQuery] = useState("");
@@ -149,6 +152,7 @@ export default function KnowledgeHome({
         </div>
 
         {/* Retrieval engines */}
+        {canManageInfrastructure ? (
         <section className="mt-8">
           <h2 className="mb-3 flex items-center gap-2 text-[11px] font-medium uppercase tracking-wide text-[var(--muted-foreground)]">
             <Cpu className="h-3.5 w-3.5" />
@@ -235,6 +239,7 @@ export default function KnowledgeHome({
             </button>
           </div>
         </section>
+        ) : null}
 
         {/* Knowledge bases */}
         <section className="mt-8 pb-2">

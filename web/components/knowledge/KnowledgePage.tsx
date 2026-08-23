@@ -4,7 +4,9 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useTranslation } from "react-i18next";
 import { Loader2 } from "lucide-react";
+import { useAuthStatus } from "@/hooks/useAuthStatus";
 import { useKnowledgeBases } from "@/hooks/useKnowledgeBases";
+import { canManageDeployment } from "@/lib/auth-status";
 import { updateRagProviderMode } from "@/lib/knowledge-api";
 import KnowledgeBaseDetail from "./KnowledgeBaseDetail";
 import KnowledgeHome from "./KnowledgeHome";
@@ -16,6 +18,8 @@ export default function KnowledgePage() {
   const { t } = useTranslation();
   const router = useRouter();
   const searchParams = useSearchParams();
+  const authStatus = useAuthStatus();
+  const canManageKnowledgeInfrastructure = canManageDeployment(authStatus);
   const initialKb = searchParams.get("kb");
   const initialEngine = searchParams.get("engine");
 
@@ -256,8 +260,11 @@ export default function KnowledgePage() {
               onOpenEngine={openEngine}
               onCreate={openCreate}
               onConnectObsidian={openObsidian}
+              canManageInfrastructure={canManageKnowledgeInfrastructure}
             />
-          ) : view === "engine" && selectedProvider ? (
+          ) : view === "engine" &&
+            selectedProvider &&
+            canManageKnowledgeInfrastructure ? (
             <EngineDetail
               provider={selectedProvider}
               kbs={kbs}
@@ -276,6 +283,7 @@ export default function KnowledgePage() {
               onOpenEngine={openEngine}
               onCreate={openCreate}
               onConnectObsidian={openObsidian}
+              canManageInfrastructure={canManageKnowledgeInfrastructure}
             />
           ) : (
             <KnowledgeBaseDetail
@@ -307,14 +315,19 @@ export default function KnowledgePage() {
         onConnectLightRagServer={connectLightRagServer}
         initialMode={createPreset?.mode}
         initialSource={createPreset?.source}
-        onConfigureProvider={() => {
-          setCreateOpen(false);
-          setPipelineOpen(true);
-        }}
+        allowExternalConnectors={canManageKnowledgeInfrastructure}
+        onConfigureProvider={
+          canManageKnowledgeInfrastructure
+            ? () => {
+                setCreateOpen(false);
+                setPipelineOpen(true);
+              }
+            : undefined
+        }
       />
 
       <PageIndexSettingsModal
-        isOpen={pipelineOpen}
+        isOpen={pipelineOpen && canManageKnowledgeInfrastructure}
         onClose={() => setPipelineOpen(false)}
         onSaved={() => void refresh({ force: true })}
       />

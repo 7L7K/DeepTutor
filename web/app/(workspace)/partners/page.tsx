@@ -8,7 +8,7 @@
 import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { HeartHandshake, Loader2, Plus } from "lucide-react";
+import { AlertTriangle, HeartHandshake, Loader2, Plus, X } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import { listPartners, type PartnerInfo } from "@/lib/partners-api";
 import {
@@ -57,6 +57,7 @@ export default function PartnersPage() {
   const [partners, setPartners] = useState<PartnerInfo[]>([]);
   const [loading, setLoading] = useState(true);
   const [busyId, setBusyId] = useState<string | null>(null);
+  const [openError, setOpenError] = useState("");
 
   // Clicking a partner card. An admin drills into the management page; a
   // non-admin can't manage partners — for them a partner is consulted as a
@@ -68,6 +69,7 @@ export default function PartnersPage() {
         router.push(`/partners/${partner.partner_id}`);
         return;
       }
+      setOpenError("");
       setBusyId(partner.partner_id);
       try {
         const conns = await listSubagentConnections();
@@ -92,14 +94,19 @@ export default function PartnersPage() {
         }
         router.push(`/home?agent=${encodeURIComponent(name)}`);
       } catch {
-        // Couldn't auto-connect (e.g. the name clashes with an existing KB) —
-        // fall back to My Agents, where the partner can be connected by hand.
-        router.push("/agents");
+        // Stay on the learner-safe surface. My Agents is an administrator
+        // workspace, and a transient failure or freshly revoked assignment is
+        // not authority to send a learner there.
+        setOpenError(
+          t(
+            "We couldn't open this Partner. Try again, or ask your administrator to check the assignment.",
+          ),
+        );
       } finally {
         setBusyId(null);
       }
     },
-    [isAdmin, router],
+    [isAdmin, router, t],
   );
 
   const load = useCallback(async () => {
@@ -149,6 +156,24 @@ export default function PartnersPage() {
           </Link>
         ) : null}
       </header>
+
+      {openError ? (
+        <div
+          role="alert"
+          className="mb-5 flex items-start gap-2.5 rounded-xl border border-amber-200 bg-amber-50 px-3.5 py-3 text-[12.5px] text-amber-900 dark:border-amber-900 dark:bg-amber-950/30 dark:text-amber-100"
+        >
+          <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
+          <span className="min-w-0 flex-1 leading-relaxed">{openError}</span>
+          <button
+            type="button"
+            onClick={() => setOpenError("")}
+            aria-label={t("Dismiss")}
+            className="rounded-md p-0.5 text-amber-800/70 hover:bg-amber-100 hover:text-amber-900 dark:text-amber-200/70 dark:hover:bg-amber-900/40 dark:hover:text-amber-100"
+          >
+            <X className="h-3.5 w-3.5" />
+          </button>
+        </div>
+      ) : null}
 
       {loading ? (
         <div className="flex min-h-[320px] items-center justify-center">

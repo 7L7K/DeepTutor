@@ -46,5 +46,20 @@ export default defineConfig({
       ],
       use: { ...devices["Desktop Chrome"], channel: "chrome" },
     },
+    {
+      // This authenticated proof generates temporary credentials. Keep every
+      // browser artifact off so no trace, video, screenshot, or HAR can retain
+      // a session cookie or typed password in the evidence directory.
+      name: "day2-learner-admin",
+      testMatch: "**/day2-learner-admin.spec.ts",
+      retries: 0,
+      use: {
+        ...devices["Desktop Chrome"],
+        channel: "chrome",
+        trace: "off",
+        video: "off",
+        screenshot: "off",
+      },
+    },
   ],
 });

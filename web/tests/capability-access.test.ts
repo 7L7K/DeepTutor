@@ -1,5 +1,7 @@
-import test from "node:test";
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
+import test from "node:test";
+import path from "node:path";
 
 import {
   adminOnlyForPath,
@@ -10,7 +12,6 @@ import {
 
 test("capabilityForPath maps LLM features to llm", () => {
   assert.equal(capabilityForPath("/home"), null); // Course organization stays available.
-  assert.equal(capabilityForPath("/partners"), "llm");
   assert.equal(capabilityForPath("/co-writer"), "llm");
   assert.equal(capabilityForPath("/book"), "llm");
   assert.equal(capabilityForPath("/space/learning"), null); // Model-free Course learning.
@@ -19,7 +20,6 @@ test("capabilityForPath maps LLM features to llm", () => {
 
 test("capabilityForPath matches nested routes by prefix", () => {
   assert.equal(capabilityForPath("/home/abc-123"), null);
-  assert.equal(capabilityForPath("/partners/partner-1"), "llm");
   assert.equal(capabilityForPath("/space/learning/book-1"), null);
 });
 
@@ -39,6 +39,8 @@ test("capabilityForPath returns null for ungated routes", () => {
   assert.equal(capabilityForPath("/memory"), null);
   assert.equal(capabilityForPath("/space"), null);
   assert.equal(capabilityForPath("/settings"), null);
+  assert.equal(capabilityForPath("/partners"), null);
+  assert.equal(capabilityForPath("/partners/partner-1"), null);
 });
 
 test("adminOnlyForPath protects advanced workspace destinations", () => {
@@ -58,6 +60,33 @@ test("adminOnlyForPath leaves learner destinations available", () => {
   assert.equal(adminOnlyForPath("/space"), false);
   assert.equal(adminOnlyForPath("/space/mcp"), false);
   assert.equal(adminOnlyForPath("/knowledge-base"), false);
+});
+
+test("adminOnlyForPath gates Partner management but not learner discovery", () => {
+  // The list is a learner surface. Only a concrete management page (new or a
+  // partner ID) is admin-only, so CapabilityGate prevents its effects from
+  // issuing admin-only partner API requests for regular users.
+  assert.equal(adminOnlyForPath("/partners"), false);
+  assert.equal(adminOnlyForPath("/partners/"), false);
+  assert.equal(adminOnlyForPath("/partners/new"), true);
+  assert.equal(adminOnlyForPath("/partners/new/"), true);
+  assert.equal(adminOnlyForPath("/partners/study-buddy"), true);
+  assert.equal(adminOnlyForPath("/partners/study-buddy/"), true);
+  assert.equal(adminOnlyForPath("/partners/study-buddy/channels"), true);
+  assert.equal(adminOnlyForPath("/partners//"), true);
+  assert.equal(adminOnlyForPath("/partnerships/new"), false);
+});
+
+test("optional admin gates never redirect learner-safe routes", () => {
+  const source = readFileSync(
+    path.join(process.cwd(), "components/access/AdminGate.tsx"),
+    "utf8",
+  );
+
+  assert.match(
+    source,
+    /const denied =\s+required &&\s+known &&\s+!loading &&\s+enabled &&\s+\(!authenticated \|\| !isAdmin\);/,
+  );
 });
 
 test("adminOnlyForPath matches route segments rather than bare prefixes", () => {

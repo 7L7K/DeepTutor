@@ -21,9 +21,22 @@ export const ADMIN_ONLY_ROUTE_PREFIXES: ReadonlyArray<string> = [
   "/space/cli-apps",
 ];
 
+/**
+ * Partner discovery is learner-safe, but its creation and per-partner pages
+ * manage deployment-wide configuration. Keep this exact-route rule separate
+ * from ADMIN_ONLY_ROUTE_PREFIXES so /partners itself stays available to
+ * learners assigned a Partner.
+ */
+function isPartnerManagementRoute(pathname: string): boolean {
+  if (!pathname.startsWith("/partners/")) return false;
+  return pathname !== "/partners/";
+}
+
 export function adminOnlyForPath(pathname: string): boolean {
-  return ADMIN_ONLY_ROUTE_PREFIXES.some(
-    (prefix) => pathname === prefix || pathname.startsWith(`${prefix}/`),
+  return (
+    ADMIN_ONLY_ROUTE_PREFIXES.some(
+      (prefix) => pathname === prefix || pathname.startsWith(`${prefix}/`),
+    ) || isPartnerManagementRoute(pathname)
   );
 }
 
@@ -41,7 +54,6 @@ export const ROUTE_CAPABILITIES: ReadonlyArray<{
   prefix: string;
   capability: Capability;
 }> = [
-  { prefix: "/partners", capability: "llm" },
   { prefix: "/co-writer", capability: "llm" },
   { prefix: "/book", capability: "llm" },
   { prefix: "/playground", capability: "llm" },

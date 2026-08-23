@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState, type ReactNode } from "react";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { useTranslation } from "react-i18next";
 import {
   AlertTriangle,
@@ -40,6 +40,7 @@ const PAGEINDEX_FORMATS = [
 ];
 const OBSIDIAN_SOURCE = "obsidian";
 const LIGHTRAG_SERVER_PROVIDER = "lightrag-server";
+const IMA_PROVIDER = "ima";
 const EXAMPLE_INDEX_PATH = "/Users/you/knowledge_bases/my-kb";
 const EXAMPLE_VAULT_PATH = "/Users/you/Documents/MyVault";
 const EXAMPLE_SERVER_URL = "http://localhost:9621";
@@ -80,6 +81,8 @@ interface CreateKbModalProps {
   initialMode?: Mode;
   /** Pre-select a link source (engine id or "obsidian") when opening in link mode. */
   initialSource?: string;
+  /** Whether this identity may bind host paths or external servers. */
+  allowExternalConnectors: boolean;
 }
 
 export default function CreateKbModal({
@@ -94,6 +97,7 @@ export default function CreateKbModal({
   onConfigureProvider,
   initialMode = "new",
   initialSource,
+  allowExternalConnectors,
 }: CreateKbModalProps) {
   const { t } = useTranslation();
   const [mode, setMode] = useState<Mode>("new");
@@ -116,7 +120,23 @@ export default function CreateKbModal({
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const firstLinkable = providers.find((p) => p.linkable)?.id;
+  const selectableProviders = useMemo(
+    () =>
+      allowExternalConnectors
+        ? providers
+        : providers.filter(
+            (item) =>
+              item.id !== LIGHTRAG_SERVER_PROVIDER && item.id !== IMA_PROVIDER,
+          ),
+    [allowExternalConnectors, providers],
+  );
+  const firstLinkable = selectableProviders.find((p) => p.linkable)?.id;
+  const effectiveMode = allowExternalConnectors ? mode : "new";
+  const effectiveProvider = selectableProviders.some(
+    (item) => item.id === provider,
+  )
+    ? provider
+    : selectableProviders[0]?.id || "llamaindex";
 
   // Reset the form only on the closed → open transition. While the modal is
   // open, background indexing polls replace `providers` (and friends) every
@@ -126,12 +146,20 @@ export default function CreateKbModal({
     const justOpened = isOpen && !wasOpenRef.current;
     wasOpenRef.current = isOpen;
     if (!justOpened) return;
-    setMode(initialMode);
+    setMode(allowExternalConnectors ? initialMode : "new");
     setName("");
     setFiles([]);
     setError(null);
-    setProvider(initialSource || providers[0]?.id || "llamaindex");
-    setLinkSource(initialSource || firstLinkable || OBSIDIAN_SOURCE);
+    setProvider(
+      allowExternalConnectors && initialSource
+        ? initialSource
+        : selectableProviders[0]?.id || "llamaindex",
+    );
+    setLinkSource(
+      allowExternalConnectors
+        ? initialSource || firstLinkable || OBSIDIAN_SOURCE
+        : OBSIDIAN_SOURCE,
+    );
     setFolderPath("");
     setProbe(null);
     setProbing(false);
@@ -140,7 +168,14 @@ export default function CreateKbModal({
     setServerMode("");
     setServerProbe(null);
     setServerProbing(false);
-  }, [isOpen, providers, firstLinkable, initialMode, initialSource]);
+  }, [
+    isOpen,
+    selectableProviders,
+    firstLinkable,
+    initialMode,
+    initialSource,
+    allowExternalConnectors,
+  ]);
 
   // A fresh path / source invalidates a stale probe verdict.
   useEffect(() => {
@@ -153,12 +188,16 @@ export default function CreateKbModal({
   }, [serverUrl, apiKey]);
 
   // ---- New mode (build a fresh index) ----------------------------------
-  const activeProvider = providers.find((p) => p.id === provider);
+  const activeProvider = selectableProviders.find(
+    (p) => p.id === effectiveProvider,
+  );
   const providerNeedsKey =
     !!activeProvider?.requires_api_key && activeProvider?.configured === false;
   const providerUnavailable = activeProvider?.configured === false;
-  const isPageIndex = provider === "pageindex";
-  const isLightRagServer = provider === LIGHTRAG_SERVER_PROVIDER;
+  const isPageIndex = effectiveProvider === "pageindex";
+  const isLightRagServer =
+    allowExternalConnectors &&
+    effectiveProvider === LIGHTRAG_SERVER_PROVIDER;
   const serverModeOptions = activeProvider?.modes ?? [];
   const effectiveServerMode =
     serverMode || activeProvider?.default_mode || serverModeOptions[0] || "";
@@ -183,21 +222,27 @@ export default function CreateKbModal({
   const canSubmit = (() => {
     if (submitting) return false;
     if (!trimmed) return false;
-    if (mode === "new") {
+    if (effectiveMode === "new") {
       if (isLightRagServer) {
         // The connection must pass the test before a KB is bound to it.
         return !!trimmedServerUrl && !!serverProbe?.ok;
       }
       return !providerUnavailable && selection.validFiles.length > 0;
     }
-    if (!trimmedPath) return false;
+    if (!allowExternalConnectors || !trimmedPath) return false;
     if (linkIsObsidian) return true;
     // An engine index must pass the probe before it can be linked.
     return !!probe?.ok;
   })();
 
   const handleProbe = async () => {
-    if (!trimmedPath || linkIsObsidian || probing) return;
+    if (
+      !allowExternalConnectors ||
+      !trimmedPath ||
+      linkIsObsidian ||
+      probing
+    )
+      return;
     setProbing(true);
     setError(null);
     try {
@@ -214,7 +259,7 @@ export default function CreateKbModal({
   };
 
   const handleTestServer = async () => {
-    if (!trimmedServerUrl || serverProbing) return;
+    if (!allowExternalConnectors || !trimmedServerUrl || serverProbing) return;
     setServerProbing(true);
     setError(null);
     try {
@@ -235,7 +280,7 @@ export default function CreateKbModal({
     setSubmitting(true);
     setError(null);
     try {
-      if (mode === "new") {
+      if (effectiveMode === "new") {
         if (isLightRagServer) {
           await onConnectLightRagServer({
             name: trimmed,
@@ -246,13 +291,13 @@ export default function CreateKbModal({
         } else {
           await onCreate({
             name: trimmed,
-            provider,
+            provider: effectiveProvider,
             files: selection.validFiles,
           });
         }
-      } else if (linkIsObsidian) {
+      } else if (allowExternalConnectors && linkIsObsidian) {
         await onConnectObsidian({ name: trimmed, vaultPath: trimmedPath });
-      } else {
+      } else if (allowExternalConnectors) {
         await onConnectLinkedFolder({
           name: trimmed,
           folderPath: trimmedPath,
@@ -268,7 +313,7 @@ export default function CreateKbModal({
   };
 
   const submitLabel =
-    mode === "new"
+    effectiveMode === "new"
       ? isLightRagServer
         ? t("Connect")
         : t("Create")
@@ -303,7 +348,7 @@ export default function CreateKbModal({
           >
             {submitting ? (
               <Loader2 className="h-3.5 w-3.5 animate-spin" />
-            ) : mode === "new" && !isLightRagServer ? (
+            ) : effectiveMode === "new" && !isLightRagServer ? (
               <Plus size={14} />
             ) : (
               <Link2 size={14} />
@@ -316,9 +361,10 @@ export default function CreateKbModal({
       <div className="space-y-4 px-5 py-4">
         {/* New vs. link existing */}
         <ModeToggle
-          mode={mode}
+          mode={effectiveMode}
           onChange={setMode}
           disabled={submitting}
+          allowLink={allowExternalConnectors}
           t={t}
         />
 
@@ -336,10 +382,10 @@ export default function CreateKbModal({
           />
         </div>
 
-        {mode === "new" ? (
+        {effectiveMode === "new" ? (
           <NewModeFields
-            providers={providers}
-            provider={provider}
+            providers={selectableProviders}
+            provider={effectiveProvider}
             setProvider={setProvider}
             submitting={submitting}
             providerUnavailable={providerUnavailable}
@@ -403,14 +449,16 @@ function ModeToggle({
   mode,
   onChange,
   disabled,
+  allowLink,
   t,
 }: {
   mode: Mode;
   onChange: (mode: Mode) => void;
   disabled: boolean;
+  allowLink: boolean;
   t: TFn;
 }) {
-  const options: {
+  const allOptions: {
     id: Mode;
     label: string;
     hint: string;
@@ -431,8 +479,11 @@ function ModeToggle({
       icon: Link2,
     },
   ];
+  const options = allOptions.filter(
+    (option) => allowLink || option.id === "new",
+  );
   return (
-    <div className="grid grid-cols-2 gap-2">
+    <div className={`grid gap-2 ${allowLink ? "grid-cols-2" : "grid-cols-1"}`}>
       {options.map((opt) => {
         const selected = mode === opt.id;
         const Icon = opt.icon;

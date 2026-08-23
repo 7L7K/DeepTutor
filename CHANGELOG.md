@@ -7,6 +7,26 @@
   projection while backend models, prompts, and execution permissions remain
   admin-only.
 
+- Hardened the school-ready multi-user boundary around subagents and Partners.
+  Subagent execution policy now always resolves from deployment-owned settings,
+  Partner assignments are revalidated whenever a saved connection is listed or
+  used, host-local CLI connections cannot be assigned to or activated by a
+  learner, and missing authenticated request context now fails closed instead
+  of inheriting local-administrator authority. Learner-safe Partner discovery
+  remains available while management deep links stay administrator-only.
+
+- Restricted learner Knowledge Base configuration to existing, writable bases
+  and reviewed retrieval fields, with learner-safe read/write responses that do
+  not expose stored paths or connector credentials. Host-folder and external
+  connector workflows are now administrator-only, generic grants exclude live
+  connected resources, and legacy learner pointer metadata remains inert. The
+  browser now hides those deployment controls unless administrator status is
+  confirmed. Legacy `/settings/mcp` links now carry learners to the account-safe
+  `/space/mcp` surface while the deployment registry remains administrator-only.
+  Added a disposable learner/admin browser campaign that records the safe
+  projections, denied admin surfaces, route gates, and browser errors without
+  touching real account data.
+
 - Added the learner Course surfaces for local-first beta qualification: distinct
   Overview, Practice, Flashcards, and Materials flows; Course-grounded quiz and
   flashcard creation; editable learner cards; and admin-only navigation and

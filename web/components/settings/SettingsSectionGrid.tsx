@@ -6,6 +6,7 @@ import { useTranslation } from "react-i18next";
 import { ArrowUpRight } from "lucide-react";
 
 import { useAuthStatus } from "@/hooks/useAuthStatus";
+import { canManageDeployment } from "@/lib/auth-status";
 import {
   serviceReadiness,
   useSettings,
@@ -35,12 +36,11 @@ export default function SettingsSectionGrid({
 
   const category = SETTINGS_CATEGORIES.find((c) => c.key === categoryKey);
 
-  const { enabled: authEnabled, isAdmin, loading: authLoading } =
-    useAuthStatus();
+  const authStatus = useAuthStatus();
   // Keep restricted leaves hidden during auth resolution. Local auth-disabled
   // runs briefly show the learner-safe view, then reveal the admin view once
   // the local implicit-admin status is confirmed.
-  const hideAdminOnly = authLoading || (authEnabled && !isAdmin);
+  const hideAdminOnly = !canManageDeployment(authStatus);
 
   const chipFor = useCallback(
     (

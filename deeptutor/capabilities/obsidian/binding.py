@@ -19,8 +19,22 @@ from deeptutor.knowledge.kb_types import OBSIDIAN_KB_TYPE
 _CACHE_KEY = "_obsidian_vault"
 
 
+def _current_user_is_admin() -> bool:
+    from deeptutor.multi_user.context import MissingCurrentUserContext, get_current_user
+
+    try:
+        return get_current_user().is_admin
+    except MissingCurrentUserContext:
+        return False
+
+
 def vault_for_turn(context: UnifiedContext) -> dict[str, str] | None:
     """Return ``{"name", "path"}`` of the selected Obsidian vault, or ``None``."""
+    # Check before consulting the per-turn cache so an accidentally reused
+    # context cannot carry an administrator's resolved host path into a learner
+    # request.
+    if not _current_user_is_admin():
+        return None
     cached = context.metadata.get(_CACHE_KEY, _UNSET)
     if cached is not _UNSET:
         return cached or None
@@ -31,6 +45,12 @@ def vault_for_turn(context: UnifiedContext) -> dict[str, str] | None:
 
 def _resolve(context: UnifiedContext) -> dict[str, str] | None:
     from deeptutor.multi_user.knowledge_access import resolve_kb_metadata
+
+    # A vault path is host-filesystem authority. Keep this capability inert for
+    # learners even if stale metadata or a future caller bypasses the central
+    # connected-KB resolver.
+    if not _current_user_is_admin():
+        return None
 
     for ref in context.knowledge_bases or []:
         ref = str(ref).strip()
@@ -53,6 +73,9 @@ def obsidian_vault_refs(context: UnifiedContext) -> set[str]:
     from the ``rag`` surface — ``rag`` has no index for a live vault (issue #650).
     """
     from deeptutor.multi_user.knowledge_access import resolve_kb_metadata
+
+    if not _current_user_is_admin():
+        return set()
 
     refs: set[str] = set()
     for ref in context.knowledge_bases or []:

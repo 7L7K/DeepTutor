@@ -82,6 +82,22 @@ class PartnerBackend(SubagentBackend):
         if not pid:
             return ConsultResult(success=False, error="No partner is bound to this connection.")
 
+        # HTTP and capability callers both revalidate before reaching this
+        # backend. Keep the authoritative assignment guard here too so a future
+        # caller cannot turn persisted connection metadata into access after a
+        # grant was revoked.
+        from fastapi import HTTPException
+
+        from deeptutor.multi_user.context import MissingCurrentUserContext
+        from deeptutor.multi_user.partner_access import assert_partner_allowed
+
+        try:
+            assert_partner_allowed(pid)
+        except HTTPException as exc:
+            return ConsultResult(success=False, error=str(exc.detail))
+        except MissingCurrentUserContext as exc:
+            return ConsultResult(success=False, error=str(exc))
+
         from deeptutor.services.partners import get_partner_manager
 
         manager = get_partner_manager()

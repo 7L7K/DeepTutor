@@ -71,10 +71,11 @@ def _project_card(partner: dict[str, Any]) -> dict[str, Any]:
 def visible_partner_cards() -> list[dict[str, Any]]:
     """Partners the current user may consult: all for an admin, or just the
     assigned subset for a non-admin. Returns identity-only card dicts."""
+    user = get_current_user()
+
     from deeptutor.services.partners import get_partner_manager
 
     everything = get_partner_manager().list_partners()
-    user = get_current_user()
     if user.is_admin:
         return [_project_card(item) for item in everything]
     allowed = assigned_partner_ids(user.id)

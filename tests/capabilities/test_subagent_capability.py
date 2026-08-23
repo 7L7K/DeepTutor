@@ -26,12 +26,25 @@ from deeptutor.services.subagent.config import BackendConfig
 from deeptutor.services.subagent.types import ConsultResult, SubagentEvent
 
 
-def _bind(monkeypatch, *, kind: str = "claude_code", cwd: str = "", name: str = "myagent") -> None:
+def _bind(
+    monkeypatch,
+    *,
+    kind: str = "claude_code",
+    cwd: str = "",
+    name: str = "myagent",
+    partner_id: str = "",
+) -> None:
     """Make ``resolve_kb_metadata`` report ``name`` as a connected subagent."""
     monkeypatch.setattr(
         "deeptutor.multi_user.knowledge_access.resolve_kb_metadata",
         lambda ref: (
-            {"name": ref, "type": "subagent", "agent_kind": kind, "cwd": cwd}
+            {
+                "name": ref,
+                "type": "subagent",
+                "agent_kind": kind,
+                "cwd": cwd,
+                "partner_id": partner_id,
+            }
             if ref == name
             else {"name": ref, "type": None}
         ),
@@ -108,6 +121,152 @@ def test_binding_cached(monkeypatch) -> None:
     subagent_binding.connection_for_turn(ctx)
     subagent_binding.connection_for_turn(ctx)
     assert calls["n"] == 1  # second call hits the per-turn cache
+
+
+def test_cached_admin_local_connection_cannot_replay_for_learner(
+    monkeypatch,
+    tmp_path,
+) -> None:
+    """A cached binding is data, not authority across principal changes."""
+    from deeptutor.multi_user.context import reset_current_user, set_current_user
+    from deeptutor.multi_user.models import CurrentUser, UserScope
+
+    _bind(monkeypatch, kind="claude_code", name="AdminClaude", cwd="/admin/workspace")
+    ctx = UnifiedContext(user_message="hi", knowledge_bases=["AdminClaude"])
+    admin = CurrentUser(
+        id="u_admin",
+        username="admin",
+        role="admin",
+        scope=UserScope(kind="admin", user_id="u_admin", root=tmp_path / "admin"),
+    )
+    learner = CurrentUser(
+        id="u_learner",
+        username="learner",
+        role="user",
+        scope=UserScope(kind="user", user_id="u_learner", root=tmp_path / "learner"),
+    )
+
+    admin_token = set_current_user(admin)
+    try:
+        assert subagent_binding.connection_for_turn(ctx) is not None
+    finally:
+        reset_current_user(admin_token)
+
+    learner_token = set_current_user(learner)
+    try:
+        assert subagent_binding.connection_for_turn(ctx) is None
+        assert SubagentCapability().is_active(ctx) is False
+    finally:
+        reset_current_user(learner_token)
+
+
+def test_cached_admin_local_connection_cannot_replay_without_auth_context(
+    monkeypatch,
+    tmp_path,
+) -> None:
+    from deeptutor.multi_user import context as user_context
+    from deeptutor.multi_user.models import CurrentUser, UserScope
+    from deeptutor.services import auth as auth_service
+
+    _bind(monkeypatch, kind="claude_code", name="AdminClaude", cwd="/admin/workspace")
+    ctx = UnifiedContext(user_message="hi", knowledge_bases=["AdminClaude"])
+    admin = CurrentUser(
+        id="u_admin",
+        username="admin",
+        role="admin",
+        scope=UserScope(kind="admin", user_id="u_admin", root=tmp_path / "admin"),
+    )
+    admin_token = user_context.set_current_user(admin)
+    try:
+        assert subagent_binding.connection_for_turn(ctx) is not None
+    finally:
+        user_context.reset_current_user(admin_token)
+
+    monkeypatch.setattr(auth_service, "AUTH_ENABLED", True)
+    empty_token = user_context._current_user.set(None)
+    try:
+        assert subagent_binding.connection_for_turn(ctx) is None
+        assert SubagentCapability().is_active(ctx) is False
+    finally:
+        user_context.reset_current_user(empty_token)
+
+
+def test_local_subagent_binding_is_reserved_for_admins(monkeypatch, tmp_path) -> None:
+    """Assigned metadata cannot let a learner activate a host CLI."""
+    from deeptutor.multi_user.context import reset_current_user, set_current_user
+    from deeptutor.multi_user.models import CurrentUser, UserScope
+
+    _bind(monkeypatch, kind="claude_code", name="AdminClaude", cwd="/admin/workspace")
+    cap = SubagentCapability()
+
+    learner = CurrentUser(
+        id="u_learner",
+        username="learner",
+        role="user",
+        scope=UserScope(kind="user", user_id="u_learner", root=tmp_path / "learner"),
+    )
+    learner_token = set_current_user(learner)
+    try:
+        learner_turn = UnifiedContext(user_message="hi", knowledge_bases=["AdminClaude"])
+        assert subagent_binding.connection_for_turn(learner_turn) is None
+        assert cap.is_active(learner_turn) is False
+        assert subagent_binding.subagent_refs(learner_turn) == set()
+    finally:
+        reset_current_user(learner_token)
+
+    admin = CurrentUser(
+        id="u_admin",
+        username="admin",
+        role="admin",
+        scope=UserScope(kind="admin", user_id="u_admin", root=tmp_path / "admin"),
+    )
+    admin_token = set_current_user(admin)
+    try:
+        admin_turn = UnifiedContext(user_message="hi", knowledge_bases=["AdminClaude"])
+        assert cap.is_active(admin_turn) is True
+        assert subagent_binding.connection_for_turn(admin_turn) == {
+            "name": "AdminClaude",
+            "kind": "claude_code",
+            "cwd": "/admin/workspace",
+            "partner_id": "",
+        }
+    finally:
+        reset_current_user(admin_token)
+
+
+def test_revoked_partner_binding_is_inert_before_the_consult_tool(monkeypatch) -> None:
+    """A persisted Partner KB is not sufficient after its grant is revoked."""
+    from fastapi import HTTPException
+    from deeptutor.multi_user import partner_access
+
+    allowed = {"value": True}
+
+    def recheck_assignment(partner_id: str) -> None:
+        assert partner_id == "paul"
+        if not allowed["value"]:
+            raise HTTPException(status_code=403, detail="Partner is not assigned to you")
+
+    monkeypatch.setattr(partner_access, "assert_partner_allowed", recheck_assignment)
+    _bind(monkeypatch, kind="partner", name="Paul", partner_id="paul")
+    cap = SubagentCapability()
+
+    partner_turn = UnifiedContext(user_message="hi", knowledge_bases=["Paul"])
+    assert cap.is_active(partner_turn) is True
+
+    allowed["value"] = False
+    # Reusing the exact context must not replay the cached, formerly-authorized
+    # Partner connection after its grant changes.
+    assert subagent_binding.connection_for_turn(partner_turn) is None
+    assert cap.is_active(partner_turn) is False
+    revoked_turn = UnifiedContext(user_message="hi", knowledge_bases=["Paul"])
+    assert subagent_binding.connection_for_turn(revoked_turn) is None
+    assert cap.is_active(revoked_turn) is False
+    assert subagent_binding.subagent_refs(revoked_turn) == set()
+    # Without a server-injected connection spec, the consult tool cannot invoke
+    # a Partner for the revoked selection.
+    assert cap.augment_kwargs("consult_subagent", {"question": "q"}, revoked_turn) == {
+        "question": "q"
+    }
 
 
 # ---- exclusivity -------------------------------------------------------------
@@ -236,6 +395,140 @@ async def test_consult_budget_is_authoritative(monkeypatch) -> None:
     assert refused.success is False
     assert "budget" in refused.content.lower()
     assert len(backend.calls) == 1  # backend never invoked the second time
+
+
+@pytest.mark.asyncio
+async def test_learner_tool_refuses_local_spec_before_backend_or_budget(
+    monkeypatch,
+    tmp_path,
+) -> None:
+    """The execution seam rejects forged/stale local CLI specs without side effects."""
+    from deeptutor.multi_user.context import reset_current_user, set_current_user
+    from deeptutor.multi_user.models import CurrentUser, UserScope
+
+    calls: list[str] = []
+
+    def should_not_resolve_backend(kind: str):
+        calls.append(kind)
+        raise AssertionError("learner local CLI spec must not reach backend resolution")
+
+    monkeypatch.setattr("deeptutor.services.subagent.get_backend", should_not_resolve_backend)
+    learner = CurrentUser(
+        id="u_learner",
+        username="learner",
+        role="user",
+        scope=UserScope(kind="user", user_id="u_learner", root=tmp_path / "learner"),
+    )
+    token = set_current_user(learner)
+    try:
+        state = {"count": 0, "session_id": None, "name": "AdminClaude"}
+        result = await ConsultSubagentTool().execute(
+            question="hello",
+            _subagent={
+                "kind": "claude_code",
+                "cwd": "/admin/workspace",
+                "name": "AdminClaude",
+                "budget": 2,
+                "config": BackendConfig(),
+                "state": state,
+            },
+        )
+    finally:
+        reset_current_user(token)
+
+    assert result.success is False
+    assert "administrator" in result.content.lower()
+    assert calls == []
+    assert state == {"count": 0, "session_id": None, "name": "AdminClaude"}
+
+
+@pytest.mark.asyncio
+async def test_missing_auth_context_refuses_spec_before_backend_or_budget(monkeypatch) -> None:
+    """A lost auth ContextVar is denial, never implicit local-admin authority."""
+    from deeptutor.multi_user import context as user_context
+    from deeptutor.services import auth as auth_service
+
+    calls: list[str] = []
+
+    def should_not_resolve_backend(kind: str):
+        calls.append(kind)
+        raise AssertionError("missing authority must not reach backend resolution")
+
+    monkeypatch.setattr(auth_service, "AUTH_ENABLED", True)
+    monkeypatch.setattr("deeptutor.services.subagent.get_backend", should_not_resolve_backend)
+    token = user_context._current_user.set(None)
+    state = {"count": 0, "session_id": None, "name": "AdminClaude"}
+    try:
+        result = await ConsultSubagentTool().execute(
+            question="hello",
+            _subagent={
+                "kind": "claude_code",
+                "cwd": "/admin/workspace",
+                "name": "AdminClaude",
+                "budget": 2,
+                "config": BackendConfig(),
+                "state": state,
+            },
+        )
+    finally:
+        user_context.reset_current_user(token)
+
+    assert result.success is False
+    assert "context is unavailable" in result.content.lower()
+    assert calls == []
+    assert state == {"count": 0, "session_id": None, "name": "AdminClaude"}
+
+
+@pytest.mark.asyncio
+async def test_revoked_partner_spec_refuses_before_backend_or_budget(
+    monkeypatch,
+    tmp_path,
+) -> None:
+    from fastapi import HTTPException
+
+    from deeptutor.multi_user import partner_access
+    from deeptutor.multi_user.context import reset_current_user, set_current_user
+    from deeptutor.multi_user.models import CurrentUser, UserScope
+
+    calls: list[str] = []
+
+    def deny(partner_id: str) -> None:
+        assert partner_id == "paul"
+        raise HTTPException(status_code=403, detail="Partner is not assigned to you")
+
+    def should_not_resolve_backend(kind: str):
+        calls.append(kind)
+        raise AssertionError("revoked Partner spec must not reach backend resolution")
+
+    monkeypatch.setattr(partner_access, "assert_partner_allowed", deny)
+    monkeypatch.setattr("deeptutor.services.subagent.get_backend", should_not_resolve_backend)
+    learner = CurrentUser(
+        id="u_learner",
+        username="learner",
+        role="user",
+        scope=UserScope(kind="user", user_id="u_learner", root=tmp_path / "learner"),
+    )
+    token = set_current_user(learner)
+    state = {"count": 0, "session_id": None, "name": "Paul"}
+    try:
+        result = await ConsultSubagentTool().execute(
+            question="hello",
+            _subagent={
+                "kind": "partner",
+                "partner_id": "paul",
+                "name": "Paul",
+                "budget": 2,
+                "config": BackendConfig(),
+                "state": state,
+            },
+        )
+    finally:
+        reset_current_user(token)
+
+    assert result.success is False
+    assert result.content == "Partner is not assigned to you"
+    assert calls == []
+    assert state == {"count": 0, "session_id": None, "name": "Paul"}
 
 
 @pytest.mark.asyncio

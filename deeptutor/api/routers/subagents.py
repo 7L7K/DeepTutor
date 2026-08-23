@@ -116,8 +116,16 @@ async def list_connections():
         meta = manager.get_metadata(name)
         if not isinstance(meta, dict) or meta.get("type") != SUBAGENT_KB_TYPE:
             continue
-        if not get_current_user().is_admin and meta.get("agent_kind") != PARTNER_BACKEND_KIND:
-            continue
+        if not get_current_user().is_admin:
+            if meta.get("agent_kind") != PARTNER_BACKEND_KIND:
+                continue
+            # Connections persist as KB metadata, while partner assignments can
+            # be revoked at any time. Never surface a stale connection as usable
+            # to a learner merely because it was permitted when first created.
+            try:
+                assert_partner_allowed(str(meta.get("partner_id") or ""))
+            except HTTPException:
+                continue
         connections.append(
             {
                 "name": name,
@@ -244,6 +252,12 @@ async def message_connection(name: str, payload: SubagentMessageRequest):
         raise HTTPException(status_code=404, detail=f"No connected subagent named {name!r}.")
     if not get_current_user().is_admin and meta.get("agent_kind") != PARTNER_BACKEND_KIND:
         raise HTTPException(status_code=403, detail="Administrator access required.")
+
+    # A Partner connection records its target for convenience, not as a durable
+    # authorization grant. Re-check the current assignment before starting the
+    # stream so a revoked learner cannot drive the Partner through a stale KB.
+    if meta.get("agent_kind") == PARTNER_BACKEND_KIND:
+        assert_partner_allowed(str(meta.get("partner_id") or ""))
 
     from deeptutor.services.subagent import get_backend
     from deeptutor.services.subagent.sessions import get_session, remember_session, session_key

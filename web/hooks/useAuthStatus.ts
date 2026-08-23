@@ -2,24 +2,13 @@
 
 import { useEffect, useState } from "react";
 import { fetchAuthStatus } from "@/lib/auth";
+import {
+  INITIAL_AUTH_STATUS,
+  projectAuthStatus,
+  type AuthStatusState,
+} from "@/lib/auth-status";
 
-export interface AuthStatusState {
-  /** Whether auth is enabled on the backend. */
-  enabled: boolean;
-  /** Whether the current session is authenticated. */
-  authenticated: boolean;
-  /** Whether the authenticated user is an admin. */
-  isAdmin: boolean;
-  /** True until the first status fetch resolves. */
-  loading: boolean;
-}
-
-const INITIAL: AuthStatusState = {
-  enabled: false,
-  authenticated: false,
-  isAdmin: false,
-  loading: true,
-};
+export type { AuthStatusState } from "@/lib/auth-status";
 
 /**
  * Resolve auth state at runtime from the backend (`/api/v1/auth/status`).
@@ -40,12 +29,7 @@ let inflight: Promise<AuthStatusState> | null = null;
 function loadAuthStatus(): Promise<AuthStatusState> {
   if (!inflight) {
     inflight = fetchAuthStatus()
-      .then((status) => ({
-        enabled: Boolean(status?.enabled),
-        authenticated: Boolean(status?.authenticated),
-        isAdmin: status?.role === "admin",
-        loading: false,
-      }))
+      .then(projectAuthStatus)
       .finally(() => {
         inflight = null;
       });
@@ -54,7 +38,7 @@ function loadAuthStatus(): Promise<AuthStatusState> {
 }
 
 export function useAuthStatus(): AuthStatusState {
-  const [state, setState] = useState<AuthStatusState>(INITIAL);
+  const [state, setState] = useState<AuthStatusState>(INITIAL_AUTH_STATUS);
 
   useEffect(() => {
     let alive = true;

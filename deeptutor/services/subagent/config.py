@@ -22,8 +22,6 @@ import json
 import logging
 from typing import Any
 
-from deeptutor.services.path_service import get_path_service
-
 logger = logging.getLogger(__name__)
 
 _SETTINGS_FILE = "subagent.json"
@@ -137,7 +135,20 @@ def _coerce_backend(raw: Any) -> BackendConfig:
 
 
 def _settings_path():
-    return get_path_service().get_settings_file(_SETTINGS_FILE)
+    """Return the deployment-owned settings file for every request scope.
+
+    Subagent configuration controls which local CLI is invoked and the
+    permission/sandbox policy used to invoke it.  It is therefore deployment
+    authority, not learner preference: resolving it through the ambient path
+    service would let an authenticated learner's private workspace shadow the
+    administrator's configured budget or backend policy.
+
+    Import at call time so tests and embedders that redirect the multi-user
+    admin path keep their existing monkeypatch seam.
+    """
+    from deeptutor.multi_user.paths import get_admin_path_service
+
+    return get_admin_path_service().get_settings_file(_SETTINGS_FILE)
 
 
 def settings_from_dict(raw: Any) -> SubagentSettings:

@@ -27,7 +27,7 @@ type Tab = "installed" | "store";
  */
 export default function McpStoreSection() {
   const { t } = useTranslation();
-  const { isAdmin, loading: authLoading } = useAuthStatus();
+  const { known: authKnown, isAdmin, loading: authLoading } = useAuthStatus();
   const mcp = useMcpServers(SPACE_MCP_SURFACE);
   const [tab, setTab] = useState<Tab>("installed");
 
@@ -185,7 +185,7 @@ export default function McpStoreSection() {
                     are editable, so listing them read-only as well would show
                     every row twice. Held back until the role is known rather
                     than flashing the read-only list at an admin. */}
-                {authLoading ? null : isAdmin ? (
+                {authLoading || !authKnown ? null : isAdmin ? (
                   <McpAdminRegistry />
                 ) : (
                   view && (

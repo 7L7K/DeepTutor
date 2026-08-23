@@ -32,15 +32,14 @@ import type { SessionSummary } from "@/lib/session-api";
 import { Tooltip } from "@/components/ui/Tooltip";
 import { useCapabilityAccess } from "@/components/access/CapabilityAccessContext";
 import { useAuthStatus } from "@/hooks/useAuthStatus";
-import type { Capability } from "@/lib/capability-routes";
+import { canManageDeployment } from "@/lib/auth-status";
+import { capabilityForPath } from "@/lib/capability-routes";
 
 interface NavEntry {
   href: string;
   label: string;
   icon: LucideIcon;
   tooltipKey?: string;
-  /** Model capability this feature needs; locked when the user lacks it. */
-  requires?: Capability;
   /** Deployment-wide or advanced workspace surface reserved for admins. */
   adminOnly?: boolean;
 }
@@ -91,14 +90,12 @@ const MORE_NAV: NavEntry[] = [
     label: "Partners",
     icon: HeartHandshake,
     tooltipKey: "Partners tooltip",
-    requires: "llm",
   },
   {
     href: "/co-writer",
     label: "Co-Writer",
     icon: PenLine,
     tooltipKey: "Co-Writer tooltip",
-    requires: "llm",
     adminOnly: true,
   },
   {
@@ -106,7 +103,6 @@ const MORE_NAV: NavEntry[] = [
     label: "Book",
     icon: Library,
     tooltipKey: "Book tooltip",
-    requires: "llm",
     adminOnly: true,
   },
   {
@@ -165,8 +161,7 @@ export function SidebarShell({
   const router = useRouter();
   const { t } = useTranslation();
   const { has } = useCapabilityAccess();
-  const { enabled: authEnabled, isAdmin: authIsAdmin, loading: authLoading } =
-    useAuthStatus();
+  const authStatus = useAuthStatus();
   const { sidebarCollapsed, setSidebarCollapsed: setCollapsed } = useAppShell();
   const { isMobile } = useDevice();
   const drawer = useSidebarDrawer();
@@ -187,13 +182,18 @@ export function SidebarShell({
     drawer?.close();
   };
 
-  const navLocked = (item: NavEntry) =>
-    item.requires ? !has(item.requires) : false;
+  // Keep navigation and direct-route capability policy on the same authority.
+  // In particular, Partner discovery is model-free even though starting a
+  // normal chat may still require the learner's assigned LLM.
+  const navLocked = (item: NavEntry) => {
+    const capability = capabilityForPath(item.href);
+    return capability ? !has(capability) : false;
+  };
   const lockedTooltip = t("Locked — contact your administrator to get access.");
   // Hide admin-only destinations while auth is resolving so an ordinary user
   // never gets a clickable flash of deployment-wide controls. Auth-disabled
   // local runs resolve as the implicit admin and keep the full menu.
-  const canSeeAdminOnly = !authLoading && (!authEnabled || authIsAdmin);
+  const canSeeAdminOnly = canManageDeployment(authStatus);
   const visibleMoreNav = MORE_NAV.filter(
     (item) => !navLocked(item) && (!item.adminOnly || canSeeAdminOnly),
   );

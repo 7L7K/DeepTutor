@@ -24,6 +24,7 @@ import { listPersonas } from "@/lib/personas-api";
 import { listSkills } from "@/lib/skills-api";
 import { fetchAllProgress } from "@/lib/learning-api";
 import { useAuthStatus } from "@/hooks/useAuthStatus";
+import { canManageDeployment } from "@/lib/auth-status";
 
 /**
  * Learning Space dashboard — the hub of `/space`.
@@ -194,11 +195,10 @@ const ADMIN_ONLY_ITEMS = new Set<DashKey>(["cli_apps"]);
 
 export default function SpaceDashboard() {
   const { i18n } = useTranslation();
-  const { enabled: authEnabled, isAdmin, loading: authLoading } =
-    useAuthStatus();
+  const authStatus = useAuthStatus();
   const zh = i18n.language?.toLowerCase().startsWith("zh");
   const tr = useCallback((l: Lang) => (zh ? l.zh : l.en), [zh]);
-  const canSeeAdminItems = !authLoading && (!authEnabled || isAdmin);
+  const canSeeAdminItems = canManageDeployment(authStatus);
   const visibleGroups = useMemo(
     () =>
       GROUPS.map((group) => ({

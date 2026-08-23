@@ -340,6 +340,62 @@ def test_message_connection_unknown_is_404(client):
     assert res.status_code == 404
 
 
+def test_revoked_partner_connection_is_hidden_and_cannot_be_messaged(client, monkeypatch):
+    """A connection created before revocation never remains a usable capability."""
+    from fastapi import HTTPException
+
+    _patch_partner_existence(monkeypatch, {"paul"})
+    created = client.post(
+        "/api/v1/subagents/connections",
+        json={"name": "Paul", "agent_kind": "partner", "partner_id": "paul"},
+    )
+    assert created.status_code == 200
+
+    allowed = {"value": True}
+
+    def recheck_assignment(partner_id: str) -> None:
+        assert partner_id == "paul"
+        if not allowed["value"]:
+            raise HTTPException(status_code=403, detail="Partner is not assigned to you")
+
+    monkeypatch.setattr(
+        subagents_module,
+        "get_current_user",
+        lambda: SimpleNamespace(is_admin=False),
+    )
+    monkeypatch.setattr(subagents_module, "assert_partner_allowed", recheck_assignment)
+
+    assert client.get("/api/v1/subagents/connections").json()["connections"] == [
+        {
+            "name": "Paul",
+            "agent_kind": "partner",
+            "cwd": "",
+            "partner_id": "paul",
+            "description": "Connected subagent: Paul",
+            "created_at": None,
+            "updated_at": None,
+        }
+    ]
+
+    allowed["value"] = False
+    # Revocation hides the retained pointer instead of presenting it as usable.
+    assert client.get("/api/v1/subagents/connections").json()["connections"] == []
+
+    calls: list[object] = []
+
+    def should_not_resolve_backend(_kind: str):
+        calls.append(_kind)
+        raise AssertionError("a revoked partner must not reach backend resolution")
+
+    monkeypatch.setattr("deeptutor.services.subagent.get_backend", should_not_resolve_backend)
+    denied = client.post(
+        "/api/v1/subagents/connections/Paul/message",
+        json={"chat_session_id": "chatA", "message": "hello"},
+    )
+    assert denied.status_code == 403
+    assert calls == []
+
+
 def test_backend_sync_endpoint(client, monkeypatch):
     from deeptutor.services.subagent import models as models_mod
     from deeptutor.services.subagent.models import BackendOptions, ModelOption

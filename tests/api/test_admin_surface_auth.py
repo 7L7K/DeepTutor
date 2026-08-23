@@ -115,6 +115,49 @@ def test_deployment_wide_knowledge_settings_are_admin_only() -> None:
         ), f"{method} {path} must require admin access"
 
 
+def test_host_path_and_external_connector_knowledge_routes_are_admin_only() -> None:
+    module = importlib.import_module("deeptutor.api.routers.knowledge")
+    routes = {
+        (route.path, frozenset(route.methods)): route
+        for route in module.router.routes
+        if hasattr(route, "methods")
+    }
+
+    for path, method in (
+        ("/configs", "GET"),
+        ("/configs/sync", "POST"),
+        ("/connect-obsidian", "POST"),
+        ("/probe-folder", "POST"),
+        ("/connect-folder", "POST"),
+        ("/probe-lightrag-server", "POST"),
+        ("/connect-lightrag-server", "POST"),
+        ("/probe-ima", "POST"),
+        ("/connect-ima", "POST"),
+        ("/{kb_name}/link-folder", "POST"),
+        ("/{kb_name}/linked-folders", "GET"),
+        ("/{kb_name}/linked-folders/{folder_id}", "DELETE"),
+        ("/{kb_name}/sync-folder/{folder_id}", "POST"),
+    ):
+        route = routes[(path, frozenset({method}))]
+        assert any(
+            dependency.call is require_admin for dependency in route.dependant.dependencies
+        ), f"{method} {path} must require admin access"
+
+    # Learner-owned KB creation, upload, and content reads keep their existing
+    # authenticated-user policy; this change must not turn them into admin APIs.
+    for path, method in (
+        ("/create", "POST"),
+        ("/{kb_name}/upload", "POST"),
+        ("/{kb_name}", "GET"),
+        ("/{kb_name}/files", "GET"),
+        ("/{kb_name}/config", "GET"),
+    ):
+        route = routes[(path, frozenset({method}))]
+        assert all(
+            dependency.call is not require_admin for dependency in route.dependant.dependencies
+        ), f"{method} {path} must remain available to authenticated learners"
+
+
 def test_regular_knowledge_account_cannot_read_global_model_options(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
