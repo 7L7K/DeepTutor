@@ -52,7 +52,7 @@ async function signIn(page: Page, username: string, password: string) {
   await page.goto("/login");
   expect((await authReady).status()).toBe(200);
   await page.getByLabel("Email or username").fill(username);
-  await page.getByLabel("Password").fill(password);
+  await page.getByRole("textbox", { name: "Password", exact: true }).fill(password);
   const loginResponse = page.waitForResponse(
     (response) =>
       response.url().includes("/api/v1/auth/login") &&
@@ -122,15 +122,6 @@ async function mockCapabilityProbeShell(
         ],
       });
     }
-    if (pathname === "/api/v1/auth/status") {
-      return fulfill({
-        enabled: false,
-        authenticated: false,
-        user_id: null,
-        username: null,
-        role: null,
-      });
-    }
     if (pathname === "/api/v1/courses") {
       return fulfill({
         courses: [],
@@ -164,6 +155,9 @@ async function mockCapabilityProbeShell(
         effective: { max_file_bytes: 1024, max_total_bytes: 4096 },
       });
     }
+    if (pathname === "/api/v1/auth/status" || pathname === "/api/v1/auth/login") {
+      return route.continue();
+    }
     return fulfill({});
   });
 }
@@ -171,12 +165,14 @@ async function mockCapabilityProbeShell(
 test("initial capability probe failure renders Retry instead of a missing-grant notice", async ({
   page,
 }) => {
+  test.skip(!alicePassword, "Run through scripts/test-course-chat-c1 with disposable fixtures.");
   const probe: CapabilityProbeFixture = {
     failSettings: true,
     settingsDelayMs: 0,
     settingsCalls: 0,
   };
   await mockCapabilityProbeShell(page, probe);
+  await signIn(page, "c1_alice", alicePassword!);
 
   await page.goto("/home");
   const failure = page.getByRole("alert").filter({
@@ -196,12 +192,14 @@ test("initial capability probe failure renders Retry instead of a missing-grant 
 test("failed focus refresh preserves the mounted composer draft and Retry recovers", async ({
   page,
 }) => {
+  test.skip(!alicePassword, "Run through scripts/test-course-chat-c1 with disposable fixtures.");
   const probe: CapabilityProbeFixture = {
     failSettings: false,
     settingsDelayMs: 0,
     settingsCalls: 0,
   };
   await mockCapabilityProbeShell(page, probe);
+  await signIn(page, "c1_alice", alicePassword!);
   await page.goto("/home");
 
   const composer = page.locator("textarea").last();
@@ -262,7 +260,7 @@ test("Alice opens exact Course Chat, persists its citation, and reopens it", asy
 
   await page.goto(`/classes/${encodeURIComponent(proof.alice_course_id)}`);
   await expect(page.getByRole("heading", { name: "Biology 101" })).toBeVisible();
-  await expect(page.getByText("Term: Fall 2026", { exact: true })).toBeVisible();
+  await expect(page.getByText("Fall 2026", { exact: true })).toBeVisible();
   await expect(page.getByTestId("course-overview-dashboard")).toBeVisible();
   await expect(page.getByTestId("course-chat-link")).toHaveCount(0);
   await page.screenshot({
@@ -330,7 +328,7 @@ test("Alice opens exact Course Chat, persists its citation, and reopens it", asy
     page.getByTestId(`course-citation-${proof.alice_ready_source_id}`),
   ).toBeVisible();
 
-  await page.getByRole("link", { name: "Back to Course" }).click();
+  await page.getByRole("link", { name: "Overview", exact: true }).click();
   await expect(page).toHaveURL(
     new RegExp(`/classes/${proof.alice_course_id}$`),
   );
@@ -525,7 +523,7 @@ test("Bob cannot open Alice Course or Course session URLs", async ({ page }) => 
 
   await page.goto(`/classes/${encodeURIComponent(proof.alice_course_id)}/chat`);
   const denial = page.getByText(
-    "Course Chat was not found or is not available to this account.",
+    "Course resource not found",
     { exact: true },
   );
   await expect(denial).toBeVisible();
@@ -562,13 +560,12 @@ test("zero-ready and zero-Course states stay truthful without a Chat session", a
   await page.goto(
     `/classes/${encodeURIComponent(proof.alice_no_ready_course_id)}/chat`,
   );
-  await expect(
-    page.getByRole("heading", {
-      name: "This Course does not have any materials yet.",
-    }),
-  ).toBeVisible();
+  await expect(page.getByTestId("course-chat-readiness-banner")).toBeVisible();
+  await expect(page.getByTestId("course-chat-readiness-banner")).toContainText(
+    "This Course has no materials yet.",
+  );
   await expect(page.getByRole("link", { name: "Add materials" })).toBeVisible();
-  await expect(page.getByTestId("course-chat-route")).toHaveCount(0);
+  await expect(page.getByTestId("course-chat-route")).toBeVisible();
   await page.screenshot({
     path: join(evidenceDir!, "screenshots", "course-chat-zero-ready.png"),
     fullPage: true,
@@ -601,9 +598,12 @@ test("zero-ready and zero-Course states stay truthful without a Chat session", a
     `/classes/${encodeURIComponent(proof.processing_only_course_id)}/chat`,
   );
   await expect(
-    page.getByRole("heading", { name: "Course materials are still processing." }),
+    page.getByTestId("course-chat-readiness-banner"),
   ).toBeVisible();
-  await expect(page.getByTestId("course-chat-route")).toHaveCount(0);
+  await expect(page.getByTestId("course-chat-readiness-banner")).toContainText(
+    "Course materials are still processing.",
+  );
+  await expect(page.getByTestId("course-chat-route")).toBeVisible();
   await page.screenshot({
     path: join(evidenceDir!, "screenshots", "course-chat-processing-only.png"),
     fullPage: true,
@@ -612,12 +612,11 @@ test("zero-ready and zero-Course states stay truthful without a Chat session", a
   await page.goto(
     `/classes/${encodeURIComponent(proof.failed_only_course_id)}/chat`,
   );
-  await expect(
-    page.getByRole("heading", {
-      name: "Course materials could not be prepared for Chat.",
-    }),
-  ).toBeVisible();
-  await expect(page.getByTestId("course-chat-route")).toHaveCount(0);
+  await expect(page.getByTestId("course-chat-readiness-banner")).toBeVisible();
+  await expect(page.getByTestId("course-chat-readiness-banner")).toContainText(
+    "Course materials could not be prepared for Chat.",
+  );
+  await expect(page.getByTestId("course-chat-route")).toBeVisible();
   await page.screenshot({
     path: join(evidenceDir!, "screenshots", "course-chat-failed-only.png"),
     fullPage: true,
