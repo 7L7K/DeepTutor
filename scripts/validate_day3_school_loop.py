@@ -187,6 +187,25 @@ def validate_network(document: dict[str, Any], phase: str) -> None:
     ):
         require(document.get(field) == [], f"{phase} {field} is non-empty")
 
+    cancellations = document.get("teardownCancellations")
+    require(isinstance(cancellations, list), f"{phase} teardown cancellation evidence malformed")
+    for cancellation in cancellations:
+        require(isinstance(cancellation, dict), f"{phase} teardown cancellation malformed")
+        require(cancellation.get("actor") in ACTORS, f"{phase} teardown cancellation actor invalid")
+        require(isinstance(cancellation.get("method"), str), f"{phase} teardown cancellation method missing")
+        raw_url = cancellation.get("url")
+        parsed = urlsplit(raw_url) if isinstance(raw_url, str) else None
+        require(
+            parsed is not None
+            and parsed.scheme in {"http", "https"}
+            and f"{parsed.scheme}://{parsed.netloc}" in EXPECTED_HTTP_ORIGINS,
+            f"{phase} teardown cancellation escaped local HTTP origins",
+        )
+        require(
+            cancellation.get("failure") == "net::ERR_ABORTED",
+            f"{phase} unexpected teardown cancellation failure",
+        )
+
     sockets = document.get("websockets")
     closures = document.get("websocketClosures")
     require(isinstance(sockets, list), f"{phase} WebSocket evidence malformed")

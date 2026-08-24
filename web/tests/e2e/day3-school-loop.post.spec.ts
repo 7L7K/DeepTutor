@@ -112,6 +112,7 @@ type NetworkEvidence = {
   networkViolations: Array<{ actor: Actor; method: string; url: string }>;
   blockedNetworkRequests: Array<{ actor: Actor; method: string; url: string; failure: string }>;
   networkFailures: Array<{ actor: Actor; method: string; url: string; failure: string }>;
+  teardownCancellations: Array<{ actor: Actor; method: string; url: string; failure: string }>;
   websockets: Array<{ actor: Actor; url: string; path: string }>;
   websocketViolations: Array<{ actor: Actor; url: string }>;
   websocketErrors: Array<{ actor: Actor; url: string; error: string }>;
@@ -137,6 +138,7 @@ function emptyNetworkEvidence(): NetworkEvidence {
     networkViolations: [],
     blockedNetworkRequests: [],
     networkFailures: [],
+    teardownCancellations: [],
     websockets: [],
     websocketViolations: [],
     websocketErrors: [],
@@ -148,6 +150,9 @@ function expectNetworkClean(evidence: NetworkEvidence): void {
   expect(evidence.networkViolations).toEqual([]);
   expect(evidence.blockedNetworkRequests).toEqual([]);
   expect(evidence.networkFailures).toEqual([]);
+  for (const cancellation of evidence.teardownCancellations) {
+    expect(cancellation.failure).toBe("net::ERR_ABORTED");
+  }
   expect(evidence.websocketViolations).toEqual([]);
   expect(evidence.websocketErrors).toEqual([]);
 }
@@ -222,6 +227,7 @@ async function observePage(page: Page, actor: Actor, evidence: PostEvidence) {
   const allowedHttpOrigins = new Set(evidence.networkPolicy.httpOrigins);
   const allowedSocketOrigins = new Set(evidence.networkPolicy.websocketOrigins);
   const activelyBlockedRequests = new WeakSet<object>();
+  const intentionalShutdownRequests = new WeakSet<object>();
   const inFlightHttpRequests = new Map<object, { method: string; url: string }>();
   let lastHttpActivityAt = Date.now();
   let intentionalShutdown = false;
@@ -289,6 +295,7 @@ async function observePage(page: Page, actor: Actor, evidence: PostEvidence) {
     const url = new URL(request.url());
     if (!["http:", "https:"].includes(url.protocol) || !allowedHttpOrigins.has(url.origin)) return;
     inFlightHttpRequests.set(request, { method: request.method(), url: request.url() });
+    if (intentionalShutdown) intentionalShutdownRequests.add(request);
     lastHttpActivityAt = Date.now();
   });
   page.on("requestfinished", (request) => {
@@ -309,6 +316,15 @@ async function observePage(page: Page, actor: Actor, evidence: PostEvidence) {
     if (inFlightHttpRequests.delete(request)) lastHttpActivityAt = Date.now();
     const url = new URL(request.url());
     const failure = request.failure()?.errorText || "request failed";
+    if (intentionalShutdownRequests.has(request) && failure === "net::ERR_ABORTED") {
+      evidence.teardownCancellations.push({
+        actor,
+        method: request.method(),
+        url: request.url(),
+        failure,
+      });
+      return;
+    }
     if (activelyBlockedRequests.has(request) && /blocked_by_client/i.test(failure)) {
       evidence.blockedNetworkRequests.push({
         actor,
@@ -374,6 +390,7 @@ async function observePage(page: Page, actor: Actor, evidence: PostEvidence) {
     },
     markIntentionalShutdown() {
       intentionalShutdown = true;
+      for (const request of inFlightHttpRequests.keys()) intentionalShutdownRequests.add(request);
     },
   };
 }
