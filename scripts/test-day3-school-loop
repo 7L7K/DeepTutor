@@ -531,6 +531,7 @@ run_browser() {
     D3_EVIDENCE_DIR="$evidence_dir" WEB_BASE_URL="$frontend_url" D3_BACKEND_URL="$backend_url" \
     PW_SERIAL=1 \
     PW_OUTPUT_DIR="$runtime_root/playwright-$phase-results" \
+    PW_HTML_REPORT_DIR="$runtime_root/playwright-$phase-report" \
     "$python_bin" -c 'import os,sys; os.setsid(); os.execvpe(sys.argv[1],sys.argv[1:],os.environ)' \
       "$node_bin" ./node_modules/playwright/cli.js test "$spec" --project=day3-school-loop \
       --reporter=line \
