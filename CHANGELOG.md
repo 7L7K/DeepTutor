@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+- Added the Day 5 runtime-data backup/restore boundary. The explicit utility
+  creates a manifest-verified archive of one stopped `data/` tree, rejects
+  symbolic links, hard links, and special files, excludes the ephemeral Course
+  process lock, and restores into a validated staging tree. Replacing a
+  non-empty target requires `--replace` and preserves the prior tree beside the
+  restored one for recovery. Added isolated round-trip, lock, and private-tree
+  safety tests.
+
 - Hardened the school-ready learner Course loop for provider-off use. Active
   Course Chat now discloses when answers are general, processing, failed, or
   partially grounded without hiding the Chat surface. A learner can create and
