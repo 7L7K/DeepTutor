@@ -336,6 +336,11 @@ async function observePage(
     const url = new URL(request.url());
     if (!["http:", "https:"].includes(url.protocol) || !allowedHttpOrigins.has(url.origin)) return;
     inFlightHttpRequests.set(request, { method: request.method(), url: request.url() });
+    if (url.pathname.startsWith("/api/v1/sessions/")) {
+      console.log(
+        `[D3_SESSION_REQUEST] actor=${actor} shutdown=${intentionalShutdown} url=${request.url()} page=${page.url()}`,
+      );
+    }
     if (intentionalShutdown) intentionalShutdownRequests.add(request);
     lastHttpActivityAt = Date.now();
   });
@@ -357,6 +362,11 @@ async function observePage(
     if (inFlightHttpRequests.delete(request)) lastHttpActivityAt = Date.now();
     const url = new URL(request.url());
     const failure = request.failure()?.errorText || "request failed";
+    if (failure === "net::ERR_ABORTED" && url.pathname.startsWith("/api/v1/sessions/")) {
+      console.log(
+        `[D3_SESSION_ABORT] actor=${actor} shutdown=${intentionalShutdown} tracked=${intentionalShutdownRequests.has(request)} inFlight=${inFlightHttpRequests.has(request)} url=${request.url()} page=${page.url()}`,
+      );
+    }
     if (
       (intentionalShutdownRequests.has(request) || intentionalShutdown) &&
       failure === "net::ERR_ABORTED"
