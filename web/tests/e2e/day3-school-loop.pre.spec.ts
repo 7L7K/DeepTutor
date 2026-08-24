@@ -357,7 +357,10 @@ async function observePage(
     if (inFlightHttpRequests.delete(request)) lastHttpActivityAt = Date.now();
     const url = new URL(request.url());
     const failure = request.failure()?.errorText || "request failed";
-    if (intentionalShutdownRequests.has(request) && failure === "net::ERR_ABORTED") {
+    if (
+      (intentionalShutdownRequests.has(request) || intentionalShutdown) &&
+      failure === "net::ERR_ABORTED"
+    ) {
       evidence.teardownCancellations.push({
         actor,
         method: request.method(),
