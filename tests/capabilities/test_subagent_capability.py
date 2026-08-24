@@ -237,6 +237,7 @@ def test_local_subagent_binding_is_reserved_for_admins(monkeypatch, tmp_path) ->
 def test_revoked_partner_binding_is_inert_before_the_consult_tool(monkeypatch) -> None:
     """A persisted Partner KB is not sufficient after its grant is revoked."""
     from fastapi import HTTPException
+
     from deeptutor.multi_user import partner_access
 
     allowed = {"value": True}

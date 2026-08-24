@@ -15,7 +15,6 @@ import sys
 from typing import Any
 from urllib.parse import urlsplit
 
-
 ACTORS = ("learner_a", "learner_b")
 RESOURCE_KEYS = ("course", "source", "practice", "attempt", "flashcards", "card", "review")
 ISOLATION_FAMILIES = (

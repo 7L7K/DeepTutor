@@ -13,11 +13,11 @@ import sys
 
 import pytest
 
-import deeptutor.multi_user.paths as multi_user_paths
 from deeptutor.capabilities.subagent.capability import _resolve_budget
 from deeptutor.core.context import UnifiedContext
 from deeptutor.multi_user.context import reset_current_user, set_current_user
 from deeptutor.multi_user.models import CurrentUser, UserScope
+import deeptutor.multi_user.paths as multi_user_paths
 from deeptutor.services.path_service import PathService
 from deeptutor.services.subagent.claude_code import ClaudeCodeBackend
 from deeptutor.services.subagent.codex import CodexBackend

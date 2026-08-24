@@ -60,9 +60,7 @@ def test_backup_verify_and_restore_round_trip_preserves_tree(tmp_path: Path, cap
     capsys.readouterr()
 
     assert (
-        module.main(
-            ["restore", "--backup", str(archive), "--data-root", str(data), "--replace"]
-        )
+        module.main(["restore", "--backup", str(archive), "--data-root", str(data), "--replace"])
         == 0
     )
     restored = capsys.readouterr().out

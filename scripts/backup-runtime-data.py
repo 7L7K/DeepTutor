@@ -34,11 +34,10 @@ import stat
 import sys
 import tarfile
 import tempfile
-import uuid
 from typing import Iterator
+import uuid
 
 from deeptutor.courses.deployment import SingleProcessCourseLock
-
 
 MANIFEST_NAME = "__teeechr_backup_manifest__.json"
 MANIFEST_VERSION = 1
@@ -127,7 +126,9 @@ def _iter_entries(data_root: Path) -> Iterator[TreeEntry]:
             if not stat.S_ISDIR(child_stat.st_mode):
                 raise BackupError(f"unsupported directory entry: {child}")
             entries.append(
-                TreeEntry(path=_relative_path(relative), kind="dir", mode=stat.S_IMODE(child_stat.st_mode))
+                TreeEntry(
+                    path=_relative_path(relative), kind="dir", mode=stat.S_IMODE(child_stat.st_mode)
+                )
             )
             safe_dirs.append(name)
         dirnames[:] = safe_dirs
@@ -304,7 +305,9 @@ def create_backup(data_root: Path, output: Path, *, overwrite: bool = False) -> 
             created_at = datetime.now(timezone.utc).isoformat()
             manifest = _manifest(entries, created_at=created_at)
             manifest_bytes = (json.dumps(manifest, indent=2, sort_keys=True) + "\n").encode("utf-8")
-            fd, raw_temp = tempfile.mkstemp(prefix=f".{output.name}.", suffix=".tmp", dir=output_parent)
+            fd, raw_temp = tempfile.mkstemp(
+                prefix=f".{output.name}.", suffix=".tmp", dir=output_parent
+            )
             os.close(fd)
             temp_path = Path(raw_temp)
             os.chmod(temp_path, 0o600)
@@ -378,18 +381,28 @@ def _read_manifest(archive: Path) -> tuple[dict[str, object], tuple[TreeEntry, .
                     continue
                 entry = entry_by_path.get(member.name)
                 if entry is None or member.name in seen:
-                    raise BackupError(f"archive member is not declared exactly once: {member.name!r}")
+                    raise BackupError(
+                        f"archive member is not declared exactly once: {member.name!r}"
+                    )
                 seen.add(member.name)
                 _safe_member_path(Path("/tmp/teeechr-backup-verify"), member.name)
                 if member.issym() or member.islnk() or not (member.isdir() or member.isfile()):
                     raise BackupError(f"archive member type is not allowed: {member.name!r}")
-                if member.isdir() != (entry.kind == "dir") or member.isfile() != (entry.kind == "file"):
-                    raise BackupError(f"archive member kind disagrees with manifest: {member.name!r}")
+                if member.isdir() != (entry.kind == "dir") or member.isfile() != (
+                    entry.kind == "file"
+                ):
+                    raise BackupError(
+                        f"archive member kind disagrees with manifest: {member.name!r}"
+                    )
                 if stat.S_IMODE(member.mode) != entry.mode:
-                    raise BackupError(f"archive member mode disagrees with manifest: {member.name!r}")
+                    raise BackupError(
+                        f"archive member mode disagrees with manifest: {member.name!r}"
+                    )
                 if entry.kind == "file":
                     if member.size != entry.size:
-                        raise BackupError(f"archive member size disagrees with manifest: {member.name!r}")
+                        raise BackupError(
+                            f"archive member size disagrees with manifest: {member.name!r}"
+                        )
                     handle = tar.extractfile(member)
                     if handle is None:
                         raise BackupError(f"archive member cannot be read: {member.name!r}")
@@ -397,7 +410,9 @@ def _read_manifest(archive: Path) -> tuple[dict[str, object], tuple[TreeEntry, .
                     for chunk in iter(lambda: handle.read(1024 * 1024), b""):
                         digest.update(chunk)
                     if digest.hexdigest() != entry.sha256:
-                        raise BackupError(f"archive member digest disagrees with manifest: {member.name!r}")
+                        raise BackupError(
+                            f"archive member digest disagrees with manifest: {member.name!r}"
+                        )
             if seen != set(entry_by_path):
                 missing = sorted(set(entry_by_path) - seen)
                 raise BackupError(f"backup archive is missing declared members: {missing[:3]}")
@@ -472,7 +487,9 @@ def _extract_verified(archive: Path, staging: Path, entries: tuple[TreeEntry, ..
                     size += len(chunk)
             target.chmod(entry.mode)
             if size != entry.size or digest.hexdigest() != entry.sha256:
-                raise BackupError(f"archive member content disagrees with manifest: {member.name!r}")
+                raise BackupError(
+                    f"archive member content disagrees with manifest: {member.name!r}"
+                )
     if seen != set(entry_by_path):
         missing = sorted(set(entry_by_path) - seen)
         raise BackupError(f"backup archive is missing declared members: {missing[:3]}")
@@ -498,7 +515,9 @@ def restore_backup(archive: Path, data_root: Path, *, replace: bool = False) -> 
             if target.exists() and not target.is_dir():
                 raise BackupError(f"restore target is not a directory: {target}")
             if target.exists() and any(target.iterdir()) and not replace:
-                raise BackupError("restore target is non-empty; pass --replace to preserve and replace it")
+                raise BackupError(
+                    "restore target is non-empty; pass --replace to preserve and replace it"
+                )
             _extract_verified(archive, staging, entries)
             if target.exists():
                 previous = target_parent / (

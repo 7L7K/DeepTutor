@@ -8,8 +8,7 @@ from deeptutor.capabilities.obsidian import binding as obsidian_binding
 from deeptutor.capabilities.subagent import binding as subagent_binding
 from deeptutor.core.context import UnifiedContext
 from deeptutor.multi_user import context as user_context
-from deeptutor.multi_user import knowledge_access
-from deeptutor.multi_user import partner_access
+from deeptutor.multi_user import knowledge_access, partner_access
 from deeptutor.multi_user.models import LOCAL_ADMIN_ID
 from deeptutor.services import auth as auth_service
 
