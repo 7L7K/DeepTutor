@@ -44,8 +44,7 @@ def test_subagent_management_routes_are_admin_only_but_partner_routes_are_not() 
 
     consult_settings = routes["/consult-settings"]
     assert any(
-        dependency.call is require_auth
-        for dependency in consult_settings.dependant.dependencies
+        dependency.call is require_auth for dependency in consult_settings.dependant.dependencies
     )
 
 

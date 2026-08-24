@@ -659,15 +659,10 @@ class AgenticChatPipeline:
                 has_notebooks=False if is_delegated_partner else user_has_notebooks(),
                 has_skills=bool(context.skills_manifest),
                 has_deferred_tools=(
-                    not is_delegated_partner
-                    and getattr(self, "_deferred_loader", None) is not None
+                    not is_delegated_partner and getattr(self, "_deferred_loader", None) is not None
                 ),
-                has_exec=(
-                    not is_delegated_partner and getattr(self, "_exec_enabled", False)
-                ),
-                has_code=(
-                    not is_delegated_partner and getattr(self, "_exec_enabled", False)
-                ),
+                has_exec=(not is_delegated_partner and getattr(self, "_exec_enabled", False)),
+                has_code=(not is_delegated_partner and getattr(self, "_exec_enabled", False)),
             ),
             capability_owned=self._capability_owned_tools(context),
             exclusive=self._exclusive_capability_active(context),

@@ -163,10 +163,7 @@ def _validate_kb_config_patch(config: dict) -> dict:
     if unknown:
         raise HTTPException(
             status_code=422,
-            detail=(
-                "Unsupported knowledge base config field(s): "
-                f"{', '.join(unknown)}."
-            ),
+            detail=(f"Unsupported knowledge base config field(s): {', '.join(unknown)}."),
         )
     return {field: config[field] for field in _KB_CONFIG_MUTABLE_FIELDS if field in config}
 
@@ -1470,9 +1467,7 @@ async def get_kb_config(kb_name: str):
         from deeptutor.services.config.knowledge_base_config import KnowledgeBaseConfigService
 
         resource = resolve_kb(kb_name)
-        service = KnowledgeBaseConfigService.get_instance(
-            resource.base_dir / "kb_config.json"
-        )
+        service = KnowledgeBaseConfigService.get_instance(resource.base_dir / "kb_config.json")
         config = service.get_kb_config(resource.name)
         if not get_current_user().is_admin:
             config = _public_kb_config(config)

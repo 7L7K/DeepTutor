@@ -692,9 +692,10 @@ async def test_detect_all_excludes_partner_backend() -> None:
 class _FakePartnerInstance:
     def __init__(self, running: bool = True, config=None) -> None:
         self.running = running
-        self.config = config or type(
-            "PartnerConfig", (), {"llm_selection": None, "backup_llm_selection": None}
-        )()
+        self.config = (
+            config
+            or type("PartnerConfig", (), {"llm_selection": None, "backup_llm_selection": None})()
+        )
 
 
 class _FakePartnerManager:
@@ -855,9 +856,7 @@ async def test_partner_consult_retains_each_delegated_learner_identity(
         )
         token = set_current_user(learner)
         try:
-            result = await PartnerBackend().consult(
-                "hello", on_event=on_event, partner_id="paul"
-            )
+            result = await PartnerBackend().consult("hello", on_event=on_event, partner_id="paul")
         finally:
             reset_current_user(token)
         assert result.success is True

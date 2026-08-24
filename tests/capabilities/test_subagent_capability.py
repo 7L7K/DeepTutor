@@ -567,9 +567,7 @@ async def test_owner_bound_partner_spec_refuses_before_backend_or_budget(
             }
         },
     )
-    monkeypatch.setattr(
-        "deeptutor.services.partners.get_partner_manager", lambda: UnsafeManager()
-    )
+    monkeypatch.setattr("deeptutor.services.partners.get_partner_manager", lambda: UnsafeManager())
 
     def should_not_resolve_backend(_kind: str):
         raise AssertionError("owner-bound Partner must fail before backend resolution")

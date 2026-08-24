@@ -1205,9 +1205,7 @@ def test_authenticated_learner_cannot_read_connected_pointer_credentials(
                 "version": 2,
                 "user_id": "learner-1",
                 "models": {"llm": []},
-                "knowledge_bases": [
-                    {"resource_id": "admin:kb:assigned-stale-vault"}
-                ],
+                "knowledge_bases": [{"resource_id": "admin:kb:assigned-stale-vault"}],
                 "skills": [],
                 "partners": [],
             }

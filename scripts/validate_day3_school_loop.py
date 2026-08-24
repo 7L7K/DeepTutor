@@ -18,8 +18,15 @@ from urllib.parse import urlsplit
 ACTORS = ("learner_a", "learner_b")
 RESOURCE_KEYS = ("course", "source", "practice", "attempt", "flashcards", "card", "review")
 ISOLATION_FAMILIES = (
-    "course", "source", "chat", "practice", "attempt", "result",
-    "flashcards", "card", "review-operation",
+    "course",
+    "source",
+    "chat",
+    "practice",
+    "attempt",
+    "result",
+    "flashcards",
+    "card",
+    "review-operation",
 )
 PRIVILEGED_PREFIXES = (
     "/api/v1/auth/users",
@@ -86,7 +93,9 @@ HASH_RE = re.compile(r"^[0-9a-f]{64}$")
 SECRET_PATTERNS = (
     re.compile(rb"\bsk-[A-Za-z0-9_-]{16,}\b"),
     re.compile(rb"\bBearer\s+[A-Za-z0-9._~+/-]{16,}\b", re.IGNORECASE),
-    re.compile(rb"(?:api[_-]?key|authorization)\s*[=:]\s*[\"']?[A-Za-z0-9._~+/-]{16,}", re.IGNORECASE),
+    re.compile(
+        rb"(?:api[_-]?key|authorization)\s*[=:]\s*[\"']?[A-Za-z0-9._~+/-]{16,}", re.IGNORECASE
+    ),
 )
 EXPECTED_HTTP_ORIGINS = ["http://localhost:3823", "http://127.0.0.1:8043"]
 EXPECTED_WEBSOCKET_ORIGINS = ["ws://localhost:3823", "ws://127.0.0.1:8043"]
@@ -157,9 +166,14 @@ def auth_map(value: Any, usernames: dict[str, str], label: str) -> dict[str, dic
         require(actor in ACTORS and actor not in result, f"{label} auth actor mismatch")
         require(item.get("username") == usernames[actor], f"{label} username mismatch")
         require(isinstance(item.get("userId"), str) and item["userId"], f"{label} user id empty")
-        require(item.get("role") == "user" and item.get("isAdmin") is False, f"{label} elevated learner")
+        require(
+            item.get("role") == "user" and item.get("isAdmin") is False, f"{label} elevated learner"
+        )
         result[actor] = item
-    require(result[ACTORS[0]]["userId"] != result[ACTORS[1]]["userId"], f"{label} learners collapse to one identity")
+    require(
+        result[ACTORS[0]]["userId"] != result[ACTORS[1]]["userId"],
+        f"{label} learners collapse to one identity",
+    )
     return result
 
 
@@ -192,7 +206,10 @@ def validate_network(document: dict[str, Any], phase: str) -> None:
     for cancellation in cancellations:
         require(isinstance(cancellation, dict), f"{phase} teardown cancellation malformed")
         require(cancellation.get("actor") in ACTORS, f"{phase} teardown cancellation actor invalid")
-        require(isinstance(cancellation.get("method"), str), f"{phase} teardown cancellation method missing")
+        require(
+            isinstance(cancellation.get("method"), str),
+            f"{phase} teardown cancellation method missing",
+        )
         raw_url = cancellation.get("url")
         parsed = urlsplit(raw_url) if isinstance(raw_url, str) else None
         require(
@@ -250,7 +267,9 @@ def validate_network(document: dict[str, Any], phase: str) -> None:
             )
 
 
-def validate_requests(document: dict[str, Any], phase: str, allowed_404: set[str] | None = None) -> None:
+def validate_requests(
+    document: dict[str, Any], phase: str, allowed_404: set[str] | None = None
+) -> None:
     requests = document.get("requests")
     require(isinstance(requests, list) and requests, f"{phase} request evidence is empty")
     allowed_404 = allowed_404 or set()
@@ -259,7 +278,9 @@ def validate_requests(document: dict[str, Any], phase: str, allowed_404: set[str
         require(item.get("phase") == phase, f"{phase} request has wrong phase")
         require(item.get("actor") in ACTORS, f"{phase} request actor invalid")
         path = item.get("path")
-        require(isinstance(path, str) and path.startswith("/api/v1/"), f"{phase} request path invalid")
+        require(
+            isinstance(path, str) and path.startswith("/api/v1/"), f"{phase} request path invalid"
+        )
         require(not item.get("failure"), f"{phase} request failed: {path}")
         status_code = item.get("status")
         require(isinstance(status_code, int), f"{phase} response status missing: {path}")
@@ -273,7 +294,9 @@ def validate_requests(document: dict[str, Any], phase: str, allowed_404: set[str
                 for allowed_method, pattern in LEARNER_COURSE_PATTERNS
             )
         )
-        require(learner_domain, f"{phase} API request is outside the learner allowlist: {method} {path}")
+        require(
+            learner_domain, f"{phase} API request is outside the learner allowlist: {method} {path}"
+        )
         if status_code == 404:
             require(path in allowed_404, f"{phase} unexplained 404: {path}")
         else:
@@ -281,7 +304,10 @@ def validate_requests(document: dict[str, Any], phase: str, allowed_404: set[str
                 status_code in (200, 201, 202, 204),
                 f"{phase} unexpected non-success status {status_code}: {path}",
             )
-        require(not any(path.startswith(prefix) for prefix in PRIVILEGED_PREFIXES), f"{phase} privileged API request: {path}")
+        require(
+            not any(path.startswith(prefix) for prefix in PRIVILEGED_PREFIXES),
+            f"{phase} privileged API request: {path}",
+        )
         if path.startswith("/api/v1/settings"):
             require(
                 method == "GET" and path in LEARNER_SAFE_SETTINGS,
@@ -307,15 +333,34 @@ def validate_requests(document: dict[str, Any], phase: str, allowed_404: set[str
 
 def validate_provider(document: dict[str, Any], expected: bool, label: str) -> None:
     require(document.get("schemaVersion") == 1, f"{label} schema mismatch")
-    require(document.get("deterministicProvider") is expected, f"{label} deterministic mode mismatch")
+    require(
+        document.get("deterministicProvider") is expected, f"{label} deterministic mode mismatch"
+    )
     require(document.get("paidProviderEnabled") is False, f"{label} paid provider enabled")
-    require(document.get("paidCredentialConfigured") is False, f"{label} paid credential configured")
+    require(
+        document.get("paidCredentialConfigured") is False, f"{label} paid credential configured"
+    )
     require(document.get("pocketbaseEnabled") is False, f"{label} PocketBase enabled")
-    require(document.get("llmBoundaryProfile") == "llm-profile-day3-local", f"{label} LLM boundary profile drifted")
-    require(document.get("llmBoundaryModel") == "llm-model-day3-local", f"{label} LLM boundary model drifted")
-    require(document.get("llmBoundaryBaseUrl") == "http://127.0.0.1:1/v1", f"{label} LLM fallback is not closed loopback")
-    require(document.get("llmBoundaryProvider") == "ollama", f"{label} LLM fallback provider is not local")
-    require(document.get("llmBoundaryCredentialConfigured") is False, f"{label} LLM fallback has a credential")
+    require(
+        document.get("llmBoundaryProfile") == "llm-profile-day3-local",
+        f"{label} LLM boundary profile drifted",
+    )
+    require(
+        document.get("llmBoundaryModel") == "llm-model-day3-local",
+        f"{label} LLM boundary model drifted",
+    )
+    require(
+        document.get("llmBoundaryBaseUrl") == "http://127.0.0.1:1/v1",
+        f"{label} LLM fallback is not closed loopback",
+    )
+    require(
+        document.get("llmBoundaryProvider") == "ollama",
+        f"{label} LLM fallback provider is not local",
+    )
+    require(
+        document.get("llmBoundaryCredentialConfigured") is False,
+        f"{label} LLM fallback has a credential",
+    )
     require(document.get("reservationRows") == 0, f"{label} provider ledger is non-empty")
     usage = document.get("usage")
     require(isinstance(usage, dict), f"{label} usage receipt missing")
@@ -326,20 +371,32 @@ def validate_provider(document: dict[str, Any], expected: bool, label: str) -> N
     ):
         require(usage.get(key) == 0, f"{label} provider cost is non-zero")
     if expected:
-        require(document.get("practiceProvider") == "DeterministicPracticeGenerationProvider", "practice provider is not deterministic")
-        require(document.get("flashcardProvider") == "DeterministicFlashcardGenerationProvider", "flashcard provider is not deterministic")
+        require(
+            document.get("practiceProvider") == "DeterministicPracticeGenerationProvider",
+            "practice provider is not deterministic",
+        )
+        require(
+            document.get("flashcardProvider") == "DeterministicFlashcardGenerationProvider",
+            "flashcard provider is not deterministic",
+        )
 
 
 def validate_runtime_provider_db(runtime_root: Path, evidence_dir: Path) -> None:
     root = runtime_root.resolve(strict=True)
-    require(root.name.startswith("teeechr-d3-runtime."), "runtime root is not a Day 3 disposable root")
+    require(
+        root.name.startswith("teeechr-d3-runtime."), "runtime root is not a Day 3 disposable root"
+    )
     require(not runtime_root.is_symlink(), "runtime root is a symlink")
     databases = list(root.rglob("provider_usage.db"))
     require(len(databases) == 1, "provider usage ledger path is ambiguous")
     database = databases[0]
-    require(database.resolve(strict=True).is_relative_to(root), "provider ledger escaped runtime root")
+    require(
+        database.resolve(strict=True).is_relative_to(root), "provider ledger escaped runtime root"
+    )
     with sqlite3.connect(f"file:{database}?mode=ro", uri=True) as connection:
-        policy = connection.execute("SELECT enabled FROM provider_usage_policy WHERE singleton=1").fetchone()
+        policy = connection.execute(
+            "SELECT enabled FROM provider_usage_policy WHERE singleton=1"
+        ).fetchone()
         reservation = connection.execute(
             """SELECT COUNT(*),
                       COALESCE(SUM(reserved_cost_microusd),0),
@@ -376,17 +433,31 @@ def secret_scan(evidence_dir: Path, run_id: str) -> None:
         if path.stat().st_size > 20 * 1024 * 1024:
             raise ValidationError(f"evidence file too large to scan: {path.name}")
         content = path.read_bytes()
-        require(not any(secret in content for secret in exact_bytes), f"credential leaked into {path.name}")
-        require(not any(marker in content for marker in private_markers), f"private learner marker leaked into {path.name}")
-        require(not any(pattern.search(content) for pattern in SECRET_PATTERNS), f"provider secret pattern in {path.name}")
+        require(
+            not any(secret in content for secret in exact_bytes),
+            f"credential leaked into {path.name}",
+        )
+        require(
+            not any(marker in content for marker in private_markers),
+            f"private learner marker leaked into {path.name}",
+        )
+        require(
+            not any(pattern.search(content) for pattern in SECRET_PATTERNS),
+            f"provider secret pattern in {path.name}",
+        )
 
 
 def validate_pre_cleanup(arguments: argparse.Namespace) -> None:
     evidence_dir = Path(arguments.evidence_dir)
     runtime_root = Path(arguments.runtime_root)
     require(evidence_dir.is_dir() and not evidence_dir.is_symlink(), "evidence directory is unsafe")
-    require(stat.S_IMODE(evidence_dir.stat().st_mode) == 0o700, "evidence directory mode is not 700")
-    require(not (evidence_dir / "day3-school-loop.complete").exists(), "completion sentinel exists before cleanup")
+    require(
+        stat.S_IMODE(evidence_dir.stat().st_mode) == 0o700, "evidence directory mode is not 700"
+    )
+    require(
+        not (evidence_dir / "day3-school-loop.complete").exists(),
+        "completion sentinel exists before cleanup",
+    )
     usernames = {"learner_a": arguments.learner_a, "learner_b": arguments.learner_b}
 
     provider_off = load_json(evidence_dir, "provider.off.json")
@@ -404,7 +475,9 @@ def validate_pre_cleanup(arguments: argparse.Namespace) -> None:
         (post, "post"),
     ):
         assert_header(document, phase=phase, run_id=arguments.run_id)
-        require(document.get("concurrentContexts") is True, f"{phase} did not use concurrent contexts")
+        require(
+            document.get("concurrentContexts") is True, f"{phase} did not use concurrent contexts"
+        )
 
     repair_auth = auth_map(repair.get("auth"), usernames, "repair")
     pre_auth = auth_map(pre.get("auth"), usernames, "pre")
@@ -420,8 +493,15 @@ def validate_pre_cleanup(arguments: argparse.Namespace) -> None:
         )
 
     courses = actor_map(repair.get("courses"), "repair courses")
-    require(courses["learner_a"].get("id") != courses["learner_b"].get("id"), "repair Courses are not isolated")
-    require(isinstance(courses["learner_a"].get("manualPracticeSetId"), str) and courses["learner_a"]["manualPracticeSetId"], "manual Practice UI did not create a resource")
+    require(
+        courses["learner_a"].get("id") != courses["learner_b"].get("id"),
+        "repair Courses are not isolated",
+    )
+    require(
+        isinstance(courses["learner_a"].get("manualPracticeSetId"), str)
+        and courses["learner_a"]["manualPracticeSetId"],
+        "manual Practice UI did not create a resource",
+    )
     for actor in ACTORS:
         study = courses[actor].get("study")
         require(isinstance(study, dict), f"{actor} provider-off manual study receipt missing")
@@ -440,7 +520,10 @@ def validate_pre_cleanup(arguments: argparse.Namespace) -> None:
         )
         practice = study.get("practice")
         flashcards = study.get("flashcards")
-        require(isinstance(practice, dict) and isinstance(flashcards, dict), f"{actor} manual study malformed")
+        require(
+            isinstance(practice, dict) and isinstance(flashcards, dict),
+            f"{actor} manual study malformed",
+        )
         require(
             practice.get("state") == "graded"
             and practice.get("autosaveStatus") == 200
@@ -487,8 +570,13 @@ def validate_pre_cleanup(arguments: argparse.Namespace) -> None:
     for actor in ACTORS:
         item = resources[actor]
         require(isinstance(item, dict), f"{actor} resources malformed")
-        require(item.get("actor") == actor and item.get("username") == usernames[actor], f"{actor} resource owner mismatch")
-        require(item.get("userId") == pre_auth[actor]["userId"], f"{actor} resource identity mismatch")
+        require(
+            item.get("actor") == actor and item.get("username") == usernames[actor],
+            f"{actor} resource owner mismatch",
+        )
+        require(
+            item.get("userId") == pre_auth[actor]["userId"], f"{actor} resource identity mismatch"
+        )
         course = item.get("course")
         source = item.get("source")
         chat = item.get("chat")
@@ -515,15 +603,40 @@ def validate_pre_cleanup(arguments: argparse.Namespace) -> None:
             flashcards == courses[actor]["study"]["flashcards"],
             f"{actor} Flashcard resource was not the provider-off receipt",
         )
-        require(course.get("title") == "Day 3 Shared Biology" and isinstance(course.get("writeEpoch"), int), f"{actor} Course projection invalid")
-        require(source.get("state") == "ready" and source.get("displayName") == "shared-day3-notes.txt", f"{actor} source not ready")
+        require(
+            course.get("title") == "Day 3 Shared Biology"
+            and isinstance(course.get("writeEpoch"), int),
+            f"{actor} Course projection invalid",
+        )
+        require(
+            source.get("state") == "ready" and source.get("displayName") == "shared-day3-notes.txt",
+            f"{actor} source not ready",
+        )
         source_id = source.get("id")
         require(isinstance(source_id, str) and source_id, f"{actor} source ID is empty")
-        require(source.get("contentSha256") == source.get("manifestFingerprint"), f"{actor} source digest mismatch")
-        require(all(HASH_RE.fullmatch(str(source.get(key, ""))) for key in ("contentSha256", "fileSha256", "manifestFingerprint")), f"{actor} source hashes malformed")
-        require(isinstance(chat.get("sessionId"), str) and chat.get("sessionId"), f"{actor} chat session is empty")
-        require(chat.get("groundedCitationSourceId") == source.get("id"), f"{actor} chat citation is not source-bound")
-        require(chat.get("terminalProvider") == "deterministic-local", f"{actor} chat did not terminate through deterministic provider")
+        require(
+            source.get("contentSha256") == source.get("manifestFingerprint"),
+            f"{actor} source digest mismatch",
+        )
+        require(
+            all(
+                HASH_RE.fullmatch(str(source.get(key, "")))
+                for key in ("contentSha256", "fileSha256", "manifestFingerprint")
+            ),
+            f"{actor} source hashes malformed",
+        )
+        require(
+            isinstance(chat.get("sessionId"), str) and chat.get("sessionId"),
+            f"{actor} chat session is empty",
+        )
+        require(
+            chat.get("groundedCitationSourceId") == source.get("id"),
+            f"{actor} chat citation is not source-bound",
+        )
+        require(
+            chat.get("terminalProvider") == "deterministic-local",
+            f"{actor} chat did not terminate through deterministic provider",
+        )
         expected_marker_hash = hashlib.sha256(
             f"private-{actor}-{arguments.run_id}".encode("utf-8")
         ).hexdigest()
@@ -543,19 +656,36 @@ def validate_pre_cleanup(arguments: argparse.Namespace) -> None:
             separators=(",", ":"),
         ).encode("utf-8")
         expected_content_hash = hashlib.sha256(expected_manifest).hexdigest()
-        require(source.get("fileSha256") == expected_file_hash, f"{actor} source file hash is not marker-bound")
-        require(source.get("contentSha256") == expected_content_hash, f"{actor} source manifest hash is not marker-bound")
+        require(
+            source.get("fileSha256") == expected_file_hash,
+            f"{actor} source file hash is not marker-bound",
+        )
+        require(
+            source.get("contentSha256") == expected_content_hash,
+            f"{actor} source manifest hash is not marker-bound",
+        )
         require(practice.get("state") == "graded", f"{actor} Practice attempt state invalid")
-        require(practice.get("answerSha256") == expected_marker_hash, f"{actor} Practice answer binding invalid")
-        require(flashcards.get("state") == "ready" and flashcards.get("reviewedPreRestart") is True, f"{actor} Flashcards state invalid")
-        require(flashcards.get("reviewId") == flashcards.get("lastReviewId"), f"{actor} review schedule binding invalid")
+        require(
+            practice.get("answerSha256") == expected_marker_hash,
+            f"{actor} Practice answer binding invalid",
+        )
+        require(
+            flashcards.get("state") == "ready" and flashcards.get("reviewedPreRestart") is True,
+            f"{actor} Flashcards state invalid",
+        )
+        require(
+            flashcards.get("reviewId") == flashcards.get("lastReviewId"),
+            f"{actor} review schedule binding invalid",
+        )
         require(
             chat.get("foreignMarkerAbsent") is True
             and chat.get("foreignSourceAbsent") is True
             and chat.get("foreignCitationAbsent") is True,
             f"{actor} Chat foreign-content rejection missing",
         )
-        require(item.get("privateMarkerSha256") == expected_marker_hash, f"{actor} marker hash invalid")
+        require(
+            item.get("privateMarkerSha256") == expected_marker_hash, f"{actor} marker hash invalid"
+        )
         identifiers["course"].append(str(course.get("id", "")))
         identifiers["source"].append(str(source.get("id", "")))
         identifiers["practice"].append(str(practice.get("setId", "")))
@@ -566,10 +696,25 @@ def validate_pre_cleanup(arguments: argparse.Namespace) -> None:
         require(all(identifiers[key][-1] for key in RESOURCE_KEYS), f"{actor} resource ID is empty")
     for key, values in identifiers.items():
         require(len(set(values)) == 2, f"{key} resources are not isolated")
-    require(resources["learner_a"]["privateMarkerSha256"] != resources["learner_b"]["privateMarkerSha256"], "private markers collapse")
-    require(resources["learner_a"]["chat"]["sessionId"] != resources["learner_b"]["chat"]["sessionId"], "chat sessions are not isolated")
-    require(resources["learner_a"]["source"]["fileSha256"] != resources["learner_b"]["source"]["fileSha256"], "source files are not byte-distinct")
-    require(resources["learner_a"]["source"]["contentSha256"] != resources["learner_b"]["source"]["contentSha256"], "source content digests are not distinct")
+    require(
+        resources["learner_a"]["privateMarkerSha256"]
+        != resources["learner_b"]["privateMarkerSha256"],
+        "private markers collapse",
+    )
+    require(
+        resources["learner_a"]["chat"]["sessionId"] != resources["learner_b"]["chat"]["sessionId"],
+        "chat sessions are not isolated",
+    )
+    require(
+        resources["learner_a"]["source"]["fileSha256"]
+        != resources["learner_b"]["source"]["fileSha256"],
+        "source files are not byte-distinct",
+    )
+    require(
+        resources["learner_a"]["source"]["contentSha256"]
+        != resources["learner_b"]["source"]["contentSha256"],
+        "source content digests are not distinct",
+    )
 
     interrupted_sources = actor_map(interrupted.get("sources"), "interrupted sources")
     for actor in ACTORS:
@@ -585,13 +730,26 @@ def validate_pre_cleanup(arguments: argparse.Namespace) -> None:
             and HASH_RE.fullmatch(str(receipt.get("fileSha256", ""))) is not None,
             f"{actor} interrupted source receipt invalid",
         )
-        require(receipt.get("fileSha256") == expected_interrupted_hash, f"{actor} interrupted source hash drifted")
-    require(interrupted_sources["learner_a"]["id"] != interrupted_sources["learner_b"]["id"], "interrupted source IDs collapse")
-    require(interrupted_sources["learner_a"]["fileSha256"] != interrupted_sources["learner_b"]["fileSha256"], "interrupted source bytes collapse")
+        require(
+            receipt.get("fileSha256") == expected_interrupted_hash,
+            f"{actor} interrupted source hash drifted",
+        )
+    require(
+        interrupted_sources["learner_a"]["id"] != interrupted_sources["learner_b"]["id"],
+        "interrupted source IDs collapse",
+    )
+    require(
+        interrupted_sources["learner_a"]["fileSha256"]
+        != interrupted_sources["learner_b"]["fileSha256"],
+        "interrupted source bytes collapse",
+    )
 
     for document, label in ((pre, "pre"), (post, "post")):
         counts = actor_map(document.get("generationOperationCounts"), f"{label} operation counts")
-        require(all(counts[actor] == {"practice": 0, "flashcards": 0} for actor in ACTORS), f"{label} used generated study resources")
+        require(
+            all(counts[actor] == {"practice": 0, "flashcards": 0} for actor in ACTORS),
+            f"{label} used generated study resources",
+        )
 
     require(post.get("coldRestartProjection") is True, "post proof is not bound to cold restart")
     persistence = actor_map(post.get("persistence"), "post persistence")
@@ -612,11 +770,29 @@ def validate_pre_cleanup(arguments: argparse.Namespace) -> None:
         "browserFlashcards": True,
         "browserReviewReload": True,
     }
-    require(all(persistence[actor] == expected_persistence for actor in ACTORS), "post-restart projection is incomplete")
+    require(
+        all(persistence[actor] == expected_persistence for actor in ACTORS),
+        "post-restart projection is incomplete",
+    )
     reviews = actor_map(post.get("reviewPersistence"), "review persistence")
-    require(all(reviews[actor].get("reviewId") == resources[actor]["flashcards"]["reviewId"] and reviews[actor].get("reviewCount") == 1 and reviews[actor].get("scheduleLastReviewId") == reviews[actor].get("reviewId") and reviews[actor].get("ownerScoped") is True for actor in ACTORS), "post-restart review persistence failed")
-    require(reviews["learner_a"]["reviewId"] != reviews["learner_b"]["reviewId"], "review IDs are not isolated")
-    require(post.get("reviewIdLookupBoundary") == "not-externally-addressable", "review-ID lookup boundary omitted")
+    require(
+        all(
+            reviews[actor].get("reviewId") == resources[actor]["flashcards"]["reviewId"]
+            and reviews[actor].get("reviewCount") == 1
+            and reviews[actor].get("scheduleLastReviewId") == reviews[actor].get("reviewId")
+            and reviews[actor].get("ownerScoped") is True
+            for actor in ACTORS
+        ),
+        "post-restart review persistence failed",
+    )
+    require(
+        reviews["learner_a"]["reviewId"] != reviews["learner_b"]["reviewId"],
+        "review IDs are not isolated",
+    )
+    require(
+        post.get("reviewIdLookupBoundary") == "not-externally-addressable",
+        "review-ID lookup boundary omitted",
+    )
     failed_sources = actor_map(post.get("interruptedSources"), "post interrupted sources")
     for actor in ACTORS:
         require(
@@ -634,11 +810,22 @@ def validate_pre_cleanup(arguments: argparse.Namespace) -> None:
     allowed_404: set[str] = set()
     for actor in ACTORS:
         rows = isolation[actor]
-        require(isinstance(rows, list) and len(rows) == len(ISOLATION_FAMILIES), f"{actor} isolation matrix incomplete")
-        require({row.get("family") for row in rows if isinstance(row, dict)} == set(ISOLATION_FAMILIES), f"{actor} isolation families incomplete")
+        require(
+            isinstance(rows, list) and len(rows) == len(ISOLATION_FAMILIES),
+            f"{actor} isolation matrix incomplete",
+        )
+        require(
+            {row.get("family") for row in rows if isinstance(row, dict)} == set(ISOLATION_FAMILIES),
+            f"{actor} isolation families incomplete",
+        )
         for row in rows:
             require(isinstance(row, dict), f"{actor} isolation row malformed")
-            require(row.get("foreignStatus") == 404 and row.get("missingStatus") == 404 and row.get("bodiesEqual") is True, f"{actor} foreign/missing oracle mismatch")
+            require(
+                row.get("foreignStatus") == 404
+                and row.get("missingStatus") == 404
+                and row.get("bodiesEqual") is True,
+                f"{actor} foreign/missing oracle mismatch",
+            )
             require(
                 row.get("body")
                 in (
@@ -698,38 +885,70 @@ def sha256_file(path: Path) -> str:
 def validate_final(arguments: argparse.Namespace) -> None:
     evidence_dir = Path(arguments.evidence_dir)
     require(evidence_dir.is_dir() and not evidence_dir.is_symlink(), "evidence directory is unsafe")
-    require(stat.S_IMODE(evidence_dir.stat().st_mode) == 0o700, "evidence directory mode is not 700")
+    require(
+        stat.S_IMODE(evidence_dir.stat().st_mode) == 0o700, "evidence directory mode is not 700"
+    )
     sentinel = evidence_dir / "day3-school-loop.complete"
     require(not sentinel.exists(), "wrapper sentinel exists before final validation")
     prevalidation = load_json(evidence_dir, "precleanup.validation.json")
-    require(prevalidation == {
-        "schemaVersion": 1,
-        "runId": arguments.run_id,
-        "status": "accepted",
-        "twoLearners": True,
-        "uiRepairs": True,
-        "providerLedgerZero": True,
-        "coldRestartPersistence": True,
-        "foreignMissingNonOracle": True,
-        "practiceLifecycle": True,
-        "flashcardReviewPersistence": True,
-        "interruptedSourceFailClosed": True,
-        "reviewIdLookupBoundary": "not-externally-addressable",
-    }, "pre-cleanup validation receipt mismatch")
+    require(
+        prevalidation
+        == {
+            "schemaVersion": 1,
+            "runId": arguments.run_id,
+            "status": "accepted",
+            "twoLearners": True,
+            "uiRepairs": True,
+            "providerLedgerZero": True,
+            "coldRestartPersistence": True,
+            "foreignMissingNonOracle": True,
+            "practiceLifecycle": True,
+            "flashcardReviewPersistence": True,
+            "interruptedSourceFailClosed": True,
+            "reviewIdLookupBoundary": "not-externally-addressable",
+        },
+        "pre-cleanup validation receipt mismatch",
+    )
     runtime = parse_runtime(evidence_dir / "runtime.txt")
     require(runtime.get("run_id") == arguments.run_id, "runtime run binding mismatch")
     require(runtime.get("source_worktree") == "clean", "source worktree was not clean at start")
     require(runtime.get("source_end_worktree") == "clean", "source worktree was not clean at end")
-    require(runtime.get("source_cleanup_worktree") == "clean", "source worktree was not clean after cleanup")
+    require(
+        runtime.get("source_cleanup_worktree") == "clean",
+        "source worktree was not clean after cleanup",
+    )
     require(runtime.get("source_head") == runtime.get("source_end_head"), "source HEAD changed")
-    require(runtime.get("source_branch") == runtime.get("source_end_branch"), "source branch changed")
-    require(runtime.get("source_worktree") == runtime.get("source_end_worktree"), "source worktree state changed")
-    require(runtime.get("source_tree_digest") == runtime.get("source_end_tree_digest"), "source tree digest changed")
-    require(runtime.get("source_head") == runtime.get("source_cleanup_head"), "source HEAD changed during cleanup")
-    require(runtime.get("source_branch") == runtime.get("source_cleanup_branch"), "source branch changed during cleanup")
-    require(runtime.get("source_worktree") == runtime.get("source_cleanup_worktree"), "source worktree state changed during cleanup")
-    require(runtime.get("source_tree_digest") == runtime.get("source_cleanup_tree_digest"), "source tree digest changed during cleanup")
-    require(HASH_RE.fullmatch(runtime.get("source_tree_digest", "")) is not None, "source tree digest malformed")
+    require(
+        runtime.get("source_branch") == runtime.get("source_end_branch"), "source branch changed"
+    )
+    require(
+        runtime.get("source_worktree") == runtime.get("source_end_worktree"),
+        "source worktree state changed",
+    )
+    require(
+        runtime.get("source_tree_digest") == runtime.get("source_end_tree_digest"),
+        "source tree digest changed",
+    )
+    require(
+        runtime.get("source_head") == runtime.get("source_cleanup_head"),
+        "source HEAD changed during cleanup",
+    )
+    require(
+        runtime.get("source_branch") == runtime.get("source_cleanup_branch"),
+        "source branch changed during cleanup",
+    )
+    require(
+        runtime.get("source_worktree") == runtime.get("source_cleanup_worktree"),
+        "source worktree state changed during cleanup",
+    )
+    require(
+        runtime.get("source_tree_digest") == runtime.get("source_cleanup_tree_digest"),
+        "source tree digest changed during cleanup",
+    )
+    require(
+        HASH_RE.fullmatch(runtime.get("source_tree_digest", "")) is not None,
+        "source tree digest malformed",
+    )
     expected_runtime = {
         "process_environment": "allowlisted",
         "process_overrides": "ignored",
@@ -829,7 +1048,10 @@ def main() -> int:
             require(bool(arguments.runtime_root), "--runtime-root is required before cleanup")
             validate_pre_cleanup(arguments)
         else:
-            require(arguments.runtime_root is None, "final validation must not receive the deleted runtime root")
+            require(
+                arguments.runtime_root is None,
+                "final validation must not receive the deleted runtime root",
+            )
             validate_final(arguments)
     except (ValidationError, OSError, sqlite3.Error) as exc:
         print(f"Day 3 evidence rejected: {exc}", file=sys.stderr)

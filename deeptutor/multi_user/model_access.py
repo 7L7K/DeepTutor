@@ -81,9 +81,7 @@ def assert_delegated_partner_models_shareable(partner_config: Any) -> None:
     """
     catalog = admin_catalog()
     primary = getattr(partner_config, "llm_selection", None) if partner_config else None
-    backup = (
-        getattr(partner_config, "backup_llm_selection", None) if partner_config else None
-    )
+    backup = getattr(partner_config, "backup_llm_selection", None) if partner_config else None
     candidates: tuple[dict[str, Any] | None, ...] = (
         primary or None,
         *((backup,) if backup else ()),
@@ -91,9 +89,7 @@ def assert_delegated_partner_models_shareable(partner_config: Any) -> None:
     for selection in candidates:
         profile = _effective_profile_for_selection(catalog, selection)
         if profile is not None and is_owner_bound(profile):
-            raise PermissionError(
-                "Assigned Partner cannot use an owner-bound model profile."
-            )
+            raise PermissionError("Assigned Partner cannot use an owner-bound model profile.")
 
 
 def redacted_model_access(user_id: str | None = None) -> dict[str, list[dict[str, Any]]]:

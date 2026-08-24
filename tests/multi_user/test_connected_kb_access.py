@@ -49,9 +49,9 @@ def _install_managers(
     monkeypatch.setattr(
         knowledge_access,
         "_manager_for",
-        lambda base_dir: personal_manager
-        if Path(base_dir).resolve() == personal_root
-        else admin_manager,
+        lambda base_dir: (
+            personal_manager if Path(base_dir).resolve() == personal_root else admin_manager
+        ),
     )
 
 

@@ -82,8 +82,7 @@ def _stage_source(
         idempotency_key=idempotency_key,
     )
     raw_root = (
-        get_personal_path_service(course_service.owner_user_id)
-        .get_knowledge_bases_root()
+        get_personal_path_service(course_service.owner_user_id).get_knowledge_bases_root()
         / source_kb_name(course_id, source.id)
         / "raw"
     )
@@ -98,9 +97,7 @@ def _stage_source(
             "sha256": hashlib.sha256(payload).hexdigest(),
         }
     ]
-    encoded = json.dumps(
-        manifest, ensure_ascii=False, sort_keys=True, separators=(",", ":")
-    )
+    encoded = json.dumps(manifest, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
     source = course_service.repository.update_processing_source_manifest(
         course_id,
         source.id,
@@ -170,9 +167,7 @@ def test_two_learners_keep_same_titled_courses_and_same_named_source_bytes_isola
             lambda: bob_service.repository.get_source(bob_course.id, alice_source.id)
         )
         missing_source = _denial(
-            lambda: bob_service.repository.get_source(
-                bob_course.id, "src_" + "0" * 32
-            )
+            lambda: bob_service.repository.get_source(bob_course.id, "src_" + "0" * 32)
         )
 
     assert alice_course.title == bob_course.title == "Biology"
@@ -184,12 +179,8 @@ def test_two_learners_keep_same_titled_courses_and_same_named_source_bytes_isola
     assert alice_file != bob_file
     assert alice_file.read_bytes() == b"alice-specific cell notes\n"
     assert bob_file.read_bytes() == b"bob-specific genetics notes\n"
-    assert alice_file.is_relative_to(
-        get_personal_path_service(alice.id).get_knowledge_bases_root()
-    )
-    assert bob_file.is_relative_to(
-        get_personal_path_service(bob.id).get_knowledge_bases_root()
-    )
+    assert alice_file.is_relative_to(get_personal_path_service(alice.id).get_knowledge_bases_root())
+    assert bob_file.is_relative_to(get_personal_path_service(bob.id).get_knowledge_bases_root())
     assert foreign_course == missing_course
     assert foreign_source == missing_source
 
@@ -343,35 +334,23 @@ def test_manual_practice_grade_and_flashcard_review_survive_service_reconstructi
         )
         assert _denial(
             lambda: bob_practice.get_practice_set(bob_course.id, practice_set.id)
-        ) == _denial(
-            lambda: bob_practice.get_practice_set(
-                bob_course.id, "prc_" + "0" * 32
-            )
-        )
+        ) == _denial(lambda: bob_practice.get_practice_set(bob_course.id, "prc_" + "0" * 32))
         assert _denial(
             lambda: bob_attempts.get_attempt(
                 bob_course.id, practice_set.id, attempt_view.attempt.id
             )
         ) == _denial(
-            lambda: bob_attempts.get_attempt(
-                bob_course.id, "prc_" + "0" * 32, "att_" + "0" * 32
-            )
+            lambda: bob_attempts.get_attempt(bob_course.id, "prc_" + "0" * 32, "att_" + "0" * 32)
         )
-        assert _denial(
-            lambda: bob_flashcards.get_deck(bob_course.id, deck.id)
-        ) == _denial(
-            lambda: bob_flashcards.get_deck(
-                bob_course.id, "dck_" + "0" * 32
-            )
+        assert _denial(lambda: bob_flashcards.get_deck(bob_course.id, deck.id)) == _denial(
+            lambda: bob_flashcards.get_deck(bob_course.id, "dck_" + "0" * 32)
         )
 
     assert question.prompt == "What is the formula for water?"
     assert saved_answer.response == {"answer": "H2O"}
     assert graded.state == "graded"
     assert graded.score == {"correct": 1, "total": 1, "fraction": 1.0}
-    assert reopened_practice.get_revision(
-        course.id, practice_set.id, revision.id
-    ).state == "ready"
+    assert reopened_practice.get_revision(course.id, practice_set.id, revision.id).state == "ready"
     assert restored_attempt.attempt.state == "graded"
     assert restored_attempt.attempt.score == graded.score
     assert restored_attempt.answers[0].response == {"answer": "H2O"}

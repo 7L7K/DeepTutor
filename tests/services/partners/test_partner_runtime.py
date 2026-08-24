@@ -380,9 +380,7 @@ class TestTurnExecution:
 
         reply = await runner.process_message(msg)
 
-        assert reply == (
-            "Partner management commands are unavailable in an assigned conversation."
-        )
+        assert reply == ("Partner management commands are unavailable in an assigned conversation.")
         assert fake_orchestrator.seen_contexts == []
         assert runner.store.messages("other")[0]["content"] == "another learner's private title"
         assert config.enabled_tools == ["web_search"]
@@ -502,8 +500,7 @@ class TestContextAssembly:
         ]
         assert all(ctx.metadata["_delegated_partner_call"] is True for ctx in contexts)
         assert all(
-            "_delegated_user_id" not in ctx.metadata.get("channel_metadata", {})
-            for ctx in contexts
+            "_delegated_user_id" not in ctx.metadata.get("channel_metadata", {}) for ctx in contexts
         )
 
     @pytest.mark.asyncio
@@ -723,9 +720,7 @@ class TestLiveTurn:
         mgr._partners["ada"] = SimpleNamespace(running=True, runner=CapturingRunner())
 
         for caller in ("u_alice", "u_bob", "u_alice"):
-            await mgr.send_message(
-                "ada", "hello", session_key="dt-same", delegated_user_id=caller
-            )
+            await mgr.send_message("ada", "hello", session_key="dt-same", delegated_user_id=caller)
 
         assert captured[0].session_key == captured[2].session_key
         assert captured[0].session_key != captured[1].session_key

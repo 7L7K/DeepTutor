@@ -841,11 +841,7 @@ class PartnerManager:
             chat_id=session_id or chat_id,
             content=content,
             media=media or [],
-            metadata=(
-                {"_delegated_user_id": delegated_id}
-                if delegated_id
-                else {}
-            ),
+            metadata=({"_delegated_user_id": delegated_id} if delegated_id else {}),
             session_key_override=resolved_key,
         )
         return await instance.runner.process_message(msg, on_event=on_event)

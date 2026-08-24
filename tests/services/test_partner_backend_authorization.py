@@ -103,9 +103,7 @@ async def test_partner_backend_rejects_owner_bound_default_before_start_or_sessi
     }
     monkeypatch.setattr(partner_access, "assert_partner_allowed", lambda _partner_id: None)
     monkeypatch.setattr(model_access, "admin_catalog", lambda: catalog)
-    monkeypatch.setattr(
-        "deeptutor.services.partners.get_partner_manager", lambda: UnsafeManager()
-    )
+    monkeypatch.setattr("deeptutor.services.partners.get_partner_manager", lambda: UnsafeManager())
     learner = CurrentUser(
         id="u_learner",
         username="learner",
@@ -155,9 +153,7 @@ async def test_admin_partner_consult_preserves_owner_bound_owner_behavior(
         "assert_delegated_partner_models_shareable",
         shareability_must_not_run_for_owner,
     )
-    monkeypatch.setattr(
-        "deeptutor.services.partners.get_partner_manager", lambda: OwnerManager()
-    )
+    monkeypatch.setattr("deeptutor.services.partners.get_partner_manager", lambda: OwnerManager())
     admin = CurrentUser(
         id="u_admin",
         username="admin",

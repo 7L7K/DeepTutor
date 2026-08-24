@@ -203,9 +203,7 @@ class TestExecutorRouting:
             name="unsafe",
             message="run later",
             schedule=CronSchedule(kind="every", every_seconds=60),
-            owner=CronOwner(
-                kind="partner", partner_id="ada", delegated_user_id="u_learner"
-            ),
+            owner=CronOwner(kind="partner", partner_id="ada", delegated_user_id="u_learner"),
         )
 
         status, error = await executor.execute_job(job)
