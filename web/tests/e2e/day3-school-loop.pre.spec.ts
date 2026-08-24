@@ -332,6 +332,23 @@ async function observePage(
     }
     window.WebSocket = ObservedWebSocket;
   }, "__d3RecordWebSocketClose");
+  await page.addInitScript(() => {
+    const nativeFetch = window.fetch.bind(window);
+    window.fetch = ((input: RequestInfo | URL, init?: RequestInit) => {
+      const rawUrl = typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
+      const url = new URL(rawUrl, window.location.href);
+      if (url.pathname.startsWith("/api/v1/sessions/")) {
+        const signal = init?.signal;
+        console.log(
+          `[D3_FETCH] path=${url.pathname} signal=${Boolean(signal)} aborted=${Boolean(signal?.aborted)} stack=${new Error().stack?.split("\\n").slice(1, 4).join("|")}`,
+        );
+        signal?.addEventListener("abort", () => {
+          console.log(`[D3_FETCH_ABORT_SIGNAL] path=${url.pathname}`);
+        }, { once: true });
+      }
+      return nativeFetch(input, init);
+    }) as typeof window.fetch;
+  });
   page.on("request", (request) => {
     const url = new URL(request.url());
     if (!["http:", "https:"].includes(url.protocol) || !allowedHttpOrigins.has(url.origin)) return;
@@ -415,6 +432,9 @@ async function observePage(
     });
   });
   page.on("console", (message) => {
+    if (message.type() === "log" && message.text().startsWith("[D3_")) {
+      console.log(`[D3_PAGE_LOG] actor=${actor} ${message.text()}`);
+    }
     if (message.type() === "error") {
       evidence.consoleErrors.push({ actor, text: message.text() });
     }
