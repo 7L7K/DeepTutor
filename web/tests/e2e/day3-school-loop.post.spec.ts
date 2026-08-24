@@ -229,8 +229,11 @@ async function observePage(page: Page, actor: Actor, evidence: PostEvidence) {
   const activelyBlockedRequests = new WeakSet<object>();
   const intentionalShutdownRequests = new WeakSet<object>();
   const inFlightHttpRequests = new Map<object, { method: string; url: string }>();
+  const expectedNotFoundRequests = new Set<string>();
+  const observedNotFoundResponses: string[] = [];
   let lastHttpActivityAt = Date.now();
   let intentionalShutdown = false;
+  const notFoundKey = (method: string, path: string) => method.toUpperCase() + " " + path;
   const allowedNetworkUrl = (rawUrl: string) => {
     const url = new URL(rawUrl);
     return url.protocol === "ws:" || url.protocol === "wss:"
@@ -302,7 +305,11 @@ async function observePage(page: Page, actor: Actor, evidence: PostEvidence) {
     if (inFlightHttpRequests.delete(request)) lastHttpActivityAt = Date.now();
   });
   page.on("response", (response) => {
-    const path = new URL(response.url()).pathname;
+    const responseUrl = new URL(response.url());
+    const path = responseUrl.pathname;
+    if (response.status() === 404 && allowedHttpOrigins.has(responseUrl.origin)) {
+      observedNotFoundResponses.push(notFoundKey(response.request().method(), path));
+    }
     if (!path.startsWith("/api/v1/")) return;
     evidence.requests.push({
       phase: "post",
@@ -364,7 +371,17 @@ async function observePage(page: Page, actor: Actor, evidence: PostEvidence) {
     });
   });
   page.on("console", (message) => {
-    if (message.type() === "error") evidence.consoleErrors.push({ actor, text: message.text() });
+    if (message.type() === "error") {
+      // Chromium emits a generic console error for every HTTP 404 response.
+      // The post phase intentionally performs foreign/missing non-oracle
+      // probes; those responses are checked separately by
+      // assertNotFoundClean below, so they must not be mistaken for app
+      // runtime errors here.
+      if (/^Failed to load resource: the server responded with a status of 404\b/.test(message.text())) {
+        return;
+      }
+      evidence.consoleErrors.push({ actor, text: message.text() });
+    }
   });
   page.on("pageerror", (error) => evidence.pageErrors.push({ actor, text: error.message }));
   return {
@@ -394,6 +411,14 @@ async function observePage(page: Page, actor: Actor, evidence: PostEvidence) {
     markIntentionalShutdown() {
       intentionalShutdown = true;
       for (const request of inFlightHttpRequests.keys()) intentionalShutdownRequests.add(request);
+    },
+    allowNotFound(method: string, path: string) {
+      expectedNotFoundRequests.add(notFoundKey(method, path));
+    },
+    assertNotFoundClean() {
+      expect(
+        observedNotFoundResponses.filter((key) => !expectedNotFoundRequests.has(key)),
+      ).toEqual([]);
     },
   };
 }
@@ -499,7 +524,11 @@ async function isolationPair(
   foreignPath: string,
   missingPath: string,
   init?: BrowserRequestInit,
+  allowNotFound?: (method: string, path: string) => void,
 ): Promise<IsolationReceipt> {
+  const method = init?.method || "GET";
+  allowNotFound?.(method, new URL(foreignPath, frontendUrl).pathname);
+  allowNotFound?.(method, new URL(missingPath, frontendUrl).pathname);
   const [foreign, missing] = await Promise.all([
     requestJson(page, foreignPath, { cache: "no-store", ...init }),
     requestJson(page, missingPath, { cache: "no-store", ...init }),
@@ -756,24 +785,32 @@ async function actorFlow(
         "course",
         "/api/v1/courses/" + encodeURIComponent(foreign.course.id),
         "/api/v1/courses/" + missingCourse,
+        undefined,
+        observation.allowNotFound,
       ),
       isolationPair(
         page,
         "source",
         root + "/sources/" + encodeURIComponent(foreign.source.id),
         root + "/sources/" + missingSource,
+        undefined,
+        observation.allowNotFound,
       ),
       isolationPair(
         page,
         "chat",
         "/api/v1/sessions/" + encodeURIComponent(foreign.chat.sessionId),
         "/api/v1/sessions/" + missingSession,
+        undefined,
+        observation.allowNotFound,
       ),
       isolationPair(
         page,
         "practice",
         root + "/practice/" + encodeURIComponent(foreign.practice.setId),
         root + "/practice/" + missingPractice,
+        undefined,
+        observation.allowNotFound,
       ),
       isolationPair(
         page,
@@ -784,6 +821,8 @@ async function actorFlow(
           "/attempts/" +
           encodeURIComponent(foreign.practice.attemptId),
         root + "/practice/" + encodeURIComponent(own.practice.setId) + "/attempts/" + missingAttempt,
+        undefined,
+        observation.allowNotFound,
       ),
       isolationPair(
         page,
@@ -800,12 +839,16 @@ async function actorFlow(
           "/attempts/" +
           missingAttempt +
           "/results",
+        undefined,
+        observation.allowNotFound,
       ),
       isolationPair(
         page,
         "flashcards",
         root + "/flashcards/" + encodeURIComponent(foreign.flashcards.deckId),
         root + "/flashcards/" + missingDeck,
+        undefined,
+        observation.allowNotFound,
       ),
       isolationPair(
         page,
@@ -821,6 +864,7 @@ async function actorFlow(
           "/cards/" +
           missingCard,
         cardMutation,
+        observation.allowNotFound,
       ),
       isolationPair(
         page,
@@ -828,6 +872,7 @@ async function actorFlow(
         root + "/flashcards/" + encodeURIComponent(foreign.flashcards.deckId) + "/reviews",
         root + "/flashcards/" + missingDeck + "/reviews",
         reviewMutation,
+        observation.allowNotFound,
       ),
     ]);
     evidence.persistence[actor] = {
@@ -848,6 +893,7 @@ async function actorFlow(
       browserReviewReload: true,
     };
     await observation.waitForHttpQuiescence();
+    observation.assertNotFoundClean();
   } catch (error) {
     hadPrimaryFailure = true;
     throw error;
