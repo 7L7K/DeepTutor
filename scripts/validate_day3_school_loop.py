@@ -43,6 +43,7 @@ LEARNER_SAFE_STATIC = {
     ("GET", "/api/v1/tools"),
     ("GET", "/api/v1/subagents/consult-settings"),
     ("GET", "/api/v1/subagents/partners"),
+    ("GET", "/api/v1/subagents/connections"),
 }
 LEARNER_COURSE_PATTERNS = tuple(
     (method, re.compile(pattern))

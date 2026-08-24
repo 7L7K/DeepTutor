@@ -64,6 +64,7 @@ const LEARNER_SAFE_PAGE_API_PATHS = new Set([
   "/api/v1/tools",
   "/api/v1/subagents/consult-settings",
   "/api/v1/subagents/partners",
+  "/api/v1/subagents/connections",
 ]);
 
 const LEARNER_FORBIDDEN_PAGE_API_PATHS = [
