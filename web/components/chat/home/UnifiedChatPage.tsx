@@ -1044,10 +1044,10 @@ export default function UnifiedChatPage({
   )
 
   // Initial mount — load the session from the URL.
-  // Uses a ref-based flag so Strict Mode double-mount doesn't break the flow:
-  // when React tears down + re-mounts in dev, we reset initialLoadRef in
-  // cleanup so the second mount restarts the load cleanly. The abort is
-  // deliberately OMITTED from cleanup — cancelSessionLoad handles
+  // Uses a ref-based flag so Strict Mode's development-only effect replay does
+  // not start a second request and abort the first one. A real route remount
+  // receives a new ref and still performs its initial load normally. The
+  // abort is deliberately OMITTED from cleanup — cancelSessionLoad handles
   // user-initiated cancellation.
   useEffect(() => {
     if (initialLoadRef.current) return
@@ -1057,9 +1057,7 @@ export default function UnifiedChatPage({
     } else {
       newSession()
     }
-    return () => {
-      initialLoadRef.current = false
-    }
+    return undefined
   }, []) // eslint-disable-line react-hooks/exhaustive-deps
 
   // When URL param changes (sidebar navigation), load the corresponding session
