@@ -966,7 +966,10 @@ def test_partner_event_mapping_redacts_provider_errors_for_learners() -> None:
 
     assert [event.kind for event in events] == ["error"]
     assert "secret-detail" not in events[0].text
-    assert events[0].text == "The assigned Partner could not complete that request. Please try again later."
+    assert (
+        events[0].text
+        == "The assigned Partner could not complete that request. Please try again later."
+    )
 
 
 def test_partner_event_mapping_redacts_failed_tool_result_for_learners() -> None:
@@ -985,7 +988,10 @@ def test_partner_event_mapping_redacts_failed_tool_result_for_learners() -> None
 
     assert [event.kind for event in events] == ["tool_result"]
     assert "secret-detail" not in events[0].text
-    assert events[0].text == "The assigned Partner could not complete that request. Please try again later."
+    assert (
+        events[0].text
+        == "The assigned Partner could not complete that request. Please try again later."
+    )
 
 
 def test_partner_tool_call_pairs_with_its_result_adjacently() -> None:

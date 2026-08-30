@@ -4,8 +4,8 @@ import asyncio
 from types import SimpleNamespace
 
 from fastapi import HTTPException
-from starlette.websockets import WebSocketDisconnect
 import pytest
+from starlette.websockets import WebSocketDisconnect
 
 from deeptutor.api.routers import knowledge
 from deeptutor.api.utils.progress_broadcaster import (

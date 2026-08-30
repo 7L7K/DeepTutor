@@ -305,10 +305,7 @@ def _tool_result_reports_failure(metadata: dict[str, object]) -> bool:
     tool_metadata = metadata.get("tool_metadata")
     if not isinstance(tool_metadata, dict):
         return False
-    return any(
-        key in tool_metadata
-        for key in ("error", "error_type", "needs_reindex")
-    )
+    return any(key in tool_metadata for key in ("error", "error_type", "needs_reindex"))
 
 
 def _compact(args: object) -> str:

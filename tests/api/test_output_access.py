@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
-import pytest
 from fastapi.testclient import TestClient
+import pytest
 
 from deeptutor.api import main as api_main
 from deeptutor.api.routers import auth as auth_router
@@ -51,7 +51,9 @@ def test_outputs_require_authentication_and_are_scoped_to_the_owner(monkeypatch,
 
 
 @pytest.mark.parametrize("suffix", [".html", ".svg", ".xml", ".xsl", ".xslt", ".js"])
-def test_active_outputs_are_downloaded_with_browser_hardening(monkeypatch, tmp_path, suffix) -> None:
+def test_active_outputs_are_downloaded_with_browser_hardening(
+    monkeypatch, tmp_path, suffix
+) -> None:
     _configure_authenticated_users(monkeypatch, tmp_path)
     relative_path = f"workspace/chat/chat/turn-1/exec/report{suffix}"
     output = tmp_path / "data" / "users" / "u_alice" / "user" / relative_path

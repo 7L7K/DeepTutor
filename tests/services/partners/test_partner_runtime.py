@@ -255,7 +255,9 @@ class TestTurnExecution:
         final = await runner.process_message(msg)
 
         assert "secret-detail" not in final
-        assert final == "The assigned Partner could not complete that request. Please try again later."
+        assert (
+            final == "The assigned Partner could not complete that request. Please try again later."
+        )
 
     @pytest.mark.asyncio
     async def test_llm_config_error_folds_into_graceful_reply(

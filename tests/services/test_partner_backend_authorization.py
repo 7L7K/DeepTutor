@@ -213,4 +213,7 @@ async def test_learner_partner_consult_redacts_provider_exception(tmp_path, monk
 
     assert result.success is False
     assert "secret-detail" not in result.error
-    assert result.error == "The assigned Partner could not complete that request. Please try again later."
+    assert (
+        result.error
+        == "The assigned Partner could not complete that request. Please try again later."
+    )

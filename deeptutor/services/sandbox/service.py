@@ -97,10 +97,7 @@ class SandboxService:
                     IsolationLevel.SYSTEM,
                     IsolationLevel.APPLICATION,
                 }
-            return (
-                self._backend.level is IsolationLevel.SYSTEM
-                and exec_override() is True
-            )
+            return self._backend.level is IsolationLevel.SYSTEM and exec_override() is True
         except Exception:
             logger.warning("exec authorization check failed; denying execution", exc_info=True)
             return False
