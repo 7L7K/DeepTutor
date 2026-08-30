@@ -247,7 +247,16 @@ def get_attachment_store() -> AttachmentStore:
 def _attachment_root() -> Path:
     override = str(load_system_settings().get("chat_attachment_dir") or "").strip()
     if override:
-        return Path(override).expanduser().resolve()
+        root = Path(override).expanduser().resolve()
+        # A configured host directory is shared process-wide. Keep its
+        # convenience without collapsing authenticated users into the same
+        # attachment namespace; the request-local scope remains authoritative.
+        from deeptutor.multi_user.context import get_current_user_or_none
+
+        current_user = get_current_user_or_none()
+        if current_user is not None and current_user.scope.kind == "user":
+            return (root / _coerce_filename(current_user.id)).resolve()
+        return root
     return get_path_service().get_user_root().joinpath(*_DEFAULT_SUBPATH).resolve()
 
 

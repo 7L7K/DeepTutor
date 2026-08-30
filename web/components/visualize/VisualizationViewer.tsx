@@ -3,10 +3,9 @@
 import dynamic from "next/dynamic";
 import { useEffect, useMemo, useRef, useState, type MouseEvent } from "react";
 import { createPortal } from "react-dom";
-import { Code2, Copy, Check, ExternalLink, Maximize2, X } from "lucide-react";
+import { Code2, Copy, Check, Maximize2, X } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import { Mermaid } from "@/components/Mermaid";
-import { prepareIframeHtml } from "@/lib/iframe-html";
 import { isManimResult, type VisualizeResult } from "@/lib/visualize-types";
 import "./svg-theme.css";
 
@@ -107,85 +106,34 @@ function ChartJsRenderer({ config }: { config: string }) {
   );
 }
 
-function HtmlRenderer({ html }: { html: string }) {
+function HtmlVisualizationUnavailable() {
   const { t } = useTranslation();
-  const iframeRef = useRef<HTMLIFrameElement>(null);
-  const [height, setHeight] = useState(560);
-
-  const prepared = useMemo(() => prepareIframeHtml(html || ""), [html]);
-
-  useEffect(() => {
-    const iframe = iframeRef.current;
-    if (!iframe) return;
-    iframe.srcdoc = prepared;
-  }, [prepared]);
-
-  // Listen for the iframe bridge: a sendPrompt() call (mirror into the composer
-  // via the shared window event) or a height report (grow to fit, no clipping).
-  useEffect(() => {
-    const onMessage = (e: MessageEvent) => {
-      const iframe = iframeRef.current;
-      if (!iframe || e.source !== iframe.contentWindow) return;
-      const data = e.data as { type?: string; text?: string; height?: number };
-      if (!data || typeof data !== "object") return;
-      if (data.type === "dt:visualize-prompt" && data.text) {
-        window.dispatchEvent(
-          new CustomEvent("dt:visualize-prompt", { detail: data.text }),
-        );
-      } else if (
-        data.type === "dt:visualize-height" &&
-        typeof data.height === "number"
-      ) {
-        setHeight(Math.min(2400, Math.max(240, Math.ceil(data.height) + 8)));
-      }
-    };
-    window.addEventListener("message", onMessage);
-    return () => window.removeEventListener("message", onMessage);
-  }, []);
-
-  const handleOpenInNewTab = () => {
-    try {
-      const contentUrl = URL.createObjectURL(
-        new Blob([prepared], { type: "text/html" }),
-      );
-      const wrapper = `<!DOCTYPE html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Visualization</title><style>html,body,iframe{height:100%;width:100%;margin:0;border:0;}</style></head><body><iframe sandbox="allow-scripts" src="${contentUrl}"></iframe></body></html>`;
-      const url = URL.createObjectURL(
-        new Blob([wrapper], { type: "text/html" }),
-      );
-      window.open(url, "_blank", "noopener,noreferrer");
-      setTimeout(() => {
-        URL.revokeObjectURL(url);
-        URL.revokeObjectURL(contentUrl);
-      }, 60_000);
-    } catch {
-      /* no-op */
-    }
-  };
-
   return (
-    <div className="relative w-full">
-      <button
-        type="button"
-        onClick={handleOpenInNewTab}
-        className="absolute right-2 top-2 z-10 inline-flex items-center gap-1 rounded-md border border-[var(--border)] bg-[var(--background)]/90 px-2 py-1 text-[10px] font-medium text-[var(--muted-foreground)] backdrop-blur transition-colors hover:text-[var(--foreground)]"
-        title={t("Open in new tab")}
-      >
-        <ExternalLink size={10} strokeWidth={1.8} />
-        {t("Open")}
-      </button>
-      <iframe
-        ref={iframeRef}
-        title={t("HTML visualization")}
-        sandbox="allow-scripts"
-        className="w-full rounded-lg border border-[var(--border)] bg-[var(--card)]"
-        style={{ minHeight: 320, height }}
-      />
+    <div className="rounded-lg border border-amber-500/30 bg-amber-500/10 p-4 text-sm text-[var(--muted-foreground)]">
+      {t("Interactive HTML visualizations are unavailable in this beta.")}
     </div>
   );
 }
 
 // Per-page sequence used to scope SVG ids (see the scoping block below).
 let svgScopeSeq = 0;
+
+function isLocalSvgFragment(value: string): boolean {
+  return /^#[^\s]+$/.test(value.trim());
+}
+
+function hasOnlyLocalSvgUrlReferences(value: string): boolean {
+  // CSS escapes are decoded by the browser after this sanitizer runs. Rather
+  // than attempting to decode every CSS escape form, reject escaped values.
+  if (value.includes("\\")) return false;
+  const references = value.matchAll(/url\(\s*(['"]?)(.*?)\1\s*\)/gi);
+  let found = false;
+  for (const reference of references) {
+    found = true;
+    if (!isLocalSvgFragment(reference[2] ?? "")) return false;
+  }
+  return found || !/url\s*\(/i.test(value);
+}
 
 // Sanitize an SVG string for safe inline rendering: parse as XML, strip
 // script/foreign-object/event-handler vectors, then reserialize. SVGs come from
@@ -211,30 +159,39 @@ function sanitizeSvg(raw: string): string {
     "handler",
   ];
   root.querySelectorAll(STRIP.join(",")).forEach((n) => n.remove());
+  // CSS syntax has multiple escape forms that resolve after string matching,
+  // so preserve no model-provided stylesheet rather than trying to parse it.
+  root.querySelectorAll("style").forEach((style) => style.remove());
 
   const walk = (el: Element) => {
     const tag = el.nodeName.toLowerCase();
+    const animatedAttribute = el.getAttribute("attributeName")?.trim().toLowerCase();
+    if (
+      (tag === "set" || tag === "animate" || tag === "animatetransform") &&
+      (animatedAttribute?.startsWith("on") ||
+        animatedAttribute === "href" ||
+        animatedAttribute === "xlink:href" ||
+        animatedAttribute === "style")
+    ) {
+      // Animation values are applied after this sanitizer runs. Do not allow a
+      // model to mutate an inert element into an event handler, remote fetch,
+      // or stylesheet reference at animation time.
+      el.remove();
+      return;
+    }
     for (const attr of Array.from(el.attributes)) {
       const name = attr.name.toLowerCase();
-      const val = attr.value.replace(/\s+/g, "").toLowerCase();
       if (name.startsWith("on")) {
         el.removeAttribute(attr.name);
       } else if (
         (name === "href" || name === "xlink:href") &&
-        (val.startsWith("javascript:") ||
-          (val.startsWith("data:") && !val.startsWith("data:image/")))
+        !isLocalSvgFragment(attr.value)
       ) {
         el.removeAttribute(attr.name);
-      } else if (name === "style" && val.includes("javascript:")) {
+      } else if (name === "style") {
         el.removeAttribute(attr.name);
-      } else if (
-        (tag === "set" || tag === "animate") &&
-        name === "attributename" &&
-        val.startsWith("on")
-      ) {
-        // <set attributeName="onclick" .../> can inject a handler — drop it.
-        el.remove();
-        return;
+      } else if (name !== "style" && !hasOnlyLocalSvgUrlReferences(attr.value)) {
+        el.removeAttribute(attr.name);
       }
     }
     Array.from(el.children).forEach((child) => walk(child));
@@ -373,7 +330,7 @@ function renderTextVisualization(result: TextResult) {
     return <Mermaid chart={result.code.content} />;
   }
   if (result.render_type === "html") {
-    return <HtmlRenderer html={result.code.content} />;
+    return <HtmlVisualizationUnavailable />;
   }
   return <ChartJsRenderer config={result.code.content} />;
 }
@@ -412,9 +369,7 @@ export default function VisualizationViewer({
   }
 
   // TypeScript narrows ``result`` to the text-only variant from here on.
-  // HTML iframe already provides its own "Open in new tab" affordance; the
-  // sandboxed iframe also doesn't behave well inside a re-rendered modal.
-  const supportsFullscreen = result.render_type !== "html";
+  const supportsFullscreen = true;
 
   const handleCopy = async () => {
     try {
@@ -430,11 +385,7 @@ export default function VisualizationViewer({
     <div className="space-y-3">
       {/* Visualization area */}
       <div
-        className={`relative ${
-          result.render_type === "html"
-            ? "overflow-hidden rounded-xl border border-[var(--border)] bg-[var(--background)]"
-            : "overflow-hidden rounded-xl border border-[var(--border)] bg-[var(--background)] p-4"
-        }`}
+        className="relative overflow-hidden rounded-xl border border-[var(--border)] bg-[var(--background)] p-4"
       >
         {supportsFullscreen && (
           <button

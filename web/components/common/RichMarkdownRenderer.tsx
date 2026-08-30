@@ -15,6 +15,7 @@ import { findCitationAnchor } from "@/lib/markdown-anchors";
 import {
   citationAnchorIdFor,
   escapeUnknownHtmlTagsForDisplay,
+  isRemoteMarkdownImageSource,
   markdownUrlTransform,
   normalizeMarkdownForDisplay,
   safeDecodeURIComponent,
@@ -274,6 +275,10 @@ export default function RichMarkdownRenderer({
       </code>
     ),
     img: () => null,
+    source: () => null,
+    video: () => null,
+    audio: () => null,
+    track: () => null,
     hr: () => <div className="my-1 h-px bg-current opacity-10" />,
     ul: ({ node, ...props }: any) => (
       <ul className="my-1 ml-4 list-disc" {...props} />
@@ -643,21 +648,46 @@ export default function RichMarkdownRenderer({
           }}
           className="text-[var(--primary)] underline decoration-[var(--primary)]/40 underline-offset-2 transition-colors hover:decoration-[var(--primary)]"
           {...props}
+          target={external ? "_blank" : undefined}
+          rel={external ? "noopener noreferrer" : undefined}
         >
           {children}
         </a>
       );
     },
-    img: ({ node, src, alt, ...props }: any) => (
-      <img
-        src={src}
-        alt={alt || ""}
-        loading="lazy"
-        className={`${gap} inline-block max-w-full rounded-lg border border-[var(--border)]`}
-        {...lineAttr(node)}
-        {...props}
-      />
-    ),
+    img: ({ node, src, srcSet, alt, ...props }: any) => {
+      if (
+        isRemoteMarkdownImageSource(src) ||
+        isRemoteMarkdownImageSource(srcSet)
+      ) {
+        return null;
+      }
+      return (
+        <img
+          src={src}
+          srcSet={srcSet}
+          alt={alt || ""}
+          loading="lazy"
+          className={`${gap} inline-block max-w-full rounded-lg border border-[var(--border)]`}
+          {...lineAttr(node)}
+          {...props}
+        />
+      );
+    },
+    source: ({ node, src, srcSet, ...props }: any) => {
+      if (
+        isRemoteMarkdownImageSource(src) ||
+        isRemoteMarkdownImageSource(srcSet)
+      ) {
+        return null;
+      }
+      return <source src={src} srcSet={srcSet} {...props} />;
+    },
+    // Model-supplied media and posters can make network requests before an
+    // interaction. This beta intentionally renders Markdown as text/images.
+    video: () => null,
+    audio: () => null,
+    track: () => null,
     blockquote: ({ node, ...props }: any) => (
       <blockquote
         className={`${gap} border-l-[3px] border-[var(--muted-foreground)] pl-4 italic text-[var(--muted-foreground)] [&>p]:mb-1`}

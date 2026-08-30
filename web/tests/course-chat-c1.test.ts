@@ -126,6 +126,17 @@ test("learner shells do not expose unqualified Progress or Course scope copy", (
   assert.doesNotMatch(courseChat, /hideCourseScope/);
   assert.match(courseChat, /readiness\.state !== "ready"/);
   assert.match(courseChat, /course-chat-readiness-banner/);
+  assert.match(courseChat, /Retry Course Chat/);
+  assert.match(courseChat, /setLoadAttempt\(\(attempt\) => attempt \+ 1\)/);
+});
+
+test("Course Chat load failures stay inside the current Course", () => {
+  const chat = readFileSync(
+    path.join(process.cwd(), "components/chat/home/UnifiedChatPage.tsx"),
+    "utf8",
+  );
+
+  assert.match(chat, /router\.replace\(courseRouteBase \?\? '\/home'/);
 });
 
 test("Chat cost details are reserved for administrators", () => {

@@ -32,9 +32,7 @@ async def test_generic_config_routes_hide_managed_course_indexes() -> None:
 
 
 @pytest.mark.asyncio
-async def test_generic_config_sync_skips_managed_course_indexes(
-    monkeypatch, tmp_path
-) -> None:
+async def test_generic_config_sync_skips_managed_course_indexes(monkeypatch, tmp_path) -> None:
     (tmp_path / "general_kb").mkdir()
     (tmp_path / "course_crs_one_src_one").mkdir()
     seen: list[str] = []
@@ -42,9 +40,7 @@ async def test_generic_config_sync_skips_managed_course_indexes(
         sync_from_metadata=lambda name, _base: seen.append(name),
     )
     monkeypatch.setattr(knowledge, "_current_kb_base_dir", lambda: tmp_path)
-    monkeypatch.setattr(
-        "deeptutor.services.config.get_kb_config_service", lambda: service
-    )
+    monkeypatch.setattr("deeptutor.services.config.get_kb_config_service", lambda: service)
 
     await knowledge.sync_configs_from_metadata()
 
@@ -249,6 +245,9 @@ async def test_same_named_kbs_do_not_share_progress_websocket_room(monkeypatch, 
     async def authenticate(websocket: FakeWebSocket):
         return set_current_user(users[websocket.user_id])
 
+    async def revalidate(_websocket: FakeWebSocket) -> bool:
+        return True
+
     def resolve_for_current_user(name: str) -> KnowledgeResource:
         user = knowledge.get_current_user()
         base_dir = user.scope.root / "knowledge_bases"
@@ -261,6 +260,7 @@ async def test_same_named_kbs_do_not_share_progress_websocket_room(monkeypatch, 
         )
 
     monkeypatch.setattr("deeptutor.api.routers.auth.ws_require_auth", authenticate)
+    monkeypatch.setattr("deeptutor.api.routers.auth.ws_revalidate_auth", revalidate)
     monkeypatch.setattr(knowledge, "resolve_kb", resolve_for_current_user)
     first = FakeWebSocket("usr_one")
     second = FakeWebSocket("usr_two")
@@ -308,3 +308,104 @@ async def test_progress_broadcaster_discards_a_socket_that_fails_to_send() -> No
 
     assert broadcaster.get_connection_count(subscription_key) == 0
     assert subscription_key not in broadcaster._connections
+
+
+@pytest.mark.asyncio
+async def test_stalled_progress_socket_does_not_block_another_kb_room(monkeypatch) -> None:
+    """A stalled browser is evicted without holding the global registry lock."""
+    from deeptutor.api.utils import progress_broadcaster
+
+    monkeypatch.setattr(progress_broadcaster, "_SEND_TIMEOUT_SECONDS", 0.01)
+
+    class StalledWebSocket:
+        def __init__(self) -> None:
+            self.started = asyncio.Event()
+            self.release = asyncio.Event()
+
+        async def send_json(self, _value: dict) -> None:
+            self.started.set()
+            await self.release.wait()
+
+    class HealthyWebSocket:
+        def __init__(self) -> None:
+            self.messages: list[dict] = []
+
+        async def send_json(self, value: dict) -> None:
+            self.messages.append(value)
+
+    broadcaster = ProgressBroadcaster()
+    stalled_key = progress_subscription_key("stalled", "/tmp/learner-one/knowledge_bases")
+    healthy_key = progress_subscription_key("healthy", "/tmp/learner-two/knowledge_bases")
+    stalled = StalledWebSocket()
+    healthy = HealthyWebSocket()
+    await broadcaster.connect(stalled_key, stalled)
+    await broadcaster.connect(healthy_key, healthy)
+
+    stalled_broadcast = asyncio.create_task(broadcaster.broadcast(stalled_key, {"percent": 50}))
+    await asyncio.wait_for(stalled.started.wait(), timeout=1)
+    await asyncio.wait_for(broadcaster.broadcast(healthy_key, {"percent": 75}), timeout=0.1)
+    await stalled_broadcast
+
+    assert healthy.messages == [{"type": "progress", "data": {"percent": 75}}]
+    assert broadcaster.get_connection_count(stalled_key) == 0
+
+
+@pytest.mark.asyncio
+async def test_progress_websocket_revalidates_auth_and_kb_access_before_polling(
+    monkeypatch, tmp_path
+) -> None:
+    """An idle progress socket cannot outlive a changed account or KB grant."""
+    resource = KnowledgeResource(
+        id="user:kb:notes",
+        name="notes",
+        base_dir=tmp_path / "knowledge_bases",
+        source="user",
+    )
+    calls = {"resolve": 0, "revalidate": 0, "receive": 0}
+
+    class FakeWebSocket:
+        query_params = {"task_id": "active-task"}
+
+        def __init__(self) -> None:
+            self.accepted = False
+            self.closed_code: int | None = None
+
+        async def accept(self) -> None:
+            self.accepted = True
+
+        async def close(self, code: int = 1000) -> None:
+            # Starlette raises on a duplicate close; retain the authorization
+            # close that happened before the endpoint's defensive cleanup.
+            if self.closed_code is None:
+                self.closed_code = code
+
+        async def receive_text(self) -> str:
+            calls["receive"] += 1
+            raise AssertionError("revoked progress socket must not poll")
+
+        async def send_json(self, _value: dict) -> None:
+            raise AssertionError("revoked progress socket must not send")
+
+    async def authenticate(_websocket):
+        return None
+
+    async def revalidate(_websocket) -> bool:
+        calls["revalidate"] += 1
+        return True
+
+    def resolve_for_initial_then_revoked_grant(_name: str) -> KnowledgeResource:
+        calls["resolve"] += 1
+        if calls["resolve"] == 1:
+            return resource
+        raise HTTPException(status_code=403, detail="Knowledge base is not assigned to you")
+
+    monkeypatch.setattr("deeptutor.api.routers.auth.ws_require_auth", authenticate)
+    monkeypatch.setattr("deeptutor.api.routers.auth.ws_revalidate_auth", revalidate)
+    monkeypatch.setattr(knowledge, "resolve_kb", resolve_for_initial_then_revoked_grant)
+
+    websocket = FakeWebSocket()
+    await knowledge.websocket_progress(websocket, "notes")
+
+    assert websocket.accepted is True
+    assert websocket.closed_code == 4404
+    assert calls == {"resolve": 2, "revalidate": 1, "receive": 0}

@@ -3,10 +3,28 @@ import assert from "node:assert/strict";
 import {
   escapeUnknownHtmlTagsForDisplay,
   hasVisibleMarkdownContent,
+  isRemoteMarkdownImageSource,
   markdownUrlTransform,
   normalizeMarkdownForDisplay,
   safeDecodeURIComponent,
 } from "../lib/markdown-display";
+
+test("Markdown image sources reject nonlocal URL spellings", () => {
+  assert.equal(isRemoteMarkdownImageSource("/api/attachments/s/a/image.png"), false);
+  assert.equal(isRemoteMarkdownImageSource("./image.png"), false);
+  assert.equal(
+    isRemoteMarkdownImageSource("data:image/png;base64,iVBORw0KGgo="),
+    false,
+  );
+  assert.equal(isRemoteMarkdownImageSource("https://tracker.example/pixel"), true);
+  assert.equal(isRemoteMarkdownImageSource("https:tracker.example/pixel"), true);
+  assert.equal(isRemoteMarkdownImageSource("\\\\tracker.example\\pixel"), true);
+  assert.equal(isRemoteMarkdownImageSource("blob:https://tracker.example/id"), true);
+  assert.equal(
+    isRemoteMarkdownImageSource("/local.png 1x, https://tracker.example/pixel 2x"),
+    true,
+  );
+});
 
 test("normalizeMarkdownForDisplay removes empty details blocks", () => {
   const input = "Before\n\n<details><summary></summary></details>\n\nAfter";

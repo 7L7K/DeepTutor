@@ -1018,10 +1018,12 @@ async function completePracticeUi(
       response.request().method() === "PATCH",
   );
   await answer.fill(marker);
+  // Reload immediately, before the 500 ms debounce can fire. React cleanup
+  // must dispatch the final idempotent keepalive PATCH rather than losing the
+  // learner's last keystroke.
+  await transitions.reload();
   const saved = await savedResponse;
   expect(saved.status()).toBe(200);
-  await expect(page.getByRole("status").filter({ hasText: "Saved" })).toBeVisible();
-  await transitions.reload();
   await expect(page.getByLabel("Answer for question 1")).toHaveValue(marker);
   const submit = page.waitForResponse(
     (response) =>

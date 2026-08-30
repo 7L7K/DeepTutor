@@ -207,3 +207,14 @@ test("initial Practice loading failures show a current-Course retry instead of a
   assert.match(source, /Retry loading Practice/);
   assert.match(source, /!courseLoadError && \(courseLoading \|\| !courseReady\)/);
 });
+
+test("Practice flushes a debounced answer during route cleanup", () => {
+  const source = readFileSync(
+    path.join(process.cwd(), "components", "practice", "PracticeWorkspace.tsx"),
+    "utf8",
+  );
+  assert.match(source, /for \(const item of attemptItemsRef\.current\)/);
+  assert.match(source, /interactionReadOnlyRef\.current/);
+  assert.match(source, /!attemptActiveRef\.current/);
+  assert.match(source, /void saveQueue\.flush\(item\.id, saveAnswerRef\.current\)/);
+});

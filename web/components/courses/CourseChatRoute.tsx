@@ -30,7 +30,8 @@ export default function CourseChatRoute() {
   const sessionId = params.sessionId || null;
   const courseShell = useCourseShell();
   const { activeCourse } = useCourses();
-  const requestKey = `${courseId}:${sessionId || "new"}`;
+  const [loadAttempt, setLoadAttempt] = useState(0);
+  const requestKey = `${courseId}:${sessionId || "new"}:${loadAttempt}`;
   const [loadState, setLoadState] = useState<CourseChatLoadState>({
     requestKey: "",
     readiness: null,
@@ -101,6 +102,13 @@ export default function CourseChatRoute() {
           >
             {error || "Course Chat is unavailable."}
           </div>
+          <button
+            type="button"
+            onClick={() => setLoadAttempt((attempt) => attempt + 1)}
+            className="mt-4 inline-flex rounded-xl border border-[var(--border)] bg-[var(--card)] px-4 py-2 text-sm font-medium text-[var(--foreground)] hover:bg-[var(--muted)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ring)]"
+          >
+            Retry Course Chat
+          </button>
         </div>
       </main>
     );

@@ -8,6 +8,7 @@ from deeptutor.core.stream import StreamEvent, StreamEventType
 from deeptutor.services.session.sqlite_store import SQLiteSessionStore
 from deeptutor.services.session.turn_runtime import (
     TurnRuntimeManager,
+    _new_uploaded_attachment_record,
     _request_snapshot_metadata,
     _TurnExecution,
 )
@@ -15,6 +16,23 @@ from deeptutor.services.session.turn_runtime import (
 
 async def _noop_async(*_args, **_kwargs):
     return None
+
+
+def test_uploaded_attachment_ids_are_server_generated() -> None:
+    client_record = {
+        "id": "chosen-id",
+        "type": "image",
+        "filename": "answer.png",
+        "mime_type": "image/png",
+        "base64": "iVBORw0KGgo=",
+    }
+
+    first = _new_uploaded_attachment_record(client_record)
+    second = _new_uploaded_attachment_record(client_record)
+
+    assert first["id"] != client_record["id"]
+    assert second["id"] != client_record["id"]
+    assert first["id"] != second["id"]
 
 
 @pytest.fixture(autouse=True)
@@ -287,9 +305,7 @@ async def test_inflight_stream_stops_before_next_event_after_revocation(
         owner_user_id="u_owner",
         owner_role="admin",
     )
-    current = {
-        "owner": {"id": "u_owner", "role": "admin", "disabled": False}
-    }
+    current = {"owner": {"id": "u_owner", "role": "admin", "disabled": False}}
     published: list[str] = []
 
     async def capture(_execution, event):

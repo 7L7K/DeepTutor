@@ -887,6 +887,9 @@ export function autosavePracticeAnswer(
     `/${encodeURIComponent(practiceSet.id)}/attempts/${encodeURIComponent(attempt.id)}`,
   )), {
     method: "PATCH",
+    // Answer payloads are tiny and idempotent. Keep the final request alive
+    // when a learner reloads or follows another Course link during debounce.
+    keepalive: true,
     headers: { "Content-Type": "application/json", "Idempotency-Key": idempotencyKey },
     body: JSON.stringify({
       attempt_item_id: answer.attempt_item_id,

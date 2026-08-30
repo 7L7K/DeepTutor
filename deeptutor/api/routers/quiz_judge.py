@@ -17,8 +17,8 @@ from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 
 from deeptutor.services.config import PROJECT_ROOT, load_config_with_main
 from deeptutor.services.llm import stream as llm_stream
+from deeptutor.services.sandbox.quota import QuotaExceeded, UserExecQuota
 from deeptutor.services.settings.interface_settings import get_ui_language
-from deeptutor.utils.error_utils import format_exception_message
 
 logger = logging.getLogger(__name__)
 _config = load_config_with_main("main.yaml", PROJECT_ROOT)
@@ -28,6 +28,21 @@ router = APIRouter()
 # A judge socket performs exactly one provider-backed request, so clients have
 # no legitimate reason to leave it unauthenticated-but-idle indefinitely.
 _INITIAL_REQUEST_TIMEOUT_SECONDS = 60.0
+
+# A judge request makes a billable provider call. Keep the admission control
+# process-local like the rest of this single-container deployment and hold a
+# permit for the whole stream so a learner cannot create parallel calls by
+# opening more sockets.
+_JUDGE_REQUEST_QUOTA = UserExecQuota(max_concurrent=1, max_per_minute=12)
+_JUDGE_GLOBAL_QUOTA = UserExecQuota(max_concurrent=4, max_per_minute=48)
+_JUDGE_GLOBAL_QUOTA_KEY = "quiz-judge-global"
+_MAX_JUDGE_QUESTION_CHARS = 12_000
+_MAX_JUDGE_ANSWER_CHARS = 12_000
+_MAX_JUDGE_REFERENCE_CHARS = 12_000
+_MAX_JUDGE_EXPLANATION_CHARS = 24_000
+_MAX_JUDGE_OPTION_COUNT = 12
+_MAX_JUDGE_OPTION_CHARS = 2_000
+_MAX_JUDGE_FILENAME_CHARS = 255
 
 
 _JUDGE_SYSTEM_PROMPTS = {
@@ -144,8 +159,8 @@ async def _build_multimodal_user_content(
     For ``url``-only records we resolve local AttachmentStore paths to
     base64 here (most providers can fetch external URLs themselves, but
     locally-hosted ``/api/attachments/...`` is only reachable from the
-    browser). Falls back to passing the URL through when resolution is
-    not possible.
+    browser). Resolution failures are rejected rather than forwarding an
+    untrusted URL to a provider.
     """
     from urllib.parse import unquote, urlparse
 
@@ -171,16 +186,23 @@ async def _build_multimodal_user_content(
                     aid = unquote(parts[3])
                     name = unquote("/".join(parts[4:]))
                     target = resolve(session_id=sid, attachment_id=aid, filename=name)
-                    if target is not None and target.exists():
-                        b64 = _b64.b64encode(target.read_bytes()).decode("ascii")
+                    if target is None or not target.is_file():
+                        raise ValueError("judge attachment is unavailable")
+                    from deeptutor.services.config.runtime_settings import (
+                        get_chat_attachment_limits,
+                    )
+
+                    if target.stat().st_size > get_chat_attachment_limits().max_file_bytes:
+                        raise ValueError("judge attachment exceeds the size limit")
+                    b64 = _b64.b64encode(target.read_bytes()).decode("ascii")
             except Exception as exc:
-                logger.debug("Could not resolve %s to bytes: %s", url, exc)
+                raise ValueError("judge attachment is unavailable") from exc
 
         if b64:
             data_url = f"data:{mime_type};base64,{b64}"
             content.append({"type": "image_url", "image_url": {"url": data_url}})
-        elif url:
-            content.append({"type": "image_url", "image_url": {"url": url}})
+        else:
+            raise ValueError("judge attachment is unavailable")
 
     return content
 
@@ -196,6 +218,163 @@ def _guess_image_mime(filename: str | None) -> str:
         "gif": "image/gif",
         "webp": "image/webp",
     }.get(ext, "image/png")
+
+
+def _bounded_judge_text(data: dict[str, Any], key: str, maximum: int) -> str:
+    value = data.get(key, "")
+    if value is None:
+        return ""
+    if not isinstance(value, str) or len(value) > maximum:
+        raise ValueError("judge text is invalid")
+    return value
+
+
+def _validated_judge_options(data: dict[str, Any]) -> dict[str, str] | None:
+    options = data.get("options")
+    if options is None:
+        return None
+    if not isinstance(options, dict) or len(options) > _MAX_JUDGE_OPTION_COUNT:
+        raise ValueError("judge options are invalid")
+    validated: dict[str, str] = {}
+    for key, value in options.items():
+        if (
+            not isinstance(key, str)
+            or not isinstance(value, str)
+            or len(key) > _MAX_JUDGE_OPTION_CHARS
+            or len(value) > _MAX_JUDGE_OPTION_CHARS
+        ):
+            raise ValueError("judge options are invalid")
+        validated[key] = value
+    return validated
+
+
+def _validated_judge_images(data: dict[str, Any]) -> list[dict[str, str]]:
+    """Validate image metadata and uploaded bytes before prompt construction."""
+    import base64
+    from urllib.parse import urlparse
+
+    from deeptutor.services.storage.attachment_validation import (
+        MAX_NOTEBOOK_ANSWER_IMAGE_COUNT,
+        AttachmentValidationError,
+        validate_notebook_answer_images,
+    )
+
+    raw_images = data.get("user_answer_images")
+    if raw_images is None:
+        raw_images = [
+            {
+                "base64": data.get("user_answer_image") or "",
+                "url": "",
+                "filename": data.get("image_filename") or "answer.png",
+                "mime_type": _guess_image_mime(data.get("image_filename")),
+            }
+        ]
+    if not isinstance(raw_images, list) or len(raw_images) > MAX_NOTEBOOK_ANSWER_IMAGE_COUNT:
+        raise ValueError("judge images are invalid")
+
+    records: list[dict[str, str]] = []
+    for entry in raw_images:
+        if not isinstance(entry, dict):
+            raise ValueError("judge images are invalid")
+        b64 = entry.get("base64") or ""
+        url = entry.get("url") or ""
+        filename = entry.get("filename") or "answer.png"
+        mime_type = entry.get("mime_type") or _guess_image_mime(filename)
+        if not all(isinstance(value, str) for value in (b64, url, filename, mime_type)):
+            raise ValueError("judge images are invalid")
+        if len(filename) > _MAX_JUDGE_FILENAME_CHARS or (b64 and url):
+            raise ValueError("judge images are invalid")
+        if b64.startswith("data:"):
+            try:
+                b64 = b64.split(",", 1)[1]
+            except IndexError as exc:
+                raise ValueError("judge images are invalid") from exc
+        if url:
+            parsed = urlparse(url)
+            if (
+                parsed.scheme
+                or parsed.netloc
+                or parsed.query
+                or parsed.fragment
+                or not parsed.path.startswith("/api/attachments/")
+            ):
+                raise ValueError("judge images are invalid")
+            try:
+                from urllib.parse import unquote
+
+                from deeptutor.services.config.runtime_settings import (
+                    get_chat_attachment_limits,
+                )
+                from deeptutor.services.storage import get_attachment_store
+
+                parts = parsed.path.strip("/").split("/")
+                if len(parts) < 5 or parts[0:2] != ["api", "attachments"]:
+                    raise ValueError("judge attachment is unavailable")
+                target = get_attachment_store().resolve_path(
+                    session_id=unquote(parts[2]),
+                    attachment_id=unquote(parts[3]),
+                    filename=unquote("/".join(parts[4:])),
+                )
+                if target is None or not target.is_file():
+                    raise ValueError("judge attachment is unavailable")
+                if target.stat().st_size > get_chat_attachment_limits().max_file_bytes:
+                    raise ValueError("judge attachment exceeds the size limit")
+                b64 = base64.b64encode(target.read_bytes()).decode("ascii")
+                url = ""
+            except Exception as exc:
+                raise ValueError("judge images are invalid") from exc
+        if not b64:
+            continue
+        record = {
+            "base64": b64,
+            "url": url,
+            "filename": filename,
+            "mime_type": mime_type,
+        }
+        records.append(record)
+
+    try:
+        # URL-backed records were resolved through the current user's local
+        # store above, so the same strict byte/magic policy covers both fresh
+        # and previously persisted images before any provider call.
+        validate_notebook_answer_images(records)
+    except AttachmentValidationError as exc:
+        raise ValueError("judge images are invalid") from exc
+    return records
+
+
+def _activate_judge_llm_scope() -> object:
+    """Install the live user's authorized LLM selection for one judge request.
+
+    Quiz judging has no client-facing model selector.  Non-admin users must
+    therefore be pinned to a currently granted, configured model instead of
+    falling through to the deployment's global default.  This is deliberately
+    resolved immediately before provider work so a revoked grant is honored
+    for an already-open socket.
+    """
+    from deeptutor.multi_user.context import get_current_user
+    from deeptutor.multi_user.model_access import has_capability_access, redacted_model_access
+    from deeptutor.services.model_selection.runtime import activate_llm_selection
+
+    user = get_current_user()
+    selection: dict[str, str] | None = None
+    if not user.is_admin:
+        if not has_capability_access("llm"):
+            raise PermissionError("No LLM model is assigned to this account.")
+        assignments = [
+            item for item in redacted_model_access(user.id).get("llm", []) if item.get("available")
+        ]
+        if not assignments:
+            raise PermissionError("No LLM model is assigned to this account.")
+        selection = {
+            "profile_id": str(assignments[0].get("profile_id") or ""),
+            "model_id": str(assignments[0].get("model_id") or ""),
+        }
+        if not all(selection.values()):
+            raise PermissionError("No LLM model is assigned to this account.")
+
+    _config, token = activate_llm_selection(selection)
+    return token
 
 
 @router.websocket("/question/judge")
@@ -270,8 +449,9 @@ async def websocket_quiz_judge(websocket: WebSocket):
             pass
         reset_user_context()
         return
-    except Exception as exc:
-        await safe_send({"type": "error", "content": f"Invalid request: {exc}"})
+    except Exception:
+        logger.debug("Invalid AI judge request", exc_info=True)
+        await safe_send({"type": "error", "content": "AI judging is unavailable."})
         try:
             await websocket.close()
         except Exception:
@@ -279,7 +459,26 @@ async def websocket_quiz_judge(websocket: WebSocket):
         reset_user_context()
         return
 
-    question_text = (data.get("question") or "").strip()
+    try:
+        if not isinstance(data, dict):
+            raise ValueError("judge request is invalid")
+        question_text = _bounded_judge_text(data, "question", _MAX_JUDGE_QUESTION_CHARS).strip()
+        question_type = _bounded_judge_text(data, "question_type", 80)
+        correct_answer = _bounded_judge_text(data, "correct_answer", _MAX_JUDGE_REFERENCE_CHARS)
+        explanation = _bounded_judge_text(data, "explanation", _MAX_JUDGE_EXPLANATION_CHARS)
+        user_answer = _bounded_judge_text(data, "user_answer", _MAX_JUDGE_ANSWER_CHARS)
+        options_value = _validated_judge_options(data)
+        image_records = _validated_judge_images(data)
+        requested_language = _bounded_judge_text(data, "language", 80).strip().lower()
+    except ValueError:
+        await safe_send({"type": "error", "content": "Invalid judge request."})
+        try:
+            await websocket.close(code=1008)
+        except Exception:
+            pass
+        reset_user_context()
+        return
+
     if not question_text:
         await safe_send({"type": "error", "content": "Question is required"})
         try:
@@ -289,7 +488,6 @@ async def websocket_quiz_judge(websocket: WebSocket):
         reset_user_context()
         return
 
-    requested_language = (data.get("language") or "").strip().lower()
     if requested_language not in ("zh", "en"):
         requested_language = get_ui_language(
             default=_config.get("system", {}).get("language", "en")
@@ -297,67 +495,15 @@ async def websocket_quiz_judge(websocket: WebSocket):
         if requested_language not in ("zh", "en"):
             requested_language = "en"
 
-    user_answer = data.get("user_answer") or ""
-
-    # Resolve the image set. New clients send ``user_answer_images`` (list);
-    # legacy clients send the single ``user_answer_image`` + ``image_filename``
-    # pair. Build a uniform list of ``{base64, url, filename, mime_type}`` so
-    # the downstream multimodal-message builder doesn't care which form
-    # arrived.
-    raw_images = data.get("user_answer_images")
-    image_records: list[dict[str, str]] = []
-    if isinstance(raw_images, list):
-        for entry in raw_images:
-            if not isinstance(entry, dict):
-                continue
-            b64 = entry.get("base64") or ""
-            url = entry.get("url") or ""
-            if isinstance(b64, str) and b64.startswith("data:"):
-                try:
-                    b64 = b64.split(",", 1)[1]
-                except IndexError:
-                    b64 = ""
-            if not b64 and not url:
-                continue
-            filename = entry.get("filename") or "answer.png"
-            mime_type = entry.get("mime_type") or _guess_image_mime(filename)
-            image_records.append(
-                {
-                    "base64": b64,
-                    "url": url,
-                    "filename": filename,
-                    "mime_type": mime_type,
-                }
-            )
-    else:
-        legacy_b64 = data.get("user_answer_image") or ""
-        if isinstance(legacy_b64, str) and legacy_b64.startswith("data:"):
-            try:
-                legacy_b64 = legacy_b64.split(",", 1)[1]
-            except IndexError:
-                legacy_b64 = ""
-        if legacy_b64:
-            legacy_filename = data.get("image_filename") or "answer.png"
-            image_records.append(
-                {
-                    "base64": legacy_b64,
-                    "url": "",
-                    "filename": legacy_filename,
-                    "mime_type": _guess_image_mime(legacy_filename),
-                }
-            )
-
     has_image = bool(image_records)
-
-    options_value = data.get("options") if isinstance(data.get("options"), dict) else None
     system_prompt = _JUDGE_SYSTEM_PROMPTS.get(requested_language, _JUDGE_SYSTEM_PROMPTS["en"])
     user_prompt = _build_judge_user_prompt(
         language=requested_language,
         question=question_text,
-        question_type=data.get("question_type") or "",
+        question_type=question_type,
         options=options_value,
-        correct_answer=data.get("correct_answer") or "",
-        explanation=data.get("explanation") or "",
+        correct_answer=correct_answer,
+        explanation=explanation,
         user_answer=user_answer,
         has_image=has_image,
         image_count=len(image_records),
@@ -384,56 +530,110 @@ async def websocket_quiz_judge(websocket: WebSocket):
         reset_user_context()
         return
 
-    await safe_send({"type": "started"})
+    # Revalidate the current logical model grant after the socket's account
+    # revalidation.  A learner's grant can change independently of the JWT;
+    # scope the provider call to the resolved grant rather than the global
+    # active model configuration.
+    llm_scope_token: object | None = None
+    global_quota_lease = None
+    user_quota_lease = None
+    try:
+        llm_scope_token = _activate_judge_llm_scope()
+        from deeptutor.multi_user.context import get_current_user
 
-    # Build a multimodal user message when ≥1 image was attached. We pass
-    # the full ``messages`` array to ``factory.stream`` so it forwards the
-    # content-parts unchanged (the single-image ``image_data`` kwarg only
-    # supports one image).
-    stream_kwargs: dict[str, Any] = {}
-    if has_image:
-        from deeptutor.services.llm import config as _llm_config_mod
-        from deeptutor.services.llm.capabilities import supports_vision
+        user_quota_lease = await _JUDGE_REQUEST_QUOTA.acquire(get_current_user().id)
+        global_quota_lease = await _JUDGE_GLOBAL_QUOTA.acquire(_JUDGE_GLOBAL_QUOTA_KEY)
+    except (PermissionError, QuotaExceeded, ValueError):
+        if user_quota_lease is not None:
+            await user_quota_lease.__aexit__(None, None, None)
+        if global_quota_lease is not None:
+            await global_quota_lease.__aexit__(None, None, None)
+        if llm_scope_token is not None:
+            from deeptutor.services.model_selection.runtime import reset_llm_selection
 
-        llm_cfg = _llm_config_mod.get_llm_config()
-        binding = getattr(llm_cfg, "binding", "openai") or "openai"
-        model = getattr(llm_cfg, "model", "") or ""
-        if supports_vision(binding, model):
-            user_content = await _build_multimodal_user_content(
-                text=user_prompt,
-                image_records=image_records,
-            )
-            stream_kwargs["messages"] = [
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": user_content},
-            ]
-        else:
-            # Vision-incapable model — fall back to text-only judge so the
-            # learner still gets feedback on their typed answer.
-            logger.info(
-                "Judge: %s/%s does not support vision; dropping %d image(s)",
-                binding,
-                model,
-                len(image_records),
-            )
+            reset_llm_selection(llm_scope_token)
+        await safe_send({"type": "error", "content": "AI judging is unavailable."})
+        try:
+            await websocket.close(code=1008)
+        except Exception:
+            pass
+        reset_user_context()
+        return
+    except Exception:
+        if user_quota_lease is not None:
+            await user_quota_lease.__aexit__(None, None, None)
+        if global_quota_lease is not None:
+            await global_quota_lease.__aexit__(None, None, None)
+        if llm_scope_token is not None:
+            from deeptutor.services.model_selection.runtime import reset_llm_selection
+
+            reset_llm_selection(llm_scope_token)
+        logger.exception("AI judge admission failed")
+        await safe_send({"type": "error", "content": "AI judging is unavailable."})
+        try:
+            await websocket.close(code=1011)
+        except Exception:
+            pass
+        reset_user_context()
+        return
+
+    assert global_quota_lease is not None
+    assert user_quota_lease is not None
 
     try:
-        async for chunk in llm_stream(
-            prompt=user_prompt,
-            system_prompt=system_prompt,
-            **stream_kwargs,
-        ):
-            if not chunk:
-                continue
-            if not await safe_send({"type": "text", "content": chunk}):
-                break
-        await safe_send({"type": "done"})
+        async with global_quota_lease, user_quota_lease:
+            # Build a multimodal user message when ≥1 image was attached. We
+            # pass the full ``messages`` array to ``factory.stream`` so it
+            # forwards the content-parts unchanged (the single-image
+            # ``image_data`` kwarg only supports one image).
+            stream_kwargs: dict[str, Any] = {}
+            if has_image:
+                from deeptutor.services.llm import config as _llm_config_mod
+                from deeptutor.services.llm.capabilities import supports_vision
+
+                llm_cfg = _llm_config_mod.get_llm_config()
+                binding = getattr(llm_cfg, "binding", "openai") or "openai"
+                model = getattr(llm_cfg, "model", "") or ""
+                if supports_vision(binding, model):
+                    user_content = await _build_multimodal_user_content(
+                        text=user_prompt,
+                        image_records=image_records,
+                    )
+                    stream_kwargs["messages"] = [
+                        {"role": "system", "content": system_prompt},
+                        {"role": "user", "content": user_content},
+                    ]
+                else:
+                    # Vision-incapable model — fall back to text-only judge so
+                    # the learner still gets feedback on their typed answer.
+                    logger.info(
+                        "Judge: %s/%s does not support vision; dropping %d image(s)",
+                        binding,
+                        model,
+                        len(image_records),
+                    )
+
+            if not await safe_send({"type": "started"}):
+                return
+            async for chunk in llm_stream(
+                prompt=user_prompt,
+                system_prompt=system_prompt,
+                **stream_kwargs,
+            ):
+                if not chunk:
+                    continue
+                if not await safe_send({"type": "text", "content": chunk}):
+                    break
+            await safe_send({"type": "done"})
     except WebSocketDisconnect:
         logger.debug("AI judge client disconnected mid-stream")
-    except Exception as exc:
+    except Exception:
         logger.exception("AI judge stream failed")
-        await safe_send({"type": "error", "content": format_exception_message(exc)})
+        await safe_send({"type": "error", "content": "AI judging is unavailable."})
     finally:
+        from deeptutor.services.model_selection.runtime import reset_llm_selection
+
+        reset_llm_selection(llm_scope_token)
         try:
             await websocket.close()
         except Exception:

@@ -452,10 +452,12 @@ test("an attempt deep link requests the exact attempt instead of scanning histor
 test("Practice autosave serializes the strict single-choice response union", async (t) => {
   const originalFetch = globalThis.fetch;
   let requestedBody: Record<string, unknown> = {};
+  let requestedInit: RequestInit | undefined;
   t.after(() => {
     globalThis.fetch = originalFetch;
   });
   globalThis.fetch = (async (_input: RequestInfo | URL, init?: RequestInit) => {
+    requestedInit = init;
     requestedBody = JSON.parse(String(init?.body));
     return new Response(JSON.stringify({
       attempt_item_id: "ati_1",
@@ -495,6 +497,7 @@ test("Practice autosave serializes the strict single-choice response union", asy
     expected_course_write_epoch: 7,
     expected_practice_set_write_epoch: 4,
   });
+  assert.equal(requestedInit?.keepalive, true);
   assert.equal(
     "answer" in (requestedBody.response as Record<string, unknown>),
     false,

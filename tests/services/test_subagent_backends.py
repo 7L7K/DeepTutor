@@ -994,6 +994,28 @@ def test_partner_event_mapping_redacts_failed_tool_result_for_learners() -> None
     )
 
 
+def test_partner_event_mapping_redacts_failed_tool_result_without_metadata_for_learners() -> None:
+    from deeptutor.core.stream import StreamEvent, StreamEventType
+    from deeptutor.services.subagent.partner import _to_subagent_events
+
+    events = _to_subagent_events(
+        StreamEvent(
+            type=StreamEventType.TOOL_RESULT,
+            content="Error executing reason: provider token rejected: secret-detail",
+            metadata={"tool_success": False},
+        ),
+        _partner_trace_state(),
+        redact_errors=True,
+    )
+
+    assert [event.kind for event in events] == ["tool_result"]
+    assert (
+        events[0].text
+        == "The assigned Partner could not complete that request. Please try again later."
+    )
+    assert "secret-detail" not in events[0].text
+
+
 def test_partner_tool_call_pairs_with_its_result_adjacently() -> None:
     # The loop dispatches tools in parallel - both TOOL_CALL events, then both
     # TOOL_RESULT events - sharing a call_id per tool. Each call is buffered and

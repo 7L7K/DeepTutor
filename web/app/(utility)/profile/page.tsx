@@ -178,9 +178,14 @@ export default function ProfilePage() {
   }, []);
 
   const handleSignOut = useCallback(async () => {
-    await logout();
-    router.replace("/login");
-  }, [router]);
+    setError(null);
+    const result = await logout();
+    if (result.ok) {
+      router.replace("/login");
+      return;
+    }
+    setError(t("Unable to sign out. Please try again."));
+  }, [router, t]);
 
   const descriptor = parseAvatarMarker(profile?.avatar);
   const hasImage = descriptor.kind === "image";

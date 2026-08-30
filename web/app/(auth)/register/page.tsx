@@ -38,6 +38,13 @@ export default function RegisterPage() {
     e.preventDefault();
     setError("");
 
+    // The server remains authoritative, but do not submit a registration
+    // request after the bootstrap window has closed (or its check failed).
+    if (!isFirst) {
+      setError(t("Account creation is by invitation only."));
+      return;
+    }
+
     if (password !== confirmPassword) {
       setError(t("Passwords do not match"));
       return;
@@ -76,9 +83,13 @@ export default function RegisterPage() {
         </div>
       )}
 
-      {/* Card */}
-      <div className="bg-[var(--card)] border border-[var(--border)] rounded-2xl shadow-sm px-8 py-8">
-        <form onSubmit={handleSubmit} className="space-y-5">
+      {checkingFirst ? (
+        <div className="bg-[var(--card)] border border-[var(--border)] rounded-2xl shadow-sm px-8 py-8 text-center text-sm text-[var(--muted-foreground)]">
+          {t("Checking account setup…")}
+        </div>
+      ) : isFirst ? (
+        <div className="bg-[var(--card)] border border-[var(--border)] rounded-2xl shadow-sm px-8 py-8">
+          <form onSubmit={handleSubmit} className="space-y-5">
           {/* Email or username */}
           <div>
             <label
@@ -193,8 +204,15 @@ export default function RegisterPage() {
           >
             {loading ? t("Creating account…") : t("Create account")}
           </button>
-        </form>
-      </div>
+          </form>
+        </div>
+      ) : (
+        <div className="bg-[var(--card)] border border-[var(--border)] rounded-2xl shadow-sm px-8 py-8 text-center">
+          <p className="text-sm text-[var(--muted-foreground)]">
+            {t("Account creation is by invitation only.")}
+          </p>
+        </div>
+      )}
 
       <p className="mt-6 text-center text-sm text-[var(--muted-foreground)]">
         {t("Already have an account?")}{" "}

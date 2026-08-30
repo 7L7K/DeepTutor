@@ -11,6 +11,10 @@ from fastapi import WebSocket
 
 logger = logging.getLogger(__name__)
 
+# A progress notification must never hold the shared subscription registry
+# hostage to a browser that has stopped reading from its socket.
+_SEND_TIMEOUT_SECONDS = 5.0
+
 
 def progress_subscription_key(kb_name: str, base_dir: str | Path) -> str:
     """Return the stable broadcaster key for one resolved KB resource.
@@ -60,25 +64,45 @@ class ProgressBroadcaster:
     async def broadcast(self, subscription_key: str, progress: dict):
         """Broadcast progress to subscribers of one resolved KB resource."""
         async with self._lock:
-            if subscription_key not in self._connections:
+            # Take the registry snapshot while protected, but never await a
+            # client write under this lock: another tenant's update must be
+            # able to connect, disconnect, or broadcast while one browser is
+            # stalled.
+            connections = tuple(self._connections.get(subscription_key, ()))
+
+        if not connections:
+            return
+
+        async def send_progress(websocket: WebSocket) -> bool:
+            try:
+                await asyncio.wait_for(
+                    websocket.send_json({"type": "progress", "data": progress}),
+                    timeout=_SEND_TIMEOUT_SECONDS,
+                )
+                return True
+            except Exception as exc:
+                # Connection closed, serialization failed, or the client did
+                # not drain its send buffer before the bounded deadline.
+                logger.debug("Error sending to WebSocket for resolved KB: %s", exc)
+                return False
+
+        sent = await asyncio.gather(*(send_progress(websocket) for websocket in connections))
+        failed_connections = {
+            websocket
+            for websocket, delivered in zip(connections, sent, strict=True)
+            if not delivered
+        }
+        if not failed_connections:
+            return
+
+        # A socket may have disconnected while writes were in flight. Re-read
+        # the room under the lock and remove only failed snapshot members.
+        async with self._lock:
+            current_connections = self._connections.get(subscription_key)
+            if current_connections is None:
                 return
-
-            # Create list of connections to remove (closed connections)
-            to_remove = []
-
-            for websocket in self._connections[subscription_key]:
-                try:
-                    await websocket.send_json({"type": "progress", "data": progress})
-                except Exception as e:
-                    # Connection closed or error, mark for removal
-                    logger.debug("Error sending to WebSocket for resolved KB: %s", e)
-                    to_remove.append(websocket)
-
-            # Remove closed connections
-            for ws in to_remove:
-                self._connections[subscription_key].discard(ws)
-
-            if not self._connections[subscription_key]:
+            current_connections.difference_update(failed_connections)
+            if not current_connections:
                 del self._connections[subscription_key]
 
     def get_connection_count(self, subscription_key: str) -> int:

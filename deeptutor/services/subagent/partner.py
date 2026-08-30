@@ -296,12 +296,14 @@ def _flush_pending_call(pending: dict[str, str], call_id: str) -> list[SubagentE
 def _tool_result_reports_failure(metadata: dict[str, object]) -> bool:
     """Whether dispatcher metadata marks a tool result as an internal failure.
 
-    Tool dispatch nests result metadata under ``tool_metadata``.  Failed
-    provider calls carry ``error`` there, while RAG failures use
-    ``error_type``/``needs_reindex`` and put the raw exception in the body.
-    Only delegated learner traces need this projection; owner/admin traces
-    retain their diagnostic result text.
+    The dispatcher always includes ``tool_success`` so a failing ToolResult
+    with no metadata cannot leak a raw provider or internal error. The nested
+    metadata check remains for events produced by older dispatchers. Only
+    delegated learner traces need this projection; owner/admin traces retain
+    their diagnostic result text.
     """
+    if metadata.get("tool_success") is False:
+        return True
     tool_metadata = metadata.get("tool_metadata")
     if not isinstance(tool_metadata, dict):
         return False

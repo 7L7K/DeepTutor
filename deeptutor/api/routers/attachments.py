@@ -10,9 +10,9 @@ URL shape::
 
     GET /api/attachments/{session_id}/{attachment_id}/{filename}
 
-The session id functions as the ACL boundary, mirroring how the rest of
-the app treats sessions today (single-tenant, session ownership is local
-trust). Once multi-user auth lands we should swap this for signed URLs.
+The request-local user workspace and its session database are the ACL
+boundary. A path alone is never authority: the requested attachment id must
+also be referenced by a message or notebook entry in that user's session.
 """
 
 from __future__ import annotations
@@ -24,14 +24,35 @@ from urllib.parse import quote
 from fastapi import APIRouter, HTTPException
 from fastapi.responses import FileResponse
 
+from deeptutor.services.session import get_sqlite_session_store
 from deeptutor.services.storage import (
     LocalDiskAttachmentStore,
     get_attachment_store,
+)
+from deeptutor.services.storage.attachment_validation import (
+    AttachmentValidationError,
+    validate_attachment_id,
 )
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
+
+_ACTIVE_ATTACHMENT_MEDIA_TYPES = frozenset(
+    {
+        "text/html",
+        "application/xhtml+xml",
+        "image/svg+xml",
+        "text/xml",
+        "application/xml",
+        "application/xslt+xml",
+        "text/xsl",
+        "text/javascript",
+        "application/javascript",
+        "text/ecmascript",
+        "application/ecmascript",
+    }
+)
 
 
 def _content_disposition(filename: str, *, disposition: str = "inline") -> str:
@@ -57,11 +78,19 @@ async def get_attachment(
 ):
     """Serve a previously uploaded chat attachment.
 
-    Responds with ``Content-Disposition: inline`` so browsers preview PDFs
-    and images directly in an ``<iframe>`` / ``<img>``. For unknown types
-    the browser still falls back to download, which is fine for the
-    drawer's "Download" button path.
+    The request-local session store is the ownership authority. A filename
+    that merely exists on disk is insufficient: the attachment id must be
+    referenced by a message or notebook entry in the caller's session.
     """
+    try:
+        validate_attachment_id(attachment_id, label="attachment")
+    except AttachmentValidationError as exc:
+        raise HTTPException(status_code=404, detail="Attachment not found") from exc
+
+    session_store = get_sqlite_session_store()
+    if not await session_store.attachment_is_referenced(session_id, attachment_id):
+        raise HTTPException(status_code=404, detail="Attachment not found")
+
     store = get_attachment_store()
     if not isinstance(store, LocalDiskAttachmentStore):
         # Future remote backends should issue a redirect to the signed URL
@@ -87,5 +116,12 @@ async def get_attachment(
         "Content-Disposition": _content_disposition(target.name),
         # User-uploaded data; do not let intermediaries cache it.
         "Cache-Control": "private, max-age=0, must-revalidate",
+        "X-Content-Type-Options": "nosniff",
     }
+    if media_type in _ACTIVE_ATTACHMENT_MEDIA_TYPES:
+        # User-controlled active documents must never execute under the
+        # authenticated application origin, even when previewed from history.
+        media_type = "application/octet-stream"
+        headers["Content-Disposition"] = _content_disposition(target.name, disposition="attachment")
+        headers["Content-Security-Policy"] = "sandbox; default-src 'none'"
     return FileResponse(path=str(target), media_type=media_type, headers=headers)

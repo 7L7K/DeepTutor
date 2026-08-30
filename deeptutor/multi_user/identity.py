@@ -238,6 +238,32 @@ def save_user(username: str, hashed_password: str, role: Role = "user") -> dict[
     return record
 
 
+def register_first_user(username: str, hashed_password: str) -> dict[str, Any] | None:
+    """Atomically create the one bootstrap administrator.
+
+    ``None`` means an account already exists, so callers must keep public
+    self-registration closed.  Reading the store and writing the first record
+    share ``_USERS_WRITE_LOCK`` to make that decision indivisible for standard
+    single-process deployments.  ``load_users`` remains fail-closed when an
+    existing store cannot be read.
+    """
+    with _USERS_WRITE_LOCK:
+        users = load_users()
+        if users:
+            return None
+        record = {
+            "id": new_user_id(),
+            "hash": hashed_password,
+            "role": "admin",
+            "created_at": utc_now(),
+            "disabled": False,
+            "avatar": "",
+        }
+        users[username] = record
+        _write_users(users)
+        return record
+
+
 def list_user_info(  # nosec B107 - empty defaults mean "no env fallback supplied".
     env_username: str = "",
     env_password_hash: str = "",

@@ -128,16 +128,25 @@ export async function checkIsFirstUser(): Promise<boolean> {
 }
 
 /**
- * POST to the logout endpoint to clear the session cookie.
+ * POST to the logout endpoint to clear the session cookie. A caller must only
+ * clear its local auth state and navigate away after the server confirms this
+ * succeeded; otherwise the current session may still be valid.
  */
-export async function logout(): Promise<void> {
+export async function logout(): Promise<{ ok: boolean }> {
   try {
-    await apiFetch(apiUrl("/api/v1/auth/logout"), {
+    const res = await apiFetch(apiUrl("/api/v1/auth/logout"), {
       method: "POST",
+      // A failed logout must be handled by the caller. Do not let apiFetch
+      // redirect and suspend this request as though it were an expired session.
+      skipAuthRedirect: true,
     });
+    if (!res.ok) return { ok: false };
+
+    if (typeof window !== "undefined") {
+      window.dispatchEvent(new Event("dt:auth-changed"));
+    }
+    return { ok: true };
   } catch {
-    // Ignore — we'll redirect regardless
-  } finally {
-    if (typeof window !== "undefined") window.dispatchEvent(new Event("dt:auth-changed"));
+    return { ok: false };
   }
 }

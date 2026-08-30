@@ -993,8 +993,8 @@ export default function UnifiedChatPage({
   /* ---- URL-driven session loading ---- */
 
   const navigateToHome = useCallback(() => {
-    router.replace('/home', { scroll: false })
-  }, [router])
+    router.replace(courseRouteBase ?? '/home', { scroll: false })
+  }, [courseRouteBase, router])
 
   /** Abort in-flight load + navigate home. */
   const cancelSessionLoad = useCallback(() => {
@@ -1050,21 +1050,25 @@ export default function UnifiedChatPage({
     [loadSession, navigateToHome, showCachedSession]
   )
 
-  // Initial mount — load the session from the URL. Cleanup invalidates the
-  // route generation so an unmounted Course A cannot select a late session
-  // after Course B mounts. It intentionally does not abort the transport:
-  // Strict Mode's development effect replay must not manufacture an aborted
-  // request during an otherwise successful learner journey.
+  // Initial mount — load the session from the URL. Schedule it one task later
+  // so React Strict Mode's development setup → cleanup → setup replay clears
+  // the first schedule before it can issue a duplicate GET or draft session.
+  // Once the load has started, cleanup invalidates its route generation so an
+  // unmounted Course A cannot select a late session after Course B mounts.
   useEffect(() => {
-    if (initialLoadRef.current) return
-    initialLoadRef.current = true
-    if (sessionIdParam) {
-      startSessionLoad(sessionIdParam)
-    } else {
-      newSession()
-    }
+    const initialLoadTimer = window.setTimeout(() => {
+      if (initialLoadRef.current) return
+      initialLoadRef.current = true
+      if (sessionIdParam) {
+        startSessionLoad(sessionIdParam)
+      } else {
+        newSession()
+      }
+    }, 0)
+
     return () => {
-      initialLoadRef.current = false
+      window.clearTimeout(initialLoadTimer)
+      if (!initialLoadRef.current) return
       loadAbortRef.current = null
       sessionLoadEpochRef.current += 1
     }

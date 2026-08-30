@@ -2,6 +2,22 @@
 
 ## Unreleased
 
+- Closed the controlled-beta sharing boundary around bootstrap registration,
+  quiz judging, attachments, progress streaming, and learner-safe rendering.
+  First-user registration is atomic and invite-only afterward; ordinary quiz
+  requests revalidate the learner's model grant and use bounded process-local
+  admission; uploaded files and notebook images are size/type checked before
+  storage, receive server-owned identifiers, and require a same-user database
+  reference before download. Progress sockets revalidate ownership while
+  connected, failed delegated tools stay redacted, model HTML no longer
+  executes, SVG/Markdown remote fetches are blocked, and logout redirects only
+  after the server confirms the session ended.
+
+- Preserved learner work across the demo loop: Strict Mode replay no longer
+  cancels initial unified-chat loading, Course Chat exposes a retry path,
+  Course navigation retains its scoped route, and the latest debounced Practice
+  answer is flushed with a keepalive request during reload or navigation.
+
 - Course and chat navigation now discard stale route reads by generation, so
   normal client-side navigation and development effect replay do not surface as
   aborted learner requests.

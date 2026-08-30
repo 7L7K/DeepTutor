@@ -4,7 +4,6 @@ Question Notebook API — persists quiz questions, bookmarks, and categories.
 
 from __future__ import annotations
 
-import base64 as _b64
 import logging
 import uuid as _uuid
 
@@ -13,6 +12,11 @@ from pydantic import BaseModel, Field
 
 from deeptutor.services.session import get_sqlite_session_store
 from deeptutor.services.storage import get_attachment_store
+from deeptutor.services.storage.attachment_validation import (
+    AttachmentValidationError,
+    validate_attachment_id,
+    validate_notebook_answer_images,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -118,7 +122,7 @@ class UpsertEntryRequest(BaseModel):
     # Optional: list of images attached as part of the learner's answer.
     # ``None`` means "don't touch any previously-stored images on update";
     # an empty list explicitly clears them.
-    user_answer_images: list[AnswerImageUpload] | None = None
+    user_answer_images: list[AnswerImageUpload] | None = Field(default=None, max_length=5)
     is_correct: bool = False
 
 
@@ -126,63 +130,97 @@ class UpsertEntryRequest(BaseModel):
 
 
 async def _persist_answer_images(
-    session_id: str, images: list[AnswerImageUpload] | None
-) -> list[dict[str, str]] | None:
+    session_id: str,
+    images: list[AnswerImageUpload] | None,
+    *,
+    existing_images: list[dict],
+) -> tuple[list[dict[str, str]] | None, list[str]]:
     """Materialise base64 image uploads into the AttachmentStore.
 
     Returns a list of ``{id, url, filename, mime_type}`` records suitable
     for ``notebook_entries.user_answer_images_json``. ``None`` is returned
     when ``images`` is ``None`` (no change to existing stored images).
-    Records whose bytes fail to upload are dropped from the result with
-    a warning — losing an image is better than failing the whole upsert.
+    All images are validated before the first write. Existing URLs are only
+    reusable when they already belong to this notebook entry, preventing a
+    caller from attaching another message's file by guessing its URL.
     """
     if images is None:
-        return None
+        return None, []
 
     attachment_store = get_attachment_store()
     records: list[dict[str, str]] = []
+    created_ids: list[str] = []
+    reusable = {
+        str(record.get("id") or ""): record
+        for record in existing_images
+        if str(record.get("id") or "")
+    }
+    new_images: list[dict] = []
     for image in images:
-        record_id = (image.id or _uuid.uuid4().hex[:12]).strip()
-        filename = (image.filename or "answer.png").strip() or "answer.png"
-        mime_type = (image.mime_type or "image/png").strip() or "image/png"
         url = (image.url or "").strip()
-
-        if not url and image.base64:
-            try:
-                raw_bytes = _b64.b64decode(image.base64, validate=False)
-            except Exception as exc:
-                logger.warning("answer image %s rejected: invalid base64 (%s)", filename, exc)
-                continue
-            try:
-                url = await attachment_store.put(
-                    session_id=session_id,
-                    attachment_id=record_id,
-                    filename=filename,
-                    data=raw_bytes,
-                    mime_type=mime_type,
-                )
-            except Exception as exc:
-                logger.warning("attachment store rejected answer image %s: %s", filename, exc)
-                continue
-
         if not url:
-            # No url and no base64 — nothing usable.
+            new_images.append(image.model_dump())
             continue
+        if image.base64:
+            raise AttachmentValidationError("answer images cannot include both URL and base64 data")
+        record_id = validate_attachment_id(image.id, label="answer image")
+        existing = reusable.get(record_id)
+        if not existing or str(existing.get("url") or "") != url:
+            raise AttachmentValidationError("answer image URL is not owned by this notebook entry")
         records.append(
             {
                 "id": record_id,
                 "url": url,
-                "filename": filename,
-                "mime_type": mime_type,
+                "filename": str(existing.get("filename") or ""),
+                "mime_type": str(existing.get("mime_type") or ""),
             }
         )
-    return records
+
+    for image in validate_notebook_answer_images(new_images):
+        # New uploads always receive a server-generated identifier so callers
+        # cannot overwrite a sibling attachment through a chosen id.
+        record_id = _uuid.uuid4().hex[:12]
+        filename = (str(image.get("filename") or "answer.png")).strip() or "answer.png"
+        mime_type = (str(image.get("mime_type") or "image/png")).strip() or "image/png"
+        try:
+            url = await attachment_store.put(
+                session_id=session_id,
+                attachment_id=record_id,
+                filename=filename,
+                data=image["_raw_bytes"],
+                mime_type=mime_type,
+            )
+            created_ids.append(record_id)
+        except Exception as exc:
+            for attachment_id in [*created_ids, record_id]:
+                try:
+                    await attachment_store.delete_attachment(session_id, attachment_id)
+                except Exception:
+                    logger.exception("failed to clean up answer image %s", attachment_id)
+            raise RuntimeError(f"failed to persist answer image {filename!r}") from exc
+        records.append({"id": record_id, "url": url, "filename": filename, "mime_type": mime_type})
+    return records, created_ids
 
 
 @router.post("/entries/upsert")
 async def upsert_single_entry(payload: UpsertEntryRequest):
     store = get_sqlite_session_store()
-    images_records = await _persist_answer_images(payload.session_id, payload.user_answer_images)
+    session = await store.get_session(payload.session_id)
+    if session is None:
+        raise HTTPException(status_code=404, detail="Session not found")
+    existing = await store.find_notebook_entry(
+        payload.session_id, payload.question_id, turn_id=payload.turn_id
+    )
+    try:
+        images_records, created_ids = await _persist_answer_images(
+            payload.session_id,
+            payload.user_answer_images,
+            existing_images=list((existing or {}).get("user_answer_images") or []),
+        )
+    except AttachmentValidationError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except RuntimeError as exc:
+        raise HTTPException(status_code=500, detail="Could not save answer images") from exc
     item = payload.model_dump()
     # The store expects ``user_answer_images`` as a plain list of dicts
     # (or absent to mean "leave the stored images alone"). Strip the
@@ -193,13 +231,36 @@ async def upsert_single_entry(payload: UpsertEntryRequest):
     try:
         await store.upsert_notebook_entries(payload.session_id, [item])
     except ValueError as e:
+        await _cleanup_answer_images(payload.session_id, created_ids)
         raise HTTPException(status_code=404, detail=str(e))
+    except Exception as exc:
+        await _cleanup_answer_images(payload.session_id, created_ids)
+        logger.exception("question notebook upsert failed")
+        raise HTTPException(status_code=500, detail="Could not save notebook entry") from exc
     entry = await store.find_notebook_entry(
         payload.session_id, payload.question_id, turn_id=payload.turn_id
     )
     if entry is None:
+        await _cleanup_answer_images(payload.session_id, created_ids)
         raise HTTPException(status_code=500, detail="Upsert failed")
+    if images_records is not None:
+        retained_ids = {str(record.get("id") or "") for record in images_records}
+        stale_ids = [
+            str(record.get("id") or "")
+            for record in (existing or {}).get("user_answer_images") or []
+            if str(record.get("id") or "") not in retained_ids
+        ]
+        await _cleanup_answer_images(payload.session_id, stale_ids)
     return entry
+
+
+async def _cleanup_answer_images(session_id: str, attachment_ids: list[str]) -> None:
+    attachment_store = get_attachment_store()
+    for attachment_id in attachment_ids:
+        try:
+            await attachment_store.delete_attachment(session_id, attachment_id)
+        except Exception:
+            logger.exception("failed to clean up answer image %s", attachment_id)
 
 
 @router.get("/entries", response_model=NotebookEntryListResponse)
@@ -269,9 +330,20 @@ async def update_entry(entry_id: int, payload: EntryUpdateRequest):
 @router.delete("/entries/{entry_id}")
 async def delete_entry(entry_id: int):
     store = get_sqlite_session_store()
+    entry = await store.get_notebook_entry(entry_id)
+    if entry is None:
+        raise HTTPException(status_code=404, detail="Entry not found")
     deleted = await store.delete_notebook_entry(entry_id)
     if not deleted:
         raise HTTPException(status_code=404, detail="Entry not found")
+    await _cleanup_answer_images(
+        str(entry.get("session_id") or ""),
+        [
+            str(record.get("id") or "")
+            for record in entry.get("user_answer_images") or []
+            if str(record.get("id") or "")
+        ],
+    )
     return {"deleted": True, "id": entry_id}
 
 

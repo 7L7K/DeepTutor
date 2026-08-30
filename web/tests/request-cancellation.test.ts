@@ -55,3 +55,19 @@ test("learner surfaces use the cancellation guards rather than applying late res
   assert.match(chatPage, /isCurrent: current/);
   assert.match(chatPage, /loadAbortRef\.current\?\.abort\(\)/);
 });
+
+test("initial chat loading survives Strict Mode replay without duplicate work", () => {
+  const chatPage = readFileSync(
+    path.join(process.cwd(), "components/chat/home/UnifiedChatPage.tsx"),
+    "utf8",
+  );
+
+  // React development Strict Mode cleans up an effect immediately before
+  // replaying it. The first timer must be cancelled before either an existing
+  // session GET or a new draft session can start, while a real unmount still
+  // invalidates an already-started request.
+  assert.match(chatPage, /const initialLoadTimer = window\.setTimeout\(/);
+  assert.match(chatPage, /window\.clearTimeout\(initialLoadTimer\)/);
+  assert.match(chatPage, /if \(!initialLoadRef\.current\) return/);
+  assert.doesNotMatch(chatPage, /initialLoadRef\.current = false/);
+});

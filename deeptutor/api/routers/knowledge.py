@@ -2877,7 +2877,11 @@ async def clear_progress(kb_name: str):
 @router.websocket("/{kb_name}/progress/ws")
 async def websocket_progress(websocket: WebSocket, kb_name: str):
     """WebSocket endpoint for real-time progress updates"""
-    from deeptutor.api.routers.auth import ws_auth_failed, ws_require_auth
+    from deeptutor.api.routers.auth import (
+        ws_auth_failed,
+        ws_require_auth,
+        ws_revalidate_auth,
+    )
     from deeptutor.multi_user.context import reset_current_user
 
     user_token = await ws_require_auth(websocket)
@@ -2991,6 +2995,25 @@ async def websocket_progress(websocket: WebSocket, kb_name: str):
 
         while True:
             try:
+                # This is a long-lived read socket, so its initial upgrade is
+                # not enough authorization. Refresh the account and resolve
+                # the requested KB again before the next polling/send cycle;
+                # a role, disablement, or assignment change must not retain a
+                # stale progress subscription.
+                if not await ws_revalidate_auth(websocket):
+                    break
+                try:
+                    refreshed_resource = resolve_kb(kb_name)
+                except HTTPException:
+                    await websocket.close(code=4404)
+                    break
+                if (
+                    refreshed_resource.id != resource.id
+                    or refreshed_resource.name != resolved_name
+                    or refreshed_resource.base_dir.resolve() != base_dir.resolve()
+                ):
+                    await websocket.close(code=4404)
+                    break
                 try:
                     await asyncio.wait_for(websocket.receive_text(), timeout=1.0)
                 except asyncio.TimeoutError:

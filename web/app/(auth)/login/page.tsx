@@ -21,6 +21,7 @@ function LoginPageContent() {
   const [showPassword, setShowPassword] = useState(false);
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
+  const [isFirstUser, setIsFirstUser] = useState(false);
 
   useEffect(() => {
     // If already authenticated, skip login
@@ -31,6 +32,7 @@ function LoginPageContent() {
       }
       // No users registered yet — send straight to the registration page
       checkIsFirstUser().then((first) => {
+        setIsFirstUser(first);
         if (first) router.replace("/register");
       });
     });
@@ -157,15 +159,17 @@ function LoginPageContent() {
         </form>
       </div>
 
-      <p className="mt-6 text-center text-sm text-[var(--muted-foreground)]">
-        {t("Don't have an account?")}{" "}
-        <Link
-          href="/register"
-          className="text-[var(--primary)] hover:underline font-medium"
-        >
-          {t("Create one")}
-        </Link>
-      </p>
+      {isFirstUser && (
+        <p className="mt-6 text-center text-sm text-[var(--muted-foreground)]">
+          {t("Don't have an account?")}{" "}
+          <Link
+            href="/register"
+            className="text-[var(--primary)] hover:underline font-medium"
+          >
+            {t("Create one")}
+          </Link>
+        </p>
+      )}
 
       <p className="mt-3 text-center text-xs text-[var(--muted-foreground)]">
         TEEECHR · Agent-Native Learning

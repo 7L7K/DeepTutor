@@ -13,6 +13,7 @@ import json
 import logging
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal
+import uuid
 
 from deeptutor.core.stream import StreamEvent, StreamEventType
 from deeptutor.services.llm.utils import clean_thinking_tags
@@ -68,6 +69,21 @@ def _clip_text(value: str, limit: int = 4000) -> str:
     if len(text) <= limit:
         return text
     return text[:limit].rstrip() + "\n...[truncated]"
+
+
+def _new_uploaded_attachment_record(item: dict[str, Any]) -> dict[str, Any]:
+    """Copy one untrusted upload while reserving its identifier server-side."""
+    return {
+        "type": item.get("type", "file"),
+        "url": item.get("url", ""),
+        "base64": item.get("base64", ""),
+        "filename": item.get("filename", ""),
+        "mime_type": item.get("mime_type", ""),
+        # Client-provided ids could overwrite a prior file in this session
+        # (or make failure cleanup delete a shared prefix). Attachment
+        # identifiers are server-owned.
+        "id": uuid.uuid4().hex[:12],
+    }
 
 
 _TITLE_QUOTE_PAIRS: tuple[tuple[str, str], ...] = (
@@ -1428,43 +1444,31 @@ class TurnRuntimeManager:
             question_bank_context = ""
             book_context = book_context_result.text
 
-            import base64 as _b64
-            import uuid as _uuid
-
             from deeptutor.services.storage import get_attachment_store
+            from deeptutor.services.storage.attachment_validation import (
+                validate_chat_attachments,
+            )
 
+            raw_attachment_items = []
             for item in payload.get("attachments", []):
-                record = {
-                    "type": item.get("type", "file"),
-                    "url": item.get("url", ""),
-                    "base64": item.get("base64", ""),
-                    "filename": item.get("filename", ""),
-                    "mime_type": item.get("mime_type", ""),
-                    "id": item.get("id", "") or _uuid.uuid4().hex[:12],
-                }
-                attachment_records.append(record)
+                if not isinstance(item, dict):
+                    raise ValueError("attachments must contain objects")
+                raw_attachment_items.append(_new_uploaded_attachment_record(item))
 
-            # Persist original bytes to the attachment store before extraction
-            # so the frontend preview drawer can fetch the file later. The
-            # extractor will clear base64 on documents to keep DB rows lean,
-            # but the URL we record here outlives that pruning. Upload errors
-            # are non-fatal — extraction still runs from the in-memory base64.
+            # Enforce file type, strict base64, count, per-file, and total
+            # limits before any byte reaches the attachment store.  Document
+            # extraction has its own defensive limits, but it does not cover
+            # images and previously ran only after persistence.
+            attachment_records = validate_chat_attachments(raw_attachment_items)
+
+            # Persist only prevalidated original bytes before extraction so the
+            # frontend preview drawer can fetch the file later. The extractor
+            # clears base64 on documents to keep DB rows lean, but the URL we
+            # record here outlives that pruning.
             attachment_store = get_attachment_store()
+            persisted_attachment_ids: list[str] = []
             for record in attachment_records:
-                if record.get("url"):
-                    continue  # already hosted (e.g. legacy URL)
-                b64 = record.get("base64") or ""
-                if not b64:
-                    continue
-                try:
-                    raw_bytes = _b64.b64decode(b64, validate=False)
-                except Exception as exc:
-                    logger.warning(
-                        "skipping attachment upload for %r: invalid base64 (%s)",
-                        record.get("filename"),
-                        exc,
-                    )
-                    continue
+                raw_bytes = record.pop("_raw_bytes")
                 try:
                     record["url"] = await attachment_store.put(
                         session_id=session_id,
@@ -1473,12 +1477,21 @@ class TurnRuntimeManager:
                         data=raw_bytes,
                         mime_type=record.get("mime_type", "") or "",
                     )
+                    persisted_attachment_ids.append(record["id"])
                 except Exception as exc:
-                    logger.warning(
-                        "attachment store rejected %r: %s",
-                        record.get("filename"),
-                        exc,
-                    )
+                    # The whole batch is rejected rather than persisting a
+                    # partial message with a silently missing attachment.
+                    for attachment_id in [*persisted_attachment_ids, record["id"]]:
+                        try:
+                            await attachment_store.delete_attachment(session_id, attachment_id)
+                        except Exception:
+                            logger.exception(
+                                "failed to clean up attachment %s after persistence error",
+                                attachment_id,
+                            )
+                    raise RuntimeError(
+                        f"failed to persist attachment {record.get('filename')!r}"
+                    ) from exc
 
             from deeptutor.utils.document_extractor import extract_documents_from_records
 
@@ -1526,8 +1539,8 @@ class TurnRuntimeManager:
                 enabled as deterministic_provider_enabled,
             )
 
-            deterministic_course_turn = (
-                deterministic_provider_enabled() and bool(payload.get("course_id"))
+            deterministic_course_turn = deterministic_provider_enabled() and bool(
+                payload.get("course_id")
             )
             text_generation_feature = None
             if not deterministic_course_turn and (capability_name or "") in {"", "chat"}:
@@ -1905,9 +1918,7 @@ class TurnRuntimeManager:
                 # actually streamed before the failure.
                 partial_content = _persisted_answer()
                 persist_course_failure = bool(
-                    payload.get("course_id")
-                    and capability_name == "chat"
-                    and assistant_events
+                    payload.get("course_id") and capability_name == "chat" and assistant_events
                 )
                 if partial_content or generated_attachments or persist_course_failure:
                     self._assert_execution_owner_current(execution)

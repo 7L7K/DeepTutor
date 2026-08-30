@@ -36,6 +36,7 @@ _SECURE = bool(load_auth_settings()["cookie_secure"])
 _SAMESITE = "none" if _SECURE else "lax"
 
 from deeptutor.multi_user.context import set_current_user, user_from_token_payload
+from deeptutor.multi_user.identity import register_first_user
 from deeptutor.multi_user.paths import local_admin_user
 from deeptutor.services.auth import (
     AUTH_ENABLED,
@@ -50,6 +51,7 @@ from deeptutor.services.auth import (
     decode_token,
     delete_user,
     get_user_info,
+    hash_password,
     is_first_user,
     list_users,
     register_pb,
@@ -699,28 +701,17 @@ async def register(body: RegisterRequest) -> dict:
             "is_admin": False,
         }
 
-    # Standard mode — only allowed before the first admin exists.
-    if not is_first_user():
+    # Standard mode — the empty-store decision and the first write must share
+    # one identity lock so concurrent requests cannot create ordinary users.
+    record = register_first_user(body.username, hash_password(body.password))
+    if record is None:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Self-registration is closed. Ask an administrator to create your account.",
         )
 
-    existing = {u["username"] for u in list_users()}
-    if body.username in existing:
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail="Username already taken",
-        )
-
-    add_user(body.username, body.password)
-    user_id = ""
-    role = "user"
-    for item in list_users():
-        if item.get("username") == body.username:
-            user_id = str(item.get("id") or "")
-            role = str(item.get("role") or "user")
-            break
+    user_id = str(record.get("id") or "")
+    role = str(record.get("role") or "user")
     logger.info(f"First user (admin) registered: '{body.username}'")
     return {
         "ok": True,

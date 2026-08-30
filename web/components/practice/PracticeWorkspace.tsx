@@ -1421,6 +1421,19 @@ function AttemptRunner({ view, questions, sourceNames, readOnly, withdrawn, onSa
     : [];
   const currentIsChoice = currentQuestion?.question_type === "single_choice";
   const currentSaveState = currentItem ? saveStates[currentItem.id] : undefined;
+  const attemptItemsRef = useRef(view.items);
+  const questionByIdRef = useRef(byId);
+  const saveAnswerRef = useRef(onSave);
+  const attemptActiveRef = useRef(active);
+  const interactionReadOnlyRef = useRef(interactionReadOnly);
+
+  useEffect(() => {
+    attemptItemsRef.current = view.items;
+    questionByIdRef.current = byId;
+    saveAnswerRef.current = onSave;
+    attemptActiveRef.current = active;
+    interactionReadOnlyRef.current = interactionReadOnly;
+  }, [active, byId, interactionReadOnly, onSave, view.items]);
 
   useEffect(() => {
     for (const answer of view.answers) saveQueue.syncAnswer(answer);
@@ -1430,10 +1443,31 @@ function AttemptRunner({ view, questions, sourceNames, readOnly, withdrawn, onSa
     mountedRef.current = true;
     return () => {
       mountedRef.current = false;
-      for (const timer of debounceTimers.values()) clearTimeout(timer);
+      for (const item of attemptItemsRef.current) {
+        const timer = debounceTimers.get(item.id);
+        if (timer) clearTimeout(timer);
+        const value = valuesRef.current[item.id] ?? "";
+        const durable = practiceResponseValue(
+          saveQueue.getAnswer(item.id)?.response ?? null,
+        );
+        if (
+          value === durable ||
+          interactionReadOnlyRef.current ||
+          !attemptActiveRef.current
+        ) continue;
+        const question = questionByIdRef.current.get(item.question_id);
+        if (question?.question_type === "single_choice") {
+          if (value) saveQueue.enqueue(item.id, { option_id: value });
+        } else if (value.trim() || durable.trim()) {
+          saveQueue.enqueue(item.id, { answer: value });
+        }
+        // Autosaves use fetch keepalive so a route change or reload can still
+        // deliver this final, tiny idempotent write after React unmounts.
+        void saveQueue.flush(item.id, saveAnswerRef.current);
+      }
       debounceTimers.clear();
     };
-  }, []);
+  }, [saveQueue]);
   useEffect(() => {
     if (active && !interactionReadOnly) answerInputRef.current?.focus();
   }, [active, currentIndex, interactionReadOnly]);
