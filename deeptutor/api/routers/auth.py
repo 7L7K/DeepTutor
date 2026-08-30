@@ -40,7 +40,9 @@ from deeptutor.multi_user.identity import register_first_user
 from deeptutor.multi_user.paths import local_admin_user
 from deeptutor.services.auth import (
     AUTH_ENABLED,
+    AUTH_PASSWORD_HASH,
     AUTH_SECRET,
+    AUTH_USERNAME,
     POCKETBASE_ENABLED,
     TOKEN_EXPIRE_HOURS,
     TokenPayload,
@@ -703,7 +705,14 @@ async def register(body: RegisterRequest) -> dict:
 
     # Standard mode — the empty-store decision and the first write must share
     # one identity lock so concurrent requests cannot create ordinary users.
-    record = register_first_user(body.username, hash_password(body.password))
+    record = await asyncio.to_thread(
+        register_first_user,
+        body.username,
+        body.password,
+        password_hasher=hash_password,
+        env_username=AUTH_USERNAME,
+        env_password_hash=AUTH_PASSWORD_HASH,
+    )
     if record is None:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,

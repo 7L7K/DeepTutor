@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import asyncio
 from concurrent.futures import ThreadPoolExecutor
-from threading import Barrier
+from threading import Lock, get_ident
 
 from fastapi import HTTPException
 
@@ -56,18 +56,21 @@ def test_concurrent_bootstrap_registration_accepts_only_one_request(mu_isolated_
 
     monkeypatch.setattr(auth_router, "AUTH_ENABLED", True)
     monkeypatch.setattr(auth_router, "POCKETBASE_ENABLED", False)
+    monkeypatch.setattr(auth_router, "AUTH_USERNAME", "")
+    monkeypatch.setattr(auth_router, "AUTH_PASSWORD_HASH", "")
 
     names = [f"bootstrap-{index}" for index in range(8)]
-    pre_write_barrier = Barrier(len(names))
+    hash_calls = 0
+    hash_calls_lock = Lock()
 
-    def _empty_store_before_write() -> bool:
-        # The pre-fix route performed this check before its separately locked
-        # write. Hold every request here so that version deterministically
-        # admits every caller; the fixed route no longer uses this probe.
-        pre_write_barrier.wait(timeout=5)
-        return True
+    def _hash_once(password: str) -> str:
+        nonlocal hash_calls
+        assert password == "password1234"
+        with hash_calls_lock:
+            hash_calls += 1
+        return "$2b$12$placeholder"
 
-    monkeypatch.setattr(auth_router, "is_first_user", _empty_store_before_write)
+    monkeypatch.setattr(auth_router, "hash_password", _hash_once)
 
     def _register(name: str):
         request = auth_router.RegisterRequest(username=name, password="password1234")
@@ -92,3 +95,78 @@ def test_concurrent_bootstrap_registration_accepts_only_one_request(mu_isolated_
         exc.detail == "Self-registration is closed. Ask an administrator to create your account."
         for exc in rejected
     )
+    assert hash_calls == 1
+
+
+def test_closed_registration_rejects_before_hashing(mu_isolated_root, monkeypatch):
+    """A closed public route must not spend bcrypt work on rejected requests."""
+    from deeptutor.api.routers import auth as auth_router
+    from deeptutor.multi_user.identity import save_user
+
+    save_user("existing-admin", "$2b$12$placeholder", role="admin")
+    monkeypatch.setattr(auth_router, "AUTH_ENABLED", True)
+    monkeypatch.setattr(auth_router, "POCKETBASE_ENABLED", False)
+    monkeypatch.setattr(auth_router, "AUTH_USERNAME", "")
+    monkeypatch.setattr(auth_router, "AUTH_PASSWORD_HASH", "")
+
+    def _unexpected_hash(_password: str) -> str:
+        raise AssertionError("closed registration must reject before hashing")
+
+    monkeypatch.setattr(auth_router, "hash_password", _unexpected_hash)
+    request = auth_router.RegisterRequest(username="attacker", password="password1234")
+
+    try:
+        asyncio.run(auth_router.register(request))
+    except HTTPException as exc:
+        assert exc.status_code == 403
+    else:
+        raise AssertionError("closed registration unexpectedly accepted a request")
+
+
+def test_settings_bootstrap_admin_keeps_direct_registration_closed(mu_isolated_root, monkeypatch):
+    """The settings-backed admin is identity authority even without users.json."""
+    from deeptutor.api.routers import auth as auth_router
+    from deeptutor.multi_user import identity
+
+    monkeypatch.setattr(auth_router, "AUTH_ENABLED", True)
+    monkeypatch.setattr(auth_router, "POCKETBASE_ENABLED", False)
+    monkeypatch.setattr(auth_router, "AUTH_USERNAME", "configured-admin")
+    monkeypatch.setattr(auth_router, "AUTH_PASSWORD_HASH", "$2b$12$configured")
+
+    def _unexpected_hash(_password: str) -> str:
+        raise AssertionError("configured admin must close bootstrap before hashing")
+
+    monkeypatch.setattr(auth_router, "hash_password", _unexpected_hash)
+    request = auth_router.RegisterRequest(username="attacker", password="password1234")
+
+    try:
+        asyncio.run(auth_router.register(request))
+    except HTTPException as exc:
+        assert exc.status_code == 403
+    else:
+        raise AssertionError("settings-backed admin was displaced")
+
+    assert not identity.USERS_FILE.exists()
+
+
+def test_bootstrap_hash_runs_off_event_loop_thread(mu_isolated_root, monkeypatch):
+    """The only admitted bcrypt operation must not block the FastAPI event loop."""
+    from deeptutor.api.routers import auth as auth_router
+
+    monkeypatch.setattr(auth_router, "AUTH_ENABLED", True)
+    monkeypatch.setattr(auth_router, "POCKETBASE_ENABLED", False)
+    monkeypatch.setattr(auth_router, "AUTH_USERNAME", "")
+    monkeypatch.setattr(auth_router, "AUTH_PASSWORD_HASH", "")
+    event_loop_thread = get_ident()
+
+    def _off_loop_hash(_password: str) -> str:
+        assert get_ident() != event_loop_thread
+        return "$2b$12$placeholder"
+
+    monkeypatch.setattr(auth_router, "hash_password", _off_loop_hash)
+    request = auth_router.RegisterRequest(username="first-admin", password="password1234")
+
+    result = asyncio.run(auth_router.register(request))
+
+    assert result["username"] == "first-admin"
+    assert result["is_admin"] is True

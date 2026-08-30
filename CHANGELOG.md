@@ -11,7 +11,10 @@
   reference before download. Progress sockets revalidate ownership while
   connected, failed delegated tools stay redacted, model HTML no longer
   executes, SVG/Markdown remote fetches are blocked, and logout redirects only
-  after the server confirms the session ended.
+  after the server confirms the session ended. Bootstrap admission also treats
+  the configured fallback administrator as identity authority and performs the
+  winning password hash off the request event loop only after the locked store
+  check succeeds.
 
 - Preserved learner work across the demo loop: Strict Mode replay no longer
   cancels initial unified-chat loading, Course Chat exposes a retry path,
