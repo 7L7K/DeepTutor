@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 from contextlib import contextmanager
 import importlib
 from pathlib import Path
@@ -140,3 +141,68 @@ def test_mimic_websocket_accepts_config_and_returns_messages(
     assert messages[0]["stage"] == "init"
     assert messages[1]["stage"] == "processing"
     assert messages[2]["content"] == "stub mimic failure"
+
+
+def test_quiz_judge_revalidates_after_upgrade_before_starting_provider_work(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A user disabled while an idle judge socket is open cannot start a judge run."""
+    from starlette.datastructures import QueryParams
+
+    from deeptutor.api.routers import auth as auth_router
+    from deeptutor.api.routers import quiz_judge
+    from deeptutor.services import auth as auth_service
+
+    state = {"disabled": False, "provider_started": False}
+    users = {
+        "alice": {
+            "id": "u_alice",
+            "hash": "unused-by-token-auth",
+            "role": "user",
+            "disabled": False,
+        }
+    }
+    monkeypatch.setattr(auth_router, "AUTH_ENABLED", True)
+    monkeypatch.setattr(auth_router, "AUTH_SECRET", "judge-revalidation-test-secret")
+    monkeypatch.setattr(auth_service, "AUTH_ENABLED", True)
+    monkeypatch.setattr(auth_service, "AUTH_SECRET", "judge-revalidation-test-secret")
+    monkeypatch.setattr(auth_service, "POCKETBASE_ENABLED", False)
+    monkeypatch.setattr(auth_service, "_load_users", lambda: users)
+    token = auth_service.create_token("alice", "user", "u_alice")
+
+    class FakeWebSocket:
+        def __init__(self) -> None:
+            self.closed_code: int | None = None
+            self.accepted = False
+            self.messages: list[dict] = []
+            self.headers: dict[str, str] = {}
+            self.cookies: dict[str, str] = {}
+            self.query_params = QueryParams({"token": token})
+
+        async def accept(self) -> None:
+            self.accepted = True
+
+        async def receive_json(self) -> dict:
+            state["disabled"] = True
+            users["alice"]["disabled"] = True
+            return {"question": "What is 2 + 2?", "user_answer": "4", "language": "en"}
+
+        async def send_json(self, payload: dict) -> None:
+            self.messages.append(payload)
+
+        async def close(self, code: int = 1000) -> None:
+            self.closed_code = code
+
+    async def _provider_must_not_start(**_kwargs):
+        state["provider_started"] = True
+        yield "unexpected"
+
+    monkeypatch.setattr(quiz_judge, "llm_stream", _provider_must_not_start)
+
+    websocket = FakeWebSocket()
+    asyncio.run(quiz_judge.websocket_quiz_judge(websocket))
+
+    assert websocket.accepted is True
+    assert websocket.closed_code == 4001
+    assert state["disabled"] is True
+    assert state["provider_started"] is False

@@ -276,7 +276,8 @@ export default function CourseMaterials() {
         ) : null}
         {errors.load ? (
           <div role="alert" className="mt-6 rounded-xl border border-red-300/60 bg-red-50/60 px-4 py-3 text-sm text-red-900 dark:border-red-900/60 dark:bg-red-950/20 dark:text-red-200">
-            {errors.load}
+            <p>{errors.load}</p>
+            <button type="button" onClick={() => void refresh()} disabled={loading || busy} className="mt-3 rounded-lg border border-current px-3 py-2 text-sm disabled:cursor-not-allowed disabled:opacity-50">Retry loading materials</button>
           </div>
         ) : null}
         {status ? (
@@ -287,7 +288,7 @@ export default function CourseMaterials() {
 
         {loading ? (
           <div className="mt-10 text-sm text-[var(--muted-foreground)]">Loading Course materials…</div>
-        ) : sources.length ? (
+        ) : errors.load ? null : sources.length ? (
           <div className="mt-10 space-y-8">
             <div className="grid gap-3 sm:grid-cols-3">
               {[

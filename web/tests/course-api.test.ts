@@ -42,6 +42,22 @@ test("Course detail reads the owner-scoped Course route with its nullable term",
   assert.equal(requestedUrl, "/api/v1/courses/crs%2Fbio");
 });
 
+test("Course detail forwards navigation cancellation to its owner-scoped read", async (t) => {
+  const originalFetch = globalThis.fetch;
+  let receivedSignal: AbortSignal | null | undefined;
+  t.after(() => {
+    globalThis.fetch = originalFetch;
+  });
+  globalThis.fetch = (async (_input: RequestInfo | URL, init?: RequestInit) => {
+    receivedSignal = init?.signal;
+    return new Response(JSON.stringify({}), { status: 404 });
+  }) as typeof fetch;
+
+  const controller = new AbortController();
+  await assert.rejects(() => getCourse("crs_stale", controller.signal));
+  assert.equal(receivedSignal, controller.signal);
+});
+
 test("Course capability status comes from the authenticated server", async (t) => {
   const originalFetch = globalThis.fetch;
   t.after(() => {

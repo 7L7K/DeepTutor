@@ -417,6 +417,10 @@ class QuestionPipeline:
         self.registry = get_tool_registry()
         self.usage = UsageTracker(model=self.model)
         self._optional_tools = default_optional_tools()
+        # Resolved once per run after the sandbox has checked both backend
+        # isolation and request-local authority. Defaulting to false keeps
+        # synchronous schema helpers fail-closed outside an active turn.
+        self._exec_enabled = False
         self._temperature = 0.4
 
         try:
@@ -461,6 +465,17 @@ class QuestionPipeline:
         each type to produce; when supplied, it must sum to
         ``num_questions`` (caller's responsibility).
         """
+        # Deep Question has its own tool-composition path, so it must ask the
+        # shared sandbox policy before advertising code execution. A configured
+        # backend alone is not an authorization grant.
+        try:
+            from deeptutor.services.sandbox import get_sandbox_service
+
+            self._exec_enabled = await get_sandbox_service().execution_authorized()
+        except Exception:
+            logger.warning("question exec policy gate failed; disabling execution", exc_info=True)
+            self._exec_enabled = False
+
         attachments = list(attachments or [])
         image_attachments = [a for a in attachments if getattr(a, "type", "") == "image"]
         quiz_history = list(quiz_history or [])
@@ -1483,7 +1498,7 @@ class QuestionPipeline:
             has_sources=bool(self._source_index(context)),
             has_memory=user_has_memory(),
             has_notebooks=user_has_notebooks(),
-            has_code=exec_capability_available(),
+            has_code=self._exec_enabled and exec_capability_available(),
         )
 
     def _resolved_tools(self, context: UnifiedContext) -> list[str]:
@@ -1492,6 +1507,11 @@ class QuestionPipeline:
             requested_tools=self.enabled_tools,
             optional_whitelist=self._optional_tools,
             mount_flags=self._mount_flags(context),
+            builtin_whitelist=(
+                set(context.allowed_builtin_tools)
+                if context.allowed_builtin_tools is not None
+                else None
+            ),
         )
 
     def _use_native_tools(self, context: UnifiedContext) -> bool:

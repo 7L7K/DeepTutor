@@ -148,6 +148,20 @@ export function isFlashcardDeckLibraryEligible(
   );
 }
 
+/**
+ * Generated deck shells intentionally stay out of the study library until
+ * publication. Their operation remains the learner's recovery route while it
+ * is active, awaiting review, or has failed.
+ */
+export function hasRecoverableFlashcardGeneration(
+  operations: ReadonlyArray<Pick<FlashcardGenerationOperation, "state">>,
+): boolean {
+  return operations.some(
+    (operation) =>
+      operation.state !== "completed" && operation.state !== "cancelled",
+  );
+}
+
 function idempotencyKey(): string {
   return (
     globalThis.crypto?.randomUUID?.() ??
@@ -354,6 +368,10 @@ export default function FlashcardsWorkspace() {
         (operation) => !dismissedGenerationOperationIds.includes(operation.id),
       ),
     [dismissedGenerationOperationIds, generationOperations],
+  );
+  const hasRecoverableGeneration = useMemo(
+    () => hasRecoverableFlashcardGeneration(visibleGenerationOperations),
+    [visibleGenerationOperations],
   );
   const generationOperationByDeckId = useMemo(
     () => new Map(generationOperations.map((operation) => [operation.deck_id, operation])),
@@ -1851,6 +1869,23 @@ export default function FlashcardsWorkspace() {
               </nav>
             ) : null}
 
+            {pageView !== "activity" && hasRecoverableGeneration ? (
+              <section className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-amber-300 bg-amber-50 p-4 text-sm text-amber-950 dark:border-amber-900 dark:bg-amber-950/30 dark:text-amber-100">
+                <p>
+                  {t(
+                    "A card creation request is still in progress or needs your attention. Open card creation activity to continue.",
+                  )}
+                </p>
+                <button
+                  type="button"
+                  onClick={() => setPageView("activity")}
+                  className="rounded-lg border border-current px-4 py-2 font-medium hover:bg-amber-100 dark:hover:bg-amber-900/30"
+                >
+                  {t("Open card creation activity")}
+                </button>
+              </section>
+            ) : null}
+
             {pageView === "create" && createMode !== "manual" ? (
               <div
                 className={
@@ -3333,7 +3368,7 @@ export default function FlashcardsWorkspace() {
                     onClick={openReviewCreation}
                     className="rounded-lg bg-[var(--primary)] px-4 py-2 text-sm text-[var(--primary-foreground)]"
                   >
-                              {courseShell ? t("New deck") : t("Create flashcards")}
+                    {courseShell ? t("New deck") : t("Create flashcards")}
                   </button>
                 </div>
               </section>

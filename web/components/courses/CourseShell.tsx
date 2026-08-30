@@ -14,6 +14,7 @@ import {
 } from "react";
 import { useCourses } from "@/context/CourseContext";
 import { getCourse, type Course } from "@/lib/course-api";
+import { isCurrentAbortableRequest } from "@/lib/request-cancellation";
 import {
   COURSE_NAVIGATION_DESTINATIONS,
   courseDestinationIsActive,
@@ -93,37 +94,49 @@ export default function CourseShell({
   const [course, setCourse] = useState<Course | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const courseLoadEpochRef = useRef(0);
+  const courseLoadAbortRef = useRef<AbortController | null>(null);
 
   const loadCourse = useCallback(() => {
-    let cancelled = false;
+    courseLoadAbortRef.current?.abort();
+    const controller = new AbortController();
+    courseLoadAbortRef.current = controller;
+    const requestEpoch = ++courseLoadEpochRef.current;
+    const current = () => isCurrentAbortableRequest(
+      requestEpoch,
+      courseLoadEpochRef.current,
+      controller.signal,
+    );
     // The route parameter can change without remounting the workspace layout.
     // Clear the previous Course immediately so a direct-link transition never
     // briefly presents the wrong Course context.
     setLoading(true);
     setError(null);
     setCourse(null);
-    void getCourse(courseId)
+    void getCourse(courseId, controller.signal)
       .then((loaded) => {
-        if (!cancelled) setCourse(loaded);
+        if (current()) setCourse(loaded);
       })
       .catch((cause: unknown) => {
-        if (!cancelled) {
+        if (current()) {
           setCourse(null);
           setError(cause instanceof Error ? cause.message : "Course not found");
         }
       })
       .finally(() => {
-        if (!cancelled) setLoading(false);
+        if (current()) setLoading(false);
       });
-    return () => {
-      cancelled = true;
-    };
   }, [courseId]);
 
   useEffect(() => {
     // The initial owner-scoped read intentionally seeds local route state.
     // eslint-disable-next-line react-hooks/set-state-in-effect
-    void loadCourse();
+    loadCourse();
+    return () => {
+      courseLoadAbortRef.current?.abort();
+      courseLoadAbortRef.current = null;
+      courseLoadEpochRef.current += 1;
+    };
   }, [loadCourse]);
 
   useEffect(() => {

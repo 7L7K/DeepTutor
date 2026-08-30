@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import re
@@ -9,13 +10,14 @@ import re
 import pytest
 
 TestClient = pytest.importorskip("fastapi.testclient").TestClient
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException, Request, Response
 from fastapi.exceptions import RequestValidationError
 
 from deeptutor.api.auth_validation import login_validation_exception_handler
 from deeptutor.api.routers import auth as auth_router
 from deeptutor.services import auth as auth_service
 from deeptutor.services.auth_diagnostics import (
+    LoginFailureLimiter,
     attempt_id_is_valid,
     emit_auth_attempt,
     identifier_details,
@@ -100,6 +102,169 @@ def test_identifier_mask_and_hmac_are_safe_and_deterministic() -> None:
     assert first.fingerprint == second.fingerprint
     assert "User@EXAMPLE.COM" not in first.masked
     assert "secret" not in first.fingerprint
+
+
+def test_login_failure_limiter_is_bounded_and_expires_without_raw_identifiers() -> None:
+    clock = [100.0]
+    limiter = LoginFailureLimiter(
+        max_failures=2,
+        window_seconds=10.0,
+        max_keys=2,
+        clock=lambda: clock[0],
+    )
+
+    assert limiter.retry_after_seconds("hmac-a") is None
+    limiter.reserve_attempt("hmac-a")
+    limiter.reserve_attempt("hmac-a")
+    assert limiter.retry_after_seconds("hmac-a") == 10
+
+    clock[0] = 109.1
+    assert limiter.retry_after_seconds("hmac-a") == 1
+    clock[0] = 110.0
+    assert limiter.retry_after_seconds("hmac-a") is None
+
+    limiter.reserve_attempt("hmac-a")
+    limiter.clear("hmac-a")
+    assert limiter.retry_after_seconds("hmac-a") is None
+    assert limiter.retry_after_seconds(None) is None
+
+
+def test_standard_login_runs_sync_credential_check_in_worker_thread(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(auth_router, "AUTH_ENABLED", True)
+    monkeypatch.setattr(auth_router, "POCKETBASE_ENABLED", False)
+    monkeypatch.setattr(auth_router, "AUTH_SECRET", "threading-test-secret")
+    monkeypatch.setattr(auth_router, "_LOGIN_FAILURE_LIMITER", LoginFailureLimiter())
+    payload = auth_service.TokenPayload(username="alice", role="user", user_id="u_alice")
+    result = auth_service.AuthenticationResult(
+        payload=payload,
+        lookup="exact",
+        account_state="active",
+        password_result="match",
+    )
+    monkeypatch.setattr(auth_router, "authenticate_detailed", lambda *_args: result)
+    monkeypatch.setattr(auth_router, "create_token", lambda *_args: "test-token")
+    calls: list[tuple[object, tuple[object, ...]]] = []
+
+    async def _fake_to_thread(function, /, *args, **kwargs):
+        calls.append((function, args))
+        return function(*args, **kwargs)
+
+    monkeypatch.setattr(auth_router.asyncio, "to_thread", _fake_to_thread)
+    request = Request(
+        {
+            "type": "http",
+            "method": "POST",
+            "path": "/auth/login",
+            "headers": [],
+            "client": ("127.0.0.1", 12345),
+        }
+    )
+
+    response = Response()
+    body = auth_router.LoginRequest(username="alice", password="correct-password")
+    response_body = asyncio.run(auth_router.login(body, request, response))
+
+    assert response_body["ok"] is True
+    assert calls == [(auth_router.authenticate_detailed, ("alice", "correct-password"))]
+    assert response.headers["x-auth-attempt-id"].startswith("auth_")
+
+
+def test_rate_limited_login_rejects_before_starting_credential_work(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(auth_router, "AUTH_ENABLED", True)
+    monkeypatch.setattr(auth_router, "POCKETBASE_ENABLED", False)
+    monkeypatch.setattr(auth_router, "AUTH_SECRET", "limiter-test-secret")
+    limiter = LoginFailureLimiter()
+    monkeypatch.setattr(auth_router, "_LOGIN_FAILURE_LIMITER", limiter)
+    body = auth_router.LoginRequest(username="alice", password="wrong-password")
+    fingerprint = identifier_details(body.username, auth_secret="limiter-test-secret").fingerprint
+    for _ in range(5):
+        limiter.reserve_attempt(fingerprint)
+    worker_started = False
+
+    async def _unexpected_to_thread(*_args, **_kwargs):
+        nonlocal worker_started
+        worker_started = True
+        raise AssertionError("a throttled login must not start credential verification")
+
+    monkeypatch.setattr(auth_router.asyncio, "to_thread", _unexpected_to_thread)
+    request = Request(
+        {
+            "type": "http",
+            "method": "POST",
+            "path": "/auth/login",
+            "headers": [],
+            "client": ("127.0.0.1", 12345),
+        }
+    )
+
+    with pytest.raises(HTTPException) as exc_info:
+        asyncio.run(auth_router.login(body, request, Response()))
+
+    assert exc_info.value.status_code == 429
+    assert exc_info.value.detail == "Too many login attempts. Try again later."
+    assert exc_info.value.headers is not None
+    assert int(exc_info.value.headers["Retry-After"]) >= 1
+    assert worker_started is False
+
+
+def test_simultaneous_login_burst_reserves_bcrypt_budget_before_workers_start(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(auth_router, "AUTH_ENABLED", True)
+    monkeypatch.setattr(auth_router, "POCKETBASE_ENABLED", False)
+    monkeypatch.setattr(auth_router, "AUTH_SECRET", "concurrent-limiter-test-secret")
+    monkeypatch.setattr(auth_router, "_LOGIN_FAILURE_LIMITER", LoginFailureLimiter())
+    failed_result = auth_service.AuthenticationResult(
+        payload=None,
+        lookup="exact",
+        account_state="active",
+        password_result="mismatch",
+    )
+    monkeypatch.setattr(auth_router, "authenticate_detailed", lambda *_args: failed_result)
+
+    async def _exercise() -> list[int]:
+        release_workers = asyncio.Event()
+        worker_started = 0
+
+        async def _blocked_to_thread(function, /, *args, **kwargs):
+            nonlocal worker_started
+            worker_started += 1
+            await release_workers.wait()
+            return function(*args, **kwargs)
+
+        monkeypatch.setattr(auth_router.asyncio, "to_thread", _blocked_to_thread)
+
+        async def _attempt() -> int:
+            request = Request(
+                {
+                    "type": "http",
+                    "method": "POST",
+                    "path": "/auth/login",
+                    "headers": [],
+                    "client": ("127.0.0.1", 12345),
+                }
+            )
+            body = auth_router.LoginRequest(username="alice", password="wrong-password")
+            try:
+                await auth_router.login(body, request, Response())
+            except HTTPException as exc:
+                return exc.status_code
+            raise AssertionError("the mocked authentication result must fail")
+
+        attempts = [asyncio.create_task(_attempt()) for _ in range(6)]
+        for _ in range(3):
+            await asyncio.sleep(0)
+        assert worker_started == 5
+        release_workers.set()
+        return await asyncio.gather(*attempts)
+
+    statuses = asyncio.run(_exercise())
+
+    assert sorted(statuses) == [401, 401, 401, 401, 401, 429]
 
 
 def test_login_unknown_and_wrong_password_keep_the_same_public_error(auth_users, caplog) -> None:

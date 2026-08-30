@@ -32,7 +32,10 @@ from fastapi.responses import FileResponse, PlainTextResponse, StreamingResponse
 from pydantic import BaseModel
 
 from deeptutor.api.routers.auth import require_admin
-from deeptutor.api.utils.progress_broadcaster import ProgressBroadcaster
+from deeptutor.api.utils.progress_broadcaster import (
+    ProgressBroadcaster,
+    progress_subscription_key,
+)
 from deeptutor.api.utils.task_id_manager import TaskIDManager
 from deeptutor.api.utils.task_log_stream import capture_task_logs, get_task_stream_manager
 from deeptutor.knowledge.add_documents import DocumentAdder, remove_raw_document
@@ -249,11 +252,80 @@ IMAGE_ACCEPT_MIME_TYPES = {
     ".webp": "image/webp",
 }
 
+# Raw knowledge files are user-controlled and served from the same origin as
+# the signed-in application.  These extensions can be interpreted as active
+# browser content when navigated to directly, so they must never receive an
+# inline response from this route.  Keep the list extension-based as well as
+# setting ``nosniff`` below: platform MIME databases do not consistently know
+# every JavaScript or markup extension.
+_ACTIVE_KB_FILE_EXTENSIONS = frozenset(
+    {
+        ".css",
+        ".cjs",
+        ".htm",
+        ".html",
+        ".js",
+        ".jsx",
+        ".less",
+        ".mjs",
+        ".mts",
+        ".sass",
+        ".scss",
+        ".svg",
+        ".svgz",
+        ".svelte",
+        ".ts",
+        ".tsx",
+        ".vue",
+        ".xhtml",
+        ".xht",
+        ".xml",
+        ".xsl",
+        ".xslt",
+    }
+)
+
+_KB_RAW_FILE_HEADERS = {
+    # Files may contain private course material.  More importantly, no user
+    # agent may reinterpret a harmless-looking file as executable markup.
+    "Cache-Control": "private, no-store",
+    "X-Content-Type-Options": "nosniff",
+}
+
+_KB_ACTIVE_FILE_CSP = (
+    "sandbox; default-src 'none'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'"
+)
+
+
+def _kb_raw_file_response_headers(path: Path) -> dict[str, str]:
+    """Return response headers without breaking safe embedded file previews."""
+    headers = dict(_KB_RAW_FILE_HEADERS)
+    if path.suffix.lower() in _ACTIVE_KB_FILE_EXTENSIONS:
+        # Active files are forced to download below.  The CSP remains a
+        # defense in depth if a browser or intermediary ignores that hint.
+        headers["Content-Security-Policy"] = _KB_ACTIVE_FILE_CSP
+    return headers
+
+
+def _kb_raw_text_preview_headers() -> dict[str, str]:
+    """Plain-text previews need no document sandbox, but must not be sniffed."""
+    return dict(_KB_RAW_FILE_HEADERS)
+
 
 def _build_unique_task_id(task_type: str, task_key_prefix: str) -> str:
     task_manager = TaskIDManager.get_instance()
     task_key = f"{task_key_prefix}_{datetime.now().isoformat()}_{uuid4().hex[:8]}"
-    return task_manager.generate_task_id(task_type, task_key)
+    task_id = task_manager.generate_task_id(task_type, task_key)
+    # Task logs can contain source filenames and processing errors.  Register
+    # their principal when the normal KB task is created; the SSE endpoint
+    # fails closed for legacy/unowned task metadata instead of guessing from a
+    # task key or display name.
+    task_manager.update_task_status(
+        task_id,
+        "running",
+        owner_user_id=get_current_user().id,
+    )
+    return task_id
 
 
 def _mark_kb_queued_for_processing(
@@ -2246,7 +2318,11 @@ async def serve_kb_raw_file_text_preview(kb_name: str, filename: str):
     except OSError as exc:
         raise HTTPException(status_code=404, detail="File not found") from exc
 
-    return PlainTextResponse(text, media_type="text/plain; charset=utf-8")
+    return PlainTextResponse(
+        text,
+        media_type="text/plain; charset=utf-8",
+        headers=_kb_raw_text_preview_headers(),
+    )
 
 
 @router.get("/{kb_name}/files/{filename:path}")
@@ -2254,7 +2330,9 @@ async def serve_kb_raw_file(kb_name: str, filename: str):
     """Serve a single raw document for inline preview / download.
 
     Resolution is sandboxed to the KB's raw/ directory; any path that
-    escapes via traversal yields 403.
+    escapes via traversal yields 403.  Active browser formats are delivered
+    as attachments so user-controlled KB content cannot execute in the
+    authenticated application origin.
     """
     target = _resolve_kb_raw_file_or_404(kb_name, filename)
     media_type, _ = mimetypes.guess_type(target.name)
@@ -2262,7 +2340,10 @@ async def serve_kb_raw_file(kb_name: str, filename: str):
         target,
         media_type=media_type or "application/octet-stream",
         filename=target.name,
-        content_disposition_type="inline",
+        headers=_kb_raw_file_response_headers(target),
+        content_disposition_type=(
+            "attachment" if target.suffix.lower() in _ACTIVE_KB_FILE_EXTENSIONS else "inline"
+        ),
     )
 
 
@@ -2310,8 +2391,13 @@ async def delete_knowledge_base(kb_name: str):
 async def stream_task_logs(task_id: str):
     """Stream task-specific logs for knowledge-base operations."""
     task_ids = TaskIDManager.get_instance()
-    metadata = task_ids.get_task_metadata(task_id) or {}
-    if task_id.startswith("course_source_") or metadata.get("private_course"):
+    metadata = task_ids.get_task_metadata(task_id)
+    if (
+        not metadata
+        or metadata.get("task_type") not in {"kb_init", "kb_upload", "kb_reindex"}
+        or metadata.get("private_course")
+        or metadata.get("owner_user_id") != get_current_user().id
+    ):
         raise HTTPException(status_code=404, detail="Knowledge task not found")
     manager = get_task_stream_manager()
     manager.ensure_task(task_id)
@@ -2804,20 +2890,34 @@ async def websocket_progress(websocket: WebSocket, kb_name: str):
         await websocket.close(code=4404)
         return
 
+    # Resolve before accepting or allocating a broadcaster entry.  A visible
+    # name alone is not a resource identity: two learners may both own a KB
+    # named "notes" in different private workspaces.
+    try:
+        resource = resolve_kb(kb_name)
+    except HTTPException:
+        if user_token is not None:
+            reset_current_user(user_token)
+        await websocket.close(code=4404)
+        return
+
+    resolved_name = resource.name
+    base_dir = resource.base_dir
+    subscription_key = progress_subscription_key(resolved_name, base_dir)
+
     await websocket.accept()
 
     broadcaster = ProgressBroadcaster.get_instance()
 
     try:
-        await broadcaster.connect(kb_name, websocket)
+        await broadcaster.connect(subscription_key, websocket)
 
-        base_dir = _current_kb_base_dir()
-        progress_tracker = ProgressTracker(kb_name, base_dir)
+        progress_tracker = ProgressTracker(resolved_name, base_dir)
         initial_progress = progress_tracker.get_progress()
         expected_task_id = websocket.query_params.get("task_id")
 
         try:
-            kb_info = KnowledgeBaseManager(base_dir=str(base_dir)).get_info(kb_name)
+            kb_info = KnowledgeBaseManager(base_dir=str(base_dir)).get_info(resolved_name)
             kb_is_ready = bool(kb_info.get("statistics", {}).get("rag_initialized"))
         except Exception:
             kb_is_ready = False
@@ -2928,7 +3028,7 @@ async def websocket_progress(websocket: WebSocket, kb_name: str):
         except Exception:
             pass
     finally:
-        await broadcaster.disconnect(kb_name, websocket)
+        await broadcaster.disconnect(subscription_key, websocket)
         try:
             await websocket.close()
         except Exception:

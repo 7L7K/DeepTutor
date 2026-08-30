@@ -838,7 +838,9 @@ async def test_partner_consult_retains_each_delegated_learner_identity(
             "services": {
                 "llm": {
                     "active_profile_id": "shared",
-                    "profiles": [{"id": "shared", "models": [{"id": "model"}]}],
+                    "profiles": [
+                        {"id": "shared", "binding": "openai", "models": [{"id": "model"}]}
+                    ],
                 }
             }
         },
@@ -950,6 +952,40 @@ def test_partner_event_mapping_covers_channels() -> None:
     # streamed spacing survives the accumulation.
     assert kinds(StreamEventType.CONTENT, content="") == []
     assert kinds(StreamEventType.CONTENT, content=" ") == ["text"]
+
+
+def test_partner_event_mapping_redacts_provider_errors_for_learners() -> None:
+    from deeptutor.core.stream import StreamEvent, StreamEventType
+    from deeptutor.services.subagent.partner import _to_subagent_events
+
+    events = _to_subagent_events(
+        StreamEvent(type=StreamEventType.ERROR, content="provider token rejected: secret-detail"),
+        _partner_trace_state(),
+        redact_errors=True,
+    )
+
+    assert [event.kind for event in events] == ["error"]
+    assert "secret-detail" not in events[0].text
+    assert events[0].text == "The assigned Partner could not complete that request. Please try again later."
+
+
+def test_partner_event_mapping_redacts_failed_tool_result_for_learners() -> None:
+    from deeptutor.core.stream import StreamEvent, StreamEventType
+    from deeptutor.services.subagent.partner import _to_subagent_events
+
+    events = _to_subagent_events(
+        StreamEvent(
+            type=StreamEventType.TOOL_RESULT,
+            content="Error executing reason: provider token rejected: secret-detail",
+            metadata={"tool_metadata": {"error": "provider token rejected: secret-detail"}},
+        ),
+        _partner_trace_state(),
+        redact_errors=True,
+    )
+
+    assert [event.kind for event in events] == ["tool_result"]
+    assert "secret-detail" not in events[0].text
+    assert events[0].text == "The assigned Partner could not complete that request. Please try again later."
 
 
 def test_partner_tool_call_pairs_with_its_result_adjacently() -> None:

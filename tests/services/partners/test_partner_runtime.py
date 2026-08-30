@@ -232,6 +232,32 @@ class TestTurnExecution:
         assert len(fake_orchestrator.seen_contexts) == 1
 
     @pytest.mark.asyncio
+    async def test_delegated_no_backup_redacts_provider_error(
+        self, partners_root, fake_orchestrator, monkeypatch
+    ):
+        from deeptutor.multi_user import model_access, partner_access
+
+        monkeypatch.setattr(
+            partner_access, "assert_partner_assigned_to_user", lambda _pid, _uid: None
+        )
+        monkeypatch.setattr(
+            model_access, "assert_delegated_partner_models_shareable", lambda _config: None
+        )
+        fake_orchestrator.script = [
+            _event(StreamEventType.ERROR, content="provider token rejected: secret-detail"),
+            _event(StreamEventType.RESULT, metadata={"response": ""}),
+            _event(StreamEventType.DONE),
+        ]
+        runner = _runner(partners_root)
+        msg = _msg("hi", channel="web")
+        msg.metadata["_delegated_user_id"] = "u_learner"
+
+        final = await runner.process_message(msg)
+
+        assert "secret-detail" not in final
+        assert final == "The assigned Partner could not complete that request. Please try again later."
+
+    @pytest.mark.asyncio
     async def test_llm_config_error_folds_into_graceful_reply(
         self, partners_root, fake_orchestrator, monkeypatch
     ):

@@ -7,11 +7,13 @@ REST endpoints for session operations.
 """
 
 import logging
+import os
 
 from fastapi import APIRouter, HTTPException, WebSocket, WebSocketDisconnect
 
 from deeptutor.agents.chat import ChatAgent, SessionManager
 from deeptutor.services.config import PROJECT_ROOT, load_config_with_main
+from deeptutor.services.config.origins import is_production_environment
 from deeptutor.services.llm.config import get_llm_config
 from deeptutor.services.settings.interface_settings import get_ui_language
 
@@ -20,6 +22,25 @@ log_dir = config.get("paths", {}).get("user_log_dir") or config.get("logging", {
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
+
+_LEGACY_CHAT_WEBSOCKET_OPT_IN_ENV = "TEEECHR_ENABLE_LEGACY_CHAT_WEBSOCKET"
+
+
+def _legacy_chat_websocket_enabled() -> bool:
+    """Whether the pre-unified chat socket may accept requests.
+
+    ``/api/v1/ws`` is the supported learner chat transport.  This older route
+    still constructs a deployment-global LLM configuration, so it is closed in
+    production unless an operator sets the deliberately named compatibility
+    override.  Local development remains available for migration work.
+    """
+    if not is_production_environment():
+        return True
+    return os.getenv(_LEGACY_CHAT_WEBSOCKET_OPT_IN_ENV, "").strip().lower() in {
+        "1",
+        "true",
+        "yes",
+    }
 
 
 def _get_session_manager() -> SessionManager:
@@ -58,6 +79,14 @@ async def delete_session(session_id: str):
 
 @router.websocket("/chat")
 async def websocket_chat(websocket: WebSocket):
+    # Reject before authentication, session writes, or any LLM/provider work.
+    # The current learner interface uses ``/api/v1/ws``; this is only a
+    # production compatibility escape hatch for an explicitly approved client.
+    if not _legacy_chat_websocket_enabled():
+        logger.warning("Rejected disabled legacy /api/v1/chat WebSocket in production")
+        await websocket.close(code=1008)
+        return
+
     from deeptutor.api.routers.auth import ws_auth_failed, ws_require_auth
     from deeptutor.multi_user.context import reset_current_user
 

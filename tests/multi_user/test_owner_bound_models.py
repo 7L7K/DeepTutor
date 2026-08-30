@@ -30,6 +30,7 @@ def _catalog(*, owner_bound: bool) -> dict:
     profile: dict = {
         "id": CODEX_PROFILE,
         "name": "OpenAI Codex",
+        "binding": "openai",
         "models": [{"id": "m-sol", "name": "GPT-5.6-Sol", "model": "gpt-5.6-sol"}],
     }
     if owner_bound:
@@ -114,10 +115,12 @@ def test_delegated_partner_rejects_every_owner_bound_model_path(
                 "profiles": [
                     {
                         "id": "p-shared",
+                        "binding": "openai",
                         "models": [{"id": "m-shared", "model": "gpt-shared"}],
                     },
                     {
                         "id": CODEX_PROFILE,
+                        "binding": "openai_codex",
                         "owner_bound": True,
                         "models": [{"id": "m-sol", "model": "gpt-5.6-sol"}],
                     },
@@ -141,8 +144,8 @@ def test_delegated_partner_allows_deployment_owned_primary_and_backup(monkeypatc
             "llm": {
                 "active_profile_id": "p-primary",
                 "profiles": [
-                    {"id": "p-primary", "models": [{"id": "m-primary"}]},
-                    {"id": "p-backup", "models": [{"id": "m-backup"}]},
+                    {"id": "p-primary", "binding": "openai", "models": [{"id": "m-primary"}]},
+                    {"id": "p-backup", "binding": "openai", "models": [{"id": "m-backup"}]},
                 ],
             }
         }
@@ -154,3 +157,56 @@ def test_delegated_partner_allows_deployment_owned_primary_and_backup(monkeypatc
     )
 
     model_access.assert_delegated_partner_models_shareable(config)
+
+
+@pytest.mark.parametrize(
+    ("primary", "backup", "active_profile_id"),
+    [
+        ({"profile_id": "p-oauth", "model_id": "m-oauth"}, None, "p-shared"),
+        (
+            {"profile_id": "p-shared", "model_id": "m-shared"},
+            {"profile_id": "p-oauth", "model_id": "m-oauth"},
+            "p-shared",
+        ),
+        (None, None, "p-oauth"),
+    ],
+    ids=("primary", "backup", "implicit-default"),
+)
+def test_delegated_partner_rejects_registry_oauth_without_mutable_flag(
+    monkeypatch, primary, backup, active_profile_id
+):
+    catalog = {
+        "services": {
+            "llm": {
+                "active_profile_id": active_profile_id,
+                "profiles": [
+                    {"id": "p-shared", "binding": "openai", "models": [{"id": "m-shared"}]},
+                    {"id": "p-oauth", "binding": "openai-codex", "models": [{"id": "m-oauth"}]},
+                ],
+            }
+        }
+    }
+    monkeypatch.setattr(model_access, "admin_catalog", lambda: catalog)
+    config = SimpleNamespace(llm_selection=primary, backup_llm_selection=backup)
+
+    with pytest.raises(PermissionError, match="owner-bound"):
+        model_access.assert_delegated_partner_models_shareable(config)
+
+
+def test_delegated_partner_rejects_unknown_profile_binding(monkeypatch):
+    monkeypatch.setattr(
+        model_access,
+        "admin_catalog",
+        lambda: {
+            "services": {
+                "llm": {
+                    "active_profile_id": "p-unknown",
+                    "profiles": [{"id": "p-unknown", "binding": "unreviewed-provider"}],
+                }
+            }
+        },
+    )
+    config = SimpleNamespace(llm_selection=None, backup_llm_selection=None)
+
+    with pytest.raises(PermissionError, match="owner-bound"):
+        model_access.assert_delegated_partner_models_shareable(config)

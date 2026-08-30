@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import os
 import re
-from typing import Any, Iterable
+from ipaddress import ip_address
+from typing import Any, Iterable, Mapping
 from urllib.parse import urlparse
 
 _ORIGIN_SEPARATORS = re.compile(r"[,;\n]+")
@@ -53,3 +55,65 @@ def normalize_origins(value: Any) -> list[str]:
             origins.append(origin)
             seen.add(origin)
     return origins
+
+
+def is_production_environment() -> bool:
+    """Whether this process is running the container's production policy."""
+    return os.getenv("TEEECHR_ENVIRONMENT", "").strip().lower() == "production"
+
+
+def browser_origins(
+    system_settings: Mapping[str, Any], *, production: bool | None = None
+) -> list[str]:
+    """Return browser origins safe for the active deployment policy.
+
+    Local development deliberately supports the two loopback frontend forms.
+    The production container has a different trust boundary: only explicitly
+    configured HTTPS origins may participate in credentialed browser flows.
+    ``*`` and ``null`` are never concrete credentialed principals.
+    """
+    if production is None:
+        production = is_production_environment()
+
+    configured = normalize_origins(
+        [system_settings.get("cors_origin"), system_settings.get("cors_origins")]
+    )
+
+    if production:
+        return [origin for origin in configured if _is_exact_https_origin(origin)]
+
+    origins = [
+        f"http://localhost:{system_settings['frontend_port']}",
+        f"http://127.0.0.1:{system_settings['frontend_port']}",
+        "http://localhost:3000",
+        "http://127.0.0.1:3000",
+    ]
+    for origin in configured:
+        # CORS wildcard semantics are incompatible with credentialed browser
+        # sessions, so never add either special Origin value to an allowlist.
+        if origin not in {"*", "null"} and origin not in origins:
+            origins.append(origin)
+    return origins
+
+
+def _is_exact_https_origin(origin: str) -> bool:
+    """Accept only browser-valid HTTPS origins for production allowlists."""
+    if origin in {"*", "null"}:
+        return False
+    try:
+        parsed = urlparse(origin)
+    except ValueError:
+        return False
+    hostname = parsed.hostname
+    if (
+        parsed.scheme != "https"
+        or not hostname
+        or parsed.username is not None
+        or parsed.password is not None
+        or hostname.lower() == "localhost"
+    ):
+        return False
+    try:
+        return not ip_address(hostname).is_loopback
+    except ValueError:
+        return True

@@ -3,11 +3,13 @@ import { readFileSync } from "node:fs";
 import path from "node:path";
 import test from "node:test";
 import {
+  hasRecoverableFlashcardGeneration,
   isFlashcardDeckLibraryEligible,
   resolveFlashcardDeckDetailPresentation,
   resolveFlashcardGenerationSupportPresentation,
 } from "../components/flashcards/FlashcardsWorkspace";
 import {
+  type FlashcardGenerationOperation,
   isCurrentFlashcardResponse,
   type FlashcardDeck,
   type FlashcardRequestScope,
@@ -185,6 +187,56 @@ test("Flashcard library fails closed for unpublished generated shells without hi
   assert.match(
     workspaceSource,
     /const first =[\s\S]*?listed\.find\(\s*\(deck\) =>[\s\S]*?isFlashcardDeckLibraryEligible\(deck\)/,
+  );
+});
+
+test("Flashcard reload keeps generated deck recovery reachable outside the ready-only library", () => {
+  const operation = (
+    state: FlashcardGenerationOperation["state"],
+  ): Pick<FlashcardGenerationOperation, "state"> => ({ state });
+
+  assert.equal(
+    hasRecoverableFlashcardGeneration([operation("queued")]),
+    true,
+  );
+  assert.equal(
+    hasRecoverableFlashcardGeneration([operation("running")]),
+    true,
+  );
+  assert.equal(
+    hasRecoverableFlashcardGeneration([operation("awaiting_review")]),
+    true,
+  );
+  assert.equal(
+    hasRecoverableFlashcardGeneration([operation("failed")]),
+    true,
+  );
+  assert.equal(
+    hasRecoverableFlashcardGeneration([operation("completed")]),
+    false,
+  );
+  assert.equal(
+    hasRecoverableFlashcardGeneration([operation("cancelled")]),
+    false,
+  );
+  assert.equal(
+    hasRecoverableFlashcardGeneration([
+      operation("completed"),
+      operation("cancelled"),
+    ]),
+    false,
+  );
+  assert.match(
+    workspaceSource,
+    /hasRecoverableGeneration[\s\S]*?hasRecoverableFlashcardGeneration\(visibleGenerationOperations\)/,
+  );
+  assert.match(
+    workspaceSource,
+    /pageView !== "activity" && hasRecoverableGeneration[\s\S]*?setPageView\("activity"\)[\s\S]*?Open card creation activity/,
+  );
+  assert.match(
+    workspaceSource,
+    /A card creation request is still in progress or needs your attention\. Open card creation activity to continue\./,
   );
 });
 

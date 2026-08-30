@@ -172,3 +172,45 @@ async def test_admin_partner_consult_preserves_owner_bound_owner_behavior(
 
     assert result.success is True
     assert result.final_text == "owner reply"
+
+
+@pytest.mark.asyncio
+async def test_learner_partner_consult_redacts_provider_exception(tmp_path, monkeypatch) -> None:
+    """Learners may retry a failed delegated call but never receive provider diagnostics."""
+
+    class FailingManager:
+        def partner_exists(self, _partner_id):
+            return True
+
+        def get_partner(self, _partner_id):
+            return SimpleNamespace(running=True, config=SimpleNamespace())
+
+        async def send_message(self, *_args, **_kwargs):
+            raise RuntimeError("provider token rejected: secret-detail")
+
+    monkeypatch.setattr(partner_access, "assert_partner_allowed", lambda _partner_id: None)
+    from deeptutor.multi_user import model_access
+
+    monkeypatch.setattr(
+        model_access,
+        "assert_delegated_partner_models_shareable",
+        lambda _config: None,
+    )
+    monkeypatch.setattr("deeptutor.services.partners.get_partner_manager", lambda: FailingManager())
+    learner = CurrentUser(
+        id="u_learner",
+        username="learner",
+        role="user",
+        scope=UserScope(kind="user", user_id="u_learner", root=tmp_path / "learner"),
+    )
+    token = set_current_user(learner)
+    try:
+        result = await PartnerBackend().consult(
+            "hello", on_event=lambda _event: None, partner_id="paul"
+        )
+    finally:
+        reset_current_user(token)
+
+    assert result.success is False
+    assert "secret-detail" not in result.error
+    assert result.error == "The assigned Partner could not complete that request. Please try again later."

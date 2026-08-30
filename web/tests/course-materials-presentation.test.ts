@@ -76,6 +76,12 @@ test("Only the newest material refresh response may update the view", () => {
   assert.equal(isCurrentMaterialRefresh(firstRequestEpoch, secondRequestEpoch), false);
 });
 
+test("a material load failure is retryable and never presented as an empty Course", () => {
+  assert.match(source, /Retry loading materials/);
+  assert.match(source, /errors\.load \? null : sources\.length/);
+  assert.match(source, /Could not load Course materials/);
+});
+
 test("A poll slower than the nominal interval applies before the next poll starts", async () => {
   const nominalIntervalMs = 5;
   const slowRequestMs = nominalIntervalMs + 10;

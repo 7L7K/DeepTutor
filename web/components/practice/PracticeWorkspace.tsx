@@ -196,6 +196,7 @@ export default function PracticeWorkspace({
   const [courseSources, setCourseSources] = useState<CourseSource[]>([]);
   const [generationEnabled, setGenerationEnabled] = useState(false);
   const [courseLoading, setCourseLoading] = useState(false);
+  const [courseLoadError, setCourseLoadError] = useState<string | null>(null);
   const [loadedCourseId, setLoadedCourseId] = useState<string | null>(null);
   const [plan, setPlan] = useState<PracticeGenerationPlan | null>(null);
   const [planDraft, setPlanDraft] = useState<PlanDraft>(emptyPlanDraft);
@@ -278,6 +279,7 @@ export default function PracticeWorkspace({
     setCourseSources([]);
     setGenerationEnabled(false);
     setCourseLoading(false);
+    setCourseLoadError(null);
     setLoadedCourseId(null);
     setPlan(null);
     setPlanDraft(emptyPlanDraft);
@@ -493,10 +495,11 @@ export default function PracticeWorkspace({
       const scope = invalidate(nextIdentity, courseId);
       if (nextIdentity && courseId) {
         setCourseLoading(true);
+        setCourseLoadError(null);
         try {
           await loadCourse(scope);
         } catch (cause) {
-          if (current(scope)) setError(errorText(cause));
+          if (current(scope)) setCourseLoadError(errorText(cause));
         } finally {
           if (current(scope)) setCourseLoading(false);
         }
@@ -516,7 +519,8 @@ export default function PracticeWorkspace({
         const nextScope = invalidate(nextIdentity, activeCourse?.id ?? null);
         if (nextIdentity && nextScope.courseId) {
           setCourseLoading(true);
-          try { await loadCourse(nextScope); } catch (cause) { if (current(nextScope)) setError(errorText(cause)); }
+          setCourseLoadError(null);
+          try { await loadCourse(nextScope); } catch (cause) { if (current(nextScope)) setCourseLoadError(errorText(cause)); }
           finally { if (current(nextScope)) setCourseLoading(false); }
         }
       });
@@ -525,6 +529,20 @@ export default function PracticeWorkspace({
     window.addEventListener("dt:auth-changed", onAuthChanged);
     return () => window.removeEventListener("dt:auth-changed", onAuthChanged);
   }, [activeCourse?.id, current, invalidate, loadCourse]);
+
+  const retryCourseLoad = useCallback(async () => {
+    if (!identity || !courseId) return;
+    const scope = invalidate(identity, courseId);
+    setCourseLoading(true);
+    setCourseLoadError(null);
+    try {
+      await loadCourse(scope);
+    } catch (cause) {
+      if (current(scope)) setCourseLoadError(errorText(cause));
+    } finally {
+      if (current(scope)) setCourseLoading(false);
+    }
+  }, [courseId, current, identity, invalidate, loadCourse]);
 
   useEffect(() => {
     if (!identity || !activeCourse || !scopeReady) return;
@@ -1227,7 +1245,8 @@ export default function PracticeWorkspace({
 
         {!identity ? <p className="rounded-lg border border-[var(--border)] p-4 text-sm text-[var(--muted-foreground)]">Sign in to use private Course Practice.</p> : null}
         {identity && !activeCourse ? <p className="rounded-lg border border-[var(--border)] p-4 text-sm text-[var(--muted-foreground)]">Select or create a Course above to create private Practice sets.</p> : null}
-        {identity && activeCourse && (courseLoading || !courseReady) ? <div role="status" aria-live="polite" className="mb-5 flex items-center gap-2 rounded-xl border border-[var(--border)] bg-[var(--card)] p-4 text-sm text-[var(--muted-foreground)]"><Loader2 className="animate-spin" size={18} />Loading {activeCourse.title} Practice…</div> : null}
+        {identity && activeCourse && !courseReady && courseLoadError ? <div role="alert" className="mb-5 rounded-xl border border-red-300/60 bg-red-50/60 p-4 text-sm text-red-900 dark:border-red-900/60 dark:bg-red-950/20 dark:text-red-200"><p>Could not load {activeCourse.title} Practice. {courseLoadError}</p><button type="button" onClick={() => void retryCourseLoad()} className="mt-3 rounded-lg border border-current px-3 py-2 text-sm">Retry loading Practice</button></div> : null}
+        {identity && activeCourse && !courseLoadError && (courseLoading || !courseReady) ? <div role="status" aria-live="polite" className="mb-5 flex items-center gap-2 rounded-xl border border-[var(--border)] bg-[var(--card)] p-4 text-sm text-[var(--muted-foreground)]"><Loader2 className="animate-spin" size={18} />Loading {activeCourse.title} Practice…</div> : null}
         {identity && activeCourse && courseReady ? <nav aria-label="Practice sections" role="tablist" className="flex items-center gap-5 border-b border-[var(--border)] pb-2 text-sm">
           {(["take", "history"] as PracticeTab[]).map((tab) => <button key={tab} type="button" role="tab" aria-selected={activeTab === tab} onClick={() => handleTabChange(tab)} className={`border-b-2 pb-2 font-medium transition ${activeTab === tab ? "border-[var(--primary)] text-[var(--foreground)]" : "border-transparent text-[var(--muted-foreground)] hover:text-[var(--foreground)]"}`}>{tab === "take" ? "Practice" : "History"}</button>)}
         </nav> : null}

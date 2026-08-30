@@ -8,14 +8,17 @@ other authentication material.
 
 from __future__ import annotations
 
+from collections import OrderedDict, deque
 from dataclasses import dataclass
 import hashlib
 import hmac
 import json
 import logging
+import math
 import re
 import secrets
-from typing import Literal
+import time
+from typing import Callable, Literal
 
 logger = logging.getLogger("deeptutor.auth")
 
@@ -37,6 +40,7 @@ AuthOutcome = Literal[
     "invalid_credentials",
     "disabled",
     "provider_failure",
+    "rate_limited",
     "validation_failure",
 ]
 
@@ -49,6 +53,78 @@ class IdentifierDetails:
     normalized: str
     masked: str
     fingerprint: str | None
+
+
+class LoginFailureLimiter:
+    """Small, process-local guard against repeated credential guesses.
+
+    The limiter deliberately stores only the existing HMAC identifier
+    fingerprint, never a submitted username, password, or client address.
+    It is intentionally process-local: the beta runs as one application
+    process, and a distributed limiter would add operational state to the
+    authentication boundary.  The bounded key count prevents arbitrary
+    identifier submissions from growing memory without limit.
+    """
+
+    def __init__(
+        self,
+        *,
+        max_failures: int = 5,
+        window_seconds: float = 300.0,
+        max_keys: int = 4096,
+        clock: Callable[[], float] | None = None,
+    ) -> None:
+        self._max_failures = max_failures
+        self._window_seconds = window_seconds
+        self._max_keys = max_keys
+        self._clock = clock or time.monotonic
+        self._failures: OrderedDict[str, deque[float]] = OrderedDict()
+
+    def retry_after_seconds(self, identifier_hmac: str | None) -> int | None:
+        """Return a bounded retry delay when another login should be rejected."""
+        if not identifier_hmac:
+            return None
+        attempts = self._failures.get(identifier_hmac)
+        if attempts is None:
+            return None
+        now = self._clock()
+        self._discard_expired(attempts, now)
+        if not attempts:
+            self._failures.pop(identifier_hmac, None)
+            return None
+        self._failures.move_to_end(identifier_hmac)
+        if len(attempts) < self._max_failures:
+            return None
+        return max(1, math.ceil(attempts[0] + self._window_seconds - now))
+
+    def reserve_attempt(self, identifier_hmac: str | None) -> None:
+        """Reserve a login-work slot before a credential check begins.
+
+        A successful login clears its reservation. Reserving before the async
+        worker is started prevents a simultaneous burst from passing the
+        limiter check and consuming unbounded bcrypt work.
+        """
+        if not identifier_hmac:
+            return
+        now = self._clock()
+        attempts = self._failures.get(identifier_hmac)
+        if attempts is None:
+            if len(self._failures) >= self._max_keys:
+                self._failures.popitem(last=False)
+            attempts = deque()
+            self._failures[identifier_hmac] = attempts
+        self._discard_expired(attempts, now)
+        attempts.append(now)
+        self._failures.move_to_end(identifier_hmac)
+
+    def clear(self, identifier_hmac: str | None) -> None:
+        """Clear a successful identifier's local failure history."""
+        if identifier_hmac:
+            self._failures.pop(identifier_hmac, None)
+
+    def _discard_expired(self, attempts: deque[float], now: float) -> None:
+        while attempts and now - attempts[0] >= self._window_seconds:
+            attempts.popleft()
 
 
 def resolve_attempt_id() -> str:

@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import asyncio
+
 from fastapi.testclient import TestClient
 import pytest
 
@@ -26,6 +28,7 @@ def test_cors_allows_remote_http_origins_when_auth_disabled(
 
 
 def test_cors_requires_explicit_origins_when_auth_enabled(monkeypatch) -> None:
+    monkeypatch.delenv("TEEECHR_ENVIRONMENT", raising=False)
     monkeypatch.setenv("AUTH_ENABLED", "true")
     monkeypatch.setenv("CORS_ORIGIN", "https://app.example.com/")
     monkeypatch.setenv(
@@ -40,6 +43,55 @@ def test_cors_requires_explicit_origins_when_auth_enabled(monkeypatch) -> None:
     assert "https://foo.example.com" in settings["allow_origins"]
     assert "https://bar.example.com" in settings["allow_origins"]
     assert settings["allow_origins"].count("https://foo.example.com") == 1
+
+
+def test_production_cors_allows_only_configured_https_origins(monkeypatch) -> None:
+    monkeypatch.setenv("TEEECHR_ENVIRONMENT", "production")
+    monkeypatch.setenv("AUTH_ENABLED", "true")
+    monkeypatch.setenv(
+        "CORS_ORIGINS",
+        "https://learn.example.com, http://localhost:3000, https://localhost, https://127.0.0.1, https://[::1], *, null, https://staff.example.com/",
+    )
+
+    settings = api_main._build_cors_settings()
+
+    assert settings["mode"] == "production"
+    assert settings["allow_origin_regex"] is None
+    assert settings["allow_origins"] == [
+        "https://learn.example.com",
+        "https://staff.example.com",
+    ]
+    assert "http://localhost:3000" not in settings["allow_origins"]
+    assert "https://localhost" not in settings["allow_origins"]
+    assert "https://127.0.0.1" not in settings["allow_origins"]
+    assert "https://[::1]" not in settings["allow_origins"]
+
+
+def test_auth_enabled_cors_never_allows_wildcard_origin(monkeypatch) -> None:
+    monkeypatch.setenv("TEEECHR_ENVIRONMENT", "development")
+    monkeypatch.setenv("AUTH_ENABLED", "true")
+    monkeypatch.setenv("CORS_ORIGIN", "*")
+    monkeypatch.setenv("CORS_ORIGINS", "null, https://learn.example.com")
+
+    settings = api_main._build_cors_settings()
+
+    assert "*" not in settings["allow_origins"]
+    assert "null" not in settings["allow_origins"]
+    assert "https://learn.example.com" in settings["allow_origins"]
+
+
+def test_production_websocket_origin_policy_matches_cors(monkeypatch) -> None:
+    from deeptutor.services.config import load_system_settings
+    from deeptutor.services.config.origins import browser_origins
+
+    monkeypatch.setenv("TEEECHR_ENVIRONMENT", "production")
+    monkeypatch.setenv("CORS_ORIGIN", "https://learn.example.com")
+    monkeypatch.setenv("CORS_ORIGINS", "http://localhost:3000, https://staff.example.com")
+
+    assert set(browser_origins(load_system_settings())) == {
+        "https://learn.example.com",
+        "https://staff.example.com",
+    }
 
 
 def test_cors_normalizes_common_origin_input_mistakes(monkeypatch) -> None:
@@ -146,6 +198,30 @@ def test_websocket_origin_requires_configured_frontend(monkeypatch) -> None:
     assert auth_router._websocket_origin_allowed(allowed) is True
     assert auth_router._websocket_origin_allowed(denied) is False
     assert auth_router._websocket_origin_allowed(cli) is True
+
+
+def test_auth_disabled_production_websocket_rejects_foreign_browser_origin(monkeypatch) -> None:
+    from types import SimpleNamespace
+
+    from deeptutor.api.routers import auth as auth_router
+
+    closed: list[int] = []
+
+    async def close(*, code: int) -> None:
+        closed.append(code)
+
+    websocket = SimpleNamespace(
+        headers={"origin": "https://attacker.example"},
+        close=close,
+    )
+    monkeypatch.setattr(auth_router, "AUTH_ENABLED", False)
+    monkeypatch.setattr(auth_router, "_BROWSER_ORIGINS", frozenset({"https://learn.example.com"}))
+    monkeypatch.setattr(auth_router, "is_production_environment", lambda: True)
+
+    result = asyncio.run(auth_router.ws_require_auth(websocket))
+
+    assert result is auth_router.ws_auth_failed
+    assert closed == [4003]
 
 
 def test_phase2_startup_rejects_pocketbase(monkeypatch) -> None:

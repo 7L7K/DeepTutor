@@ -183,6 +183,15 @@ class ConsultSubagentTool(BaseTool):
             )
         except Exception as exc:  # pragma: no cover - defensive: surface, don't crash the turn
             logger.warning("consult_subagent failed: %s", exc, exc_info=True)
+            if backend.kind == "partner":
+                # Partner provider failures can include a provider response,
+                # credential hint, or internal path. The delegated backend
+                # normally folds them into a safe result itself; keep this
+                # outer defensive path safe as well.
+                return ToolResult(
+                    content="The assigned Partner could not complete that request. Please try again later.",
+                    success=False,
+                )
             return ToolResult(content=f"The subagent run failed: {exc}", success=False)
         finally:
             if image_dir is not None:

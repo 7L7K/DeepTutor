@@ -11,6 +11,7 @@ from typing import Any
 
 from deeptutor.services.config.model_catalog import ModelCatalogService
 from deeptutor.services.model_selection import list_llm_options
+from deeptutor.services.provider_registry import find_by_name
 
 from .context import get_current_user
 from .grants import load_grant
@@ -46,7 +47,19 @@ def is_owner_bound(profile: dict[str, Any]) -> bool:
     a billable team key, so those profiles are never lent to other accounts
     through grants — each user signs in for themselves or goes without.
     """
-    return bool(profile.get("owner_bound"))
+    # ``owner_bound`` is durable metadata for profiles whose provider does not
+    # express this property. It cannot make a registry-classified OAuth profile
+    # shareable: a persisted catalog is operator-controlled state, while the
+    # provider registry is the canonical credential-mode classification.
+    if bool(profile.get("owner_bound")):
+        return True
+
+    spec = find_by_name(str(profile.get("binding") or ""))
+    # A delegated Partner must not become a way to exercise a credential whose
+    # mode we cannot classify. Normalized catalog profiles always have a known
+    # binding; this fail-closed branch protects malformed/legacy records before
+    # they are lent to a learner.
+    return spec is None or spec.is_oauth
 
 
 def _effective_profile_for_selection(
@@ -88,7 +101,11 @@ def assert_delegated_partner_models_shareable(partner_config: Any) -> None:
     )
     for selection in candidates:
         profile = _effective_profile_for_selection(catalog, selection)
-        if profile is not None and is_owner_bound(profile):
+        if profile is None:
+            raise PermissionError(
+                "Assigned Partner model profile is not approved for delegated use."
+            )
+        if is_owner_bound(profile):
             raise PermissionError("Assigned Partner cannot use an owner-bound model profile.")
 
 

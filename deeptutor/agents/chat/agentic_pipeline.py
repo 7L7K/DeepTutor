@@ -606,31 +606,9 @@ class AgenticChatPipeline:
         if self._is_delegated_partner_turn(context):
             return False
         try:
-            from deeptutor.services.sandbox import IsolationLevel, get_sandbox_service
+            from deeptutor.services.sandbox import get_sandbox_service
 
-            # An owner/direct-IM partner turn is the admin owner's extension;
-            # delegated Partner turns returned above and never inherit this.
-            is_partner = self._is_partner_turn(context)
-
-            level = await get_sandbox_service().isolation_level()
-            if level is IsolationLevel.SYSTEM:
-                # Admin can switch exec off per user (grant v2). ``None``
-                # follows the policy: SYSTEM isolation serves everyone.
-                from deeptutor.multi_user.tool_access import exec_override
-
-                return exec_override() is not False
-            if level is IsolationLevel.APPLICATION:
-                if is_partner:
-                    return True
-                try:
-                    from deeptutor.multi_user.context import get_current_user
-
-                    return bool(get_current_user().is_admin)
-                except Exception:
-                    # Single-user local runtime: APPLICATION isolation is the
-                    # same explicit opt-in posture TutorBot uses for local dev.
-                    return True
-            return False
+            return await get_sandbox_service().execution_authorized()
         except Exception:
             logger.warning("exec policy gate failed; disabling exec", exc_info=True)
             return False

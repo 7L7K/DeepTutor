@@ -48,6 +48,9 @@ EventCallback = Callable[[StreamEvent], Awaitable[None]]
 _MAX_IMAGE_BYTES = 8 * 1024 * 1024
 _MAX_MEDIA_BYTES = 10 * 1024 * 1024
 _TOOL_HINT_MAX_CHARS = 120
+_LEARNER_PARTNER_ERROR = (
+    "The assigned Partner could not complete that request. Please try again later."
+)
 
 
 def _format_tool_hint(tool_name: str, args: Any) -> str:
@@ -114,7 +117,10 @@ class PartnerRunner:
             logger.exception(
                 "Partner %s failed to process message on %s", self.partner_id, msg.channel
             )
-            final = f"Sorry, something went wrong while processing your message: {exc}"
+            # Channels are often configured for people other than the
+            # operator. Keep the exception in the server log, but never make a
+            # provider response or internal path part of an outbound message.
+            final = _LEARNER_PARTNER_ERROR
         if final:
             await self.bus.publish_outbound(
                 OutboundMessage(
@@ -230,7 +236,13 @@ class PartnerRunner:
             )
 
         if not final_text and errors:
-            final_text = f"Sorry, the turn failed: {errors[-1]}"
+            if self._delegated_user_id(msg):
+                # A delegated learner must not receive provider exception
+                # text. Operators retain the detailed error in the retry log
+                # above and exception log in ``_execute_turn``.
+                final_text = _LEARNER_PARTNER_ERROR
+            else:
+                final_text = f"Sorry, the turn failed: {errors[-1]}"
         return final_text, events
 
     async def _execute_turn(

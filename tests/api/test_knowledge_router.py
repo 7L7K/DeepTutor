@@ -652,6 +652,97 @@ def test_list_files_preserves_kb_named_default(monkeypatch, tmp_path: Path) -> N
     assert response.json()["files"][0]["name"] == "default.txt"
 
 
+@pytest.mark.parametrize(
+    ("filename", "payload", "mime_type", "disposition", "has_active_csp"),
+    [
+        (
+            "lesson.html",
+            b"<script>window.pwned = true</script>",
+            "text/html",
+            "attachment",
+            True,
+        ),
+        (
+            "diagram.svg",
+            b"<svg xmlns='http://www.w3.org/2000/svg'><script>alert(1)</script></svg>",
+            "image/svg+xml",
+            "attachment",
+            True,
+        ),
+        ("notes.txt", b"safe course notes", "text/plain", "inline", False),
+        ("cover.png", b"\x89PNG\r\n\x1a\n", "image/png", "inline", False),
+    ],
+)
+def test_uploaded_kb_file_response_blocks_active_content(
+    monkeypatch,
+    tmp_path: Path,
+    filename: str,
+    payload: bytes,
+    mime_type: str,
+    disposition: str,
+    has_active_csp: bool,
+) -> None:
+    """Raw KB downloads must not turn uploaded markup into same-origin code."""
+    manager = _ready_kb_manager(tmp_path)
+    monkeypatch.setattr(knowledge_router_module, "get_kb_manager", lambda: manager)
+    monkeypatch.setattr(knowledge_router_module, "_kb_base_dir", manager.base_dir)
+
+    async def _noop_upload_task(*_args, **_kwargs):
+        return None
+
+    monkeypatch.setattr(knowledge_router_module, "run_upload_processing_task", _noop_upload_task)
+
+    with TestClient(_build_app()) as client:
+        uploaded = client.post(
+            "/api/v1/knowledge/kb/upload",
+            files=[("files", (filename, payload, mime_type))],
+        )
+        response = client.get(f"/api/v1/knowledge/kb/files/{filename}")
+
+    assert uploaded.status_code == 200
+    assert response.status_code == 200
+    assert response.content == payload
+    assert response.headers["content-disposition"].startswith(disposition)
+    assert response.headers["x-content-type-options"] == "nosniff"
+    assert response.headers["cache-control"] == "private, no-store"
+    if has_active_csp:
+        assert response.headers["content-security-policy"] == (
+            "sandbox; default-src 'none'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'"
+        )
+    else:
+        assert "content-security-policy" not in response.headers
+
+
+@pytest.mark.parametrize(
+    ("filename", "payload"),
+    [
+        ("legacy-page.xht", b"<script>window.pwned = true</script>"),
+        ("legacy-diagram.svgz", b"\x1f\x8bnot-a-real-svgz"),
+    ],
+)
+def test_existing_active_kb_file_aliases_are_forced_to_download(
+    monkeypatch,
+    tmp_path: Path,
+    filename: str,
+    payload: bytes,
+) -> None:
+    """Legacy raw files use the same active-content policy as new uploads."""
+    manager = _ready_kb_manager(tmp_path)
+    (manager.base_dir / "kb" / "raw" / filename).write_bytes(payload)
+    monkeypatch.setattr(knowledge_router_module, "get_kb_manager", lambda: manager)
+
+    with TestClient(_build_app()) as client:
+        response = client.get(f"/api/v1/knowledge/kb/files/{filename}")
+
+    assert response.status_code == 200
+    assert response.content == payload
+    assert response.headers["content-disposition"].startswith("attachment")
+    assert response.headers["x-content-type-options"] == "nosniff"
+    assert response.headers["content-security-policy"] == (
+        "sandbox; default-src 'none'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'"
+    )
+
+
 def test_file_preview_text_accepts_default_alias(monkeypatch, tmp_path: Path) -> None:
     manager = _FakeKBManager(tmp_path / "knowledge_bases")
     manager.config["knowledge_bases"]["actual-kb"] = {
@@ -677,6 +768,8 @@ def test_file_preview_text_accepts_default_alias(monkeypatch, tmp_path: Path) ->
 
     assert response.status_code == 200
     assert response.text == "--- Slide 1 ---\nTitle"
+    assert response.headers["x-content-type-options"] == "nosniff"
+    assert "content-security-policy" not in response.headers
     assert calls["path"] == target
     assert calls["kwargs"]["max_chars"] == 200_000
 

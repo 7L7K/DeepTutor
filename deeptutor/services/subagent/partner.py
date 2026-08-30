@@ -46,6 +46,9 @@ PARTNER_BACKEND_KIND = "partner"
 # Cap on how much of a tool-call's args / a tool result we echo into the trace
 # line — keeps the sidebar readable without dropping the event.
 _MAX_LINE_CHARS = 600
+_LEARNER_PARTNER_ERROR = (
+    "The assigned Partner could not complete that request. Please try again later."
+)
 
 
 class PartnerBackend(SubagentBackend):
@@ -100,6 +103,8 @@ class PartnerBackend(SubagentBackend):
         except MissingCurrentUserContext as exc:
             return ConsultResult(success=False, error=str(exc))
 
+        redact_errors = not caller.is_admin
+
         from deeptutor.services.partners import get_partner_manager
 
         manager = get_partner_manager()
@@ -125,7 +130,14 @@ class PartnerBackend(SubagentBackend):
                 await manager.start_partner(pid)
             except Exception as exc:  # pragma: no cover - defensive
                 logger.warning("Failed to start partner %s for consult: %s", pid, exc)
-                return ConsultResult(success=False, error=f"Could not start partner '{pid}': {exc}")
+                return ConsultResult(
+                    success=False,
+                    error=(
+                        _LEARNER_PARTNER_ERROR
+                        if redact_errors
+                        else f"Could not start partner '{pid}': {exc}"
+                    ),
+                )
 
         # ``session_id`` is the caller-visible raw Partner session id. None on
         # the first consult of a DeepTutor chat → mint a stable, colon-free id;
@@ -151,7 +163,7 @@ class PartnerBackend(SubagentBackend):
 
         async def relay(event: "StreamEvent") -> None:
             nonlocal events
-            for out in _to_subagent_events(event, state):
+            for out in _to_subagent_events(event, state, redact_errors=redact_errors):
                 events += 1
                 await on_event(out)
 
@@ -170,7 +182,10 @@ class PartnerBackend(SubagentBackend):
         except Exception as exc:  # pragma: no cover - defensive: surface, don't crash the turn
             logger.warning("Partner consult failed (%s): %s", pid, exc, exc_info=True)
             return ConsultResult(
-                session_id=session_key, success=False, error=str(exc), event_count=events
+                session_id=session_key,
+                success=False,
+                error=_LEARNER_PARTNER_ERROR if redact_errors else str(exc),
+                event_count=events,
             )
 
         # Defensive: surface any tool call that never produced a result event so
@@ -192,6 +207,8 @@ class PartnerBackend(SubagentBackend):
 def _to_subagent_events(
     event: "StreamEvent",
     state: dict[str, dict[str, str]],
+    *,
+    redact_errors: bool = False,
 ) -> list[SubagentEvent]:
     """Map a partner chat-loop ``StreamEvent`` to zero or more subagent events.
 
@@ -244,13 +261,25 @@ def _to_subagent_events(
         out = _flush_pending_call(pending, call_id)
         body = text.strip()
         if body:
-            out.append(SubagentEvent(EVENT_TOOL_RESULT, _truncate(body)))
+            out.append(
+                SubagentEvent(
+                    EVENT_TOOL_RESULT,
+                    _LEARNER_PARTNER_ERROR
+                    if redact_errors and _tool_result_reports_failure(meta)
+                    else _truncate(body),
+                )
+            )
         return out
     if etype == StreamEventType.ERROR:
         # An error can close out a pending tool call — surface the call first.
         out = _flush_pending_call(pending, call_id)
         if text.strip():
-            out.append(SubagentEvent(EVENT_ERROR, text.strip()))
+            out.append(
+                SubagentEvent(
+                    EVENT_ERROR,
+                    _LEARNER_PARTNER_ERROR if redact_errors else text.strip(),
+                )
+            )
         return out
     # PROGRESS (call-status duplicates the tool rows), RESULT (final answer,
     # returned separately), SOURCES, DONE, SESSION* and WAIT_FOR_INPUT carry no
@@ -262,6 +291,24 @@ def _flush_pending_call(pending: dict[str, str], call_id: str) -> list[SubagentE
     """Emit (and clear) the buffered tool-call row for ``call_id``, if any."""
     label = pending.pop(call_id, "") if call_id else ""
     return [SubagentEvent(EVENT_TOOL, label)] if label else []
+
+
+def _tool_result_reports_failure(metadata: dict[str, object]) -> bool:
+    """Whether dispatcher metadata marks a tool result as an internal failure.
+
+    Tool dispatch nests result metadata under ``tool_metadata``.  Failed
+    provider calls carry ``error`` there, while RAG failures use
+    ``error_type``/``needs_reindex`` and put the raw exception in the body.
+    Only delegated learner traces need this projection; owner/admin traces
+    retain their diagnostic result text.
+    """
+    tool_metadata = metadata.get("tool_metadata")
+    if not isinstance(tool_metadata, dict):
+        return False
+    return any(
+        key in tool_metadata
+        for key in ("error", "error_type", "needs_reindex")
+    )
 
 
 def _compact(args: object) -> str:

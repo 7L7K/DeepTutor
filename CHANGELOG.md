@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- Hardened delegated Partner use: provider-registry OAuth classification and
+  unknown credential modes now fail closed even when mutable profile metadata
+  is missing, and learner-facing Partner failures no longer expose raw provider
+  exception text. Owner/admin diagnostics remain server-side.
+
 - Added the Day 5 runtime-data backup/restore boundary. The explicit utility
   creates a manifest-verified archive of one stopped `data/` tree, rejects
   symbolic links, hard links, and special files, excludes the ephemeral Course

@@ -43,6 +43,7 @@ import { notify } from '@/lib/notifications'
 import i18n from 'i18next'
 import { normalizeBookReferences, type BookReferencePayload } from '@/lib/book-references'
 import { courseIdForChatSession, getRuntimeActiveCourseId } from '@/lib/course-selection'
+import { canApplySessionLoad } from '@/lib/request-cancellation'
 
 type SessionRuntimeStatus = 'idle' | 'running' | 'completed' | 'failed' | 'cancelled' | 'rejected'
 
@@ -1407,6 +1408,9 @@ export function UnifiedChatProvider({ children }: { children: React.ReactNode })
           ? stateRef.current.sessions[sessionId]
           : undefined
       const session = await getSession(sessionId, options?.signal)
+      // A response can resolve at the same time navigation aborts it. The
+      // signal is still authoritative before we dispatch into shared state.
+      if (!canApplySessionLoad(options?.signal)) return
       const key = session.session_id || session.id
       const activeTurn = Array.isArray(session.active_turns) ? session.active_turns[0] : undefined
       const hydratedMessages = hydrateMessages(session.messages ?? [])

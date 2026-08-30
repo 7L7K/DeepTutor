@@ -23,8 +23,9 @@ Enforcement points:
   deferred tools intersects this with the account's own enable/disable
   preference. Same deny-by-default posture as MCP, for the same reason: an
   installed app runs third-party code inside the sandbox.
-* ``exec_override`` — layered on top of the deployment exec policy in the
-  chat pipeline's exec gate and in the exec tool itself.
+* ``exec_override`` — resolves execution permission for a real user. An
+  administrator remains unrestricted; every other account is deny-by-default
+  until an administrator explicitly grants execution.
 """
 
 from __future__ import annotations
@@ -87,12 +88,19 @@ def allowed_cli_apps() -> set[str] | None:
 
 
 def exec_override() -> bool | None:
-    """Per-user exec override: ``None`` follows the deployment policy."""
+    """Effective per-user execution permission.
+
+    ``None`` remains reserved for administrators (unrestricted subject to
+    backend isolation). A non-admin must carry an explicit
+    ``exec_enabled=True`` grant; absent, malformed, and false values all deny.
+    This prevents a deployment-wide sandbox from implicitly granting shell or
+    code execution to every learner.
+    """
     grant = _current_grant()
     if grant is None:
         return None
     value = grant.get("exec_enabled")
-    return value if isinstance(value, bool) else None
+    return value if isinstance(value, bool) else False
 
 
 def combine_whitelists(caller: set[str] | None, user: set[str] | None) -> set[str] | None:

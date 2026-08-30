@@ -71,6 +71,40 @@ class SandboxService:
     async def available(self) -> bool:
         return await self.isolation_level() is not IsolationLevel.OFF
 
+    async def execution_authorized(self) -> bool:
+        """Whether the request-local principal may execute on this backend.
+
+        A configured sandbox is not a blanket grant to every authenticated
+        learner. Administrators may use an explicitly opted-in local
+        ``APPLICATION`` backend; non-admin users need both an explicit
+        ``exec_enabled=True`` grant and ``SYSTEM`` isolation. The implicit
+        local administrator used by auth-disabled deployments remains an
+        administrator for this policy.
+
+        Missing or malformed request authority fails closed. Keeping this
+        decision in the service prevents pipeline mounting and direct callers
+        from drifting apart.
+        """
+        if not await self._ensure_healthy() or self._backend is None:
+            return False
+        try:
+            from deeptutor.multi_user.context import get_current_user
+            from deeptutor.multi_user.tool_access import exec_override
+
+            user = get_current_user()
+            if user.is_admin:
+                return self._backend.level in {
+                    IsolationLevel.SYSTEM,
+                    IsolationLevel.APPLICATION,
+                }
+            return (
+                self._backend.level is IsolationLevel.SYSTEM
+                and exec_override() is True
+            )
+        except Exception:
+            logger.warning("exec authorization check failed; denying execution", exc_info=True)
+            return False
+
     async def run(self, request: ExecRequest, *, user_id: str) -> ExecResult:
         """Run *request* for *user_id*, enforcing quota; never raises for
         command failure — only the sandbox/quota envelope is reported via
@@ -79,14 +113,10 @@ class SandboxService:
             return ExecResult(error=self._health_detail or t("sandbox.no_backend"))
         # Backstop for the per-user exec grant: pipelines hide the exec tool
         # when the grant denies it, but any path that reaches the sandbox
-        # directly still answers to the same policy.
-        try:
-            from deeptutor.multi_user.tool_access import exec_override
-
-            if exec_override() is False:
-                return ExecResult(error=t("sandbox.disabled_for_account"))
-        except Exception:
-            logger.warning("per-user exec policy check failed; continuing", exc_info=True)
+        # directly still answers to the same policy. A missing learner grant
+        # must not become permission to execute.
+        if not await self.execution_authorized():
+            return ExecResult(error=t("sandbox.disabled_for_account"))
         try:
             lease = await self._quota.acquire(user_id)
         except QuotaExceeded as exc:

@@ -647,6 +647,7 @@ export default function UnifiedChatPage({
   // session detail. Holds an AbortController so the user can cancel.
   const [sessionLoading, setSessionLoading] = useState(false)
   const loadAbortRef = useRef<AbortController | null>(null)
+  const sessionLoadEpochRef = useRef(0)
   // Bridge ref: ``ChatComposer`` writes a prefill function into this on
   // mount; ``ChatMessageList`` reads it via ``handlePrefillComposer`` so an
   // ``AskUserOptions`` chip click can drop text into the composer textarea.
@@ -999,6 +1000,7 @@ export default function UnifiedChatPage({
   const cancelSessionLoad = useCallback(() => {
     loadAbortRef.current?.abort()
     loadAbortRef.current = null
+    sessionLoadEpochRef.current += 1
     setSessionLoading(false)
     navigateToHome()
   }, [navigateToHome])
@@ -1017,6 +1019,11 @@ export default function UnifiedChatPage({
       loadAbortRef.current?.abort()
       const ctrl = new AbortController()
       loadAbortRef.current = ctrl
+      const requestEpoch = ++sessionLoadEpochRef.current
+      const current = () =>
+        loadAbortRef.current === ctrl &&
+        sessionLoadEpochRef.current === requestEpoch &&
+        !ctrl.signal.aborted
       const cached = showCachedSession(sid)
       setSessionLoading(!cached)
 
@@ -1025,13 +1032,13 @@ export default function UnifiedChatPage({
         revalidate: cached,
       })
         .then(() => {
-          if (!ctrl.signal.aborted) {
+          if (current()) {
             loadAbortRef.current = null
             setSessionLoading(false)
           }
         })
         .catch(() => {
-          if (!ctrl.signal.aborted) {
+          if (current()) {
             loadAbortRef.current = null
             setSessionLoading(false)
             // A background refresh that fails leaves the cached copy on
@@ -1043,12 +1050,9 @@ export default function UnifiedChatPage({
     [loadSession, navigateToHome, showCachedSession]
   )
 
-  // Initial mount — load the session from the URL.
-  // Uses a ref-based flag so Strict Mode's development-only effect replay does
-  // not start a second request and abort the first one. A real route remount
-  // receives a new ref and still performs its initial load normally. The
-  // abort is deliberately OMITTED from cleanup — cancelSessionLoad handles
-  // user-initiated cancellation.
+  // Initial mount — load the session from the URL. Cleanup owns the request
+  // so an unmounted Course A cannot select a late session after Course B
+  // mounts. Reset the ref for Strict Mode's effect replay in development.
   useEffect(() => {
     if (initialLoadRef.current) return
     initialLoadRef.current = true
@@ -1057,7 +1061,12 @@ export default function UnifiedChatPage({
     } else {
       newSession()
     }
-    return undefined
+    return () => {
+      initialLoadRef.current = false
+      loadAbortRef.current?.abort()
+      loadAbortRef.current = null
+      sessionLoadEpochRef.current += 1
+    }
   }, []) // eslint-disable-line react-hooks/exhaustive-deps
 
   // When URL param changes (sidebar navigation), load the corresponding session
@@ -1068,6 +1077,7 @@ export default function UnifiedChatPage({
     // Abort any in-flight session load from the previous param
     loadAbortRef.current?.abort()
     loadAbortRef.current = null
+    sessionLoadEpochRef.current += 1
     if (sessionIdParam) {
       if (sessionIdParam === state.sessionId) {
         setSessionLoading(false)

@@ -194,3 +194,16 @@ test("Results UI keeps ordinary disclosures but gates them behind withdrawn stat
   assert.match(source, /Reported and withdrawn/);
   assert.match(source, /practiceAttemptHistoryLabel\(attempt\)/);
 });
+
+test("initial Practice loading failures show a current-Course retry instead of a permanent spinner", () => {
+  const source = readFileSync(
+    path.join(process.cwd(), "components", "practice", "PracticeWorkspace.tsx"),
+    "utf8",
+  );
+  assert.match(source, /const \[courseLoadError, setCourseLoadError\]/);
+  assert.match(source, /const retryCourseLoad = useCallback/);
+  assert.match(source, /invalidate\(identity, courseId\)/);
+  assert.match(source, /Could not load \{activeCourse\.title\} Practice/);
+  assert.match(source, /Retry loading Practice/);
+  assert.match(source, /!courseLoadError && \(courseLoading \|\| !courseReady\)/);
+});
