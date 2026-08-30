@@ -4,6 +4,7 @@ import { ChevronDown, ChevronUp, FilePlus2, RefreshCw } from "lucide-react";
 import { useParams } from "next/navigation";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useCourseShell } from "@/components/courses/CourseShell";
+import { useAuthStatus } from "@/hooks/useAuthStatus";
 import {
   archiveCourseSource,
   attachCourseSource,
@@ -82,6 +83,7 @@ export default function CourseMaterials() {
   const params = useParams<{ courseId: string }>();
   const courseId = params.courseId;
   const courseShell = useCourseShell();
+  const canManageSources = useAuthStatus().canUploadCourseSources;
   const fileRef = useRef<HTMLInputElement | null>(null);
   const refreshEpochRef = useRef(0);
   const [sources, setSources] = useState<CourseSource[]>([]);
@@ -147,7 +149,7 @@ export default function CourseMaterials() {
 
   async function attach(file: File | undefined) {
     const course = courseShell?.course;
-    if (!file || !course || course.state !== "active") return;
+    if (!canManageSources || !file || !course || course.state !== "active") return;
     const supersedesSourceId = replacementSourceId;
     refreshEpochRef.current += 1;
     setLoading(false);
@@ -174,7 +176,7 @@ export default function CourseMaterials() {
 
   async function archiveSource(source: CourseSource) {
     const course = courseShell?.course;
-    if (!course || source.state === "archived") return;
+    if (!canManageSources || !course || source.state === "archived") return;
     refreshEpochRef.current += 1;
     setLoading(false);
     setBusy(true);
@@ -203,6 +205,7 @@ export default function CourseMaterials() {
   const processingSources = activeSources.filter((source) => source.state === "processing");
   const failedSources = activeSources.filter((source) => source.state === "failed");
   const openFilePicker = (sourceId: string | null = null) => {
+    if (!canManageSources) return;
     setReplacementSourceId(sourceId);
     fileRef.current?.click();
   };
@@ -222,10 +225,10 @@ export default function CourseMaterials() {
         ) : null}
       </div>
       <div className="flex shrink-0 flex-wrap gap-2">
-        {source.state === "failed" ? (
+        {canManageSources && source.state === "failed" ? (
           <button type="button" onClick={() => openFilePicker(source.id)} disabled={busy || course.state !== "active"} className="rounded-lg bg-[var(--foreground)] px-3 py-1.5 text-sm font-medium text-[var(--background)] transition hover:opacity-85 disabled:cursor-not-allowed disabled:opacity-50">Replace material</button>
         ) : null}
-        {source.state !== "archived" ? (
+        {canManageSources && source.state !== "archived" ? (
           <button type="button" onClick={() => void archiveSource(source)} disabled={busy || source.state === "processing" || course.state !== "active"} className="rounded-lg border border-[var(--border)] px-3 py-1.5 text-sm text-[var(--muted-foreground)] transition hover:bg-[var(--muted)] disabled:cursor-not-allowed disabled:opacity-50">Archive</button>
         ) : null}
       </div>
@@ -241,6 +244,11 @@ export default function CourseMaterials() {
             <p className="mt-2 max-w-2xl text-sm leading-6 text-[var(--muted-foreground)]">
               Sources attached here belong to {course.title}.
             </p>
+            {!canManageSources ? (
+              <p className="mt-1 max-w-2xl text-xs leading-5 text-[var(--muted-foreground)]">
+                Ask your TEEECHR owner to enable Course uploads for this account.
+              </p>
+            ) : null}
           </div>
           <div className="flex items-center gap-2">
             <button
@@ -252,20 +260,24 @@ export default function CourseMaterials() {
               <RefreshCw size={15} className={loading ? "animate-spin" : ""} />
               Refresh
             </button>
-            <input
-              ref={fileRef}
-              type="file"
-              className="hidden"
-              onChange={(event) => void attach(event.target.files?.[0])}
-            />
-            <button
-              type="button"
-              onClick={() => openFilePicker()}
-              disabled={busy || course.state !== "active"}
-              className="inline-flex items-center gap-2 rounded-lg bg-[var(--foreground)] px-3 py-2 text-sm font-medium text-[var(--background)] transition hover:opacity-85 disabled:cursor-not-allowed disabled:opacity-50"
-            >
-              <FilePlus2 size={15} /> Add material
-            </button>
+            {canManageSources ? (
+              <>
+                <input
+                  ref={fileRef}
+                  type="file"
+                  className="hidden"
+                  onChange={(event) => void attach(event.target.files?.[0])}
+                />
+                <button
+                  type="button"
+                  onClick={() => openFilePicker()}
+                  disabled={busy || course.state !== "active"}
+                  className="inline-flex items-center gap-2 rounded-lg bg-[var(--foreground)] px-3 py-2 text-sm font-medium text-[var(--background)] transition hover:opacity-85 disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                  <FilePlus2 size={15} /> Add material
+                </button>
+              </>
+            ) : null}
           </div>
         </header>
 
@@ -316,7 +328,9 @@ export default function CourseMaterials() {
           <div className="mt-10 rounded-2xl border border-dashed border-[var(--border)] px-6 py-14 text-center">
             <h2 className="text-lg font-semibold text-[var(--foreground)]">No materials attached</h2>
             <p className="mx-auto mt-2 max-w-md text-sm leading-6 text-[var(--muted-foreground)]">
-              Attach a Course source when you are ready. No readiness or generated learning state is inferred before that happens.
+              {canManageSources
+                ? "Attach a Course source when you are ready. No readiness or generated learning state is inferred before that happens."
+                : "Ask your TEEECHR owner to enable Course uploads for this account."}
             </p>
           </div>
         )}

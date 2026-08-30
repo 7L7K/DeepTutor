@@ -20,6 +20,7 @@ function emptyGrant(userId: string): GrantPayload {
     enabled_tools: null,
     mcp_tools: null,
     exec_enabled: null,
+    course_source_uploads: false,
   };
 }
 
@@ -568,6 +569,23 @@ export function GrantEditor({ userId }: { userId: string }) {
                     No MCP servers configured.
                   </p>
                 ))}
+            </section>
+            <section className="min-w-0">
+              <SectionTitle>Course materials</SectionTitle>
+              <div className="space-y-1.5 text-xs">
+                <CheckRow
+                  label="Allow Course material uploads"
+                  description="Allows bounded uploads and indexing only inside this learner's private Courses."
+                  checked={grant.course_source_uploads}
+                  disabled={controlsDisabled}
+                  onToggle={() =>
+                    setGrant((current) => ({
+                      ...current,
+                      course_source_uploads: !current.course_source_uploads,
+                    }))
+                  }
+                />
+              </div>
             </section>
             <section className="min-w-0">
               <SectionTitle>Code execution</SectionTitle>

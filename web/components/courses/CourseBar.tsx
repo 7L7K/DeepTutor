@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Archive, FilePlus2, Plus, RefreshCw, RotateCcw } from "lucide-react";
 import { useCourses } from "@/context/CourseContext";
+import { useAuthStatus } from "@/hooks/useAuthStatus";
 import {
   archiveCourseSource,
   attachCourseSource,
@@ -13,6 +14,7 @@ import { useTranslation } from "react-i18next";
 
 export function CourseBar({ onCourseChange }: { onCourseChange?: () => void }) {
   const { t } = useTranslation();
+  const canManageSources = useAuthStatus().canUploadCourseSources;
   const {
     courses,
     activeCourse,
@@ -88,7 +90,7 @@ export function CourseBar({ onCourseChange }: { onCourseChange?: () => void }) {
   }
 
   async function attach(file: File | undefined) {
-    if (!file || !activeCourse) return;
+    if (!canManageSources || !file || !activeCourse) return;
     const replacement = replacementSourceRef.current;
     setBusy(true);
     try {
@@ -117,7 +119,7 @@ export function CourseBar({ onCourseChange }: { onCourseChange?: () => void }) {
   }
 
   async function archiveSource(source: CourseSource) {
-    if (!activeCourse || source.state === "archived") return;
+    if (!canManageSources || !activeCourse || source.state === "archived") return;
     setBusy(true);
     try {
       const archivedSource = await archiveCourseSource(activeCourse.id, source);
@@ -233,19 +235,23 @@ export function CourseBar({ onCourseChange }: { onCourseChange?: () => void }) {
       ) : null}
       {activeCourse?.workspace_kind === "academic_course" ? (
         <>
-          <input ref={fileRef} type="file" className="hidden" onChange={(event) => void attach(event.target.files?.[0])} />
-          <button
-            disabled={busy}
-            onClick={() => {
-              replacementSourceRef.current = null;
-              fileRef.current?.click();
-            }}
-            className="rounded-lg p-1.5 hover:bg-[var(--muted)]"
-            title={t("Attach course source")}
-            aria-label={t("Attach course source")}
-          >
-            <FilePlus2 size={15} />
-          </button>
+          {canManageSources ? (
+            <>
+              <input ref={fileRef} type="file" className="hidden" onChange={(event) => void attach(event.target.files?.[0])} />
+              <button
+                disabled={busy}
+                onClick={() => {
+                  replacementSourceRef.current = null;
+                  fileRef.current?.click();
+                }}
+                className="rounded-lg p-1.5 hover:bg-[var(--muted)]"
+                title={t("Attach course source")}
+                aria-label={t("Attach course source")}
+              >
+                <FilePlus2 size={15} />
+              </button>
+            </>
+          ) : null}
           <button
             disabled={busy}
             onClick={() => setSourcesOpen((value) => !value)}
@@ -314,13 +320,15 @@ export function CourseBar({ onCourseChange }: { onCourseChange?: () => void }) {
                         : source.state === "ready"
                           ? t("Ready")
                           : source.state === "failed"
+                          ? canManageSources
                             ? t("Failed — attach the file again to retry")
+                            : t("Needs owner attention")
                             : t("Archived")}
                     </p>
                   </div>
-                  {source.state !== "archived" ? (
+                  {canManageSources && source.state !== "archived" ? (
                     <div className="flex gap-1">
-                      {source.state === "failed" ? (
+                      {canManageSources && source.state === "failed" ? (
                         <button
                           type="button"
                           disabled={busy}
@@ -348,7 +356,9 @@ export function CourseBar({ onCourseChange }: { onCourseChange?: () => void }) {
             </ul>
           ) : (
             <p className="text-[var(--muted-foreground)]">
-              {t("No Course sources yet. Attach a file to begin.")}
+              {canManageSources
+                ? t("No Course sources yet. Attach a file to begin.")
+                : t("No Course sources are assigned yet.")}
             </p>
           )}
         </section>

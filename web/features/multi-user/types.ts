@@ -14,6 +14,8 @@ export type GrantPayload = {
   mcp_tools: string[] | null;
   /** null = follow deployment exec policy, false = always disabled. */
   exec_enabled: boolean | null;
+  /** Explicit admin admission to bounded personal Course-source ingestion. */
+  course_source_uploads: boolean;
 };
 
 export type ToolOption = { name: string; description?: string };

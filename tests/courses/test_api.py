@@ -1,10 +1,14 @@
 from __future__ import annotations
 
 import asyncio
+from contextlib import AsyncExitStack
+from io import BytesIO
+import threading
 
 from fastapi import Depends, FastAPI
 from fastapi.testclient import TestClient
 import pytest
+from starlette.datastructures import FormData, UploadFile
 
 
 @pytest.fixture
@@ -12,7 +16,7 @@ def course_client(tmp_path, monkeypatch):
     from deeptutor.api.routers import auth as auth_router
     from deeptutor.api.routers import courses as course_router
     from deeptutor.courses import service as course_service
-    from deeptutor.multi_user import identity, paths
+    from deeptutor.multi_user import grants, identity, paths
     from deeptutor.multi_user.identity import save_user
     from deeptutor.services.auth import TokenPayload
 
@@ -25,6 +29,7 @@ def course_client(tmp_path, monkeypatch):
     monkeypatch.setattr(paths, "ADMIN_WORKSPACE_ROOT", admin_root)
     monkeypatch.setattr(paths, "LEGACY_MULTI_USER_ROOT", tmp_path / "multi-user")
     monkeypatch.setattr(paths, "_path_services", {})
+    monkeypatch.setattr(grants, "GRANTS_DIR", system_root / "grants")
     monkeypatch.setattr(identity, "PROJECT_ROOT", tmp_path)
     monkeypatch.setattr(identity, "SYSTEM_ROOT", system_root)
     monkeypatch.setattr(identity, "AUTH_DIR", system_root / "auth")
@@ -79,6 +84,32 @@ def test_course_api_isolates_users_and_admin_personal_profiles(course_client) ->
     assert [item["id"] for item in course_client.get(
         "/api/v1/courses", headers=_auth("carol")
     ).json()["courses"]] == [carol.json()["id"]]
+
+
+def test_granted_learner_course_upload_keeps_cross_owner_no_oracle(
+    course_client,
+) -> None:
+    from deeptutor.multi_user.grants import save_grant
+    from deeptutor.multi_user.identity import get_user
+
+    bob = get_user("bob")
+    assert bob is not None
+    save_grant(str(bob["id"]), {"course_source_uploads": True})
+    foreign = course_client.post(
+        "/api/v1/courses",
+        headers=_auth("alice"),
+        json={"title": "Private calculus"},
+    ).json()
+
+    response = course_client.post(
+        f"/api/v1/courses/{foreign['id']}/sources",
+        headers={**_auth("bob"), "Idempotency-Key": "foreign-source-no-oracle"},
+        data={"kind": "notes", "display_name": "notes.txt"},
+        files={"files": ("notes.txt", b"private", "text/plain")},
+    )
+
+    assert response.status_code == 404
+    assert response.json()["detail"] == "Course resource not found"
 
 
 def test_general_study_api_is_lazy_private_permanent_and_has_no_mastery(
@@ -149,14 +180,24 @@ def test_general_study_api_is_lazy_private_permanent_and_has_no_mastery(
         "General Study does not support Course Practice or mastery"
     )
 
-    source = course_client.post(
+    learner_source = course_client.post(
         f"/api/v1/courses/{general['id']}/sources",
         headers={**_auth("bob"), "Idempotency-Key": "general-source-denied"},
         data={"kind": "notes", "display_name": "must-not-exist.txt"},
         files={"files": ("must-not-exist.txt", b"private", "text/plain")},
     )
-    assert source.status_code == 409
-    assert source.json()["detail"] == (
+    assert learner_source.status_code == 403
+    assert learner_source.json()["detail"] == "Course material upload access required"
+
+    admin_general = alice.json()
+    admin_source = course_client.post(
+        f"/api/v1/courses/{admin_general['id']}/sources",
+        headers={**_auth("alice"), "Idempotency-Key": "general-source-admin-denied"},
+        data={"kind": "notes", "display_name": "must-not-exist.txt"},
+        files={"files": ("must-not-exist.txt", b"private", "text/plain")},
+    )
+    assert admin_source.status_code == 409
+    assert admin_source.json()["detail"] == (
         "General Study cannot accept Course sources or Knowledge"
     )
 
@@ -583,7 +624,7 @@ def test_course_source_api_accepts_only_prepared_owned_operation(
     from deeptutor.courses.models import CourseSource
 
     created = course_client.post(
-        "/api/v1/courses", headers=_auth("bob"), json={"title": "Writing"}
+        "/api/v1/courses", headers=_auth("alice"), json={"title": "Writing"}
     ).json()
     seen = {}
 
@@ -611,13 +652,291 @@ def test_course_source_api_accepts_only_prepared_owned_operation(
     monkeypatch.setattr(ingestion, "run_source_operation", fake_run)
     response = course_client.post(
         f"/api/v1/courses/{created['id']}/sources",
-        headers={**_auth("bob"), "Idempotency-Key": "test-source-request-1"},
+        headers={**_auth("alice"), "Idempotency-Key": "test-source-request-1"},
         files={"files": ("notes.txt", b"hello", "text/plain")},
         data={"kind": "notes", "display_name": "notes.txt"},
     )
     assert response.status_code == 202, response.text
     assert response.json()["state"] == "processing"
     assert seen["course_id"] == created["id"]
+
+
+@pytest.mark.asyncio
+async def test_course_source_background_failure_releases_user_and_global_permits(
+    monkeypatch,
+) -> None:
+    from deeptutor.api.routers.courses import _run_course_source_background
+    from deeptutor.services.sandbox.quota import UserExecQuota
+
+    user_quota = UserExecQuota(max_concurrent=1, max_per_minute=6)
+    global_quota = UserExecQuota(max_concurrent=1, max_per_minute=6)
+    stack = AsyncExitStack()
+    await stack.enter_async_context(await user_quota.acquire("user-one"))
+    await stack.enter_async_context(await global_quota.acquire("global"))
+
+    async def fail(_task):
+        raise RuntimeError("background failed")
+
+    monkeypatch.setattr(
+        "deeptutor.courses.ingestion.run_source_operation",
+        fail,
+    )
+    with pytest.raises(RuntimeError, match="background failed"):
+        await _run_course_source_background({"operation_id": "op_one"}, stack)
+
+    async with await user_quota.acquire("user-one"):
+        async with await global_quota.acquire("global"):
+            pass
+
+
+class _CourseSourceFormContext:
+    def __init__(self, form: FormData) -> None:
+        self.form = form
+
+    async def __aenter__(self) -> FormData:
+        return self.form
+
+    async def __aexit__(self, *_exc: object) -> None:
+        await self.form.close()
+
+
+class _CourseSourceRequest:
+    def __init__(self, form: FormData) -> None:
+        self.form_data = form
+
+    def form(self, **_limits: int) -> _CourseSourceFormContext:
+        return _CourseSourceFormContext(self.form_data)
+
+
+@pytest.mark.asyncio
+async def test_course_source_intake_cancellation_releases_both_permits(
+    monkeypatch,
+) -> None:
+    from deeptutor.api.routers import courses as course_router
+    from deeptutor.services.auth import TokenPayload
+    from deeptutor.services.sandbox.quota import UserExecQuota
+
+    user_quota = UserExecQuota(max_concurrent=1, max_per_minute=6)
+    global_quota = UserExecQuota(max_concurrent=1, max_per_minute=6)
+    monkeypatch.setattr(course_router, "_course_source_user_quota", user_quota)
+    monkeypatch.setattr(course_router, "_course_source_global_quota", global_quota)
+    entered = asyncio.Event()
+
+    class BlockingRequest:
+        def form(self, **_limits: int):
+            class Context:
+                async def __aenter__(self):
+                    entered.set()
+                    await asyncio.Event().wait()
+
+                async def __aexit__(self, *_exc: object) -> None:
+                    return None
+
+            return Context()
+
+    principal = TokenPayload("learner", "user", "user-one")
+    intake = asyncio.create_task(
+        course_router.create_course_source(
+            "crs_one",
+            BlockingRequest(),
+            principal,
+            "course-source-cancel-intake",
+        )
+    )
+    await entered.wait()
+    intake.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await intake
+
+    async with await user_quota.acquire("user-one"):
+        async with await global_quota.acquire("course-source-global"):
+            pass
+
+
+@pytest.mark.asyncio
+async def test_course_source_prepare_cancellation_drains_and_terminalizes_staging(
+    monkeypatch,
+) -> None:
+    from deeptutor.api.routers import courses as course_router
+    from deeptutor.courses.models import CourseSource
+    from deeptutor.services.auth import TokenPayload
+    from deeptutor.services.sandbox.quota import UserExecQuota
+
+    user_quota = UserExecQuota(max_concurrent=1, max_per_minute=6)
+    global_quota = UserExecQuota(max_concurrent=1, max_per_minute=6)
+    monkeypatch.setattr(course_router, "_course_source_user_quota", user_quota)
+    monkeypatch.setattr(course_router, "_course_source_global_quota", global_quota)
+    started = threading.Event()
+    release = threading.Event()
+    terminalized: list[tuple[dict, str]] = []
+    staged = {"operation_id": "course_source_cancelled_prepare"}
+
+    def prepare(**kwargs):
+        started.set()
+        assert release.wait(timeout=5)
+        return (
+            CourseSource(
+                id="src_one",
+                course_id=kwargs["course_id"],
+                kind=kwargs["kind"],
+                display_name=kwargs["display_name"],
+                manifest=[],
+                content_sha256="a" * 64,
+                operation_id=staged["operation_id"],
+                created_at=1,
+                updated_at=1,
+            ),
+            staged,
+        )
+
+    async def cancel(task, message):
+        terminalized.append((task, message))
+
+    monkeypatch.setattr(
+        "deeptutor.courses.ingestion.prepare_source_upload",
+        prepare,
+    )
+    monkeypatch.setattr(
+        "deeptutor.courses.ingestion.cancel_source_operation",
+        cancel,
+    )
+    form = FormData(
+        [
+            ("files", UploadFile(BytesIO(b"notes"), filename="notes.txt")),
+            ("display_name", "notes.txt"),
+        ]
+    )
+    principal = TokenPayload("learner", "user", "user-one")
+    intake = asyncio.create_task(
+        course_router.create_course_source(
+            "crs_one",
+            _CourseSourceRequest(form),
+            principal,
+            "course-source-cancel-prepare",
+        )
+    )
+    assert await asyncio.to_thread(started.wait, 2)
+    intake.cancel()
+    release.set()
+    with pytest.raises(asyncio.CancelledError):
+        await intake
+
+    assert terminalized == [(staged, "Course source request was cancelled")]
+    async with await user_quota.acquire("user-one"):
+        async with await global_quota.acquire("course-source-global"):
+            pass
+
+
+@pytest.mark.asyncio
+async def test_course_source_dispatch_failure_terminalizes_and_releases_permits(
+    monkeypatch,
+) -> None:
+    from deeptutor.api.routers import courses as course_router
+    from deeptutor.courses.models import CourseSource
+    from deeptutor.services.auth import TokenPayload
+    from deeptutor.services.sandbox.quota import UserExecQuota
+
+    user_quota = UserExecQuota(max_concurrent=1, max_per_minute=6)
+    global_quota = UserExecQuota(max_concurrent=1, max_per_minute=6)
+    monkeypatch.setattr(course_router, "_course_source_user_quota", user_quota)
+    monkeypatch.setattr(course_router, "_course_source_global_quota", global_quota)
+    staged = {"operation_id": "course_source_dispatch_failed"}
+    terminalized: list[tuple[dict, str]] = []
+
+    def prepare(**kwargs):
+        return (
+            CourseSource(
+                id="src_one",
+                course_id=kwargs["course_id"],
+                kind=kwargs["kind"],
+                display_name=kwargs["display_name"],
+                manifest=[],
+                content_sha256="a" * 64,
+                operation_id=staged["operation_id"],
+                created_at=1,
+                updated_at=1,
+            ),
+            staged,
+        )
+
+    async def cancel(task, message):
+        terminalized.append((task, message))
+
+    monkeypatch.setattr(
+        "deeptutor.courses.ingestion.prepare_source_upload",
+        prepare,
+    )
+    monkeypatch.setattr(
+        "deeptutor.courses.ingestion.cancel_source_operation",
+        cancel,
+    )
+    monkeypatch.setattr(
+        course_router,
+        "_dispatch_course_source_background",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            RuntimeError("dispatch unavailable")
+        ),
+    )
+    form = FormData(
+        [
+            ("files", UploadFile(BytesIO(b"notes"), filename="notes.txt")),
+            ("display_name", "notes.txt"),
+        ]
+    )
+    principal = TokenPayload("learner", "user", "user-one")
+
+    with pytest.raises(RuntimeError, match="dispatch unavailable"):
+        await course_router.create_course_source(
+            "crs_one",
+            _CourseSourceRequest(form),
+            principal,
+            "course-source-dispatch-failed",
+        )
+
+    assert terminalized == [
+        (staged, "Course source processing could not be started")
+    ]
+    async with await user_quota.acquire("user-one"):
+        async with await global_quota.acquire("course-source-global"):
+            pass
+
+
+@pytest.mark.asyncio
+async def test_owned_course_source_task_releases_permits_when_cancelled(
+    monkeypatch,
+) -> None:
+    from deeptutor.api.routers import courses as course_router
+    from deeptutor.services.sandbox.quota import UserExecQuota
+
+    user_quota = UserExecQuota(max_concurrent=1, max_per_minute=6)
+    global_quota = UserExecQuota(max_concurrent=1, max_per_minute=6)
+    stack = AsyncExitStack()
+    await stack.enter_async_context(await user_quota.acquire("user-one"))
+    await stack.enter_async_context(await global_quota.acquire("global"))
+    started = asyncio.Event()
+
+    async def wait_forever(_task):
+        started.set()
+        await asyncio.Event().wait()
+
+    monkeypatch.setattr(
+        "deeptutor.courses.ingestion.run_source_operation",
+        wait_forever,
+    )
+    background = course_router._dispatch_course_source_background(
+        {"operation_id": "op_owned"},
+        stack,
+    )
+    await started.wait()
+    assert background in course_router._course_source_background_tasks
+    await course_router.shutdown_course_source_background_tasks()
+    await asyncio.sleep(0)
+
+    assert background.cancelled()
+    assert background not in course_router._course_source_background_tasks
+    async with await user_quota.acquire("user-one"):
+        async with await global_quota.acquire("global"):
+            pass
 
 
 @pytest.mark.asyncio

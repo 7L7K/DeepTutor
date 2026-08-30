@@ -13,8 +13,12 @@ const source = readFileSync(
   path.join(process.cwd(), "components", "courses", "CourseMaterials.tsx"),
   "utf8",
 );
+const courseBarSource = readFileSync(
+  path.join(process.cwd(), "components", "courses", "CourseBar.tsx"),
+  "utf8",
+);
 
-test("Course Materials presents source lifecycle as learner-readable sections", () => {
+test("Course Materials presents source lifecycle with owner-managed uploads", () => {
   assert.match(source, /function materialStateLabel/);
   assert.match(source, /return "Preparing"/);
   assert.match(source, /return "Ready"/);
@@ -26,6 +30,9 @@ test("Course Materials presents source lifecycle as learner-readable sections", 
   assert.match(source, /<h2 className="mb-3 text-lg font-semibold">Needs attention<\/h2>/);
   assert.match(source, /Archived \(\{archivedSources\.length\}\)/);
   assert.match(source, /Available to Course Chat and Practice/);
+  assert.match(source, /const canManageSources = useAuthStatus\(\)\.canUploadCourseSources/);
+  assert.match(source, /Ask your TEEECHR owner to enable Course uploads for this account/);
+  assert.match(source, /canManageSources && source\.state !== "archived"/);
 });
 
 test("Failed material replacement uses the existing supersession contract", () => {
@@ -33,7 +40,16 @@ test("Failed material replacement uses the existing supersession contract", () =
   assert.match(source, /attachCourseSource\(course\.id, file, supersedesSourceId\)/);
   assert.match(source, /Replace material/);
   assert.match(source, /openFilePicker\(source\.id\)/);
+  assert.match(source, /canManageSources && source\.state === "failed"/);
   assert.doesNotMatch(source, /Delete material/);
+});
+
+test("legacy CourseBar hides add and replacement controls from learners", () => {
+  assert.match(courseBarSource, /const canManageSources = useAuthStatus\(\)\.canUploadCourseSources/);
+  assert.match(courseBarSource, /\{canManageSources \? \(/);
+  assert.match(courseBarSource, /canManageSources && source\.state === "failed"/);
+  assert.match(courseBarSource, /canManageSources && source\.state !== "archived"/);
+  assert.match(courseBarSource, /No Course sources are assigned yet/);
 });
 
 test("Processing material polls silently and serially without replacing loaded controls", () => {

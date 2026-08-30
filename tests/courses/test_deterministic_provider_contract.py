@@ -180,11 +180,18 @@ async def test_course_source_initialization_builds_exact_text_index_and_preserve
         "deeptutor.courses.ingestion._current_personal_user", lambda _owner: user
     )
     monkeypatch.setattr(
+        "deeptutor.courses.ingestion._course_source_upload_authorized",
+        lambda _user: True,
+    )
+    monkeypatch.setattr(
         "deeptutor.api.routers.knowledge.run_initialization_task", deterministic_provider
     )
     monkeypatch.setattr(
         "deeptutor.courses.ingestion.get_personal_path_service",
-        lambda _owner: SimpleNamespace(get_courses_db=lambda: db_path),
+        lambda _owner: SimpleNamespace(
+            get_courses_db=lambda: db_path,
+            get_knowledge_bases_root=lambda: kb_root,
+        ),
     )
     monkeypatch.setattr(
         "deeptutor.courses.ingestion.TaskIDManager.get_instance",
@@ -213,8 +220,11 @@ async def test_course_source_initialization_builds_exact_text_index_and_preserve
             "kb_name": source_kb_name(course.id, source.id),
             "base_dir": str(kb_root),
             "uploaded_paths": [str(uploaded)],
+            "source_content_sha256": fingerprint,
             "rag_provider": "llamaindex",
             "initialize": True,
+            "tree_bytes_before": 0,
+            "reserved_growth_bytes": 32 * 1024 * 1024,
         }
     )
     assert repo.get_source(course.id, source.id).state == "ready"

@@ -14,6 +14,7 @@ export interface AuthStatus {
   username?: string;
   role?: string;
   is_admin?: boolean;
+  course_source_uploads?: boolean;
   /** Avatar marker: "", "icon:<name>:<color>", or "img:<version>". */
   avatar?: string;
 }

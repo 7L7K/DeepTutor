@@ -529,6 +529,7 @@ async function authProjection(page: Page) {
         username: string;
         role: string;
         is_admin: boolean;
+        course_source_uploads: boolean;
         avatar: string;
       },
     };
@@ -1135,6 +1136,7 @@ async function actorFlow(
       username,
       role: "user",
       is_admin: false,
+      course_source_uploads: true,
       avatar: "",
     });
     evidence.auth.push({

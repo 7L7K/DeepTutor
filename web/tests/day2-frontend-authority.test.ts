@@ -19,6 +19,7 @@ test("auth status keeps unavailable distinct from confirmed auth-disabled", () =
     enabled: false,
     authenticated: false,
     isAdmin: false,
+    canUploadCourseSources: false,
     loading: false,
   });
   assert.equal(canManageDeployment(unavailable), false);
@@ -28,6 +29,7 @@ test("auth status keeps unavailable distinct from confirmed auth-disabled", () =
     authenticated: false,
   });
   assert.equal(localAdmin.known, true);
+  assert.equal(localAdmin.canUploadCourseSources, true);
   assert.equal(canManageDeployment(localAdmin), true);
 
   const learner = projectAuthStatus({
@@ -37,7 +39,17 @@ test("auth status keeps unavailable distinct from confirmed auth-disabled", () =
   });
   assert.equal(learner.known, true);
   assert.equal(learner.isAdmin, false);
+  assert.equal(learner.canUploadCourseSources, false);
   assert.equal(canManageDeployment(learner), false);
+
+  const admittedLearner = projectAuthStatus({
+    enabled: true,
+    authenticated: true,
+    role: "user",
+    course_source_uploads: true,
+  });
+  assert.equal(admittedLearner.canUploadCourseSources, true);
+  assert.equal(canManageDeployment(admittedLearner), false);
 
   const admin = projectAuthStatus({
     enabled: true,
@@ -50,7 +62,9 @@ test("auth status keeps unavailable distinct from confirmed auth-disabled", () =
     enabled: true,
     authenticated: false,
     role: "admin",
+    course_source_uploads: true,
   });
+  assert.equal(inconsistentAdmin.canUploadCourseSources, false);
   assert.equal(canManageDeployment(inconsistentAdmin), false);
 });
 
@@ -111,4 +125,15 @@ test("controlled-beta learners can read assigned KBs but cannot start indexing w
   assert.match(modal, /item\.id !== LIGHTRAG_SERVER_PROVIDER/);
   assert.match(modal, /item\.id !== IMA_PROVIDER/);
   assert.match(modal, /provider: effectiveProvider/);
+});
+
+test("administrators can explicitly admit one learner to bounded Course uploads", () => {
+  const editor = source("features/multi-user/components/GrantEditor.tsx");
+  const courseMaterials = source("components/courses/CourseMaterials.tsx");
+
+  assert.match(editor, /label="Allow Course material uploads"/);
+  assert.match(editor, /checked=\{grant\.course_source_uploads\}/);
+  assert.match(editor, /course_source_uploads: !current\.course_source_uploads/);
+  assert.match(courseMaterials, /useAuthStatus\(\)\.canUploadCourseSources/);
+  assert.doesNotMatch(courseMaterials, /canManageDeployment/);
 });

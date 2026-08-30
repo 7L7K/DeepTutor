@@ -206,6 +206,19 @@ async def lifespan(app: FastAPI):
     # Execute on shutdown
     logger.info("Application shutdown")
 
+    # Course-source tasks own quota leases and staged private data. Drain them
+    # while the personal stores are still available so cancellation can
+    # terminalize exact source rows and clean their owned shards.
+    try:
+        from deeptutor.api.routers.courses import (
+            shutdown_course_source_background_tasks,
+        )
+
+        await shutdown_course_source_background_tasks()
+        logger.info("Course source tasks stopped")
+    except Exception as e:
+        logger.warning(f"Failed to stop Course source tasks: {e}")
+
     # Stop cron scheduler
     try:
         from deeptutor.services.cron import get_cron_service

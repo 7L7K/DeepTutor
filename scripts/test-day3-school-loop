@@ -609,7 +609,7 @@ for learner_id in "$learner_a_id" "$learner_b_id"; do
   local_curl --fail --silent --show-error -b "$admin_cookie" \
     -H "Origin: $frontend_url" -H "Content-Type: application/json" \
     -X PUT "$frontend_url/api/v1/multi-user/users/$learner_id/grants" \
-    --data '{"grant":{"version":2,"models":{"llm":[{"profile_id":"llm-profile-day3-local","model_ids":["llm-model-day3-local"]}]},"knowledge_bases":[],"skills":[],"partners":[],"enabled_tools":[],"mcp_tools":[],"cli_apps":[],"exec_enabled":false}}' \
+    --data '{"grant":{"version":2,"models":{"llm":[{"profile_id":"llm-profile-day3-local","model_ids":["llm-model-day3-local"]}]},"knowledge_bases":[],"skills":[],"partners":[],"enabled_tools":[],"mcp_tools":[],"cli_apps":[],"exec_enabled":false,"course_source_uploads":true}}' \
     >/dev/null
 done
 

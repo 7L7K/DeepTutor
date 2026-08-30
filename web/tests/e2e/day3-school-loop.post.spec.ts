@@ -575,6 +575,7 @@ async function actorFlow(
       username,
       role: "user",
       is_admin: false,
+      course_source_uploads: true,
       avatar: "",
     });
     evidence.auth.push({ actor, username, userId: own.userId, role: "user", isAdmin: false });

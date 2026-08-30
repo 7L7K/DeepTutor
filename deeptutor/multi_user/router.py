@@ -167,6 +167,7 @@ async def put_user_grants(
                 None if grant.get("mcp_tools") is None else len(grant.get("mcp_tools") or [])
             ),
             "exec_enabled": grant.get("exec_enabled"),
+            "course_source_uploads": grant.get("course_source_uploads") is True,
         },
     )
     return {"grant": grant}

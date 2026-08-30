@@ -12,6 +12,7 @@ export interface AuthStatusState {
   enabled: boolean;
   authenticated: boolean;
   isAdmin: boolean;
+  canUploadCourseSources: boolean;
   loading: boolean;
 }
 
@@ -20,6 +21,7 @@ export const INITIAL_AUTH_STATUS: AuthStatusState = {
   enabled: false,
   authenticated: false,
   isAdmin: false,
+  canUploadCourseSources: false,
   loading: true,
 };
 
@@ -32,11 +34,15 @@ export function projectAuthStatus(
       loading: false,
     };
   }
+  const enabled = Boolean(status.enabled);
+  const authenticated = Boolean(status.authenticated);
   return {
     known: true,
-    enabled: Boolean(status.enabled),
-    authenticated: Boolean(status.authenticated),
+    enabled,
+    authenticated,
     isAdmin: status.role === "admin",
+    canUploadCourseSources:
+      !enabled || (authenticated && Boolean(status.course_source_uploads)),
     loading: false,
   };
 }

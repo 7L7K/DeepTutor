@@ -70,6 +70,7 @@ def test_normalize_migrates_v1_to_v2():
     assert grant["enabled_tools"] is None
     assert grant["mcp_tools"] is None
     assert grant["exec_enabled"] is None
+    assert grant["course_source_uploads"] is False
 
 
 def test_normalize_tool_lists_and_exec():
@@ -86,6 +87,13 @@ def test_normalize_tool_lists_and_exec():
     assert grant["exec_enabled"] is False
     # Non-bool values remain absent in storage and resolve deny-by-default for users.
     assert normalize_grant("u_alice", {"exec_enabled": "yes"})["exec_enabled"] is None
+    assert (
+        normalize_grant("u_alice", {"course_source_uploads": "yes"})["course_source_uploads"]
+        is False
+    )
+    assert (
+        normalize_grant("u_alice", {"course_source_uploads": True})["course_source_uploads"] is True
+    )
 
 
 def test_admin_is_never_restricted(as_user):
@@ -120,12 +128,20 @@ def test_user_whitelists_resolve_from_grant(as_user, grantable_alice):
 
 
 def test_saved_grant_round_trips_v2(grantable_alice):
-    save_grant(grantable_alice, {"enabled_tools": ["reason"], "exec_enabled": False})
+    save_grant(
+        grantable_alice,
+        {
+            "enabled_tools": ["reason"],
+            "exec_enabled": False,
+            "course_source_uploads": True,
+        },
+    )
     loaded = load_grant(grantable_alice)
     assert loaded["version"] == 2
     assert loaded["enabled_tools"] == ["reason"]
     assert loaded["mcp_tools"] is None
     assert loaded["exec_enabled"] is False
+    assert loaded["course_source_uploads"] is True
 
 
 def test_combine_whitelists():

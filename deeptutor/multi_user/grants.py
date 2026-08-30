@@ -41,6 +41,10 @@ def empty_grant(user_id: str) -> dict[str, Any]:
         "mcp_tools": None,
         "cli_apps": None,
         "exec_enabled": None,
+        # Course-source ingestion can consume shared storage, CPU, and provider
+        # capacity. Ordinary learners are denied until an administrator opts
+        # that specific beta account into the bounded upload lane.
+        "course_source_uploads": False,
     }
 
 
@@ -86,6 +90,7 @@ def normalize_grant(user_id: str, payload: dict[str, Any] | None) -> dict[str, A
         base[key] = _normalize_tool_list(payload.get(key))
     exec_enabled = payload.get("exec_enabled")
     base["exec_enabled"] = bool(exec_enabled) if isinstance(exec_enabled, bool) else None
+    base["course_source_uploads"] = payload.get("course_source_uploads") is True
     return base
 
 

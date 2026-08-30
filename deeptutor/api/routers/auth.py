@@ -36,6 +36,7 @@ _SECURE = bool(load_auth_settings()["cookie_secure"])
 _SAMESITE = "none" if _SECURE else "lax"
 
 from deeptutor.multi_user.context import set_current_user, user_from_token_payload
+from deeptutor.multi_user.grants import load_grant
 from deeptutor.multi_user.identity import register_first_user
 from deeptutor.multi_user.paths import local_admin_user
 from deeptutor.services.auth import (
@@ -191,6 +192,7 @@ class AuthStatusResponse(BaseModel):
     username: str | None = None
     role: str | None = None
     is_admin: bool = False
+    course_source_uploads: bool = False
     avatar: str = ""
 
 
@@ -420,6 +422,27 @@ async def require_admin(
     return payload
 
 
+async def require_course_source_upload(
+    payload: TokenPayload | None = Depends(require_auth),
+) -> TokenPayload:
+    """Require explicit admission to bounded private Course-source ingestion."""
+    if not AUTH_ENABLED:
+        return _local_admin_token_payload()
+    if payload is None:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Course material upload access required",
+        )
+    if payload.role == "admin":
+        return payload
+    if load_grant(payload.user_id).get("course_source_uploads") is not True:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Course material upload access required",
+        )
+    return payload
+
+
 def _local_admin_token_payload() -> TokenPayload:
     """Synthetic admin payload used when AUTH_ENABLED=false.
 
@@ -485,6 +508,7 @@ async def auth_status(
             username="local",
             role="admin",
             is_admin=True,
+            course_source_uploads=True,
         )
 
     token = _extract_token(authorization, dt_token)
@@ -501,6 +525,15 @@ async def auth_status(
         username=payload.username if payload else None,
         role=payload.role if payload else None,
         is_admin=payload.role == "admin" if payload else False,
+        course_source_uploads=(
+            bool(
+                payload
+                and (
+                    payload.role == "admin"
+                    or load_grant(payload.user_id).get("course_source_uploads") is True
+                )
+            )
+        ),
         avatar=avatar,
     )
 

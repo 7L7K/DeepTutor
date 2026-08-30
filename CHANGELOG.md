@@ -3,12 +3,16 @@
 ## Unreleased
 
 - Closed additional controlled-beta resource and shared-browser boundaries.
-  Personal Knowledge Base creation, upload, and indexing are owner/admin-only
-  until durable per-user storage and provider-spend budgets exist; learners
-  retain assigned Course materials and read access. Sandbox quota identity now
-  comes from the authenticated principal in every pipeline, protocol-relative
-  Markdown navigation is rejected, and successful logout clears private saved
-  capability forms without clearing unrelated browser preferences. Chat input
+  Personal Knowledge Base indexing remains owner/admin-only. Course-source
+  uploads are deny-by-default per learner grant and now enforce pre-parse body
+  limits, per-user and global work permits, full-private-tree storage and index
+  growth reservations, server-owned provider selection, a durable lifetime
+  provider-operation ceiling, and live grant checks before provider work and
+  before publication. Learners retain private Course reads. Sandbox quota
+  identity now comes from the authenticated principal in every pipeline,
+  protocol-relative Markdown navigation is rejected, and successful logout
+  clears private saved capability forms without clearing unrelated browser
+  preferences. Chat input
   attachments are removed when their message fails or is cancelled, and the
   inline notebook-image endpoint now rejects oversized JSON before request-body
   parsing as well as enforcing encoded-image limits during validation.
