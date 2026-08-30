@@ -170,6 +170,24 @@ const SAFE_MARKDOWN_PROTOCOL_REGEX = /^(https?|ircs?|mailto|xmpp|attachment)$/i;
 const SAFE_RASTER_DATA_IMAGE_REGEX =
   /^data:image\/(?:png|jpe?g|gif|webp|bmp|tiff?|avif);base64,[a-z0-9+/=\s]+$/i;
 
+/**
+ * Return whether an image source can load only from this app (or from a
+ * self-contained passive raster data URL). Raw HTML may use URL spellings
+ * that do not begin with `//`, including `https:tracker.example` and
+ * backslash-normalized network paths, so reject every other scheme and every
+ * two-slash/two-backslash variant.
+ */
+export function isRemoteMarkdownImageSource(value: unknown): boolean {
+  if (typeof value !== "string") return false;
+  const source = value.trim();
+  if (!source || SAFE_RASTER_DATA_IMAGE_REGEX.test(source)) return false;
+  return source
+    .split(",")
+    .some((candidate) =>
+      /^(?:[a-z][a-z0-9+.-]*:|[\\/]{2})/i.test(candidate.trim()),
+    );
+}
+
 function isMarkdownImageSrc(key?: string, node?: unknown): boolean {
   const tagName =
     node && typeof node === "object" && "tagName" in node
@@ -188,6 +206,11 @@ export function markdownUrlTransform(
   key?: string,
   node?: unknown,
 ): string {
+  // A no-scheme network path (``//host`` or its backslash spellings)
+  // inherits the page's HTTPS scheme and navigates off-origin. Treat it as a
+  // remote URL rather than allowing it through the generic relative-path arm.
+  if (/^[\\/]{2}/.test(value.trimStart())) return "";
+
   if (
     isMarkdownImageSrc(key, node) &&
     SAFE_RASTER_DATA_IMAGE_REGEX.test(value)

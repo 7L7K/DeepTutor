@@ -16,6 +16,23 @@ class _FakeManager:
     def list_partners(self) -> list[dict]:
         return self._partners
 
+    def partner_exists(self, partner_id: str) -> bool:
+        return any(str(item.get("partner_id") or "") == partner_id for item in self._partners)
+
+    def get_partner(self, partner_id: str):
+        return None
+
+    def load_config(self, partner_id: str):
+        from types import SimpleNamespace
+
+        item = next(
+            item for item in self._partners if str(item.get("partner_id") or "") == partner_id
+        )
+        return SimpleNamespace(
+            llm_selection=item.get("llm_selection"),
+            backup_llm_selection=item.get("backup_llm_selection"),
+        )
+
 
 def _patch_manager(monkeypatch, partners: list[dict]) -> None:
     import deeptutor.services.partners as pkg
@@ -74,11 +91,54 @@ def test_non_admin_allowed_only_for_assigned(as_user, monkeypatch):
     monkeypatch.setattr(
         partner_access, "load_grant", lambda uid: {"partners": [{"partner_id": "p1"}]}
     )
+    _patch_manager(monkeypatch, [])
     with as_user("u_alice", role="user"):
         partner_access.assert_partner_allowed("p1")  # assigned → ok
         with pytest.raises(HTTPException) as exc:
             partner_access.assert_partner_allowed("p2")
         assert exc.value.status_code == 403
+
+
+def test_explicit_assignment_recheck_does_not_inherit_ambient_admin(as_user, monkeypatch):
+    monkeypatch.setattr(
+        partner_access,
+        "load_grant",
+        lambda uid: {"partners": [{"partner_id": "p1"}]} if uid == "u_alice" else {},
+    )
+
+    with as_user("u_admin", role="admin"):
+        partner_access.assert_partner_assigned_to_user("p1", "u_alice")
+        with pytest.raises(HTTPException) as exc:
+            partner_access.assert_partner_assigned_to_user("p1", "u_revoked")
+
+    assert exc.value.status_code == 403
+
+
+def test_assigned_partner_rejects_owner_bound_model_at_central_guard(as_user, monkeypatch):
+    from deeptutor.multi_user import model_access
+
+    monkeypatch.setattr(
+        partner_access, "load_grant", lambda uid: {"partners": [{"partner_id": "p1"}]}
+    )
+    _patch_manager(monkeypatch, [{"partner_id": "p1", "llm_selection": None}])
+    monkeypatch.setattr(
+        model_access,
+        "admin_catalog",
+        lambda: {
+            "services": {
+                "llm": {
+                    "active_profile_id": "owner",
+                    "profiles": [{"id": "owner", "owner_bound": True}],
+                }
+            }
+        },
+    )
+
+    with as_user("u_alice", role="user"), pytest.raises(HTTPException) as exc:
+        partner_access.assert_partner_allowed("p1")
+
+    assert exc.value.status_code == 403
+    assert "owner-bound" in str(exc.value.detail)
 
 
 # ── visible_partner_cards ─────────────────────────────────────

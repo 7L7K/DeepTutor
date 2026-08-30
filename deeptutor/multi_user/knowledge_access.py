@@ -9,6 +9,7 @@ from typing import Any
 
 from fastapi import HTTPException
 
+from deeptutor.knowledge.kb_types import SUBAGENT_KB_TYPE, is_connected_kb
 from deeptutor.knowledge.manager import KnowledgeBaseManager
 from deeptutor.knowledge.manifest import MANIFEST_NOTE_LIMIT, KbManifest, build_manifest
 
@@ -56,6 +57,45 @@ def admin_kb_manager() -> KnowledgeBaseManager:
     return _manager_for(str(admin_kb_base_dir().resolve()))
 
 
+def _enforce_connected_kb_access(resource: KnowledgeResource) -> KnowledgeResource:
+    """Reject pointer KBs for learners except their assigned Partner binding.
+
+    Connected KB metadata is live authority to a host path, local CLI, or
+    external service. Ownership or an ordinary KB grant is therefore not
+    sufficient for a non-admin to activate it. The one supported learner path
+    is a Partner connection created in the learner's own workspace; that path
+    is separately authorized by the dedicated Partner grant on every use.
+
+    Admins (including the local admin used when auth is disabled) retain the
+    existing single-user behavior.
+    """
+    user = get_current_user()
+    if user.is_admin:
+        return resource
+
+    metadata = manager_for_resource(resource).get_metadata(resource.name)
+    if not is_connected_kb(metadata):
+        return resource
+
+    from deeptutor.services.subagent.partner import PARTNER_BACKEND_KIND
+
+    if (
+        resource.source == "user"
+        and not resource.assigned
+        and metadata.get("type") == SUBAGENT_KB_TYPE
+        and str(metadata.get("agent_kind") or "").strip() == PARTNER_BACKEND_KIND
+    ):
+        from .partner_access import assert_partner_allowed
+
+        assert_partner_allowed(str(metadata.get("partner_id") or "").strip())
+        return resource
+
+    raise HTTPException(
+        status_code=403,
+        detail="Connected knowledge bases are available only to administrators",
+    )
+
+
 def _strip_resource_prefix(value: str) -> tuple[str | None, str]:
     raw = str(value or "").strip()
     if raw.startswith(ADMIN_PREFIX):
@@ -98,25 +138,29 @@ def resolve_kb(kb_ref: str, *, require_write: bool = False) -> KnowledgeResource
             name,
             allow_managed=name in _managed_course_kb_authority.get(),
         )
-        return KnowledgeResource(
-            id=f"{PERSONAL_PREFIX}{resolved}",
-            name=resolved,
-            base_dir=current_kb_base_dir(),
-            source="user",
-            assigned=False,
-            read_only=False,
+        return _enforce_connected_kb_access(
+            KnowledgeResource(
+                id=f"{PERSONAL_PREFIX}{resolved}",
+                name=resolved,
+                base_dir=current_kb_base_dir(),
+                source="user",
+                assigned=False,
+                read_only=False,
+            )
         )
 
     if user.is_admin:
         manager = admin_kb_manager()
         resolved = _resolve_default_or_name(manager, name)
-        return KnowledgeResource(
-            id=f"admin:kb:{resolved}",
-            name=resolved,
-            base_dir=admin_kb_base_dir(),
-            source="admin",
-            assigned=False,
-            read_only=False,
+        return _enforce_connected_kb_access(
+            KnowledgeResource(
+                id=f"admin:kb:{resolved}",
+                name=resolved,
+                base_dir=admin_kb_base_dir(),
+                source="admin",
+                assigned=False,
+                read_only=False,
+            )
         )
 
     user_manager = current_kb_manager()
@@ -129,46 +173,54 @@ def resolve_kb(kb_ref: str, *, require_write: bool = False) -> KnowledgeResource
             raise HTTPException(
                 status_code=403, detail="Assigned admin knowledge bases are read-only"
             )
-        return KnowledgeResource(
-            id=f"admin:kb:{name}",
-            name=name,
-            base_dir=admin_kb_base_dir(),
-            source="admin",
-            assigned=True,
-            read_only=True,
+        return _enforce_connected_kb_access(
+            KnowledgeResource(
+                id=f"admin:kb:{name}",
+                name=name,
+                base_dir=admin_kb_base_dir(),
+                source="admin",
+                assigned=True,
+                read_only=True,
+            )
         )
 
     if requested_source == "user":
         resolved = _resolve_default_or_name(user_manager, name)
-        return KnowledgeResource(
-            id=f"user:kb:{resolved}",
-            name=resolved,
-            base_dir=current_kb_base_dir(),
-            source="user",
-            assigned=False,
-            read_only=False,
+        return _enforce_connected_kb_access(
+            KnowledgeResource(
+                id=f"user:kb:{resolved}",
+                name=resolved,
+                base_dir=current_kb_base_dir(),
+                source="user",
+                assigned=False,
+                read_only=False,
+            )
         )
 
     if name.lower() in DEFAULT_KB_ALIASES:
         resolved = _resolve_default_or_name(user_manager, name)
-        return KnowledgeResource(
-            id=f"user:kb:{resolved}",
-            name=resolved,
-            base_dir=current_kb_base_dir(),
-            source="user",
-            assigned=False,
-            read_only=False,
+        return _enforce_connected_kb_access(
+            KnowledgeResource(
+                id=f"user:kb:{resolved}",
+                name=resolved,
+                base_dir=current_kb_base_dir(),
+                source="user",
+                assigned=False,
+                read_only=False,
+            )
         )
 
     user_names = set(user_manager.list_knowledge_bases())
     if name in user_names:
-        return KnowledgeResource(
-            id=f"user:kb:{name}",
-            name=name,
-            base_dir=current_kb_base_dir(),
-            source="user",
-            assigned=False,
-            read_only=False,
+        return _enforce_connected_kb_access(
+            KnowledgeResource(
+                id=f"user:kb:{name}",
+                name=name,
+                base_dir=current_kb_base_dir(),
+                source="user",
+                assigned=False,
+                read_only=False,
+            )
         )
 
     if name in assigned_names:
@@ -176,13 +228,15 @@ def resolve_kb(kb_ref: str, *, require_write: bool = False) -> KnowledgeResource
             raise HTTPException(
                 status_code=403, detail="Assigned admin knowledge bases are read-only"
             )
-        return KnowledgeResource(
-            id=f"admin:kb:{name}",
-            name=name,
-            base_dir=admin_kb_base_dir(),
-            source="admin",
-            assigned=True,
-            read_only=True,
+        return _enforce_connected_kb_access(
+            KnowledgeResource(
+                id=f"admin:kb:{name}",
+                name=name,
+                base_dir=admin_kb_base_dir(),
+                source="admin",
+                assigned=True,
+                read_only=True,
+            )
         )
 
     raise HTTPException(status_code=404, detail=f"Knowledge base '{name}' not found")
@@ -222,6 +276,13 @@ def list_visible_knowledge_bases() -> list[dict[str, Any]]:
     for name in manager.list_knowledge_bases():
         if is_managed_course_kb(name):
             continue
+        if not user.is_admin and is_connected_kb(manager.get_metadata(name)):
+            try:
+                # Only a current, dedicated Partner grant may keep a learner's
+                # personal connected pointer visible.
+                resolve_kb(f"{USER_PREFIX}{name}")
+            except HTTPException:
+                continue
         items.append(
             {
                 "id": f"admin:kb:{name}" if user.is_admin else f"user:kb:{name}",
@@ -245,6 +306,9 @@ def list_visible_knowledge_bases() -> list[dict[str, Any]]:
         if resource_id.startswith(ADMIN_PREFIX):
             name = resource_id[len(ADMIN_PREFIX) :]
         if not name:
+            continue
+        if is_connected_kb(admin_manager.get_metadata(name)):
+            # Generic KB grants never assign live admin host/external pointers.
             continue
         rid = f"admin:kb:{name}"
         if rid in existing_ids:

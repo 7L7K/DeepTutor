@@ -64,6 +64,22 @@ logger = logging.getLogger(__name__)
 # Chat memory tools a partner turn replaces with the partner_* variants.
 _PARTNER_SUPPRESSED_TOOLS: tuple[str, ...] = ("read_memory", "write_memory")
 
+# Assigned users may consult a Partner for learning, but they do not inherit
+# the owner's host, persistence, provider, or account-scoped capabilities.
+# Keep this positive: a newly registered tool is denied until its caller/data
+# isolation has been reviewed explicitly.
+_DELEGATED_PARTNER_ALLOWED_TOOLS: frozenset[str] = frozenset(
+    {
+        "ask_user",
+        "brainstorm",
+        "kb_files",
+        "rag",
+        "read_skill",
+        "read_source",
+        "reason",
+    }
+)
+
 
 CHAT_EXCLUDED_TOOLS: set[str] = set()
 CHAT_OPTIONAL_TOOLS = default_optional_tools(excluded=CHAT_EXCLUDED_TOOLS)
@@ -498,6 +514,14 @@ class AgenticChatPipeline:
         ``runtime.providers``. All the pipeline owns is translating the turn's
         context into a :class:`ToolScope`.
         """
+        if self._is_delegated_partner_turn(context):
+            # A Partner's deferred view is the deployment owner's MCP/CLI-app
+            # authority.  Assigned users receive none of it, and we avoid even
+            # starting or connecting those providers for the delegated turn.
+            self._tool_view = ProviderToolView.empty(self.registry)
+            self._deferred_pool = []
+            self._deferred_loader = None
+            return
         self._pageindex_docs = self._pageindex_doc_maps(context)
         if (context.metadata or {}).get("course_context"):
             # Phase 2 Course mode authorizes only the server-derived RAG shards.
@@ -579,40 +603,21 @@ class AgenticChatPipeline:
         return view.manifest if view is not None else ""
 
     async def _exec_allowed(self, context: UnifiedContext) -> bool:
-        try:
-            from deeptutor.services.sandbox import IsolationLevel, get_sandbox_service
-
-            # A partner turn runs as a synthetic non-admin user but IS the admin
-            # owner's extension (partners are anchored to the admin workspace), so
-            # exec follows the owner's authority — not the partner's "user" role.
-            # The owner still gates exec per-partner via the builtin-tool whitelist.
-            is_partner = self._is_partner_turn(context)
-
-            level = await get_sandbox_service().isolation_level()
-            if level is IsolationLevel.SYSTEM:
-                # Admin can switch exec off per user (grant v2). ``None``
-                # follows the policy: SYSTEM isolation serves everyone.
-                from deeptutor.multi_user.tool_access import exec_override
-
-                return exec_override() is not False
-            if level is IsolationLevel.APPLICATION:
-                if is_partner:
-                    return True
-                try:
-                    from deeptutor.multi_user.context import get_current_user
-
-                    return bool(get_current_user().is_admin)
-                except Exception:
-                    # Single-user local runtime: APPLICATION isolation is the
-                    # same explicit opt-in posture TutorBot uses for local dev.
-                    return True
+        if self._is_delegated_partner_turn(context):
             return False
+        try:
+            from deeptutor.services.sandbox import get_sandbox_service
+
+            return await get_sandbox_service().execution_authorized()
         except Exception:
             logger.warning("exec policy gate failed; disabling exec", exc_info=True)
             return False
 
     def _compose_enabled_tools(self, context: UnifiedContext) -> list[str]:
         is_partner = self._is_partner_turn(context)
+        is_delegated_partner = is_partner and bool(
+            (context.metadata or {}).get("_delegated_partner_call")
+        )
         composed = compose_enabled_tools(
             registry=self.tool_lookup,
             requested_tools=context.enabled_tools,
@@ -628,12 +633,14 @@ class AgenticChatPipeline:
                 # the investigation over attached sources), not the answer loop.
                 # Keep it off the answer surface even when sources are present.
                 has_sources=False,
-                has_memory=user_has_memory(),
-                has_notebooks=user_has_notebooks(),
+                has_memory=False if is_delegated_partner else user_has_memory(),
+                has_notebooks=False if is_delegated_partner else user_has_notebooks(),
                 has_skills=bool(context.skills_manifest),
-                has_deferred_tools=getattr(self, "_deferred_loader", None) is not None,
-                has_exec=getattr(self, "_exec_enabled", False),
-                has_code=getattr(self, "_exec_enabled", False),
+                has_deferred_tools=(
+                    not is_delegated_partner and getattr(self, "_deferred_loader", None) is not None
+                ),
+                has_exec=(not is_delegated_partner and getattr(self, "_exec_enabled", False)),
+                has_code=(not is_delegated_partner and getattr(self, "_exec_enabled", False)),
             ),
             capability_owned=self._capability_owned_tools(context),
             exclusive=self._exclusive_capability_active(context),
@@ -647,12 +654,19 @@ class AgenticChatPipeline:
             # (own workspace writable, owner's memory read-only) lives in those
             # tools, not in chat's.
             forced=(
-                *(PARTNER_BUILTIN_TOOL_NAMES if is_partner else ()),
+                *(PARTNER_BUILTIN_TOOL_NAMES if is_partner and not is_delegated_partner else ()),
                 *self._capability_forced_tools(context),
             ),
-            suppressed=_PARTNER_SUPPRESSED_TOOLS if is_partner else (),
+            suppressed=(
+                (*_PARTNER_SUPPRESSED_TOOLS, *PARTNER_BUILTIN_TOOL_NAMES)
+                if is_delegated_partner
+                else (_PARTNER_SUPPRESSED_TOOLS if is_partner else ())
+            ),
         )
-        return _drop_unconfigured_generation_tools(composed)
+        composed = _drop_unconfigured_generation_tools(composed)
+        if is_delegated_partner:
+            return [name for name in composed if name in _DELEGATED_PARTNER_ALLOWED_TOOLS]
+        return composed
 
     def _active_loop_capabilities(self, context: UnifiedContext) -> tuple[LoopCapability, ...]:
         return active_loop_capabilities(context)
@@ -1067,9 +1081,17 @@ class AgenticChatPipeline:
         args: dict[str, Any],
         context: UnifiedContext,
     ) -> dict[str, Any]:
+        kwargs = dict(args)
+        if (
+            self._is_delegated_partner_turn(context)
+            and tool_name not in _DELEGATED_PARTNER_ALLOWED_TOOLS
+        ):
+            raise PermissionError(
+                f"{tool_name} is unavailable in an assigned Partner conversation."
+            )
+
         from deeptutor.services.path_service import get_path_service
 
-        kwargs = dict(args)
         turn_id = str(context.metadata.get("turn_id", "") or "").strip()
         workspace_key = self._workspace_key(context)
         task_dir = (
@@ -1203,6 +1225,12 @@ class AgenticChatPipeline:
         if tool_name == "mastery_grade" and self._course_mastery_reply_receipt is not None:
             kwargs["_course_mastery_reply_receipt"] = self._course_mastery_reply_receipt
         return kwargs
+
+    @staticmethod
+    def _is_delegated_partner_turn(context: UnifiedContext) -> bool:
+        return AgenticChatPipeline._is_partner_turn(context) and bool(
+            (context.metadata or {}).get("_delegated_partner_call")
+        )
 
     def _retrieve_trace_metadata(
         self,

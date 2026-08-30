@@ -33,14 +33,18 @@ def empty_grant(user_id: str) -> dict[str, Any]:
         # names. ``cli_apps`` is the same posture for installed CLI apps, keyed
         # by app id: each one is third-party code executing in the sandbox, so
         # an absent grant is no access rather than all of them.
-        # ``exec_enabled`` is a tri-state override on top of the
-        # deployment exec policy: ``None`` follows the policy, ``False`` always
-        # denies, ``True`` is only honored where the sandbox can actually
-        # isolate users (SYSTEM isolation).
+        # ``exec_enabled`` is stored as an optional grant. For non-admin
+        # callers, an absent value resolves to deny-by-default at runtime;
+        # ``True`` is only honored where the sandbox can actually isolate
+        # users (SYSTEM isolation).
         "enabled_tools": None,
         "mcp_tools": None,
         "cli_apps": None,
         "exec_enabled": None,
+        # Course-source ingestion can consume shared storage, CPU, and provider
+        # capacity. Ordinary learners are denied until an administrator opts
+        # that specific beta account into the bounded upload lane.
+        "course_source_uploads": False,
     }
 
 
@@ -62,7 +66,9 @@ def normalize_grant(user_id: str, payload: dict[str, Any] | None) -> dict[str, A
 
     v1 grants normalize losslessly for everything that was ever enforced:
     ``models.embedding`` / ``models.search`` / ``spaces`` had no runtime
-    consumers and are dropped; absent v2 fields default to unrestricted.
+    consumers and are dropped. Optional-tool fields retain their historical
+    defaults; missing ``exec_enabled`` is resolved deny-by-default for
+    non-admin callers by :func:`deeptutor.multi_user.tool_access.exec_override`.
     """
     base = empty_grant(user_id)
     if not isinstance(payload, dict):
@@ -84,6 +90,7 @@ def normalize_grant(user_id: str, payload: dict[str, Any] | None) -> dict[str, A
         base[key] = _normalize_tool_list(payload.get(key))
     exec_enabled = payload.get("exec_enabled")
     base["exec_enabled"] = bool(exec_enabled) if isinstance(exec_enabled, bool) else None
+    base["course_source_uploads"] = payload.get("course_source_uploads") is True
     return base
 
 

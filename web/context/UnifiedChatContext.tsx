@@ -43,6 +43,7 @@ import { notify } from '@/lib/notifications'
 import i18n from 'i18next'
 import { normalizeBookReferences, type BookReferencePayload } from '@/lib/book-references'
 import { courseIdForChatSession, getRuntimeActiveCourseId } from '@/lib/course-selection'
+import { canApplySessionLoad } from '@/lib/request-cancellation'
 
 type SessionRuntimeStatus = 'idle' | 'running' | 'completed' | 'failed' | 'cancelled' | 'rejected'
 
@@ -195,6 +196,8 @@ interface SessionSnapshot {
 
 type LoadSessionOptions = {
   signal?: AbortSignal
+  /** Caller-owned route generation guard for a superseded read. */
+  isCurrent?: () => boolean
   revalidate?: boolean
   expectedTurnId?: string | null
   expectedAssistantMessageId?: number | null
@@ -1393,12 +1396,7 @@ export function UnifiedChatProvider({ children }: { children: React.ReactNode })
   const loadSession = useCallback(
     async (
       sessionId: string,
-      options?: {
-        signal?: AbortSignal
-        revalidate?: boolean
-        expectedTurnId?: string | null
-        expectedAssistantMessageId?: number | null
-      }
+      options?: LoadSessionOptions
     ) => {
       const expectedSession =
         options?.revalidate &&
@@ -1407,6 +1405,10 @@ export function UnifiedChatProvider({ children }: { children: React.ReactNode })
           ? stateRef.current.sessions[sessionId]
           : undefined
       const session = await getSession(sessionId, options?.signal)
+      // A response can resolve after a route is superseded or explicitly
+      // cancelled. The route generation and optional transport signal are
+      // authoritative before we dispatch into shared state.
+      if (!canApplySessionLoad(options?.signal, options?.isCurrent)) return
       const key = session.session_id || session.id
       const activeTurn = Array.isArray(session.active_turns) ? session.active_turns[0] : undefined
       const hydratedMessages = hydrateMessages(session.messages ?? [])

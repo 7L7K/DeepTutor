@@ -118,6 +118,10 @@ backend_pid=$!
 wait_for_url "$backend_url/api/v1/auth/status" "$backend_log" "$backend_pid"
 
 cd "$repo_root/web"
+playwright_args=()
+if [ -n "${C1_GREP:-}" ]; then
+  playwright_args+=(--grep "$C1_GREP")
+fi
 env PATH="$node_bin_dir:$PATH" \
   PORT="$frontend_port" \
   HOSTNAME=127.0.0.1 \
@@ -369,19 +373,25 @@ Path(fixture_path).chmod(0o600)
 PY
 
 cd "$repo_root/web"
-env PATH="$node_bin_dir:$PATH" \
-  C1_ALICE_PASSWORD="$alice_password" \
-  C1_BOB_PASSWORD="$bob_password" \
-  C1_CAROL_PASSWORD="$carol_password" \
-  C1_FIXTURE_FILE="$fixture_json" \
-  C1_BROWSER_STATE_FILE="$browser_state" \
-  C1_EVIDENCE_DIR="$evidence_dir" \
-  WEB_BASE_URL="$frontend_url" \
-  PW_SERIAL=1 \
-  PW_OUTPUT_DIR="$evidence_dir/playwright-results" \
-  PW_HTML_REPORT_DIR="$evidence_dir/playwright-report" \
-  npx playwright test tests/e2e/course-chat-c1.spec.ts --project=phase4-authenticated \
-    2>&1 | tee "$evidence_dir/playwright-output.txt"
+playwright_command=(
+  env
+  "PATH=$node_bin_dir:$PATH"
+  "C1_ALICE_PASSWORD=$alice_password"
+  "C1_BOB_PASSWORD=$bob_password"
+  "C1_CAROL_PASSWORD=$carol_password"
+  "C1_FIXTURE_FILE=$fixture_json"
+  "C1_BROWSER_STATE_FILE=$browser_state"
+  "C1_EVIDENCE_DIR=$evidence_dir"
+  "WEB_BASE_URL=$frontend_url"
+  "PW_SERIAL=1"
+  "PW_OUTPUT_DIR=$evidence_dir/playwright-results"
+  "PW_HTML_REPORT_DIR=$evidence_dir/playwright-report"
+  npx playwright test tests/e2e/course-chat-c1.spec.ts --project=phase4-authenticated
+)
+if [ -n "${C1_GREP:-}" ]; then
+  playwright_command+=(--grep "$C1_GREP")
+fi
+"${playwright_command[@]}" 2>&1 | tee "$evidence_dir/playwright-output.txt"
 
 cd "$repo_root"
 cp "$fixture_json" "$evidence_dir/backend/fixture.json"

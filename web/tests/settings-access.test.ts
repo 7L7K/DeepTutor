@@ -1,5 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
+import path from "node:path";
 
 import {
   isAdminOnlySettingsRoute,
@@ -28,7 +30,6 @@ test("admin-only settings routes cover category and privileged leaves", () => {
     "/settings/document-parsing",
     "/settings/capabilities",
     "/settings/attachments",
-    "/settings/mcp",
     "/settings/mineru",
     "/settings/agents",
     "/settings/agents/codex",
@@ -45,7 +46,19 @@ test("learner settings remain available", () => {
     "/settings/appearance",
     "/settings/chat",
     "/settings/tools",
+    "/settings/mcp",
+    "/settings/mcp/",
   ]) {
     assert.equal(isAdminOnlySettingsRoute(pathname), false, pathname);
   }
+});
+
+test("legacy MCP settings links redirect learners to the account-safe MCP surface", () => {
+  const redirectPage = readFileSync(
+    path.join(process.cwd(), "app/(utility)/settings/mcp/page.tsx"),
+    "utf8",
+  );
+
+  assert.equal(isAdminOnlySettingsRoute("/settings/mcp"), false);
+  assert.match(redirectPage, /redirect\("\/space\/mcp"\)/);
 });

@@ -18,11 +18,14 @@ import {
   advancePracticeViewScope,
   archivePracticeSet,
   autosavePracticeAnswer,
+  canStartManualPracticeDraft,
   createPracticeGenerationPlan,
   cancelPracticeGenerationOperation,
   confirmPracticeGenerationPlan,
   consumePracticePlanHandoff,
   createPracticeAnswerSaveQueue,
+  createPracticeRevision,
+  createPracticeSet,
   getPracticeAttempt,
   getPracticeSet,
   getPracticeResults,
@@ -44,6 +47,7 @@ import {
   preparePracticeRemediationFlashcards,
   practiceResultsPresentation,
   practiceLibrarySets,
+  practiceSetRevisionId,
   reportPracticeQuestion,
   readyPracticeRevision,
   restorePracticeSet,
@@ -52,6 +56,7 @@ import {
   type PracticeQuestion,
   type PracticeGenerationOperation,
   type PracticeGenerationPlan,
+  type PracticeDetailState,
   type PracticeRequestScope,
   type PracticeRevision,
   type PracticeSet,
@@ -169,18 +174,21 @@ export default function PracticeWorkspace({
   initialAttemptId?: string | null;
 }) {
   const router = useRouter();
-  const { activeCourse, refresh: refreshCourses } = useCourses();
+  const { activeCourse: sharedActiveCourse, refresh: refreshCourses } = useCourses();
   const courseShell = useCourseShell();
+  const activeCourse = courseShell?.course ?? sharedActiveCourse;
   const [identity, setIdentity] = useState<string | null>(null);
   const [sets, setSets] = useState<PracticeSet[]>([]);
   const [selectedSetId, setSelectedSetId] = useState<string | null>(null);
   const [revision, setRevision] = useState<PracticeRevision | null>(null);
+  const [detailState, setDetailState] = useState<PracticeDetailState>("idle");
   const [questions, setQuestions] = useState<PracticeQuestion[]>([]);
   const [attempts, setAttempts] = useState<QuizAttempt[]>([]);
   const [attemptsHaveMore, setAttemptsHaveMore] = useState(false);
   const [attemptView, setAttemptView] = useState<QuizAttemptView | null>(null);
   const [resultView, setResultView] = useState<QuizResult | null>(null);
   const [draft, setDraft] = useState<QuestionDraft>(emptyQuestion);
+  const [manualTitle, setManualTitle] = useState("");
   const [busy, setBusy] = useState(false);
   const [status, setStatus] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -188,6 +196,7 @@ export default function PracticeWorkspace({
   const [courseSources, setCourseSources] = useState<CourseSource[]>([]);
   const [generationEnabled, setGenerationEnabled] = useState(false);
   const [courseLoading, setCourseLoading] = useState(false);
+  const [courseLoadError, setCourseLoadError] = useState<string | null>(null);
   const [loadedCourseId, setLoadedCourseId] = useState<string | null>(null);
   const [plan, setPlan] = useState<PracticeGenerationPlan | null>(null);
   const [planDraft, setPlanDraft] = useState<PlanDraft>(emptyPlanDraft);
@@ -255,12 +264,14 @@ export default function PracticeWorkspace({
     setSets([]);
     setSelectedSetId(null);
     setRevision(null);
+    setDetailState("idle");
     setQuestions([]);
     setAttempts([]);
     setAttemptsHaveMore(false);
     setAttemptView(null);
     setResultView(null);
     setDraft(emptyQuestion);
+    setManualTitle("");
     setBusy(false);
     setStatus(null);
     setError(null);
@@ -268,6 +279,7 @@ export default function PracticeWorkspace({
     setCourseSources([]);
     setGenerationEnabled(false);
     setCourseLoading(false);
+    setCourseLoadError(null);
     setLoadedCourseId(null);
     setPlan(null);
     setPlanDraft(emptyPlanDraft);
@@ -436,12 +448,13 @@ export default function PracticeWorkspace({
     const usable = initialPracticeSetId
       ? requested
       : (generated?.state !== "archived" ? generated : null) ??
-        listed.find((set) => set.state === "draft" && set.current_revision_id) ??
+        listed.find((set) => set.state === "draft" && practiceSetRevisionId(set)) ??
         listed.find(
           (set) => set.state === "draft" && !failedSetIds.has(set.id),
         ) ??
         null;
     setSelectedSetId(usable?.id ?? null);
+    setDetailState(usable ? "loading" : "idle");
     if (initialAttemptId && !usable) {
       setError("Practice attempt could not be loaded.");
     }
@@ -451,11 +464,15 @@ export default function PracticeWorkspace({
         await loadSetDetail(
           detailScope,
           usable,
-          usable.current_revision_id,
+          practiceSetRevisionId(usable),
           initialAttemptId,
         );
+        if (current(detailScope)) setDetailState("loaded");
       } catch (cause) {
-        if (current(detailScope)) setError(errorText(cause));
+        if (current(detailScope)) {
+          setDetailState("error");
+          setError(errorText(cause));
+        }
       }
     }
     if (
@@ -478,10 +495,11 @@ export default function PracticeWorkspace({
       const scope = invalidate(nextIdentity, courseId);
       if (nextIdentity && courseId) {
         setCourseLoading(true);
+        setCourseLoadError(null);
         try {
           await loadCourse(scope);
         } catch (cause) {
-          if (current(scope)) setError(errorText(cause));
+          if (current(scope)) setCourseLoadError(errorText(cause));
         } finally {
           if (current(scope)) setCourseLoading(false);
         }
@@ -501,7 +519,8 @@ export default function PracticeWorkspace({
         const nextScope = invalidate(nextIdentity, activeCourse?.id ?? null);
         if (nextIdentity && nextScope.courseId) {
           setCourseLoading(true);
-          try { await loadCourse(nextScope); } catch (cause) { if (current(nextScope)) setError(errorText(cause)); }
+          setCourseLoadError(null);
+          try { await loadCourse(nextScope); } catch (cause) { if (current(nextScope)) setCourseLoadError(errorText(cause)); }
           finally { if (current(nextScope)) setCourseLoading(false); }
         }
       });
@@ -510,6 +529,20 @@ export default function PracticeWorkspace({
     window.addEventListener("dt:auth-changed", onAuthChanged);
     return () => window.removeEventListener("dt:auth-changed", onAuthChanged);
   }, [activeCourse?.id, current, invalidate, loadCourse]);
+
+  const retryCourseLoad = useCallback(async () => {
+    if (!identity || !courseId) return;
+    const scope = invalidate(identity, courseId);
+    setCourseLoading(true);
+    setCourseLoadError(null);
+    try {
+      await loadCourse(scope);
+    } catch (cause) {
+      if (current(scope)) setCourseLoadError(errorText(cause));
+    } finally {
+      if (current(scope)) setCourseLoading(false);
+    }
+  }, [courseId, current, identity, invalidate, loadCourse]);
 
   useEffect(() => {
     if (!identity || !activeCourse || !scopeReady) return;
@@ -683,6 +716,7 @@ export default function PracticeWorkspace({
         setSets(listed);
         setSelectedSetId(generatedSet.id);
         setRevision(generatedRevision);
+        setDetailState("loaded");
         setQuestions(generatedQuestions);
         setAttemptView(null);
         setResultView(null);
@@ -787,6 +821,7 @@ export default function PracticeWorkspace({
     // Fail closed while the next set detail is loading: never render or edit
     // the prior set/revision beneath the newly selected set title.
     setRevision(null);
+    setDetailState("loading");
     setQuestions([]);
     setAttempts([]);
     setAttemptsHaveMore(false);
@@ -796,11 +831,142 @@ export default function PracticeWorkspace({
     setStatus(null);
     setError(null);
     try {
-      await loadSetDetail(scope, practiceSet, practiceSet.current_revision_id);
+      await loadSetDetail(scope, practiceSet, practiceSetRevisionId(practiceSet));
+      if (current(scope)) setDetailState("loaded");
     } catch (cause) {
-      if (current(scope)) setError(errorText(cause));
+      if (current(scope)) {
+        setDetailState("error");
+        setError(errorText(cause));
+      }
     }
   }, [advanceView, current, loadSetDetail]);
+
+  const retrySetDetail = useCallback(async () => {
+    if (!activeCourse || !selectedSet) return;
+    const scope = advanceView();
+    setDetailState("loading");
+    setRevision(null);
+    setQuestions([]);
+    setAttempts([]);
+    setAttemptsHaveMore(false);
+    setAttemptView(null);
+    setResultView(null);
+    setError(null);
+    try {
+      const updatedSet = await getPracticeSet(activeCourse.id, selectedSet.id);
+      if (!current(scope)) return;
+      setSets((previous) => previous.map((item) =>
+        item.id === updatedSet.id ? updatedSet : item,
+      ));
+      await loadSetDetail(scope, updatedSet, practiceSetRevisionId(updatedSet));
+      if (current(scope)) setDetailState("loaded");
+    } catch (cause) {
+      if (current(scope)) {
+        setDetailState("error");
+        setError(errorText(cause));
+      }
+    }
+  }, [activeCourse, advanceView, current, loadSetDetail, selectedSet]);
+
+  const createManualPractice = useCallback(async () => {
+    if (!activeCourse || !courseWritable) return;
+    const title = manualTitle.trim() || `${activeCourse.title} practice`;
+    const scope = advanceView();
+    setBusy(true);
+    setError(null);
+    setStatus(null);
+    try {
+      const createdSet = await createPracticeSet(
+        activeCourse.id,
+        title,
+        activeCourse.write_epoch,
+      );
+      if (!current(scope)) return;
+      setSets((previous) => [
+        createdSet,
+        ...previous.filter((item) => item.id !== createdSet.id),
+      ]);
+      setSelectedSetId(createdSet.id);
+      setRevision(null);
+      setDetailState("loaded");
+      setQuestions([]);
+      setAttempts([]);
+      setAttemptsHaveMore(false);
+      setAttemptView(null);
+      setResultView(null);
+      setDraft(emptyQuestion);
+      setActiveTab("take");
+      const createdRevision = await createPracticeRevision(
+        activeCourse.id,
+        createdSet.id,
+        activeCourse.write_epoch,
+      );
+      // Re-read after the revision write so editor/archive actions keep a
+      // fresh owner-scoped set receipt. Drafts publish as current only at ready.
+      const updatedSet = await getPracticeSet(activeCourse.id, createdSet.id);
+      if (!current(scope)) return;
+      setSets((previous) => [
+        updatedSet,
+        ...previous.filter((item) => item.id !== updatedSet.id),
+      ]);
+      setSelectedSetId(updatedSet.id);
+      setRevision(createdRevision);
+      setDetailState("loaded");
+      setQuestions([]);
+      setAttempts([]);
+      setAttemptsHaveMore(false);
+      setAttemptView(null);
+      setResultView(null);
+      setDraft(emptyQuestion);
+      setManualTitle("");
+      setActiveTab("take");
+      setHistoryLoadedCourseId(null);
+      setStatus("Manual Practice draft created. Add your first question.");
+    } catch (cause) {
+      if (current(scope)) setError(errorText(cause));
+    } finally {
+      if (current(scope)) setBusy(false);
+    }
+  }, [activeCourse, advanceView, courseWritable, current, manualTitle]);
+
+  const startManualDraft = useCallback(async () => {
+    if (
+      !activeCourse ||
+      !selectedSet ||
+      busy ||
+      readOnly ||
+      !canStartManualPracticeDraft(selectedSet, detailState)
+    ) return;
+    const scope = advanceView();
+    setDetailState("loading");
+    setBusy(true);
+    setError(null);
+    setStatus(null);
+    try {
+      const createdRevision = await createPracticeRevision(
+        activeCourse.id,
+        selectedSet.id,
+        activeCourse.write_epoch,
+      );
+      const updatedSet = await getPracticeSet(activeCourse.id, selectedSet.id);
+      if (!current(scope)) return;
+      setSets((previous) => previous.map((item) =>
+        item.id === updatedSet.id ? updatedSet : item,
+      ));
+      await loadSetDetail(scope, updatedSet, createdRevision.id);
+      if (current(scope)) {
+        setDetailState("loaded");
+        setStatus("Practice draft started. Add your first question.");
+      }
+    } catch (cause) {
+      if (current(scope)) {
+        setDetailState("error");
+        setError(errorText(cause));
+      }
+    } finally {
+      if (current(scope)) setBusy(false);
+    }
+  }, [activeCourse, advanceView, busy, current, detailState, loadSetDetail, readOnly, selectedSet]);
 
   const addQuestion = useCallback(async () => {
     if (!activeCourse || !selectedSet || !revision || revision.state !== "draft" || readOnly) return;
@@ -1079,7 +1245,8 @@ export default function PracticeWorkspace({
 
         {!identity ? <p className="rounded-lg border border-[var(--border)] p-4 text-sm text-[var(--muted-foreground)]">Sign in to use private Course Practice.</p> : null}
         {identity && !activeCourse ? <p className="rounded-lg border border-[var(--border)] p-4 text-sm text-[var(--muted-foreground)]">Select or create a Course above to create private Practice sets.</p> : null}
-        {identity && activeCourse && (courseLoading || !courseReady) ? <div role="status" aria-live="polite" className="mb-5 flex items-center gap-2 rounded-xl border border-[var(--border)] bg-[var(--card)] p-4 text-sm text-[var(--muted-foreground)]"><Loader2 className="animate-spin" size={18} />Loading {activeCourse.title} Practice…</div> : null}
+        {identity && activeCourse && !courseReady && courseLoadError ? <div role="alert" className="mb-5 rounded-xl border border-red-300/60 bg-red-50/60 p-4 text-sm text-red-900 dark:border-red-900/60 dark:bg-red-950/20 dark:text-red-200"><p>Could not load {activeCourse.title} Practice. {courseLoadError}</p><button type="button" onClick={() => void retryCourseLoad()} className="mt-3 rounded-lg border border-current px-3 py-2 text-sm">Retry loading Practice</button></div> : null}
+        {identity && activeCourse && !courseLoadError && (courseLoading || !courseReady) ? <div role="status" aria-live="polite" className="mb-5 flex items-center gap-2 rounded-xl border border-[var(--border)] bg-[var(--card)] p-4 text-sm text-[var(--muted-foreground)]"><Loader2 className="animate-spin" size={18} />Loading {activeCourse.title} Practice…</div> : null}
         {identity && activeCourse && courseReady ? <nav aria-label="Practice sections" role="tablist" className="flex items-center gap-5 border-b border-[var(--border)] pb-2 text-sm">
           {(["take", "history"] as PracticeTab[]).map((tab) => <button key={tab} type="button" role="tab" aria-selected={activeTab === tab} onClick={() => handleTabChange(tab)} className={`border-b-2 pb-2 font-medium transition ${activeTab === tab ? "border-[var(--primary)] text-[var(--foreground)]" : "border-transparent text-[var(--muted-foreground)] hover:text-[var(--foreground)]"}`}>{tab === "take" ? "Practice" : "History"}</button>)}
         </nav> : null}
@@ -1122,7 +1289,14 @@ export default function PracticeWorkspace({
               <div className="flex justify-end pt-1">
                 <button ref={reviewPlanButtonRef} type="button" disabled={busy || !courseWritable || !planDraft.focus.trim() || !planDraft.sourceIds.length} onClick={() => void openPlanReview()} className="inline-flex w-full items-center justify-center gap-2 rounded-xl bg-[var(--primary)] px-5 py-3 text-sm font-medium text-[var(--primary-foreground)] transition hover:brightness-105 disabled:opacity-50 sm:w-auto"><Sparkles size={16} />Quiz me</button>
               </div>
-            </div> : <div className="mt-4 rounded-xl border border-[var(--border)] p-3"><h3 className="font-medium">AI quiz creation is unavailable right now</h3><p className="mt-1 text-sm text-[var(--muted-foreground)]">No provider call was attempted. Manual Practice drafts can still be finished below.</p></div>}
+            </div> : <div className="mt-4 rounded-xl border border-[var(--border)] p-4">
+              <h3 className="font-medium">Create a manual Practice quiz</h3>
+              <p className="mt-1 text-sm text-[var(--muted-foreground)]">AI quiz creation is unavailable, but you can write the questions and answers yourself. No provider call will be attempted.</p>
+              <div className="mt-4 flex flex-col gap-3 sm:flex-row sm:items-end">
+                <label className="grid min-w-0 flex-1 gap-1.5 text-sm"><span>Quiz title</span><input aria-label="Manual Practice title" value={manualTitle} disabled={!courseWritable || busy} onChange={(event) => setManualTitle(event.target.value)} placeholder={`${activeCourse.title} practice`} className="rounded-lg border border-[var(--border)] bg-[var(--card)] px-3 py-2 disabled:opacity-60" /></label>
+                <button type="button" disabled={!courseWritable || busy} onClick={() => void createManualPractice()} className="inline-flex items-center justify-center gap-2 rounded-lg bg-[var(--primary)] px-4 py-2 text-sm font-medium text-[var(--primary-foreground)] disabled:opacity-50">{busy ? <Loader2 className="animate-spin" size={16} /> : <Save size={16} />}Create manual quiz</button>
+              </div>
+            </div>}
           </section> : null}
         </> : null}
 
@@ -1152,6 +1326,17 @@ export default function PracticeWorkspace({
                 <div><p className="mb-1 text-xs font-medium uppercase tracking-wide text-[var(--muted-foreground)]">{activeCourse.title} / Practice{resultView ? " / Results" : ""}</p><h2 className="text-lg font-semibold">{selectedSet.title}</h2><p className="text-sm text-[var(--muted-foreground)]">{selectedSet.state === "archived" ? "Archived — read-only history" : revision?.state === "ready" ? revisionAvailability.status : "Draft revision"}</p></div>
                 {!attemptView ? <button disabled={busy || !activeCourse} onClick={() => void archiveOrRestore()} className="inline-flex items-center gap-1 rounded-lg border border-[var(--border)] px-3 py-2 text-sm disabled:opacity-50">{selectedSet.state === "archived" ? <RotateCcw size={15} /> : <Archive size={15} />}{selectedSet.state === "archived" ? "Restore" : "Archive"}</button> : null}
               </div>
+              {!attemptView && detailState === "loading" ? <div role="status" className="mb-6 flex items-center gap-2 rounded-lg border border-[var(--border)] p-4 text-sm text-[var(--muted-foreground)]"><Loader2 className="animate-spin" size={16} />Opening this quiz…</div> : null}
+              {!attemptView && detailState === "error" ? <div className="mb-6 rounded-lg border border-[var(--border)] p-4">
+                <h3 className="font-medium">This quiz could not be opened</h3>
+                <p className="mt-1 text-sm text-[var(--muted-foreground)]">Its saved revision was not changed. Retry the detail request before editing.</p>
+                <button type="button" onClick={() => void retrySetDetail()} className="mt-3 rounded-lg border border-[var(--border)] px-3 py-2 text-sm">Retry opening quiz</button>
+              </div> : null}
+              {!attemptView && !readOnly && canStartManualPracticeDraft(selectedSet, detailState) ? <div className="mb-6 rounded-lg border border-[var(--border)] p-4">
+                <h3 className="font-medium">Start this draft</h3>
+                <p className="mt-1 text-sm text-[var(--muted-foreground)]">This quiz exists, but its editable draft has not started yet. Starting it is safe to retry.</p>
+                <button type="button" disabled={busy} onClick={() => void startManualDraft()} className="mt-3 inline-flex items-center gap-1 rounded-lg bg-[var(--primary)] px-3 py-2 text-sm text-[var(--primary-foreground)] disabled:opacity-50">{busy ? <Loader2 className="animate-spin" size={15} /> : <Save size={15} />}Start draft</button>
+              </div> : null}
               {!attemptView && revision?.state === "draft" && !readOnly ? <div className="mb-6 rounded-lg border border-[var(--border)] p-4">
                 <h3 className="mb-1 font-medium">Continue creating</h3>
                 <p className="mb-3 text-sm text-[var(--muted-foreground)]">This draft is not ready to take yet. Add at least one question, then mark it ready.</p>
@@ -1236,6 +1421,19 @@ function AttemptRunner({ view, questions, sourceNames, readOnly, withdrawn, onSa
     : [];
   const currentIsChoice = currentQuestion?.question_type === "single_choice";
   const currentSaveState = currentItem ? saveStates[currentItem.id] : undefined;
+  const attemptItemsRef = useRef(view.items);
+  const questionByIdRef = useRef(byId);
+  const saveAnswerRef = useRef(onSave);
+  const attemptActiveRef = useRef(active);
+  const interactionReadOnlyRef = useRef(interactionReadOnly);
+
+  useEffect(() => {
+    attemptItemsRef.current = view.items;
+    questionByIdRef.current = byId;
+    saveAnswerRef.current = onSave;
+    attemptActiveRef.current = active;
+    interactionReadOnlyRef.current = interactionReadOnly;
+  }, [active, byId, interactionReadOnly, onSave, view.items]);
 
   useEffect(() => {
     for (const answer of view.answers) saveQueue.syncAnswer(answer);
@@ -1245,10 +1443,31 @@ function AttemptRunner({ view, questions, sourceNames, readOnly, withdrawn, onSa
     mountedRef.current = true;
     return () => {
       mountedRef.current = false;
-      for (const timer of debounceTimers.values()) clearTimeout(timer);
+      for (const item of attemptItemsRef.current) {
+        const timer = debounceTimers.get(item.id);
+        if (timer) clearTimeout(timer);
+        const value = valuesRef.current[item.id] ?? "";
+        const durable = practiceResponseValue(
+          saveQueue.getAnswer(item.id)?.response ?? null,
+        );
+        if (
+          value === durable ||
+          interactionReadOnlyRef.current ||
+          !attemptActiveRef.current
+        ) continue;
+        const question = questionByIdRef.current.get(item.question_id);
+        if (question?.question_type === "single_choice") {
+          if (value) saveQueue.enqueue(item.id, { option_id: value });
+        } else if (value.trim() || durable.trim()) {
+          saveQueue.enqueue(item.id, { answer: value });
+        }
+        // Autosaves use fetch keepalive so a route change or reload can still
+        // deliver this final, tiny idempotent write after React unmounts.
+        void saveQueue.flush(item.id, saveAnswerRef.current);
+      }
       debounceTimers.clear();
     };
-  }, []);
+  }, [saveQueue]);
   useEffect(() => {
     if (active && !interactionReadOnly) answerInputRef.current?.focus();
   }, [active, currentIndex, interactionReadOnly]);

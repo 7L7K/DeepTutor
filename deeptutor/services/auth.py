@@ -16,7 +16,7 @@ Multi-user setup (recommended):
     Navigate to /register in the browser. The first user to register is granted
     admin privileges and can manage other users from /admin/users.
 
-    Users are stored in data/user/auth_users.json:
+    Users are stored in data/system/auth/users.json:
         {
             "alice": {"hash": "$2b$12$...", "role": "admin", "created_at": "2026-..."},
             "bob":   {"hash": "$2b$12$...", "role": "user",  "created_at": "2026-..."}
@@ -157,7 +157,7 @@ def is_first_user() -> bool:
 
 def add_user(username: str, plain_password: str, role: str = "user") -> None:
     """
-    Add or update a user in data/user/auth_users.json.
+    Add or update a user in data/system/auth/users.json.
 
     The role defaults to 'user'. Pass role='admin' to elevate. When the store
     is empty the first user is automatically promoted to 'admin' regardless of

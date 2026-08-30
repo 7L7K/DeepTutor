@@ -14,6 +14,7 @@ import {
 } from "react";
 import { useCourses } from "@/context/CourseContext";
 import { getCourse, type Course } from "@/lib/course-api";
+import { isCurrentAbortableRequest } from "@/lib/request-cancellation";
 import {
   COURSE_NAVIGATION_DESTINATIONS,
   courseDestinationIsActive,
@@ -93,9 +94,14 @@ export default function CourseShell({
   const [course, setCourse] = useState<Course | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const courseLoadEpochRef = useRef(0);
 
   const loadCourse = useCallback(() => {
-    let cancelled = false;
+    const requestEpoch = ++courseLoadEpochRef.current;
+    const current = () => isCurrentAbortableRequest(
+      requestEpoch,
+      courseLoadEpochRef.current,
+    );
     // The route parameter can change without remounting the workspace layout.
     // Clear the previous Course immediately so a direct-link transition never
     // briefly presents the wrong Course context.
@@ -104,26 +110,29 @@ export default function CourseShell({
     setCourse(null);
     void getCourse(courseId)
       .then((loaded) => {
-        if (!cancelled) setCourse(loaded);
+        if (current()) setCourse(loaded);
       })
       .catch((cause: unknown) => {
-        if (!cancelled) {
+        if (current()) {
           setCourse(null);
           setError(cause instanceof Error ? cause.message : "Course not found");
         }
       })
       .finally(() => {
-        if (!cancelled) setLoading(false);
+        if (current()) setLoading(false);
       });
-    return () => {
-      cancelled = true;
-    };
   }, [courseId]);
 
   useEffect(() => {
     // The initial owner-scoped read intentionally seeds local route state.
     // eslint-disable-next-line react-hooks/set-state-in-effect
-    void loadCourse();
+    loadCourse();
+    return () => {
+      // Generation invalidation is sufficient: the previous response cannot
+      // write route state, while the request may settle cleanly during React
+      // development effect replay or a normal client-side route change.
+      courseLoadEpochRef.current += 1;
+    };
   }, [loadCourse]);
 
   useEffect(() => {

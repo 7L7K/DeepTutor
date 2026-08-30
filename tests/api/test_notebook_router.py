@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import base64
 import importlib
 from pathlib import Path
 
@@ -13,7 +14,22 @@ TestClient = pytest.importorskip("fastapi.testclient").TestClient
 notebook_router = importlib.import_module("deeptutor.api.routers.question_notebook").router
 sessions_router = importlib.import_module("deeptutor.api.routers.sessions").router
 
+from deeptutor.services.config.runtime_settings import ChatAttachmentLimits
 from deeptutor.services.session.sqlite_store import SQLiteSessionStore
+
+
+class _MemoryAttachmentStore:
+    def __init__(self) -> None:
+        self.files: dict[tuple[str, str], bytes] = {}
+        self.put_calls = 0
+
+    async def put(self, *, session_id, attachment_id, filename, data, mime_type="") -> str:
+        self.put_calls += 1
+        self.files[(session_id, attachment_id)] = data
+        return f"/api/attachments/{session_id}/{attachment_id}/{filename}"
+
+    async def delete_attachment(self, session_id: str, attachment_id: str) -> None:
+        self.files.pop((session_id, attachment_id), None)
 
 
 def _build_app(store: SQLiteSessionStore) -> FastAPI:
@@ -60,6 +76,22 @@ def _quiz_answers():
             "is_correct": True,
         },
     ]
+
+
+def _answer_image_payload(session_id: str, **overrides):
+    return {
+        "session_id": session_id,
+        "question_id": "q-image",
+        "question": "Show your work",
+        "user_answer_images": [
+            {
+                "filename": "answer.png",
+                "mime_type": "image/png",
+                "base64": base64.b64encode(b"\x89PNG\r\n\x1a\n").decode(),
+            }
+        ],
+        **overrides,
+    }
 
 
 def test_list_entries_empty(store: SQLiteSessionStore) -> None:
@@ -368,3 +400,126 @@ def test_lookup_missing_entry_returns_204_when_missing_ok(store: SQLiteSessionSt
         )
         assert resp.status_code == 204
         assert resp.content == b""
+
+
+def test_answer_images_are_validated_before_missing_session_writes(store, monkeypatch) -> None:
+    attachment_store = _MemoryAttachmentStore()
+    monkeypatch.setattr(
+        "deeptutor.api.routers.question_notebook.get_attachment_store", lambda: attachment_store
+    )
+
+    with TestClient(_build_app(store)) as client:
+        response = client.post(
+            "/api/v1/question-notebook/entries/upsert",
+            json=_answer_image_payload("missing-session"),
+        )
+
+    assert response.status_code == 404
+    assert attachment_store.put_calls == 0
+
+
+def test_answer_images_reject_invalid_base64_without_writing(store, monkeypatch) -> None:
+    attachment_store = _MemoryAttachmentStore()
+    monkeypatch.setattr(
+        "deeptutor.api.routers.question_notebook.get_attachment_store", lambda: attachment_store
+    )
+    sid = asyncio.run(store.create_session())["id"]
+
+    with TestClient(_build_app(store)) as client:
+        response = client.post(
+            "/api/v1/question-notebook/entries/upsert",
+            json=_answer_image_payload(
+                sid,
+                user_answer_images=[
+                    {"filename": "answer.png", "mime_type": "image/png", "base64": "bad base64!"}
+                ],
+            ),
+        )
+
+    assert response.status_code == 400
+    assert attachment_store.put_calls == 0
+
+
+def test_replacing_or_deleting_answer_images_cleans_the_old_file(store, monkeypatch) -> None:
+    attachment_store = _MemoryAttachmentStore()
+    monkeypatch.setattr(
+        "deeptutor.api.routers.question_notebook.get_attachment_store", lambda: attachment_store
+    )
+    sid = asyncio.run(store.create_session())["id"]
+
+    with TestClient(_build_app(store)) as client:
+        created = client.post(
+            "/api/v1/question-notebook/entries/upsert", json=_answer_image_payload(sid)
+        )
+        assert created.status_code == 200
+        image_id = created.json()["user_answer_images"][0]["id"]
+        assert (sid, image_id) in attachment_store.files
+
+        replaced = client.post(
+            "/api/v1/question-notebook/entries/upsert",
+            json=_answer_image_payload(sid, user_answer_images=[]),
+        )
+        assert replaced.status_code == 200
+        assert (sid, image_id) not in attachment_store.files
+
+        entry_id = replaced.json()["id"]
+        assert client.delete(f"/api/v1/question-notebook/entries/{entry_id}").status_code == 200
+
+
+def test_answer_images_are_cleaned_when_database_upsert_fails(store, monkeypatch) -> None:
+    attachment_store = _MemoryAttachmentStore()
+    monkeypatch.setattr(
+        "deeptutor.api.routers.question_notebook.get_attachment_store", lambda: attachment_store
+    )
+    sid = asyncio.run(store.create_session())["id"]
+
+    async def fail_upsert(*_args, **_kwargs):
+        raise RuntimeError("database unavailable")
+
+    monkeypatch.setattr(store, "upsert_notebook_entries", fail_upsert)
+
+    with TestClient(_build_app(store)) as client:
+        response = client.post(
+            "/api/v1/question-notebook/entries/upsert",
+            json=_answer_image_payload(sid),
+        )
+
+    assert response.status_code == 500
+    assert response.json()["detail"] == "Could not save notebook entry"
+    assert attachment_store.files == {}
+
+
+def test_answer_image_encoded_size_is_rejected_before_storage(store, monkeypatch) -> None:
+    """Pydantic rejects oversize base64 before the route can decode or write it."""
+    attachment_store = _MemoryAttachmentStore()
+    monkeypatch.setattr(
+        "deeptutor.api.routers.question_notebook.get_attachment_store", lambda: attachment_store
+    )
+    monkeypatch.setattr(
+        "deeptutor.services.config.runtime_settings.get_chat_attachment_limits",
+        lambda: ChatAttachmentLimits(
+            max_file_bytes=4,
+            max_total_bytes=4,
+            max_chars_per_doc=10_000,
+            max_chars_total=10_000,
+        ),
+    )
+    sid = asyncio.run(store.create_session())["id"]
+
+    with TestClient(_build_app(store)) as client:
+        response = client.post(
+            "/api/v1/question-notebook/entries/upsert",
+            json=_answer_image_payload(
+                sid,
+                user_answer_images=[
+                    {
+                        "filename": "answer.png",
+                        "mime_type": "image/png",
+                        "base64": base64.b64encode(b"too-large").decode(),
+                    }
+                ],
+            ),
+        )
+
+    assert response.status_code == 422
+    assert attachment_store.put_calls == 0

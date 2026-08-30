@@ -437,6 +437,53 @@ def test_tool_schemas_populated_when_kb_attached() -> None:
     )
 
 
+def test_course_rag_allowlist_cannot_mount_code_execution(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Course turns stay retrieval-only even when a sandbox is available."""
+    from deeptutor.agents.question import pipeline as question_pipeline
+    from deeptutor.core.context import UnifiedContext
+
+    monkeypatch.setattr(question_pipeline, "exec_capability_available", lambda: True)
+    pipeline = QuestionPipeline(language="en", kb_name="course-kb")
+    pipeline._exec_enabled = True
+
+    resolved = pipeline._resolved_tools(
+        UnifiedContext(
+            user_message="Generate a question",
+            enabled_tools=[],
+            allowed_builtin_tools=["rag"],
+            knowledge_bases=["course-kb"],
+        )
+    )
+
+    assert resolved == ["rag"]
+    assert "code_execution" not in resolved
+
+
+def test_code_execution_overwrites_model_authored_quota_identity(monkeypatch) -> None:
+    """Deep Question binds execution work to the authenticated principal."""
+    from types import SimpleNamespace
+
+    from deeptutor.agents.question import pipeline as question_pipeline
+    from deeptutor.core.context import UnifiedContext
+
+    monkeypatch.setattr(
+        question_pipeline,
+        "get_current_user",
+        lambda: SimpleNamespace(id="u_question_learner"),
+    )
+    pipeline = QuestionPipeline(language="en")
+
+    kwargs = pipeline._augment_tool_kwargs(
+        "code_execution",
+        {"_sandbox_user_id": "model-chosen-fresh-bucket"},
+        UnifiedContext(user_message="calculate", metadata={}),
+    )
+
+    assert kwargs["_sandbox_user_id"] == "u_question_learner"
+
+
 def test_use_native_tools_false_when_no_tools_resolved() -> None:
     """If the registry returns no tools for this turn (rare — e.g. user
     has every tool disabled), ``_use_native_tools`` must return False so

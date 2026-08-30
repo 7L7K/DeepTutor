@@ -13,6 +13,12 @@ import sys
 
 import pytest
 
+from deeptutor.capabilities.subagent.capability import _resolve_budget
+from deeptutor.core.context import UnifiedContext
+from deeptutor.multi_user.context import reset_current_user, set_current_user
+from deeptutor.multi_user.models import CurrentUser, UserScope
+import deeptutor.multi_user.paths as multi_user_paths
+from deeptutor.services.path_service import PathService
 from deeptutor.services.subagent.claude_code import ClaudeCodeBackend
 from deeptutor.services.subagent.codex import CodexBackend
 from deeptutor.services.subagent.config import (
@@ -20,6 +26,8 @@ from deeptutor.services.subagent.config import (
     DEFAULT_CONSULT_BUDGET,
     BackendConfig,
     SubagentSettings,
+    get_consult_budget,
+    load_subagent_settings,
     settings_from_dict,
 )
 from deeptutor.services.subagent.process import stream_process_lines
@@ -415,6 +423,45 @@ def test_settings_defaults() -> None:
     assert settings_from_dict({}).consult_budget == DEFAULT_CONSULT_BUDGET
 
 
+def test_settings_stay_admin_owned_during_regular_user_request(tmp_path, monkeypatch) -> None:
+    """A learner's private file cannot shadow deployment CLI policy."""
+    admin_paths = PathService(workspace_root=tmp_path / "admin")
+    learner_root = tmp_path / "users" / "learner-1"
+    learner_paths = PathService(workspace_root=learner_root)
+    admin_path = admin_paths.get_settings_file("subagent.json")
+    learner_path = learner_paths.get_settings_file("subagent.json")
+    admin_path.parent.mkdir(parents=True, exist_ok=True)
+    learner_path.parent.mkdir(parents=True, exist_ok=True)
+    admin_path.write_text(
+        '{"consult_budget": 7, "backends": {"codex": '
+        '{"model": "admin-model", "sandbox": "read-only"}}}',
+        encoding="utf-8",
+    )
+    learner_path.write_text(
+        '{"consult_budget": 2, "backends": {"codex": '
+        '{"model": "learner-model", "sandbox": "danger-full-access"}}}',
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(multi_user_paths, "get_admin_path_service", lambda: admin_paths)
+
+    learner = CurrentUser(
+        id="learner-1",
+        username="learner",
+        role="user",
+        scope=UserScope(kind="user", user_id="learner-1", root=learner_root),
+    )
+    token = set_current_user(learner)
+    try:
+        settings = load_subagent_settings()
+        assert settings.consult_budget == 7
+        assert get_consult_budget() == 7
+        assert _resolve_budget(UnifiedContext(user_message="hi")) == 7
+        assert settings.backend("codex").model == "admin-model"
+        assert settings.backend("codex").sandbox == "read-only"
+    finally:
+        reset_current_user(token)
+
+
 # ---- image forwarding (materialization) --------------------------------------
 
 
@@ -643,8 +690,12 @@ async def test_detect_all_excludes_partner_backend() -> None:
 
 
 class _FakePartnerInstance:
-    def __init__(self, running: bool = True) -> None:
+    def __init__(self, running: bool = True, config=None) -> None:
         self.running = running
+        self.config = (
+            config
+            or type("PartnerConfig", (), {"llm_selection": None, "backup_llm_selection": None})()
+        )
 
 
 class _FakePartnerManager:
@@ -674,14 +725,32 @@ class _FakePartnerManager:
         self._running = True
         return _FakePartnerInstance(True)
 
-    async def send_message(self, pid, content, *, session_key, media=None, on_event=None):
+    async def send_message(
+        self,
+        pid,
+        content,
+        *,
+        session_key,
+        media=None,
+        on_event=None,
+        delegated_user_id=None,
+    ):
         self.sent.append(
-            {"pid": pid, "content": content, "session_key": session_key, "media": media or []}
+            {
+                "pid": pid,
+                "content": content,
+                "session_key": session_key,
+                "media": media or [],
+                "delegated_user_id": delegated_user_id,
+            }
         )
         if on_event is not None:
             for ev in self._trace:
                 await on_event(ev)
         return self._reply
+
+    def load_config(self, pid: str):
+        return _FakePartnerInstance().config
 
 
 def _patch_manager(monkeypatch, manager) -> None:
@@ -748,6 +817,53 @@ async def test_partner_consult_resumes_given_session(monkeypatch) -> None:
     # A remembered key is reused verbatim — the partner session continues.
     assert result.session_id == "dt-abc123"
     assert manager.sent[0]["session_key"] == "dt-abc123"
+
+
+@pytest.mark.asyncio
+async def test_partner_consult_retains_each_delegated_learner_identity(
+    tmp_path, monkeypatch
+) -> None:
+    from deeptutor.multi_user import model_access, partner_access
+    from deeptutor.multi_user.context import reset_current_user, set_current_user
+    from deeptutor.multi_user.models import CurrentUser, UserScope
+    from deeptutor.services.subagent.partner import PartnerBackend
+
+    manager = _FakePartnerManager()
+    _patch_manager(monkeypatch, manager)
+    monkeypatch.setattr(partner_access, "assert_partner_allowed", lambda _partner_id: None)
+    monkeypatch.setattr(
+        model_access,
+        "admin_catalog",
+        lambda: {
+            "services": {
+                "llm": {
+                    "active_profile_id": "shared",
+                    "profiles": [
+                        {"id": "shared", "binding": "openai", "models": [{"id": "model"}]}
+                    ],
+                }
+            }
+        },
+    )
+
+    async def on_event(_event):
+        return None
+
+    for user_id in ("u_alice", "u_bob"):
+        learner = CurrentUser(
+            id=user_id,
+            username=user_id,
+            role="user",
+            scope=UserScope(kind="user", user_id=user_id, root=tmp_path / user_id),
+        )
+        token = set_current_user(learner)
+        try:
+            result = await PartnerBackend().consult("hello", on_event=on_event, partner_id="paul")
+        finally:
+            reset_current_user(token)
+        assert result.success is True
+
+    assert [call["delegated_user_id"] for call in manager.sent] == ["u_alice", "u_bob"]
 
 
 @pytest.mark.asyncio
@@ -836,6 +952,68 @@ def test_partner_event_mapping_covers_channels() -> None:
     # streamed spacing survives the accumulation.
     assert kinds(StreamEventType.CONTENT, content="") == []
     assert kinds(StreamEventType.CONTENT, content=" ") == ["text"]
+
+
+def test_partner_event_mapping_redacts_provider_errors_for_learners() -> None:
+    from deeptutor.core.stream import StreamEvent, StreamEventType
+    from deeptutor.services.subagent.partner import _to_subagent_events
+
+    events = _to_subagent_events(
+        StreamEvent(type=StreamEventType.ERROR, content="provider token rejected: secret-detail"),
+        _partner_trace_state(),
+        redact_errors=True,
+    )
+
+    assert [event.kind for event in events] == ["error"]
+    assert "secret-detail" not in events[0].text
+    assert (
+        events[0].text
+        == "The assigned Partner could not complete that request. Please try again later."
+    )
+
+
+def test_partner_event_mapping_redacts_failed_tool_result_for_learners() -> None:
+    from deeptutor.core.stream import StreamEvent, StreamEventType
+    from deeptutor.services.subagent.partner import _to_subagent_events
+
+    events = _to_subagent_events(
+        StreamEvent(
+            type=StreamEventType.TOOL_RESULT,
+            content="Error executing reason: provider token rejected: secret-detail",
+            metadata={"tool_metadata": {"error": "provider token rejected: secret-detail"}},
+        ),
+        _partner_trace_state(),
+        redact_errors=True,
+    )
+
+    assert [event.kind for event in events] == ["tool_result"]
+    assert "secret-detail" not in events[0].text
+    assert (
+        events[0].text
+        == "The assigned Partner could not complete that request. Please try again later."
+    )
+
+
+def test_partner_event_mapping_redacts_failed_tool_result_without_metadata_for_learners() -> None:
+    from deeptutor.core.stream import StreamEvent, StreamEventType
+    from deeptutor.services.subagent.partner import _to_subagent_events
+
+    events = _to_subagent_events(
+        StreamEvent(
+            type=StreamEventType.TOOL_RESULT,
+            content="Error executing reason: provider token rejected: secret-detail",
+            metadata={"tool_success": False},
+        ),
+        _partner_trace_state(),
+        redact_errors=True,
+    )
+
+    assert [event.kind for event in events] == ["tool_result"]
+    assert (
+        events[0].text
+        == "The assigned Partner could not complete that request. Please try again later."
+    )
+    assert "secret-detail" not in events[0].text
 
 
 def test_partner_tool_call_pairs_with_its_result_adjacently() -> None:

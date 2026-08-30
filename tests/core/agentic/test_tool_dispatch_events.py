@@ -229,6 +229,8 @@ async def test_one_failed_tool_does_not_raise_a_turn_level_error() -> None:
 
     assert _call_states(events) == ["running", "error"]
     assert [e for e in events if e.type == StreamEventType.ERROR] == []
+    result = next(e for e in events if e.type == StreamEventType.TOOL_RESULT)
+    assert (result.metadata or {}).get("tool_success") is False
     assert _status_events(events)[-1].type == StreamEventType.PROGRESS
 
 

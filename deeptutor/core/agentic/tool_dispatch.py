@@ -538,7 +538,16 @@ async def _collect_outcome(
         result_text = str(result["result_text"])
         tool_meta = per_tool_trace_meta[tool_index]
         tool_extra_meta = result.get("metadata") if isinstance(result, dict) else None
-        result_event_meta = merge_trace_metadata(tool_meta, {"trace_kind": "tool_result"})
+        result_event_meta = merge_trace_metadata(
+            tool_meta,
+            {
+                "trace_kind": "tool_result",
+                # Result metadata is optional, but delegated learner traces
+                # must still be able to distinguish an explicit ToolResult
+                # failure from successful output without inspecting the body.
+                "tool_success": bool(result.get("success", False)),
+            },
+        )
         if isinstance(tool_extra_meta, dict) and tool_extra_meta:
             result_event_meta = merge_trace_metadata(
                 result_event_meta,

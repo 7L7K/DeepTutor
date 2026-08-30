@@ -65,12 +65,14 @@ function AddClassModal({
   onClose,
   onSubmit,
   creating,
+  createError,
 }: {
   title: string;
   onTitleChange: (title: string) => void;
   onClose: () => void;
   onSubmit: (event: React.FormEvent<HTMLFormElement>) => void;
   creating: boolean;
+  createError: string | null;
 }) {
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
@@ -120,6 +122,14 @@ function AddClassModal({
           Add a class by title. You can organize its materials, Practice, Flashcards,
           and Course Chat in one place.
         </p>
+        {createError ? (
+          <p
+            role="alert"
+            className="mt-4 rounded-lg border border-red-300/60 bg-red-50/60 px-3 py-2 text-sm text-red-900 dark:border-red-900/60 dark:bg-red-950/20 dark:text-red-200"
+          >
+            {createError}
+          </p>
+        ) : null}
         <form onSubmit={onSubmit} className="mt-5 space-y-4">
           <label htmlFor="new-class-title" className="block text-sm font-medium text-[var(--foreground)]">
             Class title
@@ -163,6 +173,7 @@ export default function ClassesHome() {
   const [newTitle, setNewTitle] = useState("");
   const [creating, setCreating] = useState(false);
   const [createOpen, setCreateOpen] = useState(false);
+  const [createError, setCreateError] = useState<string | null>(null);
   const [status, setStatus] = useState<string | null>(null);
 
   const academicCourses = courses.filter(
@@ -174,6 +185,14 @@ export default function ClassesHome() {
   const archivedCourses = academicCourses.filter(
     (course) => course.state === "archived",
   );
+  const showEmptyState =
+    !loading && !error && academicCourses.length === 0;
+
+  function openCreateModal() {
+    setStatus(null);
+    setCreateError(null);
+    setCreateOpen(true);
+  }
 
   async function submitCourse(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -181,13 +200,16 @@ export default function ClassesHome() {
     if (!title) return;
     setCreating(true);
     setStatus(null);
+    setCreateError(null);
     try {
       await createCourse(title);
       setNewTitle("");
       setCreateOpen(false);
       setStatus("Class added");
     } catch (cause) {
-      setStatus(cause instanceof Error ? cause.message : "Could not create Course");
+      setCreateError(
+        cause instanceof Error ? cause.message : "Could not create Course",
+      );
     } finally {
       setCreating(false);
     }
@@ -208,10 +230,7 @@ export default function ClassesHome() {
           <div className="flex items-center gap-2">
             <button
               type="button"
-              onClick={() => {
-                setStatus(null);
-                setCreateOpen(true);
-              }}
+              onClick={openCreateModal}
               className="inline-flex items-center gap-2 rounded-lg bg-[var(--foreground)] px-3 py-2 text-sm font-medium text-[var(--background)] transition hover:opacity-85"
             >
               <Plus size={15} />
@@ -267,7 +286,7 @@ export default function ClassesHome() {
               ))}
             </div>
           </section>
-        ) : archivedCourses.length ? null : (
+        ) : showEmptyState ? (
           <section className="mt-10 rounded-2xl border border-dashed border-[var(--border)] bg-[var(--card)]/40 px-6 py-14 text-center">
             <span className="mx-auto flex h-12 w-12 items-center justify-center rounded-2xl border border-[var(--border)] bg-[var(--card)] text-[var(--muted-foreground)]">
               <BookOpen size={21} />
@@ -281,7 +300,7 @@ export default function ClassesHome() {
             </p>
             <button
               type="button"
-              onClick={() => setCreateOpen(true)}
+              onClick={openCreateModal}
               className="mt-5 inline-flex items-center gap-2 rounded-lg bg-[var(--foreground)] px-4 py-2 text-sm font-medium text-[var(--background)] hover:opacity-85"
             >
               <Plus size={15} />
@@ -297,7 +316,7 @@ export default function ClassesHome() {
               </Link>
             </p>
           </section>
-        )}
+        ) : null}
 
         {archivedCourses.length ? (
           <section aria-labelledby="archived-courses-heading" className="mt-10">
@@ -340,10 +359,12 @@ export default function ClassesHome() {
             if (!creating) {
               setCreateOpen(false);
               setNewTitle("");
+              setCreateError(null);
             }
           }}
           onSubmit={(event) => void submitCourse(event)}
           creating={creating}
+          createError={createError}
         />
       ) : null}
     </main>

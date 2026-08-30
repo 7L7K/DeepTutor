@@ -269,3 +269,18 @@ def test_auth_status_exposes_avatar_marker(profile_client):
     anonymous = client.get("/api/v1/auth/status").json()
     assert anonymous["authenticated"] is False
     assert anonymous["avatar"] == ""
+
+
+def test_auth_status_projects_only_the_explicit_course_upload_grant(profile_client):
+    from deeptutor.multi_user.grants import save_grant
+
+    client, users = profile_client
+    denied = client.get("/api/v1/auth/status", headers=_auth("user-token")).json()
+    assert denied["course_source_uploads"] is False
+
+    save_grant(users["bob"]["id"], {"course_source_uploads": True})
+    admitted = client.get("/api/v1/auth/status", headers=_auth("user-token")).json()
+    assert admitted["course_source_uploads"] is True
+
+    admin = client.get("/api/v1/auth/status", headers=_auth("admin-token")).json()
+    assert admin["course_source_uploads"] is True

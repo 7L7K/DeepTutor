@@ -11,6 +11,10 @@ from .paths import local_admin_user, scope_for_user
 _current_user: ContextVar[CurrentUser | None] = ContextVar("deeptutor_current_user", default=None)
 
 
+class MissingCurrentUserContext(PermissionError):
+    """Authentication is enabled but no request-local principal is installed."""
+
+
 def set_current_user(user: CurrentUser) -> Token[CurrentUser | None]:
     return _current_user.set(user)
 
@@ -20,7 +24,19 @@ def reset_current_user(token: Token[CurrentUser | None]) -> None:
 
 
 def get_current_user() -> CurrentUser:
-    return _current_user.get() or local_admin_user()
+    user = _current_user.get()
+    if user is not None:
+        return user
+
+    # The implicit deployment owner is a compatibility contract only for the
+    # auth-disabled, single-user runtime. In an authenticated deployment an
+    # absent ContextVar means the entry point failed to install authority; it
+    # must never silently become the most privileged account.
+    from deeptutor.services import auth as auth_service
+
+    if auth_service.AUTH_ENABLED:
+        raise MissingCurrentUserContext("Authenticated user context is unavailable")
+    return local_admin_user()
 
 
 def get_current_user_or_none() -> CurrentUser | None:

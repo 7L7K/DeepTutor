@@ -69,11 +69,14 @@ export async function listCourses(): Promise<Course[]> {
   return (await json<{ courses: Course[] }>(response)).courses;
 }
 
-export async function getCourse(courseId: string): Promise<Course> {
+export async function getCourse(
+  courseId: string,
+  signal?: AbortSignal,
+): Promise<Course> {
   return json<Course>(
     await apiFetch(
       apiUrl(`/api/v1/courses/${encodeURIComponent(courseId)}`),
-      { cache: "no-store" },
+      { cache: "no-store", signal },
     ),
   );
 }

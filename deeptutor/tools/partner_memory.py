@@ -18,6 +18,8 @@ memory tools — they don't gate on ``user_has_memory`` and aren't configurable.
 
 from __future__ import annotations
 
+from contextlib import contextmanager
+from contextvars import ContextVar, Token
 from typing import Any
 
 from deeptutor.core.tool_protocol import BaseTool, ToolDefinition, ToolParameter, ToolResult
@@ -32,6 +34,35 @@ PARTNER_BUILTIN_TOOL_NAMES: tuple[str, ...] = (
 
 _SNIPPET_WIDTH = 140
 _MAX_SCAN_MATCHES = 300
+
+_DELEGATED_PARTNER_CALLER: ContextVar[str | None] = ContextVar(
+    "deeptutor_delegated_partner_caller", default=None
+)
+
+
+@contextmanager
+def delegated_partner_call(user_id: str | None):
+    """Mark the current Partner turn as delegated by an ordinary user."""
+    caller = str(user_id or "").strip() or None
+    token: Token[str | None] = _DELEGATED_PARTNER_CALLER.set(caller)
+    try:
+        yield
+    finally:
+        _DELEGATED_PARTNER_CALLER.reset(token)
+
+
+def is_delegated_partner_call() -> bool:
+    """Whether the current Partner turn was delegated by an ordinary user."""
+    return _DELEGATED_PARTNER_CALLER.get() is not None
+
+
+def _delegated_denial(tool_name: str) -> ToolResult | None:
+    if not is_delegated_partner_call():
+        return None
+    return ToolResult(
+        content=f"{tool_name} is unavailable in an assigned Partner conversation.",
+        success=False,
+    )
 
 
 def _concat_l3() -> str:
@@ -102,6 +133,8 @@ class PartnerReadTool(BaseTool):
         )
 
     async def execute(self, **kwargs: Any) -> ToolResult:
+        if denial := _delegated_denial("partner_read"):
+            return denial
         from deeptutor.multi_user.paths import (
             get_admin_path_service,
             get_current_path_service,
@@ -168,6 +201,8 @@ class PartnerMemorizeTool(BaseTool):
         )
 
     async def execute(self, **kwargs: Any) -> ToolResult:
+        if denial := _delegated_denial("partner_memorize"):
+            return denial
         from deeptutor.multi_user.paths import get_current_path_service
         from deeptutor.services.memory import get_memory_store, memory_path_service_override
         from deeptutor.services.memory.trace import TraceEvent
@@ -245,6 +280,8 @@ class PartnerSearchTool(BaseTool):
         )
 
     async def execute(self, **kwargs: Any) -> ToolResult:
+        if denial := _delegated_denial("partner_search"):
+            return denial
         from deeptutor.partners.config.paths import get_partner_sessions_dir
         from deeptutor.services.partners.sessions import PartnerSessionStore
 
@@ -300,6 +337,8 @@ class PartnerSearchTool(BaseTool):
 
 __all__ = [
     "PARTNER_BUILTIN_TOOL_NAMES",
+    "delegated_partner_call",
+    "is_delegated_partner_call",
     "PartnerMemorizeTool",
     "PartnerReadTool",
     "PartnerSearchTool",

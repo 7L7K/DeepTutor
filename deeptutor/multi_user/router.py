@@ -9,6 +9,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 
 from deeptutor.api.routers.auth import require_admin
+from deeptutor.knowledge.kb_types import is_connected_kb
 from deeptutor.knowledge.manager import KnowledgeBaseManager
 from deeptutor.services.config.model_catalog import ModelCatalogService
 from deeptutor.services.skill.service import SkillService
@@ -76,6 +77,10 @@ def _admin_kb_summary() -> list[dict[str, Any]]:
             "source": "admin",
         }
         for name in manager.list_knowledge_bases()
+        # Connected KBs are live host/external pointers, not shareable copied
+        # knowledge. Partners use their dedicated grant field; every other
+        # pointer remains administrator-only.
+        if not is_connected_kb(manager.get_metadata(name))
     ]
 
 
@@ -162,6 +167,7 @@ async def put_user_grants(
                 None if grant.get("mcp_tools") is None else len(grant.get("mcp_tools") or [])
             ),
             "exec_enabled": grant.get("exec_enabled"),
+            "course_source_uploads": grant.get("course_source_uploads") is True,
         },
     )
     return {"grant": grant}

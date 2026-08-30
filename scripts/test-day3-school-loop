@@ -1,0 +1,740 @@
+#!/usr/bin/env bash
+# Hermetic Day 3 Course/materials/manual-study cold-restart browser proof.
+set -euo pipefail
+umask 077
+
+repo_root="$(cd "$(dirname "$0")/.." && pwd)"
+cd "$repo_root"
+if ! git -C "$repo_root" rev-parse --verify HEAD >/dev/null 2>&1; then
+  echo "Day 3 proof requires a committed candidate HEAD." >&2
+  exit 1
+fi
+if [ -n "$(git -C "$repo_root" status --porcelain=v1 --untracked-files=normal)" ]; then
+  echo "Day 3 proof requires a clean committed worktree before runtime creation." >&2
+  exit 1
+fi
+if [ -e "$repo_root/web/test-results" ]; then
+  echo "Day 3 proof requires web/test-results to be absent; Playwright output is runtime-owned." >&2
+  exit 1
+fi
+runtime_parent="/private/tmp"
+mkdir -p "$runtime_parent"
+runtime_root="$(mktemp -d "$runtime_parent/teeechr-d3-runtime.XXXXXX")"
+bootstrap_cleanup() {
+  case "$runtime_root" in
+    "$runtime_parent"/teeechr-d3-runtime.*) rm -rf -- "$runtime_root" ;;
+  esac
+}
+trap bootstrap_cleanup EXIT
+trap 'bootstrap_cleanup; exit 130' INT
+trap 'bootstrap_cleanup; exit 143' TERM
+
+evidence_dir="$(mktemp -d "$runtime_parent/teeechr-d3-evidence.XXXXXX")"
+backend_port="8043"
+frontend_port="3823"
+backend_url="http://127.0.0.1:$backend_port"
+frontend_url="http://localhost:$frontend_port"
+python_bin="/Users/home/.codex/runtimes/teeechr-b1-python311/bin/python"
+node_bin="/Users/home/.cache/codex-runtimes/codex-primary-runtime/dependencies/node/bin/node"
+validator="$repo_root/scripts/validate_day3_school_loop.py"
+completion_sentinel="$evidence_dir/day3-school-loop.complete"
+admin_cookie="$runtime_root/admin.cookies"
+backend_log="$runtime_root/backend.log"
+frontend_log="$runtime_root/frontend.log"
+playwright_log="$runtime_root/playwright.log"
+backend_pid=""
+frontend_pid=""
+playwright_pid=""
+deterministic_mode=0
+deterministic_ingestion_delay_ms=0
+cleanup_done=false
+cleanup_failed=false
+startup_attempts="480"
+
+mkdir -p "$evidence_dir" "$runtime_root/tmp" "$runtime_root/xdg-config" "$runtime_root/xdg-cache"
+chmod 700 "$evidence_dir" "$runtime_root" "$runtime_root/tmp" "$runtime_root/xdg-config" "$runtime_root/xdg-cache"
+rm -f -- "$completion_sentinel"
+
+append_runtime() {
+  printf '%s\n' "$1" >> "$evidence_dir/runtime.txt"
+  chmod 600 "$evidence_dir/runtime.txt"
+}
+
+port_closed() {
+  "$python_bin" - "$1" <<'PY'
+import errno
+import socket
+import sys
+with socket.socket() as probe:
+    probe.settimeout(0.2)
+    result = probe.connect_ex(("127.0.0.1", int(sys.argv[1])))
+    if result == 0:
+        raise SystemExit(f"Port still open: {sys.argv[1]}")
+    if result != errno.ECONNREFUSED:
+        raise SystemExit(
+            f"Could not prove port {sys.argv[1]} closed: connect_ex errno={result}"
+        )
+PY
+}
+
+terminate_group() {
+  local pgid="$1"
+  [ -n "$pgid" ] || return 0
+  "$python_bin" - "$pgid" <<'PY'
+import os
+import signal
+import sys
+import time
+pgid = int(sys.argv[1])
+try:
+    os.killpg(pgid, 0)
+except ProcessLookupError:
+    raise SystemExit(0)
+except PermissionError as error:
+    raise SystemExit(f"Owned process group {pgid} existed but was unsignalable: {error}")
+try:
+    os.killpg(pgid, signal.SIGTERM)
+except ProcessLookupError:
+    raise SystemExit(0)
+except PermissionError as error:
+    raise SystemExit(f"Owned process group {pgid} rejected SIGTERM: {error}")
+deadline = time.monotonic() + 3
+while time.monotonic() < deadline:
+    try:
+        os.killpg(pgid, 0)
+    except ProcessLookupError:
+        raise SystemExit(0)
+    except PermissionError:
+        time.sleep(0.05)
+        continue
+    time.sleep(0.05)
+try:
+    os.killpg(pgid, signal.SIGKILL)
+except ProcessLookupError:
+    pass
+except PermissionError as error:
+    raise SystemExit(f"Owned process group {pgid} remained but was unsignalable: {error}")
+PY
+}
+
+assert_owned_group() {
+  "$python_bin" - "$1" <<'PY'
+import os
+import sys
+import time
+pid = int(sys.argv[1])
+deadline = time.monotonic() + 3
+while time.monotonic() < deadline:
+    try:
+        if os.getpgid(pid) == pid and os.getsid(pid) == pid:
+            raise SystemExit(0)
+    except ProcessLookupError:
+        raise SystemExit(f"Process-group leader {pid} exited before startup")
+    time.sleep(0.05)
+raise SystemExit(f"Process {pid} did not establish an owned process group")
+PY
+}
+
+group_closed() {
+  local pgid="$1"
+  [ -n "$pgid" ] || return 0
+  "$python_bin" - "$pgid" <<'PY'
+import os
+import sys
+try:
+    os.killpg(int(sys.argv[1]), 0)
+except ProcessLookupError:
+    raise SystemExit(0)
+except PermissionError as error:
+    raise SystemExit(
+        f"Owned process group {sys.argv[1]} existed but was unsignalable: {error}"
+    )
+raise SystemExit(f"Owned process group {sys.argv[1]} remained")
+PY
+}
+
+stop_group() {
+  local pgid="$1"
+  local terminate_status=0
+  [ -n "$pgid" ] || return 0
+  terminate_group "$pgid" || terminate_status=$?
+  if [ "$terminate_status" -ne 0 ]; then
+    if group_closed "$pgid"; then
+      wait "$pgid" 2>/dev/null || true
+      return 0
+    fi
+    return "$terminate_status"
+  fi
+  wait "$pgid" 2>/dev/null || true
+  group_closed "$pgid"
+}
+
+cleanup() {
+  if [ "$cleanup_done" = true ]; then
+    [ "$cleanup_failed" = false ]
+    return
+  fi
+  cleanup_done=true
+  stop_group "$playwright_pid" || cleanup_failed=true
+  stop_group "$frontend_pid" || cleanup_failed=true
+  stop_group "$backend_pid" || cleanup_failed=true
+  if group_closed "$playwright_pid" && group_closed "$frontend_pid" && group_closed "$backend_pid"; then
+    append_runtime "cleanup_process_groups=closed"
+  else
+    append_runtime "cleanup_process_groups=remained"
+    cleanup_failed=true
+  fi
+  cp "$backend_log" "$evidence_dir/backend.post.log" 2>/dev/null || true
+  cp "$frontend_log" "$evidence_dir/frontend.post.log" 2>/dev/null || true
+  cp "$playwright_log" "$evidence_dir/playwright.post.log" 2>/dev/null || true
+  chmod 600 "$evidence_dir"/*.log 2>/dev/null || true
+  if port_closed "$frontend_port"; then
+    append_runtime "cleanup_frontend_port=closed"
+  else
+    append_runtime "cleanup_frontend_port=not_proven_closed"
+    cleanup_failed=true
+  fi
+  if port_closed "$backend_port"; then
+    append_runtime "cleanup_backend_port=closed"
+  else
+    append_runtime "cleanup_backend_port=not_proven_closed"
+    cleanup_failed=true
+  fi
+  case "$runtime_root" in
+    "$runtime_parent"/teeechr-d3-runtime.*)
+      rm -rf -- "$runtime_root" || cleanup_failed=true
+      ;;
+    *)
+      append_runtime "cleanup_runtime_root=unexpected_path"
+      cleanup_failed=true
+      ;;
+  esac
+  if [ ! -e "$runtime_root" ]; then
+    append_runtime "cleanup_runtime_root=removed"
+  else
+    append_runtime "cleanup_runtime_root=remained"
+    cleanup_failed=true
+  fi
+  if [ "$cleanup_failed" = true ]; then
+    append_runtime "cleanup_status=failed"
+  else
+    append_runtime "cleanup_status=closed"
+  fi
+  [ "$cleanup_failed" = false ]
+}
+
+on_exit() {
+  local status="$?"
+  trap - EXIT
+  if ! cleanup && [ "$status" -eq 0 ]; then status=1; fi
+  if [ "$status" -ne 0 ]; then rm -f -- "$completion_sentinel"; fi
+  exit "$status"
+}
+on_signal() {
+  trap - INT TERM
+  exit "$1"
+}
+trap - EXIT INT TERM
+trap on_exit EXIT
+trap 'on_signal 130' INT
+trap 'on_signal 143' TERM
+
+source_digest() {
+  "$python_bin" - "$repo_root" <<'PY'
+import hashlib
+import os
+import stat
+import subprocess
+import sys
+root = sys.argv[1]
+paths = subprocess.check_output(
+    ["git", "-C", root, "ls-files", "-z", "--cached", "--others", "--exclude-standard"]
+).split(b"\0")
+digest = hashlib.sha256()
+for relative in sorted(path for path in paths if path):
+    digest.update(relative + b"\0")
+    absolute = os.path.join(os.fsencode(root), relative)
+    try:
+        info = os.lstat(absolute)
+    except FileNotFoundError:
+        digest.update(b"missing\0")
+        continue
+    digest.update(f"{stat.S_IFMT(info.st_mode):o}:{stat.S_IMODE(info.st_mode):o}".encode() + b"\0")
+    if stat.S_ISREG(info.st_mode):
+        with open(absolute, "rb") as handle:
+            for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+                digest.update(chunk)
+    elif stat.S_ISLNK(info.st_mode):
+        digest.update(os.fsencode(os.readlink(absolute)))
+    else:
+        digest.update(b"non-regular\0")
+    digest.update(b"\0")
+print(digest.hexdigest())
+PY
+}
+
+local_curl() {
+  env -i PATH=/usr/bin:/bin NO_PROXY=127.0.0.1,localhost no_proxy=127.0.0.1,localhost \
+    /usr/bin/curl -q "$@"
+}
+
+wait_for_url() {
+  local url="$1"
+  local log="$2"
+  local pid="$3"
+  for _attempt in $(seq 1 "$startup_attempts"); do
+    if ! kill -0 "$pid" 2>/dev/null; then
+      sed -n '1,240p' "$log" >&2
+      return 1
+    fi
+    if local_curl --fail --silent --show-error "$url" >/dev/null 2>&1; then return 0; fi
+    sleep 0.25
+  done
+  sed -n '1,240p' "$log" >&2
+  return 1
+}
+
+if [ ! -x "$python_bin" ]; then echo "Python runtime unavailable: $python_bin" >&2; exit 1; fi
+if [ ! -x "$node_bin" ]; then echo "Node runtime unavailable: $node_bin" >&2; exit 1; fi
+if [ ! -f "$repo_root/web/node_modules/playwright/cli.js" ]; then
+  echo "Playwright dependencies unavailable; run npm ci in web first." >&2
+  exit 1
+fi
+if [ ! -f "$validator" ]; then echo "Day 3 validator unavailable: $validator" >&2; exit 1; fi
+if [ -n "$(git -C "$repo_root" status --porcelain=v1 --untracked-files=normal)" ]; then
+  echo "Day 3 candidate changed after preflight and before runtime seeding." >&2
+  exit 1
+fi
+
+run_id="$("$python_bin" -c 'import secrets; print(secrets.token_hex(12))')"
+admin_username="d3_admin_$run_id"
+learner_a_username="d3_learner_a_$run_id"
+learner_b_username="d3_learner_b_$run_id"
+admin_password="$("$python_bin" -c 'import secrets; print(secrets.token_urlsafe(24))')"
+learner_a_password="$("$python_bin" -c 'import secrets; print(secrets.token_urlsafe(24))')"
+learner_b_password="$("$python_bin" -c 'import secrets; print(secrets.token_urlsafe(24))')"
+source_head="$(git -C "$repo_root" rev-parse HEAD)"
+source_branch="$(git -C "$repo_root" branch --show-current)"
+source_state=clean
+source_start_digest="$(source_digest)"
+printf 'schema_version=1\nrun_id=%s\nsource_head=%s\nsource_branch=%s\nsource_worktree=%s\nsource_tree_digest=%s\n' \
+  "$run_id" "$source_head" "$source_branch" "$source_state" "$source_start_digest" > "$evidence_dir/runtime.txt"
+chmod 600 "$evidence_dir/runtime.txt"
+
+seed_runtime() {
+  "$python_bin" - "$runtime_root" "$backend_port" "$frontend_port" <<'PY'
+import json
+import sys
+from pathlib import Path
+root = Path(sys.argv[1])
+backend_port = int(sys.argv[2])
+frontend_port = int(sys.argv[3])
+settings = root / "data" / "user" / "settings"
+settings.mkdir(parents=True, exist_ok=True, mode=0o700)
+payloads = {
+    "auth.json": {
+        "version": 1, "enabled": True, "username": "", "password_hash": "",
+        "token_expire_hours": 24, "cookie_secure": False,
+    },
+    "integrations.json": {
+        "version": 1, "pocketbase_url": "", "pocketbase_port": 8090,
+        "pocketbase_external_url": "", "pocketbase_admin_email": "",
+        "pocketbase_admin_password": "",
+    },
+    "system.json": {
+        "version": 1, "backend_port": backend_port, "frontend_port": frontend_port,
+        "next_public_api_base_external": "",
+        "next_public_api_base": f"http://127.0.0.1:{backend_port}",
+        "cors_origin": f"http://localhost:{frontend_port}",
+        "cors_origins": [f"http://localhost:{frontend_port}"],
+        "disable_ssl_verify": False, "chat_attachment_dir": "",
+        "sandbox_allow_subprocess": False, "chat_attachment_max_file_mb": 20,
+        "chat_attachment_max_total_mb": 25, "chat_attachment_max_chars_per_doc": 200000,
+        "chat_attachment_max_chars_total": 150000,
+    },
+    "flashcard_provider.json": {
+        "version": 2, "enabled": False, "provider": "openai",
+        "base_url": "https://api.openai.com/v1", "credential_ref": None,
+    },
+    "model_catalog.json": {
+        "version": 1,
+        "services": {
+            "llm": {
+                "active_profile_id": "llm-profile-day3-local",
+                "active_model_id": "llm-model-day3-local",
+                "profiles": [{
+                    "id": "llm-profile-day3-local",
+                    "name": "Day 3 deterministic boundary",
+                    "binding": "ollama",
+                    "base_url": "http://127.0.0.1:1/v1",
+                    "api_version": "",
+                    "extra_headers": {},
+                    "api_key_set": False,
+                    "models": [{
+                        "id": "llm-model-day3-local",
+                        "name": "Day 3 deterministic local",
+                        "model": "day3-deterministic-local",
+                    }],
+                }],
+            },
+        },
+    },
+}
+for name, payload in payloads.items():
+    path = settings / name
+    path.write_text(json.dumps(payload, sort_keys=True), encoding="utf-8")
+    path.chmod(0o600)
+PY
+}
+
+provider_preflight() {
+  local expected="$1"
+  local output="$2"
+  (
+    cd "$repo_root"
+    env -i \
+      PATH="$(dirname "$python_bin"):/usr/bin:/bin" \
+      TMPDIR="$runtime_root/tmp" XDG_CONFIG_HOME="$runtime_root/xdg-config" \
+      XDG_CACHE_HOME="$runtime_root/xdg-cache" DEEPTUTOR_HOME="$runtime_root" \
+      DEEPTUTOR_IGNORE_PROCESS_ENV_OVERRIDES=true \
+      TEEECHR_TEST_DETERMINISTIC_PROVIDER="$expected" \
+      "$python_bin" - "$expected" "$output" <<'PY'
+import json
+import sys
+from pathlib import Path
+from deeptutor.courses.deterministic_provider import enabled
+from deeptutor.courses.flashcard_generation_provider import (
+    DeterministicFlashcardGenerationProvider,
+    default_flashcard_generation_provider,
+)
+from deeptutor.courses.generation_provider import (
+    DeterministicPracticeGenerationProvider,
+    default_practice_generation_provider,
+)
+from deeptutor.courses.provider_usage import get_provider_usage_ledger
+from deeptutor.services.auth import AUTH_ENABLED, POCKETBASE_ENABLED
+from deeptutor.services.config import load_integrations_settings
+from deeptutor.services.config.flashcard_provider import get_flashcard_provider_config_service
+from deeptutor.services.config.model_catalog import get_model_catalog_service
+from deeptutor.services.config.provider_runtime import resolve_llm_runtime_config
+from deeptutor.services.pocketbase_client import is_pocketbase_enabled
+expected = sys.argv[1] == "1"
+integrations = load_integrations_settings()
+paid = get_flashcard_provider_config_service().load()
+catalog = get_model_catalog_service().load()
+llm = catalog["services"]["llm"]
+profile = llm["profiles"][0]
+resolved_llm = resolve_llm_runtime_config(catalog=catalog)
+practice = default_practice_generation_provider()
+flashcards = default_flashcard_generation_provider()
+ledger = get_provider_usage_ledger()
+summary = ledger.usage_summary()
+with ledger._connect() as connection:
+    rows = int(connection.execute("SELECT COUNT(*) FROM provider_usage_reservations").fetchone()[0])
+assert AUTH_ENABLED is True
+assert integrations["pocketbase_url"] == integrations["pocketbase_external_url"] == ""
+assert POCKETBASE_ENABLED is False and is_pocketbase_enabled() is False
+assert enabled() is expected
+assert paid.enabled is False and paid.api_key == "" and paid.credential_ref is None
+assert llm["active_profile_id"] == "llm-profile-day3-local"
+assert llm["active_model_id"] == "llm-model-day3-local"
+assert profile["base_url"] == "http://127.0.0.1:1/v1"
+assert profile.get("api_key", "") == "" and not profile.get("credential_ref")
+assert resolved_llm.provider_name == "ollama"
+assert resolved_llm.effective_url == "http://127.0.0.1:1/v1"
+assert rows == 0 and summary["admitted_cost_microusd"] == 0
+if expected:
+    assert isinstance(practice, DeterministicPracticeGenerationProvider)
+    assert isinstance(flashcards, DeterministicFlashcardGenerationProvider)
+payload = {
+    "schemaVersion": 1,
+    "deterministicProvider": expected,
+    "practiceProvider": type(practice).__name__,
+    "flashcardProvider": type(flashcards).__name__,
+    "paidProviderEnabled": paid.enabled,
+    "paidCredentialConfigured": bool(paid.api_key),
+    "pocketbaseEnabled": False,
+    "llmBoundaryProfile": llm["active_profile_id"],
+    "llmBoundaryModel": llm["active_model_id"],
+    "llmBoundaryBaseUrl": profile["base_url"],
+    "llmBoundaryProvider": resolved_llm.provider_name,
+    "llmBoundaryCredentialConfigured": bool(profile.get("api_key")),
+    "reservationRows": rows,
+    "usage": summary,
+}
+path = Path(sys.argv[2])
+path.write_text(json.dumps(payload, sort_keys=True), encoding="utf-8")
+path.chmod(0o600)
+PY
+  )
+}
+
+start_backend() {
+  port_closed "$backend_port"
+  cd "$repo_root"
+  env -i \
+    PATH="$(dirname "$python_bin"):/usr/bin:/bin" \
+    TMPDIR="$runtime_root/tmp" XDG_CONFIG_HOME="$runtime_root/xdg-config" \
+    XDG_CACHE_HOME="$runtime_root/xdg-cache" DEEPTUTOR_HOME="$runtime_root" \
+    DEEPTUTOR_IGNORE_PROCESS_ENV_OVERRIDES=true \
+    TEEECHR_TEST_DETERMINISTIC_PROVIDER="$deterministic_mode" \
+    TEEECHR_TEST_DETERMINISTIC_INGESTION_DELAY_MS="$deterministic_ingestion_delay_ms" \
+    "$python_bin" -c 'import os,sys; os.setsid(); os.execvpe(sys.argv[1],sys.argv[1:],os.environ)' \
+      "$python_bin" -m uvicorn deeptutor.api.main:app \
+      --host 127.0.0.1 --port "$backend_port" --no-access-log >"$backend_log" 2>&1 &
+  backend_pid=$!
+  assert_owned_group "$backend_pid"
+  wait_for_url "$backend_url/api/v1/auth/status" "$backend_log" "$backend_pid"
+}
+
+start_frontend() {
+  port_closed "$frontend_port"
+  cd "$repo_root/web"
+  env -i \
+    PATH="$(dirname "$node_bin"):/usr/bin:/bin" \
+    TMPDIR="$runtime_root/tmp" XDG_CONFIG_HOME="$runtime_root/xdg-config" \
+    XDG_CACHE_HOME="$runtime_root/xdg-cache" NEXT_TELEMETRY_DISABLED=1 \
+    PORT="$frontend_port" HOSTNAME=127.0.0.1 \
+    BACKEND_PORT="$backend_port" NEXT_PUBLIC_API_BASE_EXTERNAL="$backend_url" \
+    NEXT_PUBLIC_API_BASE="$backend_url" NEXT_PUBLIC_AUTH_ENABLED=true AUTH_ENABLED=true \
+    DEEPTUTOR_API_BASE_URL="$backend_url" DEEPTUTOR_AUTH_ENABLED=true \
+    "$python_bin" -c 'import os,sys; os.setsid(); os.execvpe(sys.argv[1],sys.argv[1:],os.environ)' \
+      "$node_bin" --max-old-space-size=4096 ./node_modules/next/dist/bin/next dev \
+      >"$frontend_log" 2>&1 &
+  frontend_pid=$!
+  assert_owned_group "$frontend_pid"
+  wait_for_url "$frontend_url/login" "$frontend_log" "$frontend_pid"
+}
+
+stop_application() {
+  stop_group "$frontend_pid"
+  frontend_pid=""
+  stop_group "$backend_pid"
+  backend_pid=""
+  port_closed "$frontend_port"
+  port_closed "$backend_port"
+}
+
+run_browser() {
+  local phase="$1"
+  local spec="$2"
+  playwright_log="$runtime_root/playwright-$phase.log"
+  cd "$repo_root/web"
+  env -i \
+    PATH="$(dirname "$node_bin"):/usr/bin:/bin" \
+    TMPDIR="$runtime_root/tmp" XDG_CONFIG_HOME="$runtime_root/xdg-config" \
+    XDG_CACHE_HOME="$runtime_root/xdg-cache" NEXT_TELEMETRY_DISABLED=1 \
+    NO_PROXY=127.0.0.1,localhost no_proxy=127.0.0.1,localhost \
+    D3_HARNESS=1 D3_PHASE="$phase" D3_RUN_ID="$run_id" \
+    D3_LEARNER_A_USERNAME="$learner_a_username" D3_LEARNER_A_PASSWORD="$learner_a_password" \
+    D3_LEARNER_B_USERNAME="$learner_b_username" D3_LEARNER_B_PASSWORD="$learner_b_password" \
+    D3_EVIDENCE_DIR="$evidence_dir" WEB_BASE_URL="$frontend_url" D3_BACKEND_URL="$backend_url" \
+    PW_SERIAL=1 \
+    PW_OUTPUT_DIR="$runtime_root/playwright-$phase-results" \
+    PW_HTML_REPORT_DIR="$runtime_root/playwright-$phase-report" \
+    "$python_bin" -c 'import os,sys; os.setsid(); os.execvpe(sys.argv[1],sys.argv[1:],os.environ)' \
+      "$node_bin" ./node_modules/playwright/cli.js test "$spec" --project=day3-school-loop \
+      --reporter=line \
+      >"$playwright_log" 2>&1 &
+  playwright_pid=$!
+  assert_owned_group "$playwright_pid"
+  if ! wait "$playwright_pid"; then
+    cp "$playwright_log" "$evidence_dir/playwright-$phase.failed.log"
+    chmod 600 "$evidence_dir/playwright-$phase.failed.log"
+    append_runtime "failed_phase=$phase"
+    sed -n '1,360p' "$playwright_log" >&2
+    return 1
+  fi
+  stop_group "$playwright_pid"
+  playwright_pid=""
+  cp "$playwright_log" "$evidence_dir/playwright-$phase.log"
+  chmod 600 "$evidence_dir/playwright-$phase.log"
+}
+
+publish_sentinel() {
+  "$python_bin" - "$completion_sentinel" "$1" <<'PY'
+import os
+import sys
+sentinel, digest = sys.argv[1:]
+temporary = f"{sentinel}.tmp-{os.getpid()}"
+fd = os.open(temporary, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+try:
+    with os.fdopen(fd, "wb") as output:
+        output.write(f"complete\nmanifest_sha256={digest}\n".encode())
+        output.flush()
+        os.fsync(output.fileno())
+    os.replace(temporary, sentinel)
+    os.chmod(sentinel, 0o600)
+finally:
+    try:
+        os.unlink(temporary)
+    except FileNotFoundError:
+        pass
+PY
+}
+
+seed_runtime
+provider_preflight 0 "$evidence_dir/provider.off.json"
+append_runtime "process_environment=allowlisted"
+append_runtime "process_overrides=ignored"
+append_runtime "pocketbase=disabled"
+append_runtime "paid_provider=disabled"
+append_runtime "playwright_output=runtime-owned"
+append_runtime "playwright_repo_output_start=absent"
+append_runtime "ui_repair_provider_mode=off"
+port_closed "$backend_port"
+port_closed "$frontend_port"
+start_backend
+start_frontend
+
+local_curl --fail --silent --show-error -X POST "$frontend_url/api/v1/auth/register" \
+  -H "Content-Type: application/json" \
+  --data "{\"username\":\"$admin_username\",\"password\":\"$admin_password\"}" >/dev/null
+local_curl --fail --silent --show-error -c "$admin_cookie" \
+  -X POST "$frontend_url/api/v1/auth/login" -H "Content-Type: application/json" \
+  --data "{\"username\":\"$admin_username\",\"password\":\"$admin_password\"}" >/dev/null
+local_curl --fail --silent --show-error -b "$admin_cookie" \
+  -H "Origin: $frontend_url" -H "Content-Type: application/json" \
+  -X POST "$frontend_url/api/v1/auth/users" \
+  --data "{\"username\":\"$learner_a_username\",\"password\":\"$learner_a_password\"}" \
+  > "$runtime_root/learner-a-created.json"
+local_curl --fail --silent --show-error -b "$admin_cookie" \
+  -H "Origin: $frontend_url" -H "Content-Type: application/json" \
+  -X POST "$frontend_url/api/v1/auth/users" \
+  --data "{\"username\":\"$learner_b_username\",\"password\":\"$learner_b_password\"}" \
+  > "$runtime_root/learner-b-created.json"
+learner_a_id="$("$python_bin" -c 'import json,sys; value=json.load(open(sys.argv[1], encoding="utf-8")); assert value["role"] == "user" and value["user_id"]; print(value["user_id"])' "$runtime_root/learner-a-created.json")"
+learner_b_id="$("$python_bin" -c 'import json,sys; value=json.load(open(sys.argv[1], encoding="utf-8")); assert value["role"] == "user" and value["user_id"]; print(value["user_id"])' "$runtime_root/learner-b-created.json")"
+for learner_id in "$learner_a_id" "$learner_b_id"; do
+  local_curl --fail --silent --show-error -b "$admin_cookie" \
+    -H "Origin: $frontend_url" -H "Content-Type: application/json" \
+    -X PUT "$frontend_url/api/v1/multi-user/users/$learner_id/grants" \
+    --data '{"grant":{"version":2,"models":{"llm":[{"profile_id":"llm-profile-day3-local","model_ids":["llm-model-day3-local"]}]},"knowledge_bases":[],"skills":[],"partners":[],"enabled_tools":[],"mcp_tools":[],"cli_apps":[],"exec_enabled":false,"course_source_uploads":true}}' \
+    >/dev/null
+done
+
+run_browser repair tests/e2e/day3-school-loop.pre.spec.ts
+test -s "$evidence_dir/day3-school-loop.repair.json"
+cp "$backend_log" "$evidence_dir/backend.repair.log"
+cp "$frontend_log" "$evidence_dir/frontend.repair.log"
+chmod 600 "$evidence_dir/backend.repair.log" "$evidence_dir/frontend.repair.log"
+stop_application
+append_runtime "ui_repair_transition_groups=closed"
+
+deterministic_mode=1
+backend_log="$runtime_root/backend.pre.log"
+frontend_log="$runtime_root/frontend.pre.log"
+provider_preflight 1 "$evidence_dir/provider.pre.json"
+append_runtime "school_loop_provider_mode=deterministic-local"
+start_backend
+start_frontend
+run_browser pre tests/e2e/day3-school-loop.pre.spec.ts
+test -s "$evidence_dir/day3-school-loop.pre.json"
+cp "$backend_log" "$evidence_dir/backend.pre.log"
+cp "$frontend_log" "$evidence_dir/frontend.pre.log"
+chmod 600 "$evidence_dir/backend.pre.log" "$evidence_dir/frontend.pre.log"
+
+stop_application
+append_runtime "cold_restart_pre_frontend_group=closed"
+append_runtime "cold_restart_pre_backend_group=closed"
+deterministic_ingestion_delay_ms=30000
+backend_log="$runtime_root/backend.interrupt.log"
+frontend_log="$runtime_root/frontend.interrupt.log"
+start_backend
+start_frontend
+run_browser interrupt tests/e2e/day3-school-loop.pre.spec.ts
+test -s "$evidence_dir/day3-school-loop.interrupt.json"
+cp "$backend_log" "$evidence_dir/backend.interrupt.log"
+cp "$frontend_log" "$evidence_dir/frontend.interrupt.log"
+chmod 600 "$evidence_dir/backend.interrupt.log" "$evidence_dir/frontend.interrupt.log"
+stop_application
+append_runtime "cold_restart_interrupt_frontend_group=closed"
+append_runtime "cold_restart_interrupt_backend_group=closed"
+deterministic_ingestion_delay_ms=0
+backend_log="$runtime_root/backend.post.log"
+frontend_log="$runtime_root/frontend.post.log"
+start_backend
+start_frontend
+run_browser post tests/e2e/day3-school-loop.post.spec.ts
+test -s "$evidence_dir/day3-school-loop.post.json"
+if [ -e "$repo_root/web/test-results" ]; then
+  echo "Playwright wrote outside the disposable runtime root." >&2
+  exit 1
+fi
+append_runtime "playwright_repo_output_end=absent"
+
+env -i PATH="$(dirname "$python_bin"):/usr/bin:/bin" \
+  DEEPTUTOR_HOME="$runtime_root" DEEPTUTOR_IGNORE_PROCESS_ENV_OVERRIDES=true \
+  D3_EXPECTED_SECRET_ADMIN="$admin_password" \
+  D3_EXPECTED_SECRET_A="$learner_a_password" D3_EXPECTED_SECRET_B="$learner_b_password" \
+  "$python_bin" "$validator" pre-cleanup \
+  --evidence-dir "$evidence_dir" --runtime-root "$runtime_root" \
+  --run-id "$run_id" --learner-a "$learner_a_username" --learner-b "$learner_b_username"
+
+source_end_head="$(git -C "$repo_root" rev-parse HEAD)"
+source_end_branch="$(git -C "$repo_root" branch --show-current)"
+source_end_state=clean
+if [ -n "$(git -C "$repo_root" status --porcelain=v1 --untracked-files=normal)" ]; then source_end_state=dirty; fi
+source_end_digest="$(source_digest)"
+printf 'source_end_head=%s\nsource_end_branch=%s\nsource_end_worktree=%s\nsource_end_tree_digest=%s\n' \
+  "$source_end_head" "$source_end_branch" "$source_end_state" "$source_end_digest" >> "$evidence_dir/runtime.txt"
+chmod 600 "$evidence_dir/runtime.txt"
+if [ "$source_end_head" != "$source_head" ] || [ "$source_end_branch" != "$source_branch" ] || \
+  [ "$source_end_state" != "$source_state" ] || [ "$source_end_digest" != "$source_start_digest" ]; then
+  echo "Day 3 source identity changed during proof." >&2
+  exit 1
+fi
+printf 'backend_port=%s\nfrontend_port=%s\nnode=%s\npython=%s\n' \
+  "$backend_port" "$frontend_port" "$("$node_bin" --version)" \
+  "$("$python_bin" --version 2>&1)" >> "$evidence_dir/runtime.txt"
+chmod 600 "$evidence_dir/runtime.txt"
+
+if ! cleanup; then echo "Day 3 cleanup failed." >&2; exit 1; fi
+port_closed "$frontend_port"
+port_closed "$backend_port"
+source_cleanup_head="$(git -C "$repo_root" rev-parse HEAD)"
+source_cleanup_branch="$(git -C "$repo_root" branch --show-current)"
+source_cleanup_state=clean
+if [ -n "$(git -C "$repo_root" status --porcelain=v1 --untracked-files=normal)" ]; then source_cleanup_state=dirty; fi
+source_cleanup_digest="$(source_digest)"
+printf 'source_cleanup_head=%s\nsource_cleanup_branch=%s\nsource_cleanup_worktree=%s\nsource_cleanup_tree_digest=%s\n' \
+  "$source_cleanup_head" "$source_cleanup_branch" "$source_cleanup_state" \
+  "$source_cleanup_digest" >> "$evidence_dir/runtime.txt"
+chmod 600 "$evidence_dir/runtime.txt"
+if [ "$source_cleanup_head" != "$source_head" ] || \
+  [ "$source_cleanup_branch" != "$source_branch" ] || \
+  [ "$source_cleanup_state" != "$source_state" ] || \
+  [ "$source_cleanup_digest" != "$source_start_digest" ]; then
+  echo "Day 3 source identity changed before final validation." >&2
+  exit 1
+fi
+env -i PATH="$(dirname "$python_bin"):/usr/bin:/bin" \
+  D3_EXPECTED_SECRET_ADMIN="$admin_password" \
+  D3_EXPECTED_SECRET_A="$learner_a_password" D3_EXPECTED_SECRET_B="$learner_b_password" \
+  "$python_bin" "$validator" final --evidence-dir "$evidence_dir" \
+  --run-id "$run_id" --learner-a "$learner_a_username" --learner-b "$learner_b_username"
+source_sentinel_head="$(git -C "$repo_root" rev-parse HEAD)"
+source_sentinel_branch="$(git -C "$repo_root" branch --show-current)"
+source_sentinel_state=clean
+if [ -n "$(git -C "$repo_root" status --porcelain=v1 --untracked-files=normal)" ]; then source_sentinel_state=dirty; fi
+source_sentinel_digest="$(source_digest)"
+if [ "$source_sentinel_head" != "$source_head" ] || \
+  [ "$source_sentinel_branch" != "$source_branch" ] || \
+  [ "$source_sentinel_state" != "$source_state" ] || \
+  [ "$source_sentinel_digest" != "$source_start_digest" ]; then
+  echo "Day 3 source identity changed before sentinel publication." >&2
+  exit 1
+fi
+manifest_sha="$("$python_bin" - "$evidence_dir/manifest.json" <<'PY'
+import hashlib
+import sys
+from pathlib import Path
+print(hashlib.sha256(Path(sys.argv[1]).read_bytes()).hexdigest())
+PY
+)"
+publish_sentinel "$manifest_sha"
+test -f "$completion_sentinel"
+test ! -L "$completion_sentinel"
+sentinel_mode="$(stat -f '%Lp' "$completion_sentinel" 2>/dev/null || stat -c '%a' "$completion_sentinel")"
+if [ "$sentinel_mode" != 600 ]; then echo "Day 3 sentinel must be mode 600." >&2; exit 1; fi
+printf 'Day 3 school-loop evidence: %s\n' "$evidence_dir"

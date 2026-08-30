@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from datetime import datetime, timezone
 import json
 import logging
@@ -236,6 +237,42 @@ def save_user(username: str, hashed_password: str, role: Role = "user") -> dict[
         users[username] = record
         _write_users(users)
     return record
+
+
+def register_first_user(
+    username: str,
+    plain_password: str,
+    *,
+    password_hasher: Callable[[str], str],
+    env_username: str = "",
+    env_password_hash: str = "",
+) -> dict[str, Any] | None:
+    """Atomically create the one bootstrap administrator.
+
+    ``None`` means an account already exists, so callers must keep public
+    self-registration closed.  Reading the store and writing the first record
+    share ``_USERS_WRITE_LOCK`` to make that decision indivisible for standard
+    single-process deployments.  The effective settings-backed bootstrap user
+    participates in the same check, and the expensive password hash is computed
+    only after the caller wins admission. ``load_users`` remains fail-closed
+    when an existing store cannot be read.
+    """
+    with _USERS_WRITE_LOCK:
+        users = load_users(env_username, env_password_hash)
+        if users:
+            return None
+        hashed_password = password_hasher(plain_password)
+        record = {
+            "id": new_user_id(),
+            "hash": hashed_password,
+            "role": "admin",
+            "created_at": utc_now(),
+            "disabled": False,
+            "avatar": "",
+        }
+        users[username] = record
+        _write_users(users)
+        return record
 
 
 def list_user_info(  # nosec B107 - empty defaults mean "no env fallback supplied".

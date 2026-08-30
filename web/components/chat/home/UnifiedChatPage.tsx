@@ -33,6 +33,10 @@ import { TurnNavigator } from '@/components/chat/home/TurnNavigator'
 import SessionLoadingView from '@/components/chat/home/SessionLoadingView'
 import { CourseBar } from '@/components/courses/CourseBar'
 import { useCapabilityAccess } from '@/components/access/CapabilityAccessContext'
+import {
+  CapabilityCheckingNotice,
+  CapabilityProbeFailureNotice,
+} from '@/components/access/RequireCapability'
 import { useCourses } from '@/context/CourseContext'
 import { courseIdForChatSession, resolveSessionCourseView } from '@/lib/course-selection'
 import { getCourseCapabilities } from '@/lib/course-api'
@@ -94,7 +98,7 @@ import {
   type OutlineItem,
 } from '@/lib/research-types'
 import { listKnowledgeBases } from '@/lib/knowledge-api'
-import { getSubagentSettings } from '@/lib/subagents-api'
+import { getSubagentConsultSettings } from '@/lib/subagents-api'
 import { listLLMOptions, type LLMOption } from '@/lib/llm-options'
 import { getEnabledOptionalTools, invalidateEnabledOptionalToolsCache } from '@/lib/tools-settings'
 import { downloadChatMarkdown } from '@/lib/chat-export'
@@ -332,7 +336,14 @@ export default function UnifiedChatPage({
   const params = useParams<{ sessionId?: string[] }>()
   const router = useRouter()
   const { t } = useTranslation()
-  const { hasLlm } = useCapabilityAccess()
+  const {
+    known: llmAccessKnown,
+    loading: llmAccessLoading,
+    error: llmAccessError,
+    hasLlm,
+    refresh: refreshLlmAccess,
+  } = useCapabilityAccess()
+  const canUseLlm = llmAccessKnown && hasLlm
   const sessionIdParam =
     routeSessionId !== undefined ? routeSessionId : params.sessionId?.[0] ?? null
   const { setActiveSessionId, language: appLanguage } = useAppShell()
@@ -636,6 +647,7 @@ export default function UnifiedChatPage({
   // session detail. Holds an AbortController so the user can cancel.
   const [sessionLoading, setSessionLoading] = useState(false)
   const loadAbortRef = useRef<AbortController | null>(null)
+  const sessionLoadEpochRef = useRef(0)
   // Bridge ref: ``ChatComposer`` writes a prefill function into this on
   // mount; ``ChatMessageList`` reads it via ``handlePrefillComposer`` so an
   // ``AskUserOptions`` chip click can drop text into the composer textarea.
@@ -981,13 +993,14 @@ export default function UnifiedChatPage({
   /* ---- URL-driven session loading ---- */
 
   const navigateToHome = useCallback(() => {
-    router.replace('/home', { scroll: false })
-  }, [router])
+    router.replace(courseRouteBase ?? '/home', { scroll: false })
+  }, [courseRouteBase, router])
 
   /** Abort in-flight load + navigate home. */
   const cancelSessionLoad = useCallback(() => {
     loadAbortRef.current?.abort()
     loadAbortRef.current = null
+    sessionLoadEpochRef.current += 1
     setSessionLoading(false)
     navigateToHome()
   }, [navigateToHome])
@@ -1003,24 +1016,29 @@ export default function UnifiedChatPage({
    */
   const startSessionLoad = useCallback(
     (sid: string) => {
-      loadAbortRef.current?.abort()
       const ctrl = new AbortController()
       loadAbortRef.current = ctrl
+      const requestEpoch = ++sessionLoadEpochRef.current
+      const current = () =>
+        loadAbortRef.current === ctrl &&
+        sessionLoadEpochRef.current === requestEpoch &&
+        !ctrl.signal.aborted
       const cached = showCachedSession(sid)
       setSessionLoading(!cached)
 
       void loadSession(sid, {
         signal: ctrl.signal,
+        isCurrent: current,
         revalidate: cached,
       })
         .then(() => {
-          if (!ctrl.signal.aborted) {
+          if (current()) {
             loadAbortRef.current = null
             setSessionLoading(false)
           }
         })
         .catch(() => {
-          if (!ctrl.signal.aborted) {
+          if (current()) {
             loadAbortRef.current = null
             setSessionLoading(false)
             // A background refresh that fails leaves the cached copy on
@@ -1032,22 +1050,27 @@ export default function UnifiedChatPage({
     [loadSession, navigateToHome, showCachedSession]
   )
 
-  // Initial mount — load the session from the URL.
-  // Uses a ref-based flag so Strict Mode double-mount doesn't break the flow:
-  // when React tears down + re-mounts in dev, we reset initialLoadRef in
-  // cleanup so the second mount restarts the load cleanly. The abort is
-  // deliberately OMITTED from cleanup — cancelSessionLoad handles
-  // user-initiated cancellation.
+  // Initial mount — load the session from the URL. Schedule it one task later
+  // so React Strict Mode's development setup → cleanup → setup replay clears
+  // the first schedule before it can issue a duplicate GET or draft session.
+  // Once the load has started, cleanup invalidates its route generation so an
+  // unmounted Course A cannot select a late session after Course B mounts.
   useEffect(() => {
-    if (initialLoadRef.current) return
-    initialLoadRef.current = true
-    if (sessionIdParam) {
-      startSessionLoad(sessionIdParam)
-    } else {
-      newSession()
-    }
+    const initialLoadTimer = window.setTimeout(() => {
+      if (initialLoadRef.current) return
+      initialLoadRef.current = true
+      if (sessionIdParam) {
+        startSessionLoad(sessionIdParam)
+      } else {
+        newSession()
+      }
+    }, 0)
+
     return () => {
-      initialLoadRef.current = false
+      window.clearTimeout(initialLoadTimer)
+      if (!initialLoadRef.current) return
+      loadAbortRef.current = null
+      sessionLoadEpochRef.current += 1
     }
   }, []) // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -1056,9 +1079,11 @@ export default function UnifiedChatPage({
   useEffect(() => {
     if (sessionIdParam === prevSessionIdParam.current) return
     prevSessionIdParam.current = sessionIdParam
-    // Abort any in-flight session load from the previous param
-    loadAbortRef.current?.abort()
+    // Invalidate any in-flight session load from the previous param. The
+    // logical generation gate prevents stale shared-state writes without
+    // producing an avoidable browser-level aborted request.
     loadAbortRef.current = null
+    sessionLoadEpochRef.current += 1
     if (sessionIdParam) {
       if (sessionIdParam === state.sessionId) {
         setSessionLoading(false)
@@ -1557,17 +1582,18 @@ export default function UnifiedChatPage({
     [state.knowledgeBases, agentNameSet]
   )
   // How many times TEEECHR may consult the selected agent this turn. Seeded
-  // from the configured default; the composer's stepper overrides it per turn.
+  // from the learner-safe configured default; deployment-wide backend models,
+  // prompts, and permissions remain behind the separate admin settings route.
   const [subagentBudget, setSubagentBudget] = useState<number | null>(null)
   useEffect(() => {
-    void getSubagentSettings()
+    void getSubagentConsultSettings()
       .then(settings => setSubagentBudget(settings.consult_budget))
       .catch(() => undefined)
   }, [])
 
   const handleSend = useCallback(
     async (content: string) => {
-      if (courseSessionReadOnly || !hasLlm) return
+      if (courseSessionReadOnly || !canUseLlm) return
       if (
         (!content &&
           !attachments.length &&
@@ -1655,7 +1681,7 @@ export default function UnifiedChatPage({
       attachments,
       courseMode,
       courseSessionReadOnly,
-      hasLlm,
+      canUseLlm,
       bookReferencesPayload,
       historyReferencesPayload,
       isQuizMode,
@@ -2168,13 +2194,13 @@ export default function UnifiedChatPage({
                       onEditMessage={editMessage}
                       onSwitchBranch={switchBranch}
                       onSubmitUserReply={submitUserReply}
-                      modelActionsEnabled={hasLlm}
+                      modelActionsEnabled={canUseLlm}
                       courseActionsEnabled={
                         !disableCourseLearnerActions &&
                         courseMode &&
                         !courseSessionReadOnly &&
                         Boolean(actionCourse) &&
-                        hasLlm
+                        canUseLlm
                       }
                       courseReadiness={courseReadiness}
                       generalFlashcardsEnabled={
@@ -2226,19 +2252,43 @@ export default function UnifiedChatPage({
                   </button>
                 ) : null}
               </div>
-            ) : !hasLlm ? (
-              <div className="mx-auto mb-5 w-full max-w-3xl rounded-2xl border border-[var(--border)] bg-[var(--muted)]/35 px-4 py-3 text-sm">
-                <div className="font-medium text-[var(--foreground)]">
-                  {t('Course organization and learning remain available.')}
+            ) : !llmAccessKnown && llmAccessLoading ? (
+              <CapabilityCheckingNotice />
+            ) : !llmAccessKnown && llmAccessError ? (
+              <CapabilityProbeFailureNotice
+                compact
+                onRetry={() => void refreshLlmAccess()}
+              />
+            ) : !llmAccessKnown ? (
+              <CapabilityCheckingNotice />
+            ) : !canUseLlm ? (
+              <>
+                {llmAccessError ? (
+                  <CapabilityProbeFailureNotice
+                    compact
+                    onRetry={() => void refreshLlmAccess()}
+                  />
+                ) : null}
+                <div className="mx-auto mb-5 w-full max-w-3xl rounded-2xl border border-[var(--border)] bg-[var(--muted)]/35 px-4 py-3 text-sm">
+                  <div className="font-medium text-[var(--foreground)]">
+                    {t('Course organization and learning remain available.')}
+                  </div>
+                  <div className="mt-1 text-xs text-[var(--muted-foreground)]">
+                    {t(
+                      'Chat and regeneration require an assigned LLM model. Contact your administrator for model access.'
+                    )}
+                  </div>
                 </div>
-                <div className="mt-1 text-xs text-[var(--muted-foreground)]">
-                  {t(
-                    'Chat and regeneration require an assigned LLM model. Contact your administrator for model access.'
-                  )}
-                </div>
-              </div>
+              </>
             ) : (
-              <ChatComposer
+              <>
+                {llmAccessError ? (
+                  <CapabilityProbeFailureNotice
+                    compact
+                    onRetry={() => void refreshLlmAccess()}
+                  />
+                ) : null}
+                <ChatComposer
                 composerRef={composerRef}
                 capMenuRef={capMenuRef}
                 capBtnRef={capBtnRef}
@@ -2315,7 +2365,8 @@ export default function UnifiedChatPage({
                 prefillInputRef={prefillInputRef}
                 courseMode={courseMode}
                 hideCourseScope={hideCourseScope}
-              />
+                />
+              </>
             )}
             <div
               aria-hidden="true"

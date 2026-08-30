@@ -1,14 +1,15 @@
 from contextlib import asynccontextmanager
 import logging
+import mimetypes
 import sys
 
 from fastapi import Depends, FastAPI, HTTPException, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
-from fastapi.staticfiles import StaticFiles
+from fastapi.responses import FileResponse, JSONResponse
 
 from deeptutor.api.auth_validation import login_validation_exception_handler
+from deeptutor.api.request_body_limits import NotebookUpsertBodyLimitMiddleware
 from deeptutor.logging import configure_logging
 from deeptutor.services.config import (
     ensure_runtime_settings_files,
@@ -16,7 +17,7 @@ from deeptutor.services.config import (
     load_auth_settings,
     load_system_settings,
 )
-from deeptutor.services.config.origins import normalize_origins
+from deeptutor.services.config.origins import browser_origins, is_production_environment
 from deeptutor.services.path_service import get_path_service
 
 ensure_runtime_settings_files()
@@ -42,19 +43,6 @@ CONFIG_DRIFT_ERROR_TEMPLATE = (
     "registered in the runtime tool registry. Register the missing tools or "
     "remove the stale tool names from the capability manifests."
 )
-
-
-class SafeOutputStaticFiles(StaticFiles):
-    """Static file mount that only exposes explicitly whitelisted artifacts."""
-
-    def __init__(self, *args, path_service, **kwargs):
-        super().__init__(*args, **kwargs)
-        self._path_service = path_service
-
-    async def get_response(self, path: str, scope):
-        if not self._path_service.is_public_output_path(path):
-            raise HTTPException(status_code=404, detail="Output not found")
-        return await super().get_response(path, scope)
 
 
 def validate_tool_consistency():
@@ -97,29 +85,19 @@ def validate_course_backend_compatibility() -> None:
 
 
 def _build_cors_settings() -> dict[str, object]:
-    """Build CORS settings for both localhost and remote Docker deployments."""
+    """Build CORS settings for local and production browser trust boundaries."""
     system_settings = load_system_settings()
     auth_settings = load_auth_settings()
-    frontend_port = str(system_settings["frontend_port"])
-    extra_origins = normalize_origins(
-        [system_settings["cors_origin"], system_settings["cors_origins"]]
-    )
-    origins = [
-        f"http://localhost:{frontend_port}",
-        f"http://127.0.0.1:{frontend_port}",
-        "http://localhost:3000",
-        "http://127.0.0.1:3000",
-    ]
-    for origin in extra_origins:
-        if origin not in origins:
-            origins.append(origin)
+    production = is_production_environment()
+    origins = browser_origins(system_settings, production=production)
 
     # Auth is disabled by default. In that local/single-user mode, mirror the
     # pre-v1.3.8 behavior and allow remote Docker/LAN origins out of the box.
     # When auth is enabled, require explicit CORS_ORIGIN(S) for credentialed
-    # cross-origin requests.
-    allow_origin_regex = None if auth_settings["enabled"] else r"https?://.*"
-    mode = "explicit" if auth_settings["enabled"] else "permissive"
+    # cross-origin requests. Production always follows that exact-origin
+    # policy, even if an operator has temporarily disabled login.
+    allow_origin_regex = None if production or auth_settings["enabled"] else r"https?://.*"
+    mode = "production" if production else ("explicit" if auth_settings["enabled"] else "permissive")
     return {
         "allow_origins": origins,
         "allow_origin_regex": allow_origin_regex,
@@ -227,6 +205,19 @@ async def lifespan(app: FastAPI):
 
     # Execute on shutdown
     logger.info("Application shutdown")
+
+    # Course-source tasks own quota leases and staged private data. Drain them
+    # while the personal stores are still available so cancellation can
+    # terminalize exact source rows and clean their owned shards.
+    try:
+        from deeptutor.api.routers.courses import (
+            shutdown_course_source_background_tasks,
+        )
+
+        await shutdown_course_source_background_tasks()
+        logger.info("Course source tasks stopped")
+    except Exception as e:
+        logger.warning(f"Failed to stop Course source tasks: {e}")
 
     # Stop cron scheduler
     try:
@@ -356,6 +347,7 @@ async def enforce_cookie_origin(request, call_next):
     return await call_next(request)
 
 
+app.add_middleware(NotebookUpsertBodyLimitMiddleware)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=_cors_settings["allow_origins"],
@@ -365,11 +357,6 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Mount a filtered view over user outputs.
-# Only whitelisted artifact paths are readable through the static handler.
-path_service = get_path_service()
-user_dir = path_service.get_public_outputs_root()
-
 # Initialize user directories on startup
 try:
     from deeptutor.services.setup import init_user_directories
@@ -377,14 +364,9 @@ try:
     init_user_directories()
 except Exception:
     # Fallback: just create the main directory if it doesn't exist
+    user_dir = get_path_service().get_public_outputs_root()
     if not user_dir.exists():
         user_dir.mkdir(parents=True)
-
-app.mount(
-    "/api/outputs",
-    SafeOutputStaticFiles(directory=str(user_dir), path_service=path_service),
-    name="outputs",
-)
 
 # Import routers only after runtime settings are initialized.
 # Some router modules load YAML settings at import time.
@@ -440,6 +422,46 @@ _auth = [Depends(require_auth)]
 # process-wide, so management is admin-gated in multi-user deployments
 # (single-user local runs are implicitly admin — no behaviour change there).
 _admin = [Depends(require_admin)]
+_ACTIVE_OUTPUT_MEDIA_TYPES = frozenset(
+    {
+        "text/html",
+        "application/xhtml+xml",
+        "image/svg+xml",
+        "text/xml",
+        "application/xml",
+        "application/xslt+xml",
+        "text/xsl",
+        "text/javascript",
+        "application/javascript",
+        "text/ecmascript",
+        "application/ecmascript",
+    }
+)
+
+
+@app.get("/api/outputs/{output_path:path}", include_in_schema=False)
+async def get_output(
+    output_path: str,
+    _: object = Depends(require_auth),
+) -> FileResponse:
+    """Serve a generated artifact only from the authenticated user's workspace."""
+    path_service = get_path_service()
+    target = (path_service.get_public_outputs_root() / output_path).resolve()
+    if not path_service.is_public_output_path(target):
+        # A foreign user's relative path resolves inside the caller's own root
+        # and therefore becomes indistinguishable from a missing artifact.
+        raise HTTPException(status_code=404, detail="Output not found")
+    media_type, _ = mimetypes.guess_type(target.name)
+    headers = {
+        "Cache-Control": "private, no-store",
+        "X-Content-Type-Options": "nosniff",
+    }
+    if media_type in _ACTIVE_OUTPUT_MEDIA_TYPES:
+        # Generated artifacts are user-controlled enough that active document
+        # types must not execute in the authenticated application origin.
+        headers["Content-Disposition"] = "attachment"
+        headers["Content-Security-Policy"] = "sandbox; default-src 'none'"
+    return FileResponse(path=target, media_type=media_type, headers=headers)
 
 app.include_router(
     multi_user_router,

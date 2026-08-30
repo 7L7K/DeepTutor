@@ -1,10 +1,20 @@
 from __future__ import annotations
 
+import asyncio
 from types import SimpleNamespace
 
 import pytest
 
 from deeptutor.courses.ingestion import _current_personal_user, run_source_operation
+
+
+@pytest.fixture(autouse=True)
+def _allow_existing_course_source_tasks(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Existing fence tests focus on account/revision changes, not grant files."""
+    monkeypatch.setattr(
+        "deeptutor.courses.ingestion._course_source_upload_authorized",
+        lambda _user: True,
+    )
 
 
 @pytest.mark.asyncio
@@ -58,8 +68,8 @@ async def test_revocation_after_provider_work_still_prevents_course_commit(
         role="user",
         scope=UserScope(kind="user", user_id="u_owner", root=tmp_path),
     )
-    identities = iter([user, None])
-    called = {"provider": False, "repository": False}
+    identities = iter([user, user, None])
+    called = {"provider": False, "failed": False, "ready": False}
     statuses: list[tuple[str, str]] = []
     monkeypatch.setattr(
         "deeptutor.courses.ingestion._current_personal_user",
@@ -69,15 +79,28 @@ async def test_revocation_after_provider_work_still_prevents_course_commit(
     async def provider(*_args, **_kwargs):
         called["provider"] = True
 
-    class ForbiddenRepository:
+    class Repository:
         def __init__(self, *_args, **_kwargs):
-            called["repository"] = True
+            pass
+
+        def fail_source_operation(self, *_args, **_kwargs):
+            called["failed"] = True
+
+        def transition_source(self, *_args, **_kwargs):
+            called["ready"] = True
 
     monkeypatch.setattr(
         "deeptutor.api.routers.knowledge.run_initialization_task", provider
     )
     monkeypatch.setattr(
-        "deeptutor.courses.ingestion.CourseRepository", ForbiddenRepository
+        "deeptutor.courses.ingestion.CourseRepository", Repository
+    )
+    monkeypatch.setattr(
+        "deeptutor.courses.ingestion.get_personal_path_service",
+        lambda _owner: SimpleNamespace(
+            get_courses_db=lambda: tmp_path / "courses.db",
+            get_knowledge_bases_root=lambda: tmp_path / "knowledge",
+        ),
     )
     monkeypatch.setattr(
         "deeptutor.courses.ingestion.TaskIDManager.get_instance",
@@ -96,17 +119,158 @@ async def test_revocation_after_provider_work_still_prevents_course_commit(
     await run_source_operation(
         {
             "owner_user_id": "u_owner",
+            "course_id": "crs_one",
+            "course_revision": 1,
+            "course_write_epoch": 0,
+            "source_id": "src_one",
+            "source_revision": 1,
+            "source_content_sha256": "a" * 64,
             "operation_id": "op_revoked_after_provider",
             "initialize": True,
             "kb_name": "course_crs_one_src_one",
-            "base_dir": "/tmp/not-used",
+            "base_dir": str(tmp_path / "knowledge"),
             "uploaded_paths": [],
             "rag_provider": "llamaindex",
+            "tree_bytes_before": 0,
+            "reserved_growth_bytes": 32 * 1024 * 1024,
         }
     )
 
-    assert called == {"provider": True, "repository": False}
+    assert called == {"provider": True, "failed": True, "ready": False}
     assert statuses == [("op_revoked_after_provider", "cancelled")]
+
+
+@pytest.mark.asyncio
+async def test_upload_grant_revocation_before_provider_prevents_spend(
+    monkeypatch, tmp_path
+) -> None:
+    from deeptutor.multi_user.models import CurrentUser, UserScope
+
+    user = CurrentUser(
+        id="u_owner",
+        username="owner",
+        role="user",
+        scope=UserScope(kind="user", user_id="u_owner", root=tmp_path),
+    )
+    called = {"provider": False}
+    monkeypatch.setattr(
+        "deeptutor.courses.ingestion._current_personal_user", lambda _owner: user
+    )
+    monkeypatch.setattr(
+        "deeptutor.courses.ingestion._course_source_upload_authorized",
+        lambda _user: False,
+    )
+
+    async def provider(*_args, **_kwargs):
+        called["provider"] = True
+
+    monkeypatch.setattr(
+        "deeptutor.api.routers.knowledge.run_initialization_task", provider
+    )
+    monkeypatch.setattr(
+        "deeptutor.courses.ingestion.TaskIDManager.get_instance",
+        lambda: SimpleNamespace(update_task_status=lambda *_args, **_kwargs: None),
+    )
+    monkeypatch.setattr(
+        "deeptutor.courses.ingestion.get_task_stream_manager",
+        lambda: SimpleNamespace(emit_failed=lambda *_args, **_kwargs: None),
+    )
+
+    await run_source_operation(
+        {
+            "owner_user_id": user.id,
+            "operation_id": "op_grant_revoked_before_provider",
+            "initialize": True,
+        }
+    )
+
+    assert called["provider"] is False
+
+
+@pytest.mark.asyncio
+async def test_upload_grant_revocation_after_provider_prevents_ready_commit(
+    monkeypatch, tmp_path
+) -> None:
+    from deeptutor.multi_user.models import CurrentUser, UserScope
+
+    user = CurrentUser(
+        id="u_owner",
+        username="owner",
+        role="user",
+        scope=UserScope(kind="user", user_id="u_owner", root=tmp_path),
+    )
+    authorizations = iter([True, False])
+    called = {"provider": False, "failed": False, "ready": False}
+    monkeypatch.setattr(
+        "deeptutor.courses.ingestion._current_personal_user", lambda _owner: user
+    )
+    monkeypatch.setattr(
+        "deeptutor.courses.ingestion._course_source_upload_authorized",
+        lambda _user: next(authorizations),
+    )
+
+    async def provider(*_args, **_kwargs):
+        called["provider"] = True
+        return True
+
+    class Repository:
+        def __init__(self, *_args, **_kwargs):
+            pass
+
+        def fail_source_operation(self, *_args, **_kwargs):
+            called["failed"] = True
+
+        def transition_source(self, *_args, **_kwargs):
+            called["ready"] = True
+
+    monkeypatch.setattr(
+        "deeptutor.api.routers.knowledge.run_initialization_task", provider
+    )
+    monkeypatch.setattr(
+        "deeptutor.courses.deterministic_provider.build_index",
+        lambda *_args, **_kwargs: True,
+    )
+    monkeypatch.setattr(
+        "deeptutor.courses.ingestion.CourseRepository", Repository
+    )
+    monkeypatch.setattr(
+        "deeptutor.courses.ingestion.get_personal_path_service",
+        lambda _owner: SimpleNamespace(
+            get_courses_db=lambda: tmp_path / "courses.db",
+            get_knowledge_bases_root=lambda: tmp_path / "knowledge",
+        ),
+    )
+    monkeypatch.setattr(
+        "deeptutor.courses.ingestion.TaskIDManager.get_instance",
+        lambda: SimpleNamespace(
+            get_task_metadata=lambda _task_id: {"status": "running"},
+            update_task_status=lambda *_args, **_kwargs: None,
+        ),
+    )
+    monkeypatch.setattr(
+        "deeptutor.courses.ingestion.get_task_stream_manager",
+        lambda: SimpleNamespace(emit_failed=lambda *_args, **_kwargs: None),
+    )
+
+    await run_source_operation(
+        {
+            "owner_user_id": user.id,
+            "course_id": "crs_one",
+            "source_id": "src_one",
+            "source_revision": 1,
+            "source_content_sha256": "a" * 64,
+            "operation_id": "op_grant_revoked_after_provider",
+            "initialize": True,
+            "kb_name": "course_crs_one_src_one",
+            "base_dir": str(tmp_path / "knowledge"),
+            "uploaded_paths": [],
+            "rag_provider": "llamaindex",
+            "tree_bytes_before": 0,
+            "reserved_growth_bytes": 32 * 1024 * 1024,
+        }
+    )
+
+    assert called == {"provider": True, "failed": True, "ready": False}
 
 
 def test_bootstrap_env_admin_is_revalidated_for_background_course_work(monkeypatch) -> None:
@@ -174,7 +338,10 @@ async def test_success_is_published_only_after_course_source_commit(
     monkeypatch.setattr("deeptutor.courses.ingestion.CourseRepository", Repository)
     monkeypatch.setattr(
         "deeptutor.courses.ingestion.get_personal_path_service",
-        lambda _owner: SimpleNamespace(get_courses_db=lambda: tmp_path / "courses.db"),
+        lambda _owner: SimpleNamespace(
+            get_courses_db=lambda: tmp_path / "courses.db",
+            get_knowledge_bases_root=lambda: tmp_path,
+        ),
     )
     monkeypatch.setattr(
         "deeptutor.courses.ingestion.TaskIDManager.get_instance", lambda: Tasks()
@@ -198,6 +365,8 @@ async def test_success_is_published_only_after_course_source_commit(
             "uploaded_paths": [],
             "rag_provider": "local-test",
             "initialize": True,
+            "tree_bytes_before": 0,
+            "reserved_growth_bytes": 32 * 1024 * 1024,
         }
     )
 
@@ -230,14 +399,19 @@ async def test_owner_revocation_terminalizes_source_row_and_unblocks_archive(
         role="user",
         scope=UserScope(kind="user", user_id=owner, root=tmp_path),
     )
-    identities = iter([user, None]) if revoked_after_provider else iter([None])
+    identities = (
+        iter([user, user, None]) if revoked_after_provider else iter([None])
+    )
     monkeypatch.setattr(
         "deeptutor.courses.ingestion._current_personal_user",
         lambda _owner: next(identities),
     )
     monkeypatch.setattr(
         "deeptutor.courses.ingestion.get_personal_path_service",
-        lambda _owner: SimpleNamespace(get_courses_db=lambda: db_path),
+        lambda _owner: SimpleNamespace(
+            get_courses_db=lambda: db_path,
+            get_knowledge_bases_root=lambda: tmp_path / "knowledge",
+        ),
     )
 
     async def provider(*_args, **_kwargs):
@@ -267,11 +441,13 @@ async def test_owner_revocation_terminalizes_source_row_and_unblocks_archive(
             "source_id": source.id,
             "source_revision": source.revision,
             "operation_id": "op_revoked",
-            "kb_name": "course_test",
-            "base_dir": str(tmp_path),
+            "kb_name": f"course_{course.id}_{source.id}",
+            "base_dir": str(tmp_path / "knowledge"),
             "uploaded_paths": [],
             "rag_provider": "local-test",
             "initialize": True,
+            "tree_bytes_before": 0,
+            "reserved_growth_bytes": 32 * 1024 * 1024,
         }
     )
 
@@ -308,7 +484,10 @@ async def test_provider_exception_terminalizes_source_row(monkeypatch, tmp_path)
     )
     monkeypatch.setattr(
         "deeptutor.courses.ingestion.get_personal_path_service",
-        lambda _owner: SimpleNamespace(get_courses_db=lambda: db_path),
+        lambda _owner: SimpleNamespace(
+            get_courses_db=lambda: db_path,
+            get_knowledge_bases_root=lambda: tmp_path / "knowledge",
+        ),
     )
 
     async def provider(*_args, **_kwargs):
@@ -336,16 +515,116 @@ async def test_provider_exception_terminalizes_source_row(monkeypatch, tmp_path)
                 "source_id": source.id,
                 "source_revision": source.revision,
                 "operation_id": "op_error",
-                "kb_name": "course_test",
-                "base_dir": str(tmp_path),
+                "kb_name": f"course_{course.id}_{source.id}",
+                "base_dir": str(tmp_path / "knowledge"),
                 "uploaded_paths": [],
                 "rag_provider": "local-test",
                 "initialize": True,
+                "tree_bytes_before": 0,
+                "reserved_growth_bytes": 32 * 1024 * 1024,
             }
         )
 
     assert repo.get_source(course.id, source.id).state == "failed"
     assert repo.archive_course(course.id, course.revision).state == "archived"
+
+
+@pytest.mark.asyncio
+async def test_background_cancellation_cleans_shard_and_terminalizes_source(
+    monkeypatch, tmp_path
+) -> None:
+    from deeptutor.courses.repository import CourseRepository
+    from deeptutor.multi_user.models import CurrentUser, UserScope
+
+    owner = "u_owner"
+    db_path = tmp_path / "courses.db"
+    kb_root = tmp_path / "knowledge"
+    repo = CourseRepository(db_path, owner)
+    course = repo.create_course("Physics")
+    source = repo.create_source(
+        course.id,
+        kind="notes",
+        display_name="week-one.txt",
+        manifest=[],
+        content_sha256="a" * 64,
+        operation_id="op_cancelled",
+    )
+    kb_name = f"course_{course.id}_{source.id}"
+    shard = kb_root / kb_name
+    shard.mkdir(parents=True)
+    (shard / "partial.bin").write_bytes(b"partial")
+    user = CurrentUser(
+        id=owner,
+        username="owner",
+        role="user",
+        scope=UserScope(kind="user", user_id=owner, root=tmp_path),
+    )
+    started = asyncio.Event()
+    statuses: list[tuple[str, str]] = []
+    monkeypatch.setattr(
+        "deeptutor.courses.ingestion._current_personal_user", lambda _owner: user
+    )
+    monkeypatch.setattr(
+        "deeptutor.courses.ingestion.get_personal_path_service",
+        lambda _owner: SimpleNamespace(
+            get_courses_db=lambda: db_path,
+            get_knowledge_bases_root=lambda: kb_root,
+        ),
+    )
+    monkeypatch.setattr(
+        "deeptutor.courses.deterministic_provider.enabled", lambda: True
+    )
+
+    async def block_before_index() -> None:
+        started.set()
+        await asyncio.Event().wait()
+
+    monkeypatch.setattr(
+        "deeptutor.courses.deterministic_provider.delay_ingestion_for_runtime_proof",
+        block_before_index,
+    )
+    monkeypatch.setattr(
+        "deeptutor.courses.ingestion.TaskIDManager.get_instance",
+        lambda: SimpleNamespace(
+            update_task_status=lambda task_id, status, **_kwargs: statuses.append(
+                (task_id, status)
+            )
+        ),
+    )
+    monkeypatch.setattr(
+        "deeptutor.courses.ingestion.get_task_stream_manager",
+        lambda: SimpleNamespace(emit_failed=lambda *_args, **_kwargs: None),
+    )
+
+    operation = asyncio.create_task(
+        run_source_operation(
+            {
+                "owner_user_id": owner,
+                "course_id": course.id,
+                "course_revision": course.revision,
+                "course_write_epoch": course.write_epoch,
+                "source_id": source.id,
+                "source_revision": source.revision,
+                "source_content_sha256": source.content_sha256,
+                "operation_id": "op_cancelled",
+                "kb_name": kb_name,
+                "base_dir": str(kb_root),
+                "uploaded_paths": [],
+                "rag_provider": "deterministic",
+                "initialize": True,
+                "tree_bytes_before": 0,
+                "reserved_growth_bytes": 32 * 1024 * 1024,
+            }
+        )
+    )
+    await started.wait()
+    operation.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await operation
+
+    assert not shard.exists()
+    assert repo.get_source(course.id, source.id).state == "failed"
+    assert statuses == [("op_cancelled", "cancelled")]
 
 
 @pytest.mark.asyncio
@@ -383,7 +662,10 @@ async def test_index_written_before_stale_commit_never_becomes_course_authority(
     )
     monkeypatch.setattr(
         "deeptutor.courses.ingestion.get_personal_path_service",
-        lambda _owner: SimpleNamespace(get_courses_db=lambda: db_path),
+        lambda _owner: SimpleNamespace(
+            get_courses_db=lambda: db_path,
+            get_knowledge_bases_root=lambda: kb_root,
+        ),
     )
 
     async def provider(initializer, *_args, **_kwargs):
@@ -416,15 +698,17 @@ async def test_index_written_before_stale_commit_never_becomes_course_authority(
             "source_id": source.id,
             "source_revision": source.revision,
             "operation_id": "op_stale_after_index",
-            "kb_name": "course_test_stale",
+            "kb_name": f"course_{course.id}_{source.id}",
             "base_dir": str(kb_root),
             "uploaded_paths": [],
             "rag_provider": "llamaindex",
             "initialize": True,
+            "tree_bytes_before": 0,
+            "reserved_growth_bytes": 32 * 1024 * 1024,
         }
     )
 
-    assert (kb_root / "course_test_stale" / "provider-index.bin").exists()
+    assert not (kb_root / f"course_{course.id}_{source.id}").exists()
     assert repo.get_source(course.id, source.id).state == "failed"
     monkeypatch.setattr(
         "deeptutor.courses.service.get_current_course_service",

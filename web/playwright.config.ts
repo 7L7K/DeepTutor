@@ -46,5 +46,38 @@ export default defineConfig({
       ],
       use: { ...devices["Desktop Chrome"], channel: "chrome" },
     },
+    {
+      // This authenticated proof generates temporary credentials. Keep every
+      // browser artifact off so no trace, video, screenshot, or HAR can retain
+      // a session cookie or typed password in the evidence directory.
+      name: "day2-learner-admin",
+      testMatch: "**/day2-learner-admin.spec.ts",
+      retries: 0,
+      use: {
+        ...devices["Desktop Chrome"],
+        channel: "chrome",
+        trace: "off",
+        video: "off",
+        screenshot: "off",
+      },
+    },
+    {
+      // The Day 3 wrapper owns disposable credentials, data, and evidence.
+      // Browser artifacts stay off so no cookie or typed password can escape
+      // the private evidence root.
+      name: "day3-school-loop",
+      testMatch: [
+        "**/day3-school-loop.pre.spec.ts",
+        "**/day3-school-loop.post.spec.ts",
+      ],
+      retries: 0,
+      use: {
+        ...devices["Desktop Chrome"],
+        channel: "chrome",
+        trace: "off",
+        video: "off",
+        screenshot: "off",
+      },
+    },
   ],
 });

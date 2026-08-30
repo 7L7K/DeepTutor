@@ -2,6 +2,7 @@ import { apiFetch, apiUrl } from "@/lib/api";
 import { invalidateClientCache, withClientCache } from "@/lib/client-cache";
 
 const SUBAGENT_SETTINGS_CACHE_KEY = "subagents:settings";
+const SUBAGENT_CONSULT_SETTINGS_CACHE_KEY = "subagents:consult-settings";
 
 /** One agent CLI backend's installability on this machine. */
 export interface SubagentBackendInfo {
@@ -165,6 +166,10 @@ export interface SubagentSettings {
   backends: Record<string, SubagentBackendConfig>;
 }
 
+export interface SubagentConsultSettings {
+  consult_budget: number;
+}
+
 /** One streamed line from the "message the agent directly" endpoint. */
 export interface SubagentStreamLine {
   channel?: string;
@@ -216,12 +221,28 @@ export async function* streamSubagentMessage(
   if (tail) yield JSON.parse(tail) as SubagentStreamLine;
 }
 
-/** Read the subagent settings (backends + consult budget).
+/** Read the learner-safe per-turn consult default.
  *
- *  Cached because the chat page only needs the default consult budget, and
- *  re-reading it on every session switch is pure overhead. Writes through
- *  ``updateSubagentSettings`` drop the cache; pass ``force`` for editors that
- *  must show the stored values. */
+ *  The full settings endpoint remains admin-only because it includes backend
+ *  models, prompts, and execution permissions. Learner chat receives only the
+ *  bounded consult budget it needs for the assigned-agent selector. */
+export async function getSubagentConsultSettings(options?: {
+  force?: boolean;
+}): Promise<SubagentConsultSettings> {
+  return withClientCache<SubagentConsultSettings>(
+    SUBAGENT_CONSULT_SETTINGS_CACHE_KEY,
+    async () => {
+      const res = await apiFetch(apiUrl("/api/v1/subagents/consult-settings"), {
+        cache: "no-store",
+      });
+      if (!res.ok) throw new Error(`Request failed: ${res.status}`);
+      return (await res.json()) as SubagentConsultSettings;
+    },
+    { force: options?.force },
+  );
+}
+
+/** Read the deployment-wide subagent settings for the admin editor. */
 export async function getSubagentSettings(options?: {
   force?: boolean;
 }): Promise<SubagentSettings> {
@@ -248,5 +269,6 @@ export async function updateSubagentSettings(
   });
   if (!res.ok) throw new Error(`Update failed: ${res.status}`);
   invalidateClientCache(SUBAGENT_SETTINGS_CACHE_KEY);
+  invalidateClientCache(SUBAGENT_CONSULT_SETTINGS_CACHE_KEY);
   return (await res.json()) as SubagentSettings;
 }

@@ -1313,6 +1313,35 @@ class SQLiteSessionStore:
     async def get_messages(self, session_id: str) -> list[dict[str, Any]]:
         return await self._run(self._get_messages_sync, session_id)
 
+    def _attachment_is_referenced_sync(self, session_id: str, attachment_id: str) -> bool:
+        """Return whether a session-owned message or notebook entry names an attachment.
+
+        Filesystem layout is not authorization.  This database reference check
+        prevents a caller who can guess an id from reading an unlinked file in
+        another session's attachment directory.
+        """
+        with self._connect() as conn:
+            if (
+                conn.execute("SELECT 1 FROM sessions WHERE id = ?", (session_id,)).fetchone()
+                is None
+            ):
+                return False
+            rows = conn.execute(
+                "SELECT attachments_json FROM messages WHERE session_id = ?", (session_id,)
+            ).fetchall()
+            rows += conn.execute(
+                "SELECT user_answer_images_json FROM notebook_entries WHERE session_id = ?",
+                (session_id,),
+            ).fetchall()
+        for row in rows:
+            for record in _json_loads(row[0], []):
+                if isinstance(record, dict) and str(record.get("id") or "") == attachment_id:
+                    return True
+        return False
+
+    async def attachment_is_referenced(self, session_id: str, attachment_id: str) -> bool:
+        return await self._run(self._attachment_is_referenced_sync, session_id, attachment_id)
+
     def _get_messages_for_context_sync(
         self, session_id: str, leaf_message_id: int | None = None
     ) -> list[dict[str, Any]]:

@@ -8,9 +8,10 @@ from pathlib import Path
 import pytest
 
 try:
-    from fastapi import FastAPI
+    from fastapi import Depends, FastAPI
     from fastapi.testclient import TestClient
 except Exception:  # pragma: no cover - optional dependency in lightweight envs
+    Depends = None
     FastAPI = None
     TestClient = None
 
@@ -651,6 +652,97 @@ def test_list_files_preserves_kb_named_default(monkeypatch, tmp_path: Path) -> N
     assert response.json()["files"][0]["name"] == "default.txt"
 
 
+@pytest.mark.parametrize(
+    ("filename", "payload", "mime_type", "disposition", "has_active_csp"),
+    [
+        (
+            "lesson.html",
+            b"<script>window.pwned = true</script>",
+            "text/html",
+            "attachment",
+            True,
+        ),
+        (
+            "diagram.svg",
+            b"<svg xmlns='http://www.w3.org/2000/svg'><script>alert(1)</script></svg>",
+            "image/svg+xml",
+            "attachment",
+            True,
+        ),
+        ("notes.txt", b"safe course notes", "text/plain", "inline", False),
+        ("cover.png", b"\x89PNG\r\n\x1a\n", "image/png", "inline", False),
+    ],
+)
+def test_uploaded_kb_file_response_blocks_active_content(
+    monkeypatch,
+    tmp_path: Path,
+    filename: str,
+    payload: bytes,
+    mime_type: str,
+    disposition: str,
+    has_active_csp: bool,
+) -> None:
+    """Raw KB downloads must not turn uploaded markup into same-origin code."""
+    manager = _ready_kb_manager(tmp_path)
+    monkeypatch.setattr(knowledge_router_module, "get_kb_manager", lambda: manager)
+    monkeypatch.setattr(knowledge_router_module, "_kb_base_dir", manager.base_dir)
+
+    async def _noop_upload_task(*_args, **_kwargs):
+        return None
+
+    monkeypatch.setattr(knowledge_router_module, "run_upload_processing_task", _noop_upload_task)
+
+    with TestClient(_build_app()) as client:
+        uploaded = client.post(
+            "/api/v1/knowledge/kb/upload",
+            files=[("files", (filename, payload, mime_type))],
+        )
+        response = client.get(f"/api/v1/knowledge/kb/files/{filename}")
+
+    assert uploaded.status_code == 200
+    assert response.status_code == 200
+    assert response.content == payload
+    assert response.headers["content-disposition"].startswith(disposition)
+    assert response.headers["x-content-type-options"] == "nosniff"
+    assert response.headers["cache-control"] == "private, no-store"
+    if has_active_csp:
+        assert response.headers["content-security-policy"] == (
+            "sandbox; default-src 'none'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'"
+        )
+    else:
+        assert "content-security-policy" not in response.headers
+
+
+@pytest.mark.parametrize(
+    ("filename", "payload"),
+    [
+        ("legacy-page.xht", b"<script>window.pwned = true</script>"),
+        ("legacy-diagram.svgz", b"\x1f\x8bnot-a-real-svgz"),
+    ],
+)
+def test_existing_active_kb_file_aliases_are_forced_to_download(
+    monkeypatch,
+    tmp_path: Path,
+    filename: str,
+    payload: bytes,
+) -> None:
+    """Legacy raw files use the same active-content policy as new uploads."""
+    manager = _ready_kb_manager(tmp_path)
+    (manager.base_dir / "kb" / "raw" / filename).write_bytes(payload)
+    monkeypatch.setattr(knowledge_router_module, "get_kb_manager", lambda: manager)
+
+    with TestClient(_build_app()) as client:
+        response = client.get(f"/api/v1/knowledge/kb/files/{filename}")
+
+    assert response.status_code == 200
+    assert response.content == payload
+    assert response.headers["content-disposition"].startswith("attachment")
+    assert response.headers["x-content-type-options"] == "nosniff"
+    assert response.headers["content-security-policy"] == (
+        "sandbox; default-src 'none'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'"
+    )
+
+
 def test_file_preview_text_accepts_default_alias(monkeypatch, tmp_path: Path) -> None:
     manager = _FakeKBManager(tmp_path / "knowledge_bases")
     manager.config["knowledge_bases"]["actual-kb"] = {
@@ -676,6 +768,8 @@ def test_file_preview_text_accepts_default_alias(monkeypatch, tmp_path: Path) ->
 
     assert response.status_code == 200
     assert response.text == "--- Slide 1 ---\nTitle"
+    assert response.headers["x-content-type-options"] == "nosniff"
+    assert "content-security-policy" not in response.headers
     assert calls["path"] == target
     assert calls["kwargs"]["max_chars"] == 200_000
 
@@ -884,7 +978,7 @@ def test_reindex_bypasses_existing_match_when_vectors_are_invalid(
     assert manager.config["knowledge_bases"]["bad-index-kb"]["status"] == "initializing"
 
 
-def test_update_config_coerces_legacy_provider_to_llamaindex() -> None:
+def test_update_config_coerces_legacy_provider_to_llamaindex(tmp_path: Path) -> None:
     """Legacy `rag_provider` values are accepted and normalized to llamaindex."""
 
     class _FakeConfigService:
@@ -899,12 +993,15 @@ def test_update_config_coerces_legacy_provider_to_llamaindex() -> None:
             return self.config
 
     fake_service = _FakeConfigService()
+    manager = _FakeKBManager(tmp_path / "knowledge_bases")
+    manager.config["knowledge_bases"]["demo"] = {"path": "demo"}
 
     config_module = importlib.import_module("deeptutor.services.config")
     app = _build_app()
 
     with pytest.MonkeyPatch.context() as monkeypatch:
         monkeypatch.setattr(config_module, "get_kb_config_service", lambda: fake_service)
+        monkeypatch.setattr(knowledge_router_module, "get_kb_manager", lambda: manager)
         with TestClient(app) as client:
             response = client.put(
                 "/api/v1/knowledge/demo/config",
@@ -915,7 +1012,7 @@ def test_update_config_coerces_legacy_provider_to_llamaindex() -> None:
     assert fake_service.config.get("rag_provider") == "llamaindex"
 
 
-def test_update_config_preserves_known_provider() -> None:
+def test_update_config_preserves_known_provider(tmp_path: Path) -> None:
     class _FakeConfigService:
         def __init__(self) -> None:
             self.config: dict = {}
@@ -928,12 +1025,15 @@ def test_update_config_preserves_known_provider() -> None:
             return self.config
 
     fake_service = _FakeConfigService()
+    manager = _FakeKBManager(tmp_path / "knowledge_bases")
+    manager.config["knowledge_bases"]["demo"] = {"path": "demo"}
 
     config_module = importlib.import_module("deeptutor.services.config")
     app = _build_app()
 
     with pytest.MonkeyPatch.context() as monkeypatch:
         monkeypatch.setattr(config_module, "get_kb_config_service", lambda: fake_service)
+        monkeypatch.setattr(knowledge_router_module, "get_kb_manager", lambda: manager)
         with TestClient(app) as client:
             response = client.put(
                 "/api/v1/knowledge/demo/config",
@@ -962,8 +1062,11 @@ def test_update_config_rejects_provider_change_for_ready_index(monkeypatch, tmp_
 
     fake_service = _FakeConfigService()
     config_module = importlib.import_module("deeptutor.services.config")
+    manager = _FakeKBManager(tmp_path)
+    manager.config["knowledge_bases"]["demo"] = {"path": "demo"}
 
     monkeypatch.setattr(config_module, "get_kb_config_service", lambda: fake_service)
+    monkeypatch.setattr(knowledge_router_module, "get_kb_manager", lambda: manager)
     monkeypatch.setattr(knowledge_router_module, "_current_kb_base_dir", lambda: tmp_path)
 
     with TestClient(_build_app()) as client:
@@ -975,6 +1078,321 @@ def test_update_config_rejects_provider_change_for_ready_index(monkeypatch, tmp_
     assert response.status_code == 409
     assert "ready llamaindex index" in response.json()["detail"]
     assert fake_service.config["rag_provider"] == "llamaindex"
+
+
+def test_update_config_rejects_connected_provider_change_but_allows_search_mode(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    class _FakeConfigService:
+        def __init__(self) -> None:
+            self.config = {
+                "type": "lightrag_server",
+                "rag_provider": "lightrag-server",
+                "search_mode": "hybrid",
+                "server_url": "http://remote.invalid",
+                "api_key": "admin-secret",
+            }
+
+        def get_kb_config(self, _kb_name: str) -> dict:
+            return dict(self.config)
+
+        def set_kb_config(self, _kb_name: str, config: dict) -> None:
+            self.config.update(config)
+
+    manager = _FakeKBManager(tmp_path / "knowledge_bases")
+    manager.config["knowledge_bases"]["remote"] = {
+        "path": "remote",
+        "type": "lightrag_server",
+        "rag_provider": "lightrag-server",
+    }
+    fake_service = _FakeConfigService()
+    config_module = importlib.import_module("deeptutor.services.config")
+    monkeypatch.setattr(knowledge_router_module, "get_kb_manager", lambda: manager)
+    monkeypatch.setattr(config_module, "get_kb_config_service", lambda: fake_service)
+
+    with TestClient(_build_app()) as client:
+        provider_change = client.put(
+            "/api/v1/knowledge/remote/config",
+            json={"rag_provider": "llamaindex"},
+        )
+        mode_change = client.put(
+            "/api/v1/knowledge/remote/config",
+            json={"search_mode": "mix"},
+        )
+
+    assert provider_change.status_code == 409
+    assert fake_service.config["rag_provider"] == "lightrag-server"
+    assert mode_change.status_code == 200
+    assert fake_service.config["search_mode"] == "mix"
+
+
+def test_regular_user_kb_config_cannot_forge_subagent_identity(tmp_path: Path, monkeypatch) -> None:
+    """The authenticated learner patch is limited to an existing personal KB's retrieval fields."""
+    from deeptutor.api.routers.auth import require_auth
+    from deeptutor.multi_user.knowledge_access import resolve_kb_metadata
+    from deeptutor.multi_user.models import CurrentUser, UserScope
+    from deeptutor.multi_user.paths import user_context
+    from deeptutor.services.config.knowledge_base_config import KnowledgeBaseConfigService
+    from deeptutor.services.path_service import PathService
+
+    learner_root = tmp_path / "users" / "learner-1"
+    learner_paths = PathService(workspace_root=learner_root)
+    kb_root = learner_paths.get_knowledge_bases_root()
+    (kb_root / "personal-kb").mkdir(parents=True)
+    config_path = kb_root / "kb_config.json"
+    config_path.write_text(
+        json.dumps(
+            {
+                "knowledge_bases": {
+                    "personal-kb": {
+                        "path": "personal-kb",
+                        "description": "Learner notes",
+                        "rag_provider": "llamaindex",
+                    }
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+    learner = CurrentUser(
+        id="learner-1",
+        username="learner",
+        role="user",
+        scope=UserScope(kind="user", user_id="learner-1", root=learner_root),
+    )
+    monkeypatch.setattr(KnowledgeBaseConfigService, "_instances", {})
+
+    async def authenticate_learner():
+        from deeptutor.multi_user.context import set_current_user
+
+        set_current_user(learner)
+        return None
+
+    app = FastAPI()
+    app.include_router(
+        router,
+        prefix="/api/v1/knowledge",
+        dependencies=[Depends(require_auth)],
+    )
+    app.dependency_overrides[require_auth] = authenticate_learner
+
+    with TestClient(app) as client:
+        forged = client.put(
+            "/api/v1/knowledge/personal-kb/config",
+            json={
+                "type": "subagent",
+                "agent_kind": "codex",
+                "cwd": "/tmp/learner-controlled",
+                "partner_id": "not-a-partner",
+            },
+        )
+        unknown = client.put(
+            "/api/v1/knowledge/personal-kb/config",
+            json={"not_a_supported_config": True},
+        )
+        allowed = client.put(
+            "/api/v1/knowledge/personal-kb/config",
+            json={"search_mode": "hybrid"},
+        )
+        missing = client.put(
+            "/api/v1/knowledge/missing-kb/config",
+            json={"search_mode": "hybrid"},
+        )
+
+    assert forged.status_code == 422
+    assert unknown.status_code == 422
+    assert allowed.status_code == 200
+    assert missing.status_code == 404
+
+    with user_context(learner):
+        metadata = resolve_kb_metadata("personal-kb")
+        persisted = json.loads(config_path.read_text(encoding="utf-8"))["knowledge_bases"][
+            "personal-kb"
+        ]
+    assert persisted["search_mode"] == "hybrid"
+    assert metadata is not None and metadata.get("type") != "subagent"
+    assert persisted.get("type") != "subagent"
+    assert not {"agent_kind", "cwd", "partner_id"} & set(persisted)
+
+
+def test_authenticated_learner_cannot_read_connected_pointer_credentials(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    """Stale personal pointers fail closed while ordinary retrieval config remains readable."""
+    from deeptutor.api.routers import auth as auth_router
+    from deeptutor.api.routers.auth import require_auth
+    from deeptutor.multi_user import grants, knowledge_access, paths
+    from deeptutor.services.auth import TokenPayload
+    from deeptutor.services.config.knowledge_base_config import KnowledgeBaseConfigService
+
+    admin_root = (tmp_path / "data").resolve()
+    users_root = admin_root / "users"
+    system_root = admin_root / "system"
+    monkeypatch.setattr(paths, "ADMIN_WORKSPACE_ROOT", admin_root)
+    monkeypatch.setattr(paths, "USERS_ROOT", users_root)
+    monkeypatch.setattr(paths, "SYSTEM_ROOT", system_root)
+    monkeypatch.setattr(paths, "LEGACY_MULTI_USER_ROOT", tmp_path / "legacy-multi-user")
+    monkeypatch.setattr(paths, "_path_services", {})
+    monkeypatch.setattr(paths, "_legacy_migration_done", False)
+    monkeypatch.setattr(grants, "GRANTS_DIR", system_root / "grants")
+    knowledge_access._manager_for.cache_clear()
+    monkeypatch.setattr(KnowledgeBaseConfigService, "_instances", {})
+
+    kb_root = users_root / "learner-1" / "knowledge_bases"
+    (kb_root / "notes").mkdir(parents=True)
+    (kb_root / "kb_config.json").write_text(
+        json.dumps(
+            {
+                "defaults": {
+                    "default_kb": "notes",
+                    "rag_provider": "llamaindex",
+                    "search_mode": "hybrid",
+                },
+                "knowledge_bases": {
+                    "notes": {
+                        "path": "notes",
+                        "rag_provider": "llamaindex",
+                        "search_mode": "hybrid",
+                        "api_key": "ordinary-entry-secret-must-not-project",
+                    },
+                    "stale-remote": {
+                        "path": "stale-remote",
+                        "type": "lightrag_server",
+                        "rag_provider": "lightrag-server",
+                        "server_url": "http://169.254.169.254/private",
+                        "api_key": "connected-secret",
+                        "client_id": "connected-client",
+                        "external_path": "/srv/private-index",
+                        "cwd": "/srv/private-agent",
+                        "partner_id": "not-authorized",
+                    },
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    admin_kb_root = admin_root / "knowledge_bases"
+    admin_kb_root.mkdir(parents=True)
+    (admin_kb_root / "kb_config.json").write_text(
+        json.dumps(
+            {
+                "knowledge_bases": {
+                    "assigned-stale-vault": {
+                        "path": "assigned-stale-vault",
+                        "type": "obsidian",
+                        "vault_path": "/srv/admin-private-vault",
+                        "api_key": "admin-connected-secret",
+                    }
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+    grant_dir = system_root / "grants"
+    grant_dir.mkdir(parents=True)
+    (grant_dir / "learner-1.json").write_text(
+        json.dumps(
+            {
+                "version": 2,
+                "user_id": "learner-1",
+                "models": {"llm": []},
+                "knowledge_bases": [{"resource_id": "admin:kb:assigned-stale-vault"}],
+                "skills": [],
+                "partners": [],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    monkeypatch.setattr(auth_router, "AUTH_ENABLED", True)
+    monkeypatch.setattr(
+        auth_router,
+        "decode_token",
+        lambda _token: TokenPayload(
+            username="learner",
+            role="user",
+            user_id="learner-1",
+        ),
+    )
+
+    app = FastAPI()
+    app.include_router(
+        router,
+        prefix="/api/v1/knowledge",
+        dependencies=[Depends(require_auth)],
+    )
+    headers = {"Authorization": "Bearer learner-token"}
+    with TestClient(app) as client:
+        bulk = client.get("/api/v1/knowledge/configs", headers=headers)
+        ordinary_update = client.put(
+            "/api/v1/knowledge/notes/config",
+            json={"search_mode": "vector"},
+            headers=headers,
+        )
+        ordinary_config = client.get("/api/v1/knowledge/notes/config", headers=headers)
+        pointer_config = client.get(
+            "/api/v1/knowledge/stale-remote/config",
+            headers=headers,
+        )
+        pointer_details = client.get("/api/v1/knowledge/stale-remote", headers=headers)
+        listing = client.get("/api/v1/knowledge/list", headers=headers)
+
+    assert bulk.status_code == 403
+    assert ordinary_update.status_code == 200
+    assert ordinary_update.json()["config"] == {
+        "rag_provider": "llamaindex",
+        "search_mode": "vector",
+    }
+    assert ordinary_config.status_code == 200
+    assert ordinary_config.json()["config"] == {
+        "rag_provider": "llamaindex",
+        "search_mode": "vector",
+    }
+    assert pointer_config.status_code == 403
+    assert pointer_details.status_code == 403
+    assert listing.status_code == 200
+    listed = {item["name"]: item for item in listing.json()}
+    assert listed["notes"]["available"] is True
+    assert listed["stale-remote"] == {
+        "id": "user:kb:stale-remote",
+        "name": "stale-remote",
+        "is_default": False,
+        "statistics": {},
+        "metadata": {},
+        "path": None,
+        "status": "unavailable",
+        "progress": None,
+        "source": "user",
+        "assigned": False,
+        "read_only": False,
+        "provenance_label": "Created by you",
+        "available": False,
+    }
+    assert "assigned-stale-vault" not in listed
+    serialized_responses = " ".join(
+        response.text
+        for response in (
+            ordinary_update,
+            ordinary_config,
+            pointer_config,
+            pointer_details,
+            listing,
+        )
+    )
+    for secret in (
+        "ordinary-entry-secret-must-not-project",
+        "connected-secret",
+        "connected-client",
+        "169.254.169.254",
+        "/srv/private-index",
+        "/srv/private-agent",
+        "not-authorized",
+        "/srv/admin-private-vault",
+        "admin-connected-secret",
+    ):
+        assert secret not in serialized_responses
 
 
 def test_rag_providers_marks_linkable() -> None:
@@ -1038,6 +1456,177 @@ def _patch_server_probe(monkeypatch, *, ok: bool, error: str | None = None) -> N
         return result
 
     monkeypatch.setattr(probe_module, "probe_server", _fake_probe)
+
+
+def test_authenticated_regular_learner_cannot_reach_host_or_connector_side_effects(
+    monkeypatch,
+) -> None:
+    """All connector dependencies reject a real learner token before the endpoint runs."""
+    from deeptutor.api.routers import auth as auth_router
+    from deeptutor.services.auth import TokenPayload
+    from deeptutor.services.rag.pipelines.ima import probe as ima_probe_module
+    from deeptutor.services.rag.pipelines.lightrag_server import probe as server_probe_module
+
+    monkeypatch.setattr(auth_router, "AUTH_ENABLED", True)
+    monkeypatch.setattr(
+        auth_router,
+        "decode_token",
+        lambda _token: TokenPayload(
+            username="learner",
+            role="user",
+            user_id="learner-1",
+        ),
+    )
+
+    touched: list[str] = []
+
+    def forbidden_sync(*_args, **_kwargs):
+        touched.append("filesystem-or-manager")
+        raise AssertionError("learner reached a host filesystem or manager side effect")
+
+    async def forbidden_network(*_args, **_kwargs):
+        touched.append("network")
+        raise AssertionError("learner reached an outbound connector probe")
+
+    monkeypatch.setattr(knowledge_router_module, "assert_path_allowed", forbidden_sync)
+    monkeypatch.setattr(knowledge_router_module, "probe_linked_folder", forbidden_sync)
+    monkeypatch.setattr(knowledge_router_module, "get_kb_manager", forbidden_sync)
+    monkeypatch.setattr(knowledge_router_module, "_writable_kb", forbidden_sync)
+    monkeypatch.setattr(knowledge_router_module, "_current_kb_base_dir", forbidden_sync)
+    monkeypatch.setattr(knowledge_router_module, "resolve_kb", forbidden_sync)
+    monkeypatch.setattr(server_probe_module, "probe_server", forbidden_network)
+    monkeypatch.setattr(ima_probe_module, "probe_knowledge_base", forbidden_network)
+
+    requests = (
+        (
+            "POST",
+            "/api/v1/knowledge/connect-obsidian",
+            {"name": "vault", "vault_path": "/srv/vault"},
+        ),
+        ("POST", "/api/v1/knowledge/probe-folder", {"folder_path": "/srv/index"}),
+        (
+            "POST",
+            "/api/v1/knowledge/connect-folder",
+            {"name": "index", "folder_path": "/srv/index"},
+        ),
+        (
+            "POST",
+            "/api/v1/knowledge/probe-lightrag-server",
+            {"server_url": "http://169.254.169.254"},
+        ),
+        (
+            "POST",
+            "/api/v1/knowledge/connect-lightrag-server",
+            {"name": "remote", "server_url": "http://169.254.169.254"},
+        ),
+        (
+            "POST",
+            "/api/v1/knowledge/probe-ima",
+            {
+                "client_id": "client",
+                "api_key": "secret",
+                "knowledge_base_id": "library",
+            },
+        ),
+        (
+            "POST",
+            "/api/v1/knowledge/connect-ima",
+            {
+                "name": "ima",
+                "client_id": "client",
+                "api_key": "secret",
+                "knowledge_base_id": "library",
+            },
+        ),
+        ("POST", "/api/v1/knowledge/demo/link-folder", {"folder_path": "/srv/source"}),
+        ("GET", "/api/v1/knowledge/demo/linked-folders", None),
+        ("DELETE", "/api/v1/knowledge/demo/linked-folders/folder-1", None),
+        ("POST", "/api/v1/knowledge/demo/sync-folder/folder-1", None),
+        ("POST", "/api/v1/knowledge/configs/sync", None),
+    )
+
+    headers = {"Authorization": "Bearer learner-token"}
+    with TestClient(_build_app()) as client:
+        responses = [
+            client.request(method, path, json=payload, headers=headers)
+            if payload is not None
+            else client.request(method, path, headers=headers)
+            for method, path, payload in requests
+        ]
+        responses.extend(
+            [
+                client.post(
+                    "/api/v1/knowledge/create",
+                    data={"name": "learner-index", "rag_provider": "llamaindex"},
+                    files=_upload_payload(),
+                    headers=headers,
+                ),
+                client.post(
+                    "/api/v1/knowledge/demo/upload",
+                    files=_upload_payload(),
+                    headers=headers,
+                ),
+                client.post("/api/v1/knowledge/demo/reindex", headers=headers),
+                client.post("/api/v1/knowledge/demo/retry", headers=headers),
+            ]
+        )
+
+    assert [response.status_code for response in responses] == [403] * len(responses)
+    assert all(response.json()["detail"] == "Admin access required" for response in responses)
+    assert touched == []
+
+
+@pytest.mark.parametrize(
+    ("auth_enabled", "role", "headers"),
+    [
+        (True, "admin", {"Authorization": "Bearer admin-token"}),
+        (False, "user", {}),
+    ],
+    ids=["authenticated-admin", "auth-disabled-local-admin"],
+)
+def test_admin_and_auth_disabled_local_can_probe_host_folder(
+    monkeypatch,
+    tmp_path: Path,
+    auth_enabled: bool,
+    role: str,
+    headers: dict[str, str],
+) -> None:
+    from deeptutor.api.routers import auth as auth_router
+    from deeptutor.services.auth import TokenPayload
+
+    monkeypatch.setattr(auth_router, "AUTH_ENABLED", auth_enabled)
+    monkeypatch.setattr(
+        auth_router,
+        "decode_token",
+        lambda _token: TokenPayload(username=role, role=role, user_id=f"{role}-1"),
+    )
+    touched: list[str] = []
+
+    class _ProbeResult:
+        def to_dict(self) -> dict:
+            return {"ok": True, "version": "version-1"}
+
+    def allow_path(_path: str) -> Path:
+        touched.append("path")
+        return tmp_path
+
+    def probe(_path: str, _provider: str) -> _ProbeResult:
+        touched.append("probe")
+        return _ProbeResult()
+
+    monkeypatch.setattr(knowledge_router_module, "assert_path_allowed", allow_path)
+    monkeypatch.setattr(knowledge_router_module, "probe_linked_folder", probe)
+
+    with TestClient(_build_app()) as client:
+        response = client.post(
+            "/api/v1/knowledge/probe-folder",
+            json={"folder_path": str(tmp_path)},
+            headers=headers,
+        )
+
+    assert response.status_code == 200
+    assert response.json()["ok"] is True
+    assert touched == ["path", "probe"]
 
 
 def test_probe_lightrag_server_endpoint_reports_verdict(monkeypatch) -> None:

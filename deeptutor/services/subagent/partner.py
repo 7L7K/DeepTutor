@@ -7,14 +7,14 @@ The partner answers with its own chat loop — its soul, library and skills — 
 streams its native trace back, which we map onto the coarse subagent event
 channels so the sidebar renders it like any other consulted agent.
 
-Session continuity is the whole point of the design. ``session_id`` here IS the
-*partner session key*. The first consult of a DeepTutor chat session has none,
-so we mint a fresh ``dt-…`` key and return it; the cross-turn registry
+Session continuity is the whole point of the design. ``session_id`` here is the
+caller-visible raw Partner session id. The first consult of a DeepTutor chat
+session has none, so we mint a fresh ``dt-…`` id and return it; the cross-turn registry
 (:mod:`deeptutor.services.subagent.sessions`) remembers it against
 (chat session, connection), so every later consult in the same DeepTutor chat —
-within one turn or across turns — resumes the SAME partner session. The partner
-page then sees one complete history session per DeepTutor chat, titled from the
-first consult's question.
+within one turn or across turns — resumes the SAME partner session. The manager
+namespaces delegated storage by caller identity so equal raw ids cannot merge
+two learners' history.
 """
 
 from __future__ import annotations
@@ -46,6 +46,9 @@ PARTNER_BACKEND_KIND = "partner"
 # Cap on how much of a tool-call's args / a tool result we echo into the trace
 # line — keeps the sidebar readable without dropping the event.
 _MAX_LINE_CHARS = 600
+_LEARNER_PARTNER_ERROR = (
+    "The assigned Partner could not complete that request. Please try again later."
+)
 
 
 class PartnerBackend(SubagentBackend):
@@ -82,11 +85,43 @@ class PartnerBackend(SubagentBackend):
         if not pid:
             return ConsultResult(success=False, error="No partner is bound to this connection.")
 
+        # HTTP and capability callers both revalidate before reaching this
+        # backend. Keep the authoritative assignment guard here too so a future
+        # caller cannot turn persisted connection metadata into access after a
+        # grant was revoked.
+        from fastapi import HTTPException
+
+        from deeptutor.multi_user.context import MissingCurrentUserContext, get_current_user
+        from deeptutor.multi_user.model_access import assert_delegated_partner_models_shareable
+        from deeptutor.multi_user.partner_access import assert_partner_allowed
+
+        try:
+            caller = get_current_user()
+            assert_partner_allowed(pid)
+        except HTTPException as exc:
+            return ConsultResult(success=False, error=str(exc.detail))
+        except MissingCurrentUserContext as exc:
+            return ConsultResult(success=False, error=str(exc))
+
+        redact_errors = not caller.is_admin
+
         from deeptutor.services.partners import get_partner_manager
 
         manager = get_partner_manager()
         if not manager.partner_exists(pid):
             return ConsultResult(success=False, error=f"Partner '{pid}' no longer exists.")
+
+        # Assigned learners deliberately use the Partner's deployment-owned
+        # model instead of needing a personal LLM grant.  Validate the running
+        # instance's exact config (or the persisted config before startup) so
+        # that delegation can never lend an operator-bound OAuth identity.
+        if not caller.is_admin:
+            instance = manager.get_partner(pid)
+            partner_config = instance.config if instance is not None else manager.load_config(pid)
+            try:
+                assert_delegated_partner_models_shareable(partner_config)
+            except PermissionError as exc:
+                return ConsultResult(success=False, error=str(exc))
 
         # Bring the partner online if it isn't already (auto-start partners are).
         instance = manager.get_partner(pid)
@@ -95,11 +130,18 @@ class PartnerBackend(SubagentBackend):
                 await manager.start_partner(pid)
             except Exception as exc:  # pragma: no cover - defensive
                 logger.warning("Failed to start partner %s for consult: %s", pid, exc)
-                return ConsultResult(success=False, error=f"Could not start partner '{pid}': {exc}")
+                return ConsultResult(
+                    success=False,
+                    error=(
+                        _LEARNER_PARTNER_ERROR
+                        if redact_errors
+                        else f"Could not start partner '{pid}': {exc}"
+                    ),
+                )
 
-        # ``session_id`` is the partner session key. None on the first consult of
-        # a DeepTutor chat → mint a stable, colon-free key; the registry threads
-        # it through every later consult so they all land in one partner session.
+        # ``session_id`` is the caller-visible raw Partner session id. None on
+        # the first consult of a DeepTutor chat → mint a stable, colon-free id;
+        # the manager namespaces it internally for delegated persistence.
         session_key = str(session_id or "").strip() or f"dt-{uuid.uuid4().hex[:12]}"
 
         events = 0
@@ -121,22 +163,29 @@ class PartnerBackend(SubagentBackend):
 
         async def relay(event: "StreamEvent") -> None:
             nonlocal events
-            for out in _to_subagent_events(event, state):
+            for out in _to_subagent_events(event, state, redact_errors=redact_errors):
                 events += 1
                 await on_event(out)
 
         try:
-            reply = await manager.send_message(
-                pid,
-                question,
-                session_key=session_key,
-                media=list(images or []),
-                on_event=relay,
-            )
+            send_kwargs = {
+                "session_key": session_key,
+                "media": list(images or []),
+                "on_event": relay,
+            }
+            if not caller.is_admin:
+                # Private provenance: the manager converts this into an inbound
+                # sender id plus private metadata before the synthetic Partner
+                # user scope replaces the authenticated request principal.
+                send_kwargs["delegated_user_id"] = caller.id
+            reply = await manager.send_message(pid, question, **send_kwargs)
         except Exception as exc:  # pragma: no cover - defensive: surface, don't crash the turn
             logger.warning("Partner consult failed (%s): %s", pid, exc, exc_info=True)
             return ConsultResult(
-                session_id=session_key, success=False, error=str(exc), event_count=events
+                session_id=session_key,
+                success=False,
+                error=_LEARNER_PARTNER_ERROR if redact_errors else str(exc),
+                event_count=events,
             )
 
         # Defensive: surface any tool call that never produced a result event so
@@ -158,6 +207,8 @@ class PartnerBackend(SubagentBackend):
 def _to_subagent_events(
     event: "StreamEvent",
     state: dict[str, dict[str, str]],
+    *,
+    redact_errors: bool = False,
 ) -> list[SubagentEvent]:
     """Map a partner chat-loop ``StreamEvent`` to zero or more subagent events.
 
@@ -210,13 +261,25 @@ def _to_subagent_events(
         out = _flush_pending_call(pending, call_id)
         body = text.strip()
         if body:
-            out.append(SubagentEvent(EVENT_TOOL_RESULT, _truncate(body)))
+            out.append(
+                SubagentEvent(
+                    EVENT_TOOL_RESULT,
+                    _LEARNER_PARTNER_ERROR
+                    if redact_errors and _tool_result_reports_failure(meta)
+                    else _truncate(body),
+                )
+            )
         return out
     if etype == StreamEventType.ERROR:
         # An error can close out a pending tool call — surface the call first.
         out = _flush_pending_call(pending, call_id)
         if text.strip():
-            out.append(SubagentEvent(EVENT_ERROR, text.strip()))
+            out.append(
+                SubagentEvent(
+                    EVENT_ERROR,
+                    _LEARNER_PARTNER_ERROR if redact_errors else text.strip(),
+                )
+            )
         return out
     # PROGRESS (call-status duplicates the tool rows), RESULT (final answer,
     # returned separately), SOURCES, DONE, SESSION* and WAIT_FOR_INPUT carry no
@@ -228,6 +291,23 @@ def _flush_pending_call(pending: dict[str, str], call_id: str) -> list[SubagentE
     """Emit (and clear) the buffered tool-call row for ``call_id``, if any."""
     label = pending.pop(call_id, "") if call_id else ""
     return [SubagentEvent(EVENT_TOOL, label)] if label else []
+
+
+def _tool_result_reports_failure(metadata: dict[str, object]) -> bool:
+    """Whether dispatcher metadata marks a tool result as an internal failure.
+
+    The dispatcher always includes ``tool_success`` so a failing ToolResult
+    with no metadata cannot leak a raw provider or internal error. The nested
+    metadata check remains for events produced by older dispatchers. Only
+    delegated learner traces need this projection; owner/admin traces retain
+    their diagnostic result text.
+    """
+    if metadata.get("tool_success") is False:
+        return True
+    tool_metadata = metadata.get("tool_metadata")
+    if not isinstance(tool_metadata, dict):
+        return False
+    return any(key in tool_metadata for key in ("error", "error_type", "needs_reindex"))
 
 
 def _compact(args: object) -> str:

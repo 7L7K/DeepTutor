@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+from types import SimpleNamespace
 from typing import Any
 
 import pytest
@@ -231,6 +232,34 @@ class TestTurnExecution:
         assert len(fake_orchestrator.seen_contexts) == 1
 
     @pytest.mark.asyncio
+    async def test_delegated_no_backup_redacts_provider_error(
+        self, partners_root, fake_orchestrator, monkeypatch
+    ):
+        from deeptutor.multi_user import model_access, partner_access
+
+        monkeypatch.setattr(
+            partner_access, "assert_partner_assigned_to_user", lambda _pid, _uid: None
+        )
+        monkeypatch.setattr(
+            model_access, "assert_delegated_partner_models_shareable", lambda _config: None
+        )
+        fake_orchestrator.script = [
+            _event(StreamEventType.ERROR, content="provider token rejected: secret-detail"),
+            _event(StreamEventType.RESULT, metadata={"response": ""}),
+            _event(StreamEventType.DONE),
+        ]
+        runner = _runner(partners_root)
+        msg = _msg("hi", channel="web")
+        msg.metadata["_delegated_user_id"] = "u_learner"
+
+        final = await runner.process_message(msg)
+
+        assert "secret-detail" not in final
+        assert (
+            final == "The assigned Partner could not complete that request. Please try again later."
+        )
+
+    @pytest.mark.asyncio
     async def test_llm_config_error_folds_into_graceful_reply(
         self, partners_root, fake_orchestrator, monkeypatch
     ):
@@ -290,6 +319,99 @@ class TestTurnExecution:
         final = await runner.process_message(_msg())
         assert final == "first try works"
         assert fake_orchestrator.activated_selections == [None]
+
+    @pytest.mark.asyncio
+    async def test_delegated_owner_bound_model_recheck_precedes_session_work(
+        self, partners_root, fake_orchestrator, monkeypatch
+    ):
+        from deeptutor.multi_user import model_access, partner_access
+
+        monkeypatch.setattr(
+            partner_access, "assert_partner_assigned_to_user", lambda _pid, _uid: None
+        )
+
+        monkeypatch.setattr(
+            model_access,
+            "admin_catalog",
+            lambda: {
+                "services": {
+                    "llm": {
+                        "active_profile_id": "owner",
+                        "profiles": [{"id": "owner", "owner_bound": True}],
+                    }
+                }
+            },
+        )
+        runner = _runner(partners_root)
+        msg = _msg("must not persist", channel="web")
+        msg.metadata["_delegated_user_id"] = "u_learner"
+
+        with pytest.raises(PermissionError, match="owner-bound"):
+            await runner.process_message(msg)
+
+        assert fake_orchestrator.activated_selections == []
+        assert fake_orchestrator.seen_contexts == []
+        assert runner.store.messages(msg.session_key) == []
+
+    @pytest.mark.asyncio
+    async def test_delegated_assignment_is_rechecked_inside_session_lock_before_work(
+        self, partners_root, fake_orchestrator, monkeypatch
+    ):
+        from fastapi import HTTPException
+
+        from deeptutor.multi_user import model_access, partner_access
+
+        runner = _runner(partners_root)
+        msg = _msg("must not run", channel="web")
+        msg.metadata["_delegated_user_id"] = "u_revoked"
+        observed: list[tuple[str, str, bool]] = []
+
+        def deny_revoked(partner_id, user_id):
+            observed.append((partner_id, user_id, runner._lock_for(msg.session_key).locked()))
+            raise HTTPException(status_code=403, detail="Partner is not assigned to you")
+
+        monkeypatch.setattr(partner_access, "assert_partner_assigned_to_user", deny_revoked)
+        monkeypatch.setattr(
+            model_access,
+            "assert_delegated_partner_models_shareable",
+            lambda _config: (_ for _ in ()).throw(
+                AssertionError("model policy must follow the live assignment recheck")
+            ),
+        )
+
+        with pytest.raises(HTTPException, match="not assigned"):
+            await runner.process_message(msg)
+
+        assert observed == [("ada", "u_revoked", True)]
+        assert fake_orchestrator.activated_selections == []
+        assert fake_orchestrator.seen_contexts == []
+        assert runner.store.messages(msg.session_key) == []
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("command", ["/sessions", "/delete other", "/tool off web_search"])
+    async def test_delegated_partner_management_commands_cannot_cross_tenants(
+        self, command, partners_root, fake_orchestrator, monkeypatch
+    ):
+        from deeptutor.multi_user import model_access, partner_access
+
+        monkeypatch.setattr(
+            model_access, "assert_delegated_partner_models_shareable", lambda _config: None
+        )
+        monkeypatch.setattr(
+            partner_access, "assert_partner_assigned_to_user", lambda _pid, _uid: None
+        )
+        config = PartnerConfig(name="Ada", enabled_tools=["web_search"])
+        runner = _runner(partners_root, config)
+        runner.store.append("other", "user", "another learner's private title")
+        msg = _msg(command, channel="web")
+        msg.metadata["_delegated_user_id"] = "u_learner"
+
+        reply = await runner.process_message(msg)
+
+        assert reply == ("Partner management commands are unavailable in an assigned conversation.")
+        assert fake_orchestrator.seen_contexts == []
+        assert runner.store.messages("other")[0]["content"] == "another learner's private title"
+        assert config.enabled_tools == ["web_search"]
 
     @pytest.mark.asyncio
     async def test_inbound_handler_publishes_reply_outbound(self, partners_root, fake_orchestrator):
@@ -374,6 +496,40 @@ class TestContextAssembly:
         await runner.process_message(_msg())
 
         assert "mcp_tools_filter" not in fake_orchestrator.seen_contexts[0].metadata
+
+    @pytest.mark.asyncio
+    async def test_delegated_context_retains_distinct_learner_provenance(
+        self, partners_root, fake_orchestrator, monkeypatch
+    ):
+        from deeptutor.multi_user import model_access, partner_access
+
+        monkeypatch.setattr(
+            model_access, "assert_delegated_partner_models_shareable", lambda _config: None
+        )
+        monkeypatch.setattr(
+            partner_access, "assert_partner_assigned_to_user", lambda _pid, _uid: None
+        )
+        fake_orchestrator.script = _finish("ok")
+        runner = _runner(partners_root)
+        for learner_id in ("u_alice", "u_bob"):
+            msg = InboundMessage(
+                channel="web",
+                sender_id=learner_id,
+                chat_id=learner_id,
+                content="hello",
+                metadata={"_delegated_user_id": learner_id},
+            )
+            await runner.process_message(msg)
+
+        contexts = fake_orchestrator.seen_contexts
+        assert [ctx.metadata["_delegated_user_id"] for ctx in contexts] == [
+            "u_alice",
+            "u_bob",
+        ]
+        assert all(ctx.metadata["_delegated_partner_call"] is True for ctx in contexts)
+        assert all(
+            "_delegated_user_id" not in ctx.metadata.get("channel_metadata", {}) for ctx in contexts
+        )
 
     @pytest.mark.asyncio
     async def test_history_feeds_next_turn(self, partners_root, fake_orchestrator):
@@ -550,6 +706,54 @@ class TestSessionStoreOps:
 
 
 class TestLiveTurn:
+    @pytest.mark.asyncio
+    async def test_manager_converts_delegated_caller_to_private_inbound_provenance(self):
+        from deeptutor.services.partners.manager import PartnerManager
+
+        captured: list[InboundMessage] = []
+
+        class CapturingRunner:
+            async def process_message(self, msg, *, on_event=None):
+                captured.append(msg)
+                return "ok"
+
+        mgr = PartnerManager()
+        mgr._partners["ada"] = SimpleNamespace(running=True, runner=CapturingRunner())
+
+        reply = await mgr.send_message(
+            "ada",
+            "hello",
+            session_key="dt-one",
+            delegated_user_id="u_learner",
+        )
+
+        assert reply == "ok"
+        assert captured[0].sender_id == "u_learner"
+        assert captured[0].metadata == {"_delegated_user_id": "u_learner"}
+        assert captured[0].session_key != "dt-one"
+        assert captured[0].session_key.startswith("delegated:")
+
+    @pytest.mark.asyncio
+    async def test_manager_namespaces_same_raw_session_id_by_delegated_caller(self):
+        from deeptutor.services.partners.manager import PartnerManager
+
+        captured: list[InboundMessage] = []
+
+        class CapturingRunner:
+            async def process_message(self, msg, *, on_event=None):
+                captured.append(msg)
+                return "ok"
+
+        mgr = PartnerManager()
+        mgr._partners["ada"] = SimpleNamespace(running=True, runner=CapturingRunner())
+
+        for caller in ("u_alice", "u_bob", "u_alice"):
+            await mgr.send_message("ada", "hello", session_key="dt-same", delegated_user_id=caller)
+
+        assert captured[0].session_key == captured[2].session_key
+        assert captured[0].session_key != captured[1].session_key
+        assert all(msg.session_key.endswith(":dt-same") for msg in captured)
+
     def test_buffer_replays_for_late_subscriber(self):
         from deeptutor.services.partners.manager import LiveTurn
 

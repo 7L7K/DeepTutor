@@ -23,7 +23,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
-from deeptutor.api.routers.auth import require_admin
+from deeptutor.api.routers.auth import require_admin, require_auth
 from deeptutor.knowledge.kb_types import SUBAGENT_KB_TYPE
 from deeptutor.multi_user.context import get_current_user
 from deeptutor.multi_user.knowledge_access import current_kb_manager
@@ -116,8 +116,16 @@ async def list_connections():
         meta = manager.get_metadata(name)
         if not isinstance(meta, dict) or meta.get("type") != SUBAGENT_KB_TYPE:
             continue
-        if not get_current_user().is_admin and meta.get("agent_kind") != PARTNER_BACKEND_KIND:
-            continue
+        if not get_current_user().is_admin:
+            if meta.get("agent_kind") != PARTNER_BACKEND_KIND:
+                continue
+            # Connections persist as KB metadata, while partner assignments can
+            # be revoked at any time. Never surface a stale connection as usable
+            # to a learner merely because it was permitted when first created.
+            try:
+                assert_partner_allowed(str(meta.get("partner_id") or ""))
+            except HTTPException:
+                continue
         connections.append(
             {
                 "name": name,
@@ -245,6 +253,12 @@ async def message_connection(name: str, payload: SubagentMessageRequest):
     if not get_current_user().is_admin and meta.get("agent_kind") != PARTNER_BACKEND_KIND:
         raise HTTPException(status_code=403, detail="Administrator access required.")
 
+    # A Partner connection records its target for convenience, not as a durable
+    # authorization grant. Re-check the current assignment before starting the
+    # stream so a revoked learner cannot drive the Partner through a stale KB.
+    if meta.get("agent_kind") == PARTNER_BACKEND_KIND:
+        assert_partner_allowed(str(meta.get("partner_id") or ""))
+
     from deeptutor.services.subagent import get_backend
     from deeptutor.services.subagent.sessions import get_session, remember_session, session_key
 
@@ -315,6 +329,17 @@ async def message_connection(name: str, payload: SubagentMessageRequest):
 async def get_settings():
     """Read the consult budget and per-backend run config."""
     return load_subagent_settings().to_dict()
+
+
+@router.get("/consult-settings")
+async def get_consult_settings(_: object = Depends(require_auth)):
+    """Return the learner-safe per-turn consult default.
+
+    Backend models, permissions, prompts, and execution controls remain
+    deployment-wide admin settings. Learner chat needs only the bounded
+    consult budget so an assigned partner can retain its per-turn selector.
+    """
+    return {"consult_budget": load_subagent_settings().consult_budget}
 
 
 @router.put("/settings", dependencies=[Depends(require_admin)])

@@ -370,7 +370,6 @@ export const SETTINGS_CATEGORIES: SettingsCategory[] = [
 export const SETTINGS_HUB_HREF = "/settings";
 const HUB_LABEL: Lang = { zh: "设置", en: "Settings" };
 const ADMIN_ONLY_SETTINGS_ROUTE_PREFIXES = [
-  "/settings/mcp",
   "/settings/mineru",
 ] as const;
 

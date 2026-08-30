@@ -4,7 +4,10 @@ import test from "node:test";
 import {
   advancePracticeViewScope,
   autosavePracticeAnswer,
+  canStartManualPracticeDraft,
   createPracticeAnswerSaveQueue,
+  createPracticeRevision,
+  createPracticeSet,
   formatPracticeScore,
   getPracticeAttempt,
   hasUnsavedPracticeAnswers,
@@ -14,6 +17,7 @@ import {
   orderedPracticeOptions,
   practiceLibrarySets,
   practiceResponseValue,
+  practiceSetRevisionId,
   preparePracticeRemediationFlashcards,
   reportPracticeQuestion,
   updatePracticeGenerationPlan,
@@ -85,6 +89,98 @@ test("Practice question reports use the Course-scoped quality endpoint", async (
   );
   assert.equal(requestedInit?.method, "POST");
   assert.deepEqual(JSON.parse(String(requestedInit?.body)), { reason: "Citation is wrong" });
+});
+
+test("manual Practice creation uses the existing Course set and revision APIs", async (t) => {
+  const originalFetch = globalThis.fetch;
+  const requests: Array<{ url: string; init?: RequestInit }> = [];
+  t.after(() => {
+    globalThis.fetch = originalFetch;
+  });
+  globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+    const url = String(input);
+    requests.push({ url, init });
+    const payload = url.endsWith("/revisions")
+      ? { id: "prv_1", practice_set_id: "pst_1", state: "draft" }
+      : { id: "pst_1", course_id: "crs/bio", state: "draft" };
+    return new Response(JSON.stringify(payload), {
+      status: 200,
+      headers: { "Content-Type": "application/json" },
+    });
+  }) as typeof fetch;
+
+  await createPracticeSet("crs/bio", "Manual review", 9);
+  await createPracticeRevision("crs/bio", "pst/one", 9);
+
+  assert.deepEqual(
+    requests.map(({ url, init }) => ({
+      url,
+      method: init?.method,
+      body: JSON.parse(String(init?.body)),
+    })),
+    [
+      {
+        url: "/api/v1/courses/crs%2Fbio/practice",
+        method: "POST",
+        body: { title: "Manual review", expected_course_write_epoch: 9 },
+      },
+      {
+        url: "/api/v1/courses/crs%2Fbio/practice/pst%2Fone/revisions",
+        method: "POST",
+        body: { expected_course_write_epoch: 9 },
+      },
+    ],
+  );
+});
+
+test("Practice sets recover a durable draft identity before publication", () => {
+  const practiceSet: PracticeSet = {
+    id: "pst_draft", owner_user_id: "usr_alice", course_id: "crs_biology",
+    title: "Reload-safe draft", mode: "manual", state: "draft",
+    current_revision_id: null, draft_revision_id: "prv_draft",
+    revision: 1, write_epoch: 1, created_at: 1, updated_at: 1, archived_at: null,
+  };
+  assert.equal(practiceSetRevisionId(practiceSet), "prv_draft");
+  assert.equal(
+    practiceSetRevisionId({
+      ...practiceSet,
+      current_revision_id: "prv_ready",
+      draft_revision_id: "prv_successor",
+    }),
+    "prv_ready",
+  );
+  assert.equal(
+    practiceSetRevisionId({
+      ...practiceSet,
+      current_revision_id: null,
+      draft_revision_id: null,
+    }),
+    null,
+  );
+});
+
+test("manual draft start waits for a settled revision-free detail read", () => {
+  const emptySet: PracticeSet = {
+    id: "pst_empty", owner_user_id: "usr_alice", course_id: "crs_biology",
+    title: "Empty draft", mode: "manual", state: "draft",
+    current_revision_id: null, draft_revision_id: null,
+    revision: 1, write_epoch: 1, created_at: 1, updated_at: 1, archived_at: null,
+  };
+  assert.equal(canStartManualPracticeDraft(emptySet, "loaded"), true);
+  assert.equal(canStartManualPracticeDraft(emptySet, "loading"), false);
+  assert.equal(canStartManualPracticeDraft(emptySet, "error"), false);
+  assert.equal(canStartManualPracticeDraft({
+    ...emptySet,
+    current_revision_id: "prv_ready",
+  }, "loading"), false);
+  assert.equal(canStartManualPracticeDraft({
+    ...emptySet,
+    draft_revision_id: "prv_draft",
+  }, "error"), false);
+  assert.equal(canStartManualPracticeDraft({
+    ...emptySet,
+    state: "archived",
+  }, "loaded"), false);
 });
 
 test("Practice responses require the same immutable identity, Course, and request epoch", () => {
@@ -356,10 +452,12 @@ test("an attempt deep link requests the exact attempt instead of scanning histor
 test("Practice autosave serializes the strict single-choice response union", async (t) => {
   const originalFetch = globalThis.fetch;
   let requestedBody: Record<string, unknown> = {};
+  let requestedInit: RequestInit | undefined;
   t.after(() => {
     globalThis.fetch = originalFetch;
   });
   globalThis.fetch = (async (_input: RequestInfo | URL, init?: RequestInit) => {
+    requestedInit = init;
     requestedBody = JSON.parse(String(init?.body));
     return new Response(JSON.stringify({
       attempt_item_id: "ati_1",
@@ -399,6 +497,7 @@ test("Practice autosave serializes the strict single-choice response union", asy
     expected_course_write_epoch: 7,
     expected_practice_set_write_epoch: 4,
   });
+  assert.equal(requestedInit?.keepalive, true);
   assert.equal(
     "answer" in (requestedBody.response as Record<string, unknown>),
     false,

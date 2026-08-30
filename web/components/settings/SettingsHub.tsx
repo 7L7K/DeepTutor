@@ -6,6 +6,7 @@ import { useTranslation } from "react-i18next";
 import { ChevronRight, Rocket, type LucideIcon } from "lucide-react";
 
 import { apiFetch, apiUrl } from "@/lib/api";
+import { canManageDeployment } from "@/lib/auth-status";
 import { useAuthStatus } from "@/hooks/useAuthStatus";
 import {
   serviceReadiness,
@@ -40,9 +41,8 @@ export default function SettingsHub() {
 
   const { catalog, catalogEditable, diagnosticsResults, startTour } =
     useSettings();
-  const { enabled: authEnabled, isAdmin, loading: authLoading } =
-    useAuthStatus();
-  const canSeeAdminCategories = !authLoading && (!authEnabled || isAdmin);
+  const authStatus = useAuthStatus();
+  const canSeeAdminCategories = canManageDeployment(authStatus);
 
   // Model preview: how many of the model-service leaves are configured.
   const modelStats = useMemo(() => {

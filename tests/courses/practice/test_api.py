@@ -140,6 +140,46 @@ def _create_ready_practice(
     return updated_set.json(), revision_payload
 
 
+def test_manual_draft_identity_is_additive_owner_scoped_and_retryable(
+    practice_client: TestClient,
+) -> None:
+    course = _create_course(practice_client)
+    endpoint = f"/api/v1/courses/{course['id']}/practice"
+    created = practice_client.post(
+        endpoint,
+        headers=_auth("alice"),
+        json={
+            "title": "Reload-safe draft",
+            "expected_course_write_epoch": course["write_epoch"],
+        },
+    )
+    assert created.status_code == 200
+    practice_set = created.json()
+    assert practice_set["current_revision_id"] is None
+    assert practice_set["draft_revision_id"] is None
+
+    revision_endpoint = f"{endpoint}/{practice_set['id']}/revisions"
+    body = {"expected_course_write_epoch": course["write_epoch"]}
+    first = practice_client.post(revision_endpoint, headers=_auth("alice"), json=body)
+    retry = practice_client.post(revision_endpoint, headers=_auth("alice"), json=body)
+    assert first.status_code == 200
+    assert retry.status_code == 200
+    assert retry.json()["id"] == first.json()["id"]
+
+    listed = practice_client.get(endpoint, headers=_auth("alice"))
+    fetched = practice_client.get(
+        f"{endpoint}/{practice_set['id']}", headers=_auth("alice")
+    )
+    assert listed.status_code == 200
+    assert fetched.status_code == 200
+    assert listed.json()["practice_sets"][0]["draft_revision_id"] == first.json()["id"]
+    assert fetched.json()["draft_revision_id"] == first.json()["id"]
+    assert fetched.json()["current_revision_id"] is None
+    assert practice_client.get(
+        f"{endpoint}/{practice_set['id']}", headers=_auth("bob")
+    ).status_code == 404
+
+
 def test_manual_practice_api_lifecycle_autosave_idempotency_and_results(
     practice_client: TestClient,
 ) -> None:

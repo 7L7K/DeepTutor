@@ -51,7 +51,7 @@ type Tab = "installed" | "store";
 export default function CliAppsSection() {
   const { t, i18n } = useTranslation();
   const zh = i18n.language?.toLowerCase().startsWith("zh");
-  const { isAdmin, loading: authLoading } = useAuthStatus();
+  const { known: authKnown, isAdmin, loading: authLoading } = useAuthStatus();
 
   const [state, setState] = useState<CliAppState | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
@@ -121,7 +121,7 @@ export default function CliAppsSection() {
       {tab === "store" ? (
         <Store
           isAdmin={isAdmin}
-          adminKnown={!authLoading}
+          adminKnown={authKnown && !authLoading}
           onChanged={setState}
         />
       ) : state === null && !loadError ? (

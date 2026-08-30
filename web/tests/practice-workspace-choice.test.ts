@@ -86,3 +86,78 @@ test("Practice deep links resolve the exact attempt and never select it from the
     /history\.find\(\(attempt\) => attempt\.id === requestedAttemptId\)/,
   );
 });
+
+test("Course-scoped Practice prefers the authorized shell Course", () => {
+  assert.match(
+    workspaceSource,
+    /const \{ activeCourse: sharedActiveCourse, refresh: refreshCourses \} = useCourses\(\)/,
+  );
+  assert.match(
+    workspaceSource,
+    /const activeCourse = courseShell\?\.course \?\? sharedActiveCourse/,
+  );
+});
+
+test("provider-off Practice can create and select a first manual draft", () => {
+  const creationStart = workspaceSource.indexOf(
+    "const createManualPractice = useCallback",
+  );
+  const creationEnd = workspaceSource.indexOf(
+    "const addQuestion = useCallback",
+    creationStart,
+  );
+  assert.ok(creationStart >= 0 && creationEnd > creationStart);
+  const creation = workspaceSource.slice(creationStart, creationEnd);
+  assert.ok(creation.indexOf("createPracticeSet(") < creation.indexOf("createPracticeRevision("));
+  assert.ok(creation.indexOf("createPracticeRevision(") < creation.indexOf("getPracticeSet("));
+  assert.match(creation, /setSelectedSetId\(updatedSet\.id\)/);
+  assert.match(creation, /setRevision\(createdRevision\)/);
+  assert.match(creation, /setQuestions\(\[\]\)/);
+  assert.match(workspaceSource, /aria-label="Manual Practice title"/);
+  assert.match(workspaceSource, /Create manual quiz<\/button>/);
+  assert.match(
+    workspaceSource,
+    /AI quiz creation is unavailable, but you can write the questions and answers yourself\. No provider call will be attempted\./,
+  );
+});
+
+test("Practice reload resumes a durable draft and stranded sets can start one", () => {
+  assert.match(
+    workspaceSource,
+    /loadSetDetail\(\s*detailScope,\s*usable,\s*practiceSetRevisionId\(usable\)/,
+  );
+  assert.match(
+    workspaceSource,
+    /loadSetDetail\(scope, practiceSet, practiceSetRevisionId\(practiceSet\)\)/,
+  );
+  assert.match(workspaceSource, /const startManualDraft = useCallback/);
+  assert.match(workspaceSource, /Starting it is safe to retry\./);
+  assert.match(workspaceSource, /Start draft<\/button>/);
+});
+
+test("ready selections and draft detail failures cannot start a blank draft", () => {
+  const startDraftStart = workspaceSource.indexOf(
+    "const startManualDraft = useCallback",
+  );
+  const startDraftEnd = workspaceSource.indexOf(
+    "const addQuestion = useCallback",
+    startDraftStart,
+  );
+  assert.ok(startDraftStart >= 0 && startDraftEnd > startDraftStart);
+  assert.match(
+    workspaceSource.slice(startDraftStart, startDraftEnd),
+    /!canStartManualPracticeDraft\(selectedSet, detailState\)/,
+  );
+  assert.match(
+    workspaceSource,
+    /detailState === "loading"[\s\S]*Opening this quiz…/,
+  );
+  assert.match(
+    workspaceSource,
+    /detailState === "error"[\s\S]*Retry opening quiz/,
+  );
+  assert.match(
+    workspaceSource,
+    /!readOnly && canStartManualPracticeDraft\(selectedSet, detailState\)/,
+  );
+});

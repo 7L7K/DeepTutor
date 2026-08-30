@@ -32,7 +32,10 @@ from fastapi.responses import FileResponse, PlainTextResponse, StreamingResponse
 from pydantic import BaseModel
 
 from deeptutor.api.routers.auth import require_admin
-from deeptutor.api.utils.progress_broadcaster import ProgressBroadcaster
+from deeptutor.api.utils.progress_broadcaster import (
+    ProgressBroadcaster,
+    progress_subscription_key,
+)
 from deeptutor.api.utils.task_id_manager import TaskIDManager
 from deeptutor.api.utils.task_log_stream import capture_task_logs, get_task_stream_manager
 from deeptutor.knowledge.add_documents import DocumentAdder, remove_raw_document
@@ -84,10 +87,19 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
-# These endpoints read or change deployment-wide engine configuration. The
-# Knowledge Base/file routes below remain user-scoped, but shared runtime
-# settings must never be writable (or exposed) to a regular account.
+# These endpoints read or change deployment-wide engine configuration, inspect
+# host paths, or manage external connectors. Ordinary Knowledge Base/file
+# routes remain user-scoped, but these server-authority surfaces must never be
+# writable (or exposed) to a regular account.
 _ADMIN_ENGINE_DEPENDENCIES = [Depends(require_admin)]
+
+# ``/{kb_name}/config`` is a legacy general-purpose endpoint used for an
+# ordinary KB's retrieval choices. A KB entry's identity and connection fields
+# (``type``, ``agent_kind``, ``cwd``, etc.) are authority-bearing: changing one
+# can turn a plain KB into a live local-agent connection. Those fields are
+# created only by their dedicated, guarded workflows; never accept them through
+# this learner-writable config patch.
+_KB_CONFIG_MUTABLE_FIELDS = frozenset({"rag_provider", "search_mode"})
 
 # Constants for byte conversions
 BYTES_PER_GB = 1024**3
@@ -148,6 +160,22 @@ def _writable_kb(kb_name: str) -> tuple[KnowledgeBaseManager, str, Path]:
     return manager_for_resource(resource), resource.name, resource.base_dir
 
 
+def _validate_kb_config_patch(config: dict) -> dict:
+    """Return only the public retrieval fields accepted by the KB config route."""
+    unknown = sorted(set(config) - _KB_CONFIG_MUTABLE_FIELDS)
+    if unknown:
+        raise HTTPException(
+            status_code=422,
+            detail=(f"Unsupported knowledge base config field(s): {', '.join(unknown)}."),
+        )
+    return {field: config[field] for field in _KB_CONFIG_MUTABLE_FIELDS if field in config}
+
+
+def _public_kb_config(config: dict) -> dict:
+    """Project a KB config down to learner-safe retrieval choices."""
+    return {field: config[field] for field in _KB_CONFIG_MUTABLE_FIELDS if field in config}
+
+
 class KnowledgeBaseInfo(BaseModel):
     id: str | None = None
     name: str
@@ -187,6 +215,32 @@ class SupportedFileTypesInfo(BaseModel):
     max_file_size_bytes: int
 
 
+def _unavailable_connected_kb_info(
+    *,
+    resource_id: str,
+    name: str,
+    source: str,
+    assigned: bool,
+    provenance_label: str | None = None,
+) -> KnowledgeBaseInfo:
+    """Return an inert list projection without connected pointer metadata."""
+    return KnowledgeBaseInfo(
+        id=resource_id,
+        name=name,
+        is_default=False,
+        statistics={},
+        metadata={},
+        path=None,
+        status="unavailable",
+        progress=None,
+        source=source,
+        assigned=assigned,
+        read_only=assigned,
+        provenance_label=provenance_label,
+        available=False,
+    )
+
+
 IMAGE_ACCEPT_MIME_TYPES = {
     ".bmp": "image/bmp",
     ".gif": "image/gif",
@@ -198,11 +252,80 @@ IMAGE_ACCEPT_MIME_TYPES = {
     ".webp": "image/webp",
 }
 
+# Raw knowledge files are user-controlled and served from the same origin as
+# the signed-in application.  These extensions can be interpreted as active
+# browser content when navigated to directly, so they must never receive an
+# inline response from this route.  Keep the list extension-based as well as
+# setting ``nosniff`` below: platform MIME databases do not consistently know
+# every JavaScript or markup extension.
+_ACTIVE_KB_FILE_EXTENSIONS = frozenset(
+    {
+        ".css",
+        ".cjs",
+        ".htm",
+        ".html",
+        ".js",
+        ".jsx",
+        ".less",
+        ".mjs",
+        ".mts",
+        ".sass",
+        ".scss",
+        ".svg",
+        ".svgz",
+        ".svelte",
+        ".ts",
+        ".tsx",
+        ".vue",
+        ".xhtml",
+        ".xht",
+        ".xml",
+        ".xsl",
+        ".xslt",
+    }
+)
+
+_KB_RAW_FILE_HEADERS = {
+    # Files may contain private course material.  More importantly, no user
+    # agent may reinterpret a harmless-looking file as executable markup.
+    "Cache-Control": "private, no-store",
+    "X-Content-Type-Options": "nosniff",
+}
+
+_KB_ACTIVE_FILE_CSP = (
+    "sandbox; default-src 'none'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'"
+)
+
+
+def _kb_raw_file_response_headers(path: Path) -> dict[str, str]:
+    """Return response headers without breaking safe embedded file previews."""
+    headers = dict(_KB_RAW_FILE_HEADERS)
+    if path.suffix.lower() in _ACTIVE_KB_FILE_EXTENSIONS:
+        # Active files are forced to download below.  The CSP remains a
+        # defense in depth if a browser or intermediary ignores that hint.
+        headers["Content-Security-Policy"] = _KB_ACTIVE_FILE_CSP
+    return headers
+
+
+def _kb_raw_text_preview_headers() -> dict[str, str]:
+    """Plain-text previews need no document sandbox, but must not be sniffed."""
+    return dict(_KB_RAW_FILE_HEADERS)
+
 
 def _build_unique_task_id(task_type: str, task_key_prefix: str) -> str:
     task_manager = TaskIDManager.get_instance()
     task_key = f"{task_key_prefix}_{datetime.now().isoformat()}_{uuid4().hex[:8]}"
-    return task_manager.generate_task_id(task_type, task_key)
+    task_id = task_manager.generate_task_id(task_type, task_key)
+    # Task logs can contain source filenames and processing errors.  Register
+    # their principal when the normal KB task is created; the SSE endpoint
+    # fails closed for legacy/unowned task metadata instead of guessing from a
+    # task key or display name.
+    task_manager.update_task_status(
+        task_id,
+        "running",
+        owner_user_id=get_current_user().id,
+    )
+    return task_id
 
 
 def _mark_kb_queued_for_processing(
@@ -1388,7 +1511,7 @@ async def get_supported_file_types():
     )
 
 
-@router.get("/configs")
+@router.get("/configs", dependencies=_ADMIN_ENGINE_DEPENDENCIES)
 async def get_all_kb_configs():
     """Get all knowledge base configurations from centralized config file."""
     try:
@@ -1409,15 +1532,20 @@ async def get_all_kb_configs():
 
 @router.get("/{kb_name}/config")
 async def get_kb_config(kb_name: str):
-    """Get configuration for a specific knowledge base."""
+    """Get access-checked configuration for a specific knowledge base."""
     if is_managed_course_kb(kb_name):
         raise HTTPException(status_code=404, detail="Knowledge base not found")
     try:
-        from deeptutor.services.config import get_kb_config_service
+        from deeptutor.services.config.knowledge_base_config import KnowledgeBaseConfigService
 
-        service = get_kb_config_service()
-        config = service.get_kb_config(kb_name)
+        resource = resolve_kb(kb_name)
+        service = KnowledgeBaseConfigService.get_instance(resource.base_dir / "kb_config.json")
+        config = service.get_kb_config(resource.name)
+        if not get_current_user().is_admin:
+            config = _public_kb_config(config)
         return {"kb_name": kb_name, "config": config}
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f"Error getting config for KB '{kb_name}': {e}")
         raise HTTPException(status_code=500, detail=str(e))
@@ -1425,28 +1553,37 @@ async def get_kb_config(kb_name: str):
 
 @router.put("/{kb_name}/config")
 async def update_kb_config(kb_name: str, config: dict):
-    """Update configuration for a specific knowledge base."""
+    """Update an existing writable KB's public retrieval configuration."""
     if is_managed_course_kb(kb_name):
         raise HTTPException(status_code=404, detail="Knowledge base not found")
     try:
         from deeptutor.services.config import get_kb_config_service
         from deeptutor.services.rag.index_probe import has_ready_provider_index
 
-        config = dict(config or {})
+        # Resolve access and existence before loading or mutating config. This
+        # prevents a request from creating a free-floating config entry that a
+        # later metadata reader could interpret as a connected resource.
+        manager, resolved_name, kb_base_dir = _writable_kb(kb_name)
+        config = _validate_kb_config_patch(dict(config or {}))
+        if "rag_provider" in config:
+            _assert_not_connected_kb(
+                resolved_name,
+                _load_kb_entry_or_404(manager, resolved_name),
+            )
+        service = get_kb_config_service()
         if "rag_provider" in config:
             requested_provider = _validate_registered_provider(config.get("rag_provider"))
-            service = get_kb_config_service()
-            current_config = service.get_kb_config(kb_name)
+            current_config = service.get_kb_config(resolved_name)
             current_provider = _validate_registered_provider(
                 current_config.get("rag_provider") or DEFAULT_PROVIDER
             )
             if requested_provider != current_provider:
-                kb_dir = _current_kb_base_dir() / kb_name
+                kb_dir = kb_base_dir / resolved_name
                 if kb_dir.exists() and has_ready_provider_index(kb_dir, current_provider):
                     raise HTTPException(
                         status_code=409,
                         detail=(
-                            f"Knowledge base '{kb_name}' already has a ready "
+                            f"Knowledge base '{resolved_name}' already has a ready "
                             f"{current_provider} index. Provider changes require "
                             "an explicit re-index/migration instead of a silent config edit."
                         ),
@@ -1463,11 +1600,16 @@ async def update_kb_config(kb_name: str, config: dict):
                     "timestamp": datetime.now().isoformat(),
                 }
             config["rag_provider"] = requested_provider
-        else:
-            service = get_kb_config_service()
 
-        service.set_kb_config(kb_name, config)
-        return {"status": "success", "kb_name": kb_name, "config": service.get_kb_config(kb_name)}
+        service.set_kb_config(resolved_name, config)
+        persisted_config = service.get_kb_config(resolved_name)
+        if not get_current_user().is_admin:
+            persisted_config = _public_kb_config(persisted_config)
+        return {
+            "status": "success",
+            "kb_name": kb_name,
+            "config": persisted_config,
+        }
     except HTTPException:
         raise
     except Exception as e:
@@ -1475,7 +1617,7 @@ async def update_kb_config(kb_name: str, config: dict):
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@router.post("/configs/sync")
+@router.post("/configs/sync", dependencies=_ADMIN_ENGINE_DEPENDENCIES)
 async def sync_configs_from_metadata():
     """Sync all KB configurations from their metadata.json files to centralized config."""
     try:
@@ -1535,7 +1677,7 @@ class ConnectObsidianRequest(BaseModel):
     vault_path: str
 
 
-@router.post("/connect-obsidian")
+@router.post("/connect-obsidian", dependencies=_ADMIN_ENGINE_DEPENDENCIES)
 async def connect_obsidian_vault(payload: ConnectObsidianRequest):
     """Connect an existing Obsidian vault as a knowledge base.
 
@@ -1575,7 +1717,7 @@ class ConnectFolderRequest(BaseModel):
     rag_provider: str = DEFAULT_PROVIDER
 
 
-@router.post("/probe-folder")
+@router.post("/probe-folder", dependencies=_ADMIN_ENGINE_DEPENDENCIES)
 async def probe_linked_folder_route(payload: ProbeFolderRequest):
     """Inspect a local folder for a ready engine index before linking it.
 
@@ -1594,7 +1736,7 @@ async def probe_linked_folder_route(payload: ProbeFolderRequest):
     return result.to_dict()
 
 
-@router.post("/connect-folder")
+@router.post("/connect-folder", dependencies=_ADMIN_ENGINE_DEPENDENCIES)
 async def connect_linked_folder_route(payload: ConnectFolderRequest):
     """Mount an existing engine index as a read-only ``linked`` knowledge base.
 
@@ -1659,7 +1801,7 @@ class ConnectLightRagServerRequest(BaseModel):
     search_mode: str = ""
 
 
-@router.post("/probe-lightrag-server")
+@router.post("/probe-lightrag-server", dependencies=_ADMIN_ENGINE_DEPENDENCIES)
 async def probe_lightrag_server_route(payload: ProbeLightRagServerRequest):
     """Test-connect to an external LightRAG server before binding a KB to it.
 
@@ -1675,7 +1817,7 @@ async def probe_lightrag_server_route(payload: ProbeLightRagServerRequest):
     return result.to_dict()
 
 
-@router.post("/connect-lightrag-server")
+@router.post("/connect-lightrag-server", dependencies=_ADMIN_ENGINE_DEPENDENCIES)
 async def connect_lightrag_server_route(payload: ConnectLightRagServerRequest):
     """Connect an external LightRAG server as a retrieval-only knowledge base.
 
@@ -1740,7 +1882,7 @@ class ConnectImaRequest(BaseModel):
     knowledge_base_id: str
 
 
-@router.post("/probe-ima")
+@router.post("/probe-ima", dependencies=_ADMIN_ENGINE_DEPENDENCIES)
 async def probe_ima_route(payload: ProbeImaRequest):
     """Test-connect to a Tencent IMA knowledge base before binding a KB to it.
 
@@ -1758,7 +1900,7 @@ async def probe_ima_route(payload: ProbeImaRequest):
     return result.to_dict()
 
 
-@router.post("/connect-ima")
+@router.post("/connect-ima", dependencies=_ADMIN_ENGINE_DEPENDENCIES)
 async def connect_ima_route(payload: ConnectImaRequest):
     """Connect a Tencent IMA knowledge base as a retrieval-only knowledge base.
 
@@ -1812,11 +1954,12 @@ async def connect_ima_route(payload: ConnectImaRequest):
 async def list_knowledge_bases():
     """List all available knowledge bases with their details."""
     try:
+        user = get_current_user()
         manager = get_kb_manager()
         kb_names = manager.list_knowledge_bases()
         access_items = list_visible_kb_access()
         access_by_id = {str(item.get("id") or ""): item for item in access_items}
-        own_prefix = "admin:kb:" if get_current_user().is_admin else "user:kb:"
+        own_prefix = "admin:kb:" if user.is_admin else "user:kb:"
 
         logger.debug(f"Found {len(kb_names)} knowledge bases: {kb_names}")
 
@@ -1827,6 +1970,28 @@ async def list_knowledge_bases():
             if is_managed_course_kb(name):
                 continue
             try:
+                if not user.is_admin and is_connected_kb(manager.get_metadata(name)):
+                    try:
+                        # The central resolver permits only the dedicated,
+                        # currently granted personal Partner binding. Every
+                        # stale host/external pointer stays visible only as an
+                        # inert cleanup signal with no path or credentials.
+                        resolve_kb(f"user:kb:{name}")
+                    except HTTPException:
+                        resource_id = f"{own_prefix}{name}"
+                        result.append(
+                            _unavailable_connected_kb_info(
+                                resource_id=resource_id,
+                                name=name,
+                                source="user",
+                                assigned=False,
+                                provenance_label=access_by_id.get(resource_id, {}).get(
+                                    "provenance_label"
+                                )
+                                or "Created by you",
+                            )
+                        )
+                        continue
                 info = manager.get_info(name)
                 logger.debug(f"Successfully got info for KB '{name}': {info.get('statistics', {})}")
                 result.append(
@@ -1839,7 +2004,7 @@ async def list_knowledge_bases():
                         path=info.get("path"),
                         status=info.get("status"),
                         progress=info.get("progress"),
-                        source="admin" if get_current_user().is_admin else "user",
+                        source="admin" if user.is_admin else "user",
                         assigned=False,
                         read_only=False,
                         provenance_label=access_by_id.get(f"{own_prefix}{info['name']}", {}).get(
@@ -1875,7 +2040,7 @@ async def list_knowledge_bases():
                                 path=str(kb_dir),
                                 status="error",
                                 progress=fallback_progress,
-                                source="admin" if get_current_user().is_admin else "user",
+                                source="admin" if user.is_admin else "user",
                             )
                         )
                 except Exception as fallback_err:
@@ -1892,7 +2057,7 @@ async def list_knowledge_bases():
             )
 
         logger.debug(f"Returning {len(result)} knowledge bases")
-        if not get_current_user().is_admin:
+        if not user.is_admin:
             own_ids = {item.id for item in result}
             for access in access_items:
                 if access.get("source") != "admin" or access.get("id") in own_ids:
@@ -1916,7 +2081,21 @@ async def list_knowledge_bases():
                         )
                     )
                     continue
-                resource = resolve_kb(str(access.get("id") or access.get("name") or ""))
+                try:
+                    resource = resolve_kb(str(access.get("id") or access.get("name") or ""))
+                except HTTPException as exc:
+                    if exc.status_code != 403:
+                        raise
+                    result.append(
+                        _unavailable_connected_kb_info(
+                            resource_id=str(access.get("id") or ""),
+                            name=str(access.get("name") or ""),
+                            source="admin",
+                            assigned=True,
+                            provenance_label=str(access.get("provenance_label") or ""),
+                        )
+                    )
+                    continue
                 assigned_manager = manager_for_resource(resource)
                 try:
                     info = assigned_manager.get_info(resource.name)
@@ -2139,7 +2318,11 @@ async def serve_kb_raw_file_text_preview(kb_name: str, filename: str):
     except OSError as exc:
         raise HTTPException(status_code=404, detail="File not found") from exc
 
-    return PlainTextResponse(text, media_type="text/plain; charset=utf-8")
+    return PlainTextResponse(
+        text,
+        media_type="text/plain; charset=utf-8",
+        headers=_kb_raw_text_preview_headers(),
+    )
 
 
 @router.get("/{kb_name}/files/{filename:path}")
@@ -2147,7 +2330,9 @@ async def serve_kb_raw_file(kb_name: str, filename: str):
     """Serve a single raw document for inline preview / download.
 
     Resolution is sandboxed to the KB's raw/ directory; any path that
-    escapes via traversal yields 403.
+    escapes via traversal yields 403.  Active browser formats are delivered
+    as attachments so user-controlled KB content cannot execute in the
+    authenticated application origin.
     """
     target = _resolve_kb_raw_file_or_404(kb_name, filename)
     media_type, _ = mimetypes.guess_type(target.name)
@@ -2155,7 +2340,10 @@ async def serve_kb_raw_file(kb_name: str, filename: str):
         target,
         media_type=media_type or "application/octet-stream",
         filename=target.name,
-        content_disposition_type="inline",
+        headers=_kb_raw_file_response_headers(target),
+        content_disposition_type=(
+            "attachment" if target.suffix.lower() in _ACTIVE_KB_FILE_EXTENSIONS else "inline"
+        ),
     )
 
 
@@ -2203,8 +2391,13 @@ async def delete_knowledge_base(kb_name: str):
 async def stream_task_logs(task_id: str):
     """Stream task-specific logs for knowledge-base operations."""
     task_ids = TaskIDManager.get_instance()
-    metadata = task_ids.get_task_metadata(task_id) or {}
-    if task_id.startswith("course_source_") or metadata.get("private_course"):
+    metadata = task_ids.get_task_metadata(task_id)
+    if (
+        not metadata
+        or metadata.get("task_type") not in {"kb_init", "kb_upload", "kb_reindex"}
+        or metadata.get("private_course")
+        or metadata.get("owner_user_id") != get_current_user().id
+    ):
         raise HTTPException(status_code=404, detail="Knowledge task not found")
     manager = get_task_stream_manager()
     manager.ensure_task(task_id)
@@ -2215,7 +2408,7 @@ async def stream_task_logs(task_id: str):
     )
 
 
-@router.post("/{kb_name}/upload")
+@router.post("/{kb_name}/upload", dependencies=_ADMIN_ENGINE_DEPENDENCIES)
 async def upload_files(
     kb_name: str,
     background_tasks: BackgroundTasks,
@@ -2294,7 +2487,7 @@ async def upload_files(
         raise HTTPException(status_code=500, detail=formatted_error) from e
 
 
-@router.post("/create")
+@router.post("/create", dependencies=_ADMIN_ENGINE_DEPENDENCIES)
 async def create_knowledge_base(
     background_tasks: BackgroundTasks,
     name: str = Form(...),
@@ -2535,7 +2728,7 @@ async def run_reindex_task(kb_name: str, base_dir: str, task_id: str, signature_
             task_stream_manager.emit_failed(task_id, error_msg, details=trace)
 
 
-@router.post("/{kb_name}/reindex")
+@router.post("/{kb_name}/reindex", dependencies=_ADMIN_ENGINE_DEPENDENCIES)
 async def reindex_knowledge_base(
     kb_name: str,
     background_tasks: BackgroundTasks,
@@ -2621,7 +2814,7 @@ async def reindex_knowledge_base(
         raise HTTPException(status_code=500, detail=format_exception_message(e))
 
 
-@router.post("/{kb_name}/retry")
+@router.post("/{kb_name}/retry", dependencies=_ADMIN_ENGINE_DEPENDENCIES)
 async def retry_knowledge_base(
     kb_name: str,
     background_tasks: BackgroundTasks,
@@ -2684,7 +2877,11 @@ async def clear_progress(kb_name: str):
 @router.websocket("/{kb_name}/progress/ws")
 async def websocket_progress(websocket: WebSocket, kb_name: str):
     """WebSocket endpoint for real-time progress updates"""
-    from deeptutor.api.routers.auth import ws_auth_failed, ws_require_auth
+    from deeptutor.api.routers.auth import (
+        ws_auth_failed,
+        ws_require_auth,
+        ws_revalidate_auth,
+    )
     from deeptutor.multi_user.context import reset_current_user
 
     user_token = await ws_require_auth(websocket)
@@ -2697,20 +2894,34 @@ async def websocket_progress(websocket: WebSocket, kb_name: str):
         await websocket.close(code=4404)
         return
 
+    # Resolve before accepting or allocating a broadcaster entry.  A visible
+    # name alone is not a resource identity: two learners may both own a KB
+    # named "notes" in different private workspaces.
+    try:
+        resource = resolve_kb(kb_name)
+    except HTTPException:
+        if user_token is not None:
+            reset_current_user(user_token)
+        await websocket.close(code=4404)
+        return
+
+    resolved_name = resource.name
+    base_dir = resource.base_dir
+    subscription_key = progress_subscription_key(resolved_name, base_dir)
+
     await websocket.accept()
 
     broadcaster = ProgressBroadcaster.get_instance()
 
     try:
-        await broadcaster.connect(kb_name, websocket)
+        await broadcaster.connect(subscription_key, websocket)
 
-        base_dir = _current_kb_base_dir()
-        progress_tracker = ProgressTracker(kb_name, base_dir)
+        progress_tracker = ProgressTracker(resolved_name, base_dir)
         initial_progress = progress_tracker.get_progress()
         expected_task_id = websocket.query_params.get("task_id")
 
         try:
-            kb_info = KnowledgeBaseManager(base_dir=str(base_dir)).get_info(kb_name)
+            kb_info = KnowledgeBaseManager(base_dir=str(base_dir)).get_info(resolved_name)
             kb_is_ready = bool(kb_info.get("statistics", {}).get("rag_initialized"))
         except Exception:
             kb_is_ready = False
@@ -2784,6 +2995,25 @@ async def websocket_progress(websocket: WebSocket, kb_name: str):
 
         while True:
             try:
+                # This is a long-lived read socket, so its initial upgrade is
+                # not enough authorization. Refresh the account and resolve
+                # the requested KB again before the next polling/send cycle;
+                # a role, disablement, or assignment change must not retain a
+                # stale progress subscription.
+                if not await ws_revalidate_auth(websocket):
+                    break
+                try:
+                    refreshed_resource = resolve_kb(kb_name)
+                except HTTPException:
+                    await websocket.close(code=4404)
+                    break
+                if (
+                    refreshed_resource.id != resource.id
+                    or refreshed_resource.name != resolved_name
+                    or refreshed_resource.base_dir.resolve() != base_dir.resolve()
+                ):
+                    await websocket.close(code=4404)
+                    break
                 try:
                     await asyncio.wait_for(websocket.receive_text(), timeout=1.0)
                 except asyncio.TimeoutError:
@@ -2821,7 +3051,7 @@ async def websocket_progress(websocket: WebSocket, kb_name: str):
         except Exception:
             pass
     finally:
-        await broadcaster.disconnect(kb_name, websocket)
+        await broadcaster.disconnect(subscription_key, websocket)
         try:
             await websocket.close()
         except Exception:
@@ -2833,7 +3063,11 @@ async def websocket_progress(websocket: WebSocket, kb_name: str):
                 pass
 
 
-@router.post("/{kb_name}/link-folder", response_model=LinkedFolderInfo)
+@router.post(
+    "/{kb_name}/link-folder",
+    response_model=LinkedFolderInfo,
+    dependencies=_ADMIN_ENGINE_DEPENDENCIES,
+)
 async def link_folder(kb_name: str, request: LinkFolderRequest):
     """
     Link a local folder to a knowledge base.
@@ -2863,7 +3097,11 @@ async def link_folder(kb_name: str, request: LinkFolderRequest):
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@router.get("/{kb_name}/linked-folders", response_model=list[LinkedFolderInfo])
+@router.get(
+    "/{kb_name}/linked-folders",
+    response_model=list[LinkedFolderInfo],
+    dependencies=_ADMIN_ENGINE_DEPENDENCIES,
+)
 async def get_linked_folders(kb_name: str):
     """Get list of linked folders for a knowledge base."""
     try:
@@ -2879,7 +3117,10 @@ async def get_linked_folders(kb_name: str):
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@router.delete("/{kb_name}/linked-folders/{folder_id}")
+@router.delete(
+    "/{kb_name}/linked-folders/{folder_id}",
+    dependencies=_ADMIN_ENGINE_DEPENDENCIES,
+)
 async def unlink_folder(kb_name: str, folder_id: str):
     """Unlink a folder from a knowledge base."""
     try:
@@ -2897,7 +3138,10 @@ async def unlink_folder(kb_name: str, folder_id: str):
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@router.post("/{kb_name}/sync-folder/{folder_id}")
+@router.post(
+    "/{kb_name}/sync-folder/{folder_id}",
+    dependencies=_ADMIN_ENGINE_DEPENDENCIES,
+)
 async def sync_folder(kb_name: str, folder_id: str, background_tasks: BackgroundTasks):
     """
     Sync files from a linked folder to the knowledge base.

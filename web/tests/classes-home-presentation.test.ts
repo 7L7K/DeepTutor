@@ -46,3 +46,18 @@ test("The lower General Study prompt only appears when classes exist", () => {
     /\{academicCourses\.length \? \(\s*<p className="mt-10 text-sm text-\[var\(--muted-foreground\)\]">\s*Need general learning instead\?/,
   );
 });
+
+test("A failed class request is not presented as a true empty account", () => {
+  assert.match(
+    source,
+    /const showEmptyState =\s*!loading && !error && academicCourses\.length === 0;/,
+  );
+  assert.match(source, /\) : showEmptyState \? \(/);
+});
+
+test("Class creation failures stay in the modal and use an alert", () => {
+  assert.match(source, /const \[createError, setCreateError\]/);
+  assert.match(source, /setCreateError\(\s*cause instanceof Error/);
+  assert.match(source, /\{createError \? \(\s*<p\s*role="alert"/);
+  assert.match(source, /createError=\{createError\}/);
+});

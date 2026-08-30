@@ -36,7 +36,7 @@ from deeptutor.multi_user.paths import user_context
 from deeptutor.partners.bus.events import InboundMessage, OutboundMessage
 from deeptutor.partners.bus.queue import MessageBus
 from deeptutor.partners.helpers import detect_image_mime
-from deeptutor.services.partners.commands import PartnerCommandHandler
+from deeptutor.services.partners.commands import PartnerCommandHandler, looks_like_partner_command
 from deeptutor.services.partners.scope import partner_user
 from deeptutor.services.partners.sessions import PartnerSessionStore
 from deeptutor.services.partners.workspace import ensure_partner_workspace, read_soul
@@ -48,6 +48,9 @@ EventCallback = Callable[[StreamEvent], Awaitable[None]]
 _MAX_IMAGE_BYTES = 8 * 1024 * 1024
 _MAX_MEDIA_BYTES = 10 * 1024 * 1024
 _TOOL_HINT_MAX_CHARS = 120
+_LEARNER_PARTNER_ERROR = (
+    "The assigned Partner could not complete that request. Please try again later."
+)
 
 
 def _format_tool_hint(tool_name: str, args: Any) -> str:
@@ -114,7 +117,10 @@ class PartnerRunner:
             logger.exception(
                 "Partner %s failed to process message on %s", self.partner_id, msg.channel
             )
-            final = f"Sorry, something went wrong while processing your message: {exc}"
+            # Channels are often configured for people other than the
+            # operator. Keep the exception in the server log, but never make a
+            # provider response or internal path part of an outbound message.
+            final = _LEARNER_PARTNER_ERROR
         if final:
             await self.bus.publish_outbound(
                 OutboundMessage(
@@ -149,6 +155,30 @@ class PartnerRunner:
         """
         session_key = msg.session_key
         async with self._lock_for(session_key):
+            delegated_user_id = self._delegated_user_id(msg)
+            if delegated_user_id:
+                # Recheck at the final runtime boundary as well as in the
+                # subagent backend.  This closes config-change races and keeps a
+                # future direct manager caller from reaching commands, session
+                # persistence, or provider activation with an owner-bound model.
+                from deeptutor.multi_user.model_access import (
+                    assert_delegated_partner_models_shareable,
+                )
+                from deeptutor.multi_user.partner_access import (
+                    assert_partner_assigned_to_user,
+                )
+
+                assert_partner_assigned_to_user(self.partner_id, delegated_user_id)
+                assert_delegated_partner_models_shareable(self.config)
+                if looks_like_partner_command(msg.content):
+                    # Partner commands operate on the process-wide Partner:
+                    # /sessions and /delete cross session boundaries, while
+                    # /tool mutates configuration shared by every caller.  The
+                    # assigned-user surface is consultation only; management
+                    # remains an owner/admin and direct-IM compatibility path.
+                    return (
+                        "Partner management commands are unavailable in an assigned conversation."
+                    )
             command = PartnerCommandHandler(
                 partner_id=self.partner_id,
                 config=self.config,
@@ -206,7 +236,13 @@ class PartnerRunner:
             )
 
         if not final_text and errors:
-            final_text = f"Sorry, the turn failed: {errors[-1]}"
+            if self._delegated_user_id(msg):
+                # A delegated learner must not receive provider exception
+                # text. Operators retain the detailed error in the retry log
+                # above and exception log in ``_execute_turn``.
+                final_text = _LEARNER_PARTNER_ERROR
+            else:
+                final_text = f"Sorry, the turn failed: {errors[-1]}"
         return final_text, events
 
     async def _execute_turn(
@@ -285,7 +321,12 @@ class PartnerRunner:
             # writes only the partner's own. Chat's read_memory / write_memory
             # are suppressed on partner turns, so no admin memory override is
             # needed here (and the partner can never write the owner's memory).
-            with user_context(partner_user(self.partner_id, name=self.config.name)):
+            from deeptutor.tools.partner_memory import delegated_partner_call
+
+            with (
+                delegated_partner_call(self._delegated_user_id(msg)),
+                user_context(partner_user(self.partner_id, name=self.config.name)),
+            ):
                 orchestrator = ChatOrchestrator()
                 async for event in orchestrator.handle(context):
                     if on_event is not None:
@@ -396,6 +437,12 @@ class PartnerRunner:
             # NOTE: no ``wait_for_user_reply`` — an ask_user pause makes
             # the pending question the turn's reply (IM semantics).
         }
+        delegated_user_id = self._delegated_user_id(msg)
+        if delegated_user_id:
+            # Internal authorization/provenance fields.  The leading underscore
+            # also keeps them out of channel_metadata below.
+            metadata["_delegated_partner_call"] = True
+            metadata["_delegated_user_id"] = delegated_user_id
         channel_meta: dict[str, Any] = {}
         for key, value in (msg.metadata or {}).items():
             key_text = str(key)
@@ -432,6 +479,10 @@ class PartnerRunner:
             source_manifest=source_manifest,
             metadata=metadata,
         )
+
+    @staticmethod
+    def _delegated_user_id(msg: InboundMessage) -> str:
+        return str((msg.metadata or {}).get("_delegated_user_id") or "").strip()
 
     def _resolved_enabled_tools(self) -> list[str]:
         """The partner's user-toggleable tool whitelist.

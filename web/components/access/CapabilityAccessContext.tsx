@@ -5,6 +5,7 @@ import {
   useCallback,
   useContext,
   useEffect,
+  useRef,
   useState,
   type ReactNode,
 } from "react";
@@ -14,26 +15,35 @@ import { apiFetch, apiUrl } from "@/lib/api";
 import { listLLMOptions } from "@/lib/llm-options";
 
 type CapabilityAccessValue = {
-  /** True until the first access probe resolves. */
+  /** Whether at least one access probe has completed successfully. */
+  known: boolean;
+  /** True while access is being established for the first time. */
   loading: boolean;
+  /** True while confirmed access is being rechecked in the background. */
+  refreshing: boolean;
   /** Admins manage the catalog directly and are never gated. */
   isAdmin: boolean;
   /** Whether the current user has at least one usable LLM model. */
   hasLlm: boolean;
+  /** Learner-safe failure from the latest access probe, if it could not complete. */
+  error: string | null;
   /** Whether the current user may use a gated capability. */
   has: (capability: Capability) => boolean;
   /** Re-probe access (used on tab focus to pick up mid-session grant changes). */
   refresh: () => Promise<void>;
 };
 
-// Default value keeps the hook safe outside a provider (e.g. shared components
-// rendered in the admin tree): everything reads as available, and the backend
-// remains the real enforcement boundary.
+// Fail closed outside a provider as well. Every learner-facing tree installs
+// CapabilityAccessProvider; an accidental missing provider must not make
+// deployment capabilities appear available.
 const DEFAULT_VALUE: CapabilityAccessValue = {
-  loading: false,
-  isAdmin: true,
-  hasLlm: true,
-  has: () => true,
+  known: false,
+  loading: true,
+  refreshing: false,
+  isAdmin: false,
+  hasLlm: false,
+  error: null,
+  has: () => false,
   refresh: async () => {},
 };
 
@@ -49,32 +59,48 @@ export function CapabilityAccessProvider({
 }: {
   children: ReactNode;
 }) {
-  // Optimistic until the first probe resolves so we never flash a locked UI
-  // (admins and users-with-access stay unlocked; the backend enforces anyway).
-  const [isAdmin, setIsAdmin] = useState(true);
-  const [hasLlm, setHasLlm] = useState(true);
+  const [isAdmin, setIsAdmin] = useState(false);
+  const [hasLlm, setHasLlm] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [known, setKnown] = useState(false);
   const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
+  const requestEpochRef = useRef(0);
+  const knownRef = useRef(false);
 
   const refresh = useCallback(async () => {
+    const requestEpoch = ++requestEpochRef.current;
+    const isBackgroundRefresh = knownRef.current;
+    if (isBackgroundRefresh) setRefreshing(true);
+    else setLoading(true);
+    setError(null);
     try {
       // The settings payload only exposes the catalog to admins, so its
       // presence is our admin signal — admins are never gated.
       const res = await apiFetch(apiUrl("/api/v1/settings"));
-      if (!res.ok) return;
+      if (!res.ok) throw new Error("Access probe failed");
       const payload = (await res.json()) as { catalog?: unknown };
+      if (requestEpoch !== requestEpochRef.current) return;
       if (payload.catalog) {
         setIsAdmin(true);
         setHasLlm(true);
-        return;
+      } else {
+        // Non-admins: their grant-filtered LLM options decide access.
+        const { options } = await listLLMOptions({ force: true });
+        if (requestEpoch !== requestEpochRef.current) return;
+        setIsAdmin(false);
+        setHasLlm(options.length > 0);
       }
-      setIsAdmin(false);
-      // Non-admins: their grant-filtered LLM options decide access.
-      const { options } = await listLLMOptions();
-      setHasLlm(options.length > 0);
+      knownRef.current = true;
+      setKnown(true);
     } catch {
-      // Keep last known state; the backend still enforces access on every call.
+      if (requestEpoch !== requestEpochRef.current) return;
+      setError("Could not verify feature access. Try again.");
     } finally {
-      setLoading(false);
+      if (requestEpoch === requestEpochRef.current) {
+        setLoading(false);
+        setRefreshing(false);
+      }
     }
   }, []);
 
@@ -100,16 +126,19 @@ export function CapabilityAccessProvider({
 
   const has = useCallback(
     (_capability: Capability): boolean => {
-      // Only LLM is gated today. Admins and the pre-load window are never gated.
-      if (isAdmin || loading) return true;
+      // Only LLM is gated today. Fail closed until one probe succeeds, then
+      // preserve that confirmed decision while a background probe is pending
+      // or fails. A later successful probe may still revoke the grant.
+      if (!known) return false;
+      if (isAdmin) return true;
       return hasLlm;
     },
-    [isAdmin, loading, hasLlm],
+    [isAdmin, known, hasLlm],
   );
 
   return (
     <CapabilityAccessContext.Provider
-      value={{ loading, isAdmin, hasLlm, has, refresh }}
+      value={{ known, loading, refreshing, isAdmin, hasLlm, error, has, refresh }}
     >
       {children}
     </CapabilityAccessContext.Provider>

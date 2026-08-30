@@ -32,6 +32,14 @@ _MAX_CITATIONS = 32
 _MAX_JSON_BYTES = 16_384
 _ANSWER_CONTRACT_ADAPTER = TypeAdapter(PracticeAnswerContract)
 
+_PRACTICE_SET_PROJECTION = """practice_sets.*,
+    (SELECT revisions.id
+       FROM practice_set_revisions AS revisions
+      WHERE revisions.practice_set_id = practice_sets.id
+        AND revisions.state = 'draft'
+      ORDER BY revisions.revision_number DESC, revisions.id DESC
+      LIMIT 1) AS draft_revision_id"""
+
 
 def _practice_set_id() -> str:
     return f"prc_{uuid4().hex}"
@@ -241,7 +249,7 @@ class CoursePracticeRepository:
         self, conn: sqlite3.Connection, course_id: str, practice_set_id: str
     ) -> sqlite3.Row:
         row = conn.execute(
-            """SELECT practice_sets.* FROM practice_sets
+            f"""SELECT {_PRACTICE_SET_PROJECTION} FROM practice_sets
                JOIN courses ON courses.id = practice_sets.course_id
                WHERE practice_sets.id = ? AND practice_sets.course_id = ?
                  AND courses.owner_user_id = ?""",
@@ -346,7 +354,6 @@ class CoursePracticeRepository:
             raise ValueError("Generation receipts require the P4-05 server operation")
         receipt_json = None
         now = time.time()
-        revision_id = _practice_revision_id()
         with self.course_repository._write_lock, self.course_repository._connect() as conn:
             conn.execute("BEGIN IMMEDIATE")
             self._course_for_write(conn, course_id, expected_course_write_epoch)
@@ -356,14 +363,26 @@ class CoursePracticeRepository:
             if practice_set.mode == "generated":
                 raise CourseConflictError("Generated Practice revisions are reserved for generation operations")
             snapshots, snapshot_json = self._source_snapshot(conn, course_id, source_ids)
-            has_draft = conn.execute(
-                "SELECT 1 FROM practice_set_revisions WHERE practice_set_id = ? AND state = 'draft'",
+            existing_draft = conn.execute(
+                """SELECT * FROM practice_set_revisions
+                   WHERE practice_set_id = ? AND state = 'draft'
+                   ORDER BY revision_number DESC, id DESC LIMIT 1""",
                 (practice_set_id,),
             ).fetchone()
-            if has_draft is not None:
-                raise CourseConflictError("Practice set already has a draft revision")
+            if existing_draft is not None:
+                existing = self._revision_from_row(existing_draft)
+                if (
+                    existing.objective_ids != objectives
+                    or [item.source_id for item in existing.source_snapshot]
+                    != [item.source_id for item in snapshots]
+                ):
+                    raise CourseConflictError(
+                        "Practice set already has a draft with a different authoring scope"
+                    )
+                return existing
             if practice_set.mode == "generated" and not snapshots:
                 raise ValueError("Generated Practice requires ready Course sources")
+            revision_id = _practice_revision_id()
             next_number = int(conn.execute(
                 "SELECT COALESCE(MAX(revision_number), 0) + 1 FROM practice_set_revisions WHERE practice_set_id = ?",
                 (practice_set_id,),
@@ -601,7 +620,10 @@ class CoursePracticeRepository:
                 if str(existing["state"]) == "archived":
                     raise CourseConflictError("Practice set is already archived")
                 raise CourseConflictError("Practice set revision is stale")
-            row = conn.execute("SELECT * FROM practice_sets WHERE id = ?", (practice_set_id,)).fetchone()
+            row = conn.execute(
+                f"SELECT {_PRACTICE_SET_PROJECTION} FROM practice_sets WHERE id = ?",
+                (practice_set_id,),
+            ).fetchone()
         assert row is not None
         return self._set_from_row(row)
 
@@ -620,13 +642,16 @@ class CoursePracticeRepository:
             if result.rowcount != 1:
                 self._owned_set_row(conn, course_id, practice_set_id)
                 raise CourseConflictError("Practice set is active or its revision is stale")
-            row = conn.execute("SELECT * FROM practice_sets WHERE id = ?", (practice_set_id,)).fetchone()
+            row = conn.execute(
+                f"SELECT {_PRACTICE_SET_PROJECTION} FROM practice_sets WHERE id = ?",
+                (practice_set_id,),
+            ).fetchone()
         assert row is not None
         return self._set_from_row(row)
 
     def list_practice_sets(self, course_id: str, *, include_archived: bool = True) -> list[PracticeSet]:
         self.course_repository.get_course(course_id)
-        sql = """SELECT practice_sets.* FROM practice_sets JOIN courses ON courses.id = practice_sets.course_id WHERE practice_sets.course_id = ? AND courses.owner_user_id = ?"""
+        sql = f"""SELECT {_PRACTICE_SET_PROJECTION} FROM practice_sets JOIN courses ON courses.id = practice_sets.course_id WHERE practice_sets.course_id = ? AND courses.owner_user_id = ?"""
         params: list[Any] = [course_id, self.owner_user_id]
         if not include_archived:
             sql += " AND practice_sets.state = 'draft'"

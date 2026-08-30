@@ -4,7 +4,9 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useTranslation } from "react-i18next";
 import { Loader2 } from "lucide-react";
+import { useAuthStatus } from "@/hooks/useAuthStatus";
 import { useKnowledgeBases } from "@/hooks/useKnowledgeBases";
+import { canManageDeployment } from "@/lib/auth-status";
 import { updateRagProviderMode } from "@/lib/knowledge-api";
 import KnowledgeBaseDetail from "./KnowledgeBaseDetail";
 import KnowledgeHome from "./KnowledgeHome";
@@ -16,6 +18,8 @@ export default function KnowledgePage() {
   const { t } = useTranslation();
   const router = useRouter();
   const searchParams = useSearchParams();
+  const authStatus = useAuthStatus();
+  const canManageKnowledgeInfrastructure = canManageDeployment(authStatus);
   const initialKb = searchParams.get("kb");
   const initialEngine = searchParams.get("engine");
 
@@ -63,15 +67,17 @@ export default function KnowledgePage() {
   const [pipelineOpen, setPipelineOpen] = useState(false);
 
   const openCreate = useCallback(() => {
+    if (!canManageKnowledgeInfrastructure) return;
     setCreatePreset(null);
     setCreateOpen(true);
-  }, []);
+  }, [canManageKnowledgeInfrastructure]);
   // Obsidian lives in the engines grid for discoverability but routes through
   // the unified create flow, pre-set to "link existing → Obsidian".
   const openObsidian = useCallback(() => {
+    if (!canManageKnowledgeInfrastructure) return;
     setCreatePreset({ mode: "link", source: "obsidian" });
     setCreateOpen(true);
-  }, []);
+  }, [canManageKnowledgeInfrastructure]);
   // Lands on the Overview console unless deep-linked to a KB or an engine.
   const [view, setView] = useState<"home" | "kb" | "engine">(
     initialEngine ? "engine" : initialKb ? "kb" : "home",
@@ -256,8 +262,12 @@ export default function KnowledgePage() {
               onOpenEngine={openEngine}
               onCreate={openCreate}
               onConnectObsidian={openObsidian}
+              canManageInfrastructure={canManageKnowledgeInfrastructure}
+              canCreate={canManageKnowledgeInfrastructure}
             />
-          ) : view === "engine" && selectedProvider ? (
+          ) : view === "engine" &&
+            selectedProvider &&
+            canManageKnowledgeInfrastructure ? (
             <EngineDetail
               provider={selectedProvider}
               kbs={kbs}
@@ -276,6 +286,8 @@ export default function KnowledgePage() {
               onOpenEngine={openEngine}
               onCreate={openCreate}
               onConnectObsidian={openObsidian}
+              canManageInfrastructure={canManageKnowledgeInfrastructure}
+              canCreate={canManageKnowledgeInfrastructure}
             />
           ) : (
             <KnowledgeBaseDetail
@@ -291,13 +303,14 @@ export default function KnowledgePage() {
               onDelete={handleDelete}
               onClearHistory={clearHistory}
               onBack={() => setView("home")}
+              canManageIndexing={canManageKnowledgeInfrastructure}
             />
           )}
         </div>
       )}
 
       <CreateKbModal
-        isOpen={createOpen}
+        isOpen={createOpen && canManageKnowledgeInfrastructure}
         onClose={() => setCreateOpen(false)}
         providers={providers}
         uploadPolicy={uploadPolicy}
@@ -307,14 +320,19 @@ export default function KnowledgePage() {
         onConnectLightRagServer={connectLightRagServer}
         initialMode={createPreset?.mode}
         initialSource={createPreset?.source}
-        onConfigureProvider={() => {
-          setCreateOpen(false);
-          setPipelineOpen(true);
-        }}
+        allowExternalConnectors={canManageKnowledgeInfrastructure}
+        onConfigureProvider={
+          canManageKnowledgeInfrastructure
+            ? () => {
+                setCreateOpen(false);
+                setPipelineOpen(true);
+              }
+            : undefined
+        }
       />
 
       <PageIndexSettingsModal
-        isOpen={pipelineOpen}
+        isOpen={pipelineOpen && canManageKnowledgeInfrastructure}
         onClose={() => setPipelineOpen(false)}
         onSaved={() => void refresh({ force: true })}
       />

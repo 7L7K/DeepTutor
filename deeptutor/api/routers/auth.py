@@ -1,5 +1,6 @@
 """Auth router — login, logout, status, registration, profile, and user-management endpoints."""
 
+import asyncio
 from contextvars import Token as _CtxToken
 import logging
 import re
@@ -21,7 +22,11 @@ from fastapi.responses import FileResponse, HTMLResponse
 from pydantic import BaseModel, field_validator
 
 from deeptutor.services.config import load_auth_settings, load_system_settings
-from deeptutor.services.config.origins import normalize_origin, normalize_origins
+from deeptutor.services.config.origins import (
+    browser_origins,
+    is_production_environment,
+    normalize_origin,
+)
 
 # SameSite=None lets the cookie work when the browser accesses the frontend via
 # 127.0.0.1 and the backend via localhost (different origins on the same machine).
@@ -31,10 +36,14 @@ _SECURE = bool(load_auth_settings()["cookie_secure"])
 _SAMESITE = "none" if _SECURE else "lax"
 
 from deeptutor.multi_user.context import set_current_user, user_from_token_payload
+from deeptutor.multi_user.grants import load_grant
+from deeptutor.multi_user.identity import register_first_user
 from deeptutor.multi_user.paths import local_admin_user
 from deeptutor.services.auth import (
     AUTH_ENABLED,
+    AUTH_PASSWORD_HASH,
     AUTH_SECRET,
+    AUTH_USERNAME,
     POCKETBASE_ENABLED,
     TOKEN_EXPIRE_HOURS,
     TokenPayload,
@@ -45,6 +54,7 @@ from deeptutor.services.auth import (
     decode_token,
     delete_user,
     get_user_info,
+    hash_password,
     is_first_user,
     list_users,
     register_pb,
@@ -52,8 +62,10 @@ from deeptutor.services.auth import (
     set_role,
 )
 from deeptutor.services.auth_diagnostics import (
+    LoginFailureLimiter,
     auth_attempt_headers,
     emit_auth_attempt,
+    identifier_details,
     resolve_attempt_id,
     validated_request_id,
 )
@@ -66,20 +78,16 @@ router = APIRouter()
 
 _COOKIE_NAME = "dt_token"
 _COOKIE_MAX_AGE = TOKEN_EXPIRE_HOURS * 3600
+_LOGIN_FAILURE_LIMITER = LoginFailureLimiter()
+# HTTP CORS and cookie-origin middleware are installed at process startup.
+# Keep the WebSocket policy on the same restart boundary rather than silently
+# applying persisted-origin edits only to one transport.
+_BROWSER_ORIGINS = frozenset(browser_origins(load_system_settings()))
 
 
 def _allowed_browser_origins() -> set[str]:
     """Return the exact frontend origins allowed to use cookie authentication."""
-    system = load_system_settings()
-    frontend_port = str(system["frontend_port"])
-    origins = {
-        f"http://localhost:{frontend_port}",
-        f"http://127.0.0.1:{frontend_port}",
-        "http://localhost:3000",
-        "http://127.0.0.1:3000",
-    }
-    origins.update(normalize_origins([system["cors_origin"], system["cors_origins"]]))
-    return origins
+    return set(_BROWSER_ORIGINS)
 
 
 def _websocket_origin_allowed(ws: WebSocket) -> bool:
@@ -184,6 +192,7 @@ class AuthStatusResponse(BaseModel):
     username: str | None = None
     role: str | None = None
     is_admin: bool = False
+    course_source_uploads: bool = False
     avatar: str = ""
 
 
@@ -355,6 +364,11 @@ async def ws_require_auth(ws: WebSocket) -> _CtxToken | _WsAuthFailed:
             reset_current_user(user_token)
     """
     if not AUTH_ENABLED:
+        # A production deployment must not turn an auth-disabled compatibility
+        # mode into a cross-origin synthetic-admin browser session.
+        if is_production_environment() and not _websocket_origin_allowed(ws):
+            await ws.close(code=4003)
+            return ws_auth_failed
         return _install_current_user(None)
 
     if not _websocket_origin_allowed(ws):
@@ -404,6 +418,27 @@ async def require_admin(
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Admin access required",
+        )
+    return payload
+
+
+async def require_course_source_upload(
+    payload: TokenPayload | None = Depends(require_auth),
+) -> TokenPayload:
+    """Require explicit admission to bounded private Course-source ingestion."""
+    if not AUTH_ENABLED:
+        return _local_admin_token_payload()
+    if payload is None:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Course material upload access required",
+        )
+    if payload.role == "admin":
+        return payload
+    if load_grant(payload.user_id).get("course_source_uploads") is not True:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Course material upload access required",
         )
     return payload
 
@@ -473,6 +508,7 @@ async def auth_status(
             username="local",
             role="admin",
             is_admin=True,
+            course_source_uploads=True,
         )
 
     token = _extract_token(authorization, dt_token)
@@ -489,6 +525,15 @@ async def auth_status(
         username=payload.username if payload else None,
         role=payload.role if payload else None,
         is_admin=payload.role == "admin" if payload else False,
+        course_source_uploads=(
+            bool(
+                payload
+                and (
+                    payload.role == "admin"
+                    or load_grant(payload.user_id).get("course_source_uploads") is True
+                )
+            )
+        ),
         avatar=avatar,
     )
 
@@ -518,9 +563,39 @@ async def login(body: LoginRequest, request: Request, response: Response) -> dic
         response.headers.update(attempt_headers)
         return {"ok": True, "message": "Auth is disabled — no login required."}
 
+    # Use the existing one-way identifier fingerprint as the only limiter key.
+    # This keeps the process-local guard bounded and avoids retaining a raw
+    # username, IP address, or password. Check before any blocking credential
+    # or provider call so repeated failures cannot consume bcrypt workers.
+    login_identifier = identifier_details(body.username, auth_secret=AUTH_SECRET)
+    retry_after = _LOGIN_FAILURE_LIMITER.retry_after_seconds(login_identifier.fingerprint)
+    if retry_after is not None:
+        emit_auth_attempt(
+            attempt_id=attempt_id,
+            request_id=request_id,
+            username=body.username,
+            user_agent=request.headers.get("user-agent"),
+            auth_secret=AUTH_SECRET,
+            lookup="none",
+            account_state="unknown",
+            password_result="not_checked",
+            auth_mode="pocketbase" if POCKETBASE_ENABLED else "standard",
+            outcome="rate_limited",
+        )
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail="Too many login attempts. Try again later.",
+            headers={**attempt_headers, "Retry-After": str(retry_after)},
+        )
+    _LOGIN_FAILURE_LIMITER.reserve_attempt(login_identifier.fingerprint)
+
     if POCKETBASE_ENABLED:
         # PocketBase mode: email = username field for backwards-compat with the
         # existing LoginRequest schema; users can pass their email as "username".
+        # ``authenticate_pb`` uses PocketBase's process-wide client/auth store.
+        # Keep that established call path on this task rather than racing its
+        # mutable principal from worker threads; only local bcrypt verification
+        # is safe to offload here.
         pb_result = authenticate_pb(body.username, body.password)
         if pb_result.payload is None:
             emit_auth_attempt(
@@ -545,6 +620,7 @@ async def login(body: LoginRequest, request: Request, response: Response) -> dic
         payload = pb_result.payload
         pb_token = pb_result.token
         assert payload is not None and pb_token is not None
+        _LOGIN_FAILURE_LIMITER.clear(login_identifier.fingerprint)
         emit_auth_attempt(
             attempt_id=attempt_id,
             request_id=request_id,
@@ -569,7 +645,10 @@ async def login(body: LoginRequest, request: Request, response: Response) -> dic
         }
 
     # Standard JWT + bcrypt mode
-    result = authenticate_detailed(body.username, body.password)
+    # bcrypt is synchronous and intentionally expensive. Running the complete
+    # local credential check in a worker keeps concurrent API/WebSocket work
+    # responsive while preserving the current authentication semantics.
+    result = await asyncio.to_thread(authenticate_detailed, body.username, body.password)
     outcome = "disabled" if result.account_state == "disabled" else "invalid_credentials"
     emit_auth_attempt(
         attempt_id=attempt_id,
@@ -590,6 +669,7 @@ async def login(body: LoginRequest, request: Request, response: Response) -> dic
             headers=attempt_headers,
         )
 
+    _LOGIN_FAILURE_LIMITER.clear(login_identifier.fingerprint)
     token = create_token(result.payload.username, result.payload.role, result.payload.user_id)
     response.set_cookie(value=token, max_age=_COOKIE_MAX_AGE, **_cookie_attrs())
     response.headers.update(attempt_headers)
@@ -656,28 +736,24 @@ async def register(body: RegisterRequest) -> dict:
             "is_admin": False,
         }
 
-    # Standard mode — only allowed before the first admin exists.
-    if not is_first_user():
+    # Standard mode — the empty-store decision and the first write must share
+    # one identity lock so concurrent requests cannot create ordinary users.
+    record = await asyncio.to_thread(
+        register_first_user,
+        body.username,
+        body.password,
+        password_hasher=hash_password,
+        env_username=AUTH_USERNAME,
+        env_password_hash=AUTH_PASSWORD_HASH,
+    )
+    if record is None:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Self-registration is closed. Ask an administrator to create your account.",
         )
 
-    existing = {u["username"] for u in list_users()}
-    if body.username in existing:
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail="Username already taken",
-        )
-
-    add_user(body.username, body.password)
-    user_id = ""
-    role = "user"
-    for item in list_users():
-        if item.get("username") == body.username:
-            user_id = str(item.get("id") or "")
-            role = str(item.get("role") or "user")
-            break
+    user_id = str(record.get("id") or "")
+    role = str(record.get("role") or "user")
     logger.info(f"First user (admin) registered: '{body.username}'")
     return {
         "ok": True,

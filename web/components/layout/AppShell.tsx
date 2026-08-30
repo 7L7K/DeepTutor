@@ -118,13 +118,12 @@ export default function AppShell({ sidebar, children }: AppShellProps) {
                 height={20}
                 className="h-5 w-5"
               />
-              <Image
-                src="/banner.png"
-                alt="TEEECHR"
-                width={897}
-                height={236}
-                className="h-[18px] w-auto"
-              />
+              <span
+                aria-hidden="true"
+                className="text-[13px] font-semibold tracking-[0.16em] text-[var(--foreground)]"
+              >
+                TEEECHR
+              </span>
             </Link>
           </div>
 

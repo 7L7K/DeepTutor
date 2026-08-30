@@ -13,6 +13,7 @@ import json
 import logging
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal
+import uuid
 
 from deeptutor.core.stream import StreamEvent, StreamEventType
 from deeptutor.services.llm.utils import clean_thinking_tags
@@ -68,6 +69,21 @@ def _clip_text(value: str, limit: int = 4000) -> str:
     if len(text) <= limit:
         return text
     return text[:limit].rstrip() + "\n...[truncated]"
+
+
+def _new_uploaded_attachment_record(item: dict[str, Any]) -> dict[str, Any]:
+    """Copy one untrusted upload while reserving its identifier server-side."""
+    return {
+        "type": item.get("type", "file"),
+        "url": item.get("url", ""),
+        "base64": item.get("base64", ""),
+        "filename": item.get("filename", ""),
+        "mime_type": item.get("mime_type", ""),
+        # Client-provided ids could overwrite a prior file in this session
+        # (or make failure cleanup delete a shared prefix). Attachment
+        # identifiers are server-owned.
+        "id": uuid.uuid4().hex[:12],
+    }
 
 
 _TITLE_QUOTE_PAIRS: tuple[tuple[str, str], ...] = (
@@ -677,6 +693,7 @@ class TurnRuntimeManager:
         *,
         preserved_course_context: dict[str, Any] | None = None,
         replace_assistant_message_id: int | str | None = None,
+        internal_regenerate: bool = False,
     ) -> tuple[dict[str, Any], dict[str, Any]]:
         capability = str(payload.get("capability") or "chat")
         raw_config = dict(payload.get("config", {}) or {})
@@ -695,6 +712,14 @@ class TurnRuntimeManager:
         runtime_only_config = {
             key: raw_config.pop(key) for key in runtime_only_keys if key in raw_config
         }
+        if not internal_regenerate:
+            # These are runtime controls, not public WebSocket configuration.
+            # Only ``regenerate_last_turn`` may suppress the duplicate user
+            # row or mark a request as a regeneration.
+            runtime_only_config.pop("_persist_user_message", None)
+            runtime_only_config.pop("_regenerate", None)
+            runtime_only_config.pop("_regenerated_from_message_id", None)
+            runtime_only_config.pop("_superseded_turn_id", None)
         try:
             from deeptutor.runtime.request_contracts import validate_capability_config
 
@@ -1065,6 +1090,7 @@ class TurnRuntimeManager:
                 if last_message is not None and last_message.get("role") == "assistant"
                 else None
             ),
+            internal_regenerate=True,
         )
 
     async def cancel_turn(self, turn_id: str) -> bool:
@@ -1324,6 +1350,9 @@ class TurnRuntimeManager:
         turn_id = execution.turn_id
         attachments = []
         attachment_records = []
+        persisted_input_attachment_ids: list[str] = []
+        input_attachments_committed = False
+        attachment_store: Any | None = None
         assistant_events: list[dict[str, Any]] = []
         assistant_content = ""
         new_user_message_id: int | str | None = None
@@ -1391,9 +1420,9 @@ class TurnRuntimeManager:
             from deeptutor.services.skill import get_skill_service
 
             request_config = dict(payload.get("config", {}) or {})
+            is_regenerate = _extract_regenerate_flag(request_config)
             followup_question_context = _extract_followup_question_context(request_config)
             persist_user_message = _extract_persist_user_message(request_config)
-            is_regenerate = _extract_regenerate_flag(request_config)
             regenerated_from_message_id = request_config.pop("_regenerated_from_message_id", None)
             replace_assistant_message_id = request_config.pop("_replace_assistant_message_id", None)
             request_config.pop("_superseded_turn_id", None)
@@ -1428,57 +1457,60 @@ class TurnRuntimeManager:
             question_bank_context = ""
             book_context = book_context_result.text
 
-            import base64 as _b64
-            import uuid as _uuid
-
             from deeptutor.services.storage import get_attachment_store
+            from deeptutor.services.storage.attachment_validation import (
+                validate_chat_attachments,
+            )
 
+            raw_attachment_items = []
             for item in payload.get("attachments", []):
-                record = {
-                    "type": item.get("type", "file"),
-                    "url": item.get("url", ""),
-                    "base64": item.get("base64", ""),
-                    "filename": item.get("filename", ""),
-                    "mime_type": item.get("mime_type", ""),
-                    "id": item.get("id", "") or _uuid.uuid4().hex[:12],
-                }
-                attachment_records.append(record)
+                if not isinstance(item, dict):
+                    raise ValueError("attachments must contain objects")
+                raw_attachment_items.append(
+                    dict(item) if is_regenerate else _new_uploaded_attachment_record(item)
+                )
 
-            # Persist original bytes to the attachment store before extraction
-            # so the frontend preview drawer can fetch the file later. The
-            # extractor will clear base64 on documents to keep DB rows lean,
-            # but the URL we record here outlives that pruning. Upload errors
-            # are non-fatal — extraction still runs from the in-memory base64.
-            attachment_store = get_attachment_store()
-            for record in attachment_records:
-                if record.get("url"):
-                    continue  # already hosted (e.g. legacy URL)
-                b64 = record.get("base64") or ""
-                if not b64:
-                    continue
-                try:
-                    raw_bytes = _b64.b64decode(b64, validate=False)
-                except Exception as exc:
-                    logger.warning(
-                        "skipping attachment upload for %r: invalid base64 (%s)",
-                        record.get("filename"),
-                        exc,
-                    )
-                    continue
-                try:
-                    record["url"] = await attachment_store.put(
-                        session_id=session_id,
-                        attachment_id=record["id"],
-                        filename=record.get("filename", "") or "file",
-                        data=raw_bytes,
-                        mime_type=record.get("mime_type", "") or "",
-                    )
-                except Exception as exc:
-                    logger.warning(
-                        "attachment store rejected %r: %s",
-                        record.get("filename"),
-                        exc,
-                    )
+            # Enforce file type, strict base64, count, per-file, and total
+            # limits before any byte reaches the attachment store.  Document
+            # extraction has its own defensive limits, but it does not cover
+            # images and previously ran only after persistence.
+            attachment_records = (
+                raw_attachment_items
+                if is_regenerate
+                else validate_chat_attachments(raw_attachment_items)
+            )
+
+            # Persist only prevalidated original bytes before extraction so the
+            # frontend preview drawer can fetch the file later. The extractor
+            # clears base64 on documents to keep DB rows lean, but the URL we
+            # record here outlives that pruning.
+            if not is_regenerate:
+                attachment_store = get_attachment_store()
+                for record in attachment_records:
+                    raw_bytes = record.pop("_raw_bytes")
+                    try:
+                        record["url"] = await attachment_store.put(
+                            session_id=session_id,
+                            attachment_id=record["id"],
+                            filename=record.get("filename", "") or "file",
+                            data=raw_bytes,
+                            mime_type=record.get("mime_type", "") or "",
+                        )
+                        persisted_input_attachment_ids.append(record["id"])
+                    except Exception as exc:
+                        # The whole batch is rejected rather than persisting a
+                        # partial message with a silently missing attachment.
+                        for attachment_id in [*persisted_input_attachment_ids, record["id"]]:
+                            try:
+                                await attachment_store.delete_attachment(session_id, attachment_id)
+                            except Exception:
+                                logger.exception(
+                                    "failed to clean up attachment %s after persistence error",
+                                    attachment_id,
+                                )
+                        raise RuntimeError(
+                            f"failed to persist attachment {record.get('filename')!r}"
+                        ) from exc
 
             from deeptutor.utils.document_extractor import extract_documents_from_records
 
@@ -1526,8 +1558,8 @@ class TurnRuntimeManager:
                 enabled as deterministic_provider_enabled,
             )
 
-            deterministic_course_turn = (
-                deterministic_provider_enabled() and bool(payload.get("course_id"))
+            deterministic_course_turn = deterministic_provider_enabled() and bool(
+                payload.get("course_id")
             )
             text_generation_feature = None
             if not deterministic_course_turn and (capability_name or "") in {"", "chat"}:
@@ -1804,6 +1836,7 @@ class TurnRuntimeManager:
                     ),
                     **parent_kwargs,
                 )
+                input_attachments_committed = True
 
             context = UnifiedContext(
                 session_id=session_id,
@@ -1905,9 +1938,7 @@ class TurnRuntimeManager:
                 # actually streamed before the failure.
                 partial_content = _persisted_answer()
                 persist_course_failure = bool(
-                    payload.get("course_id")
-                    and capability_name == "chat"
-                    and assistant_events
+                    payload.get("course_id") and capability_name == "chat" and assistant_events
                 )
                 if partial_content or generated_attachments or persist_course_failure:
                     self._assert_execution_owner_current(execution)
@@ -2149,6 +2180,14 @@ class TurnRuntimeManager:
                     await self._flush_buffered_events(execution)
                 await self.store.update_turn_status(turn_id, "failed", str(exc))
         finally:
+            if persisted_input_attachment_ids and not input_attachments_committed:
+                # A user message is the only durable reference for uploaded
+                # chat input. Do not leave bytes behind when the turn failed,
+                # was cancelled, or never reached its input-message commit.
+                if attachment_store is not None:
+                    for attachment_id in persisted_input_attachment_ids:
+                        with contextlib.suppress(Exception):
+                            await attachment_store.delete_attachment(session_id, attachment_id)
             if llm_scope_token is not None and reset_active_llm_selection is not None:
                 reset_active_llm_selection(llm_scope_token)
             if (

@@ -2,11 +2,16 @@
 
 from __future__ import annotations
 
+import asyncio
+from dataclasses import dataclass
 import hashlib
 import json
 import logging
+import os
 from pathlib import Path
 import shutil
+import sqlite3
+import stat
 from typing import Any
 from uuid import uuid4
 
@@ -15,6 +20,7 @@ from fastapi import HTTPException, UploadFile
 from deeptutor.api.utils.task_id_manager import TaskIDManager
 from deeptutor.api.utils.task_log_stream import get_task_stream_manager
 from deeptutor.multi_user.context import reset_current_user, set_current_user
+from deeptutor.multi_user.grants import load_grant
 from deeptutor.multi_user.identity import get_user_by_id
 from deeptutor.multi_user.models import LOCAL_ADMIN_ID, LOCAL_ADMIN_USERNAME, CurrentUser
 from deeptutor.multi_user.paths import (
@@ -31,8 +37,184 @@ from .service import (
     install_personal_course_context,
     source_kb_name,
 )
+from .source_admission import (
+    CourseSourceAdmissionError,
+    CourseSourceAdmissionLimitError,
+    get_course_source_admission_ledger,
+)
 
 logger = logging.getLogger(__name__)
+
+COURSE_SOURCE_MAX_FILES = 10
+COURSE_SOURCE_MAX_BATCH_BYTES = 10 * 1024 * 1024
+COURSE_SOURCE_MAX_USER_STORAGE_BYTES = 1024 * 1024 * 1024
+COURSE_SOURCE_MIN_STORAGE_RESERVATION_BYTES = 32 * 1024 * 1024
+COURSE_SOURCE_INDEX_EXPANSION_MULTIPLIER = 8
+
+
+@dataclass(frozen=True)
+class CourseSourceStorageAdmission:
+    input_bytes: int
+    tree_bytes_before: int
+    reserved_growth_bytes: int
+
+
+def _private_tree_size(root: Path) -> int:
+    """Count regular-file bytes and fail closed on unsafe filesystem entries."""
+    try:
+        root_stat = root.lstat()
+    except FileNotFoundError:
+        return 0
+    total = 0
+    expected_uid = os.geteuid() if hasattr(os, "geteuid") else None
+    try:
+        if (
+            stat.S_ISLNK(root_stat.st_mode)
+            or not stat.S_ISDIR(root_stat.st_mode)
+            or (expected_uid is not None and root_stat.st_uid != expected_uid)
+        ):
+            raise OSError("unsafe private Course storage root")
+        for path in root.rglob("*"):
+            path_stat = path.lstat()
+            if expected_uid is not None and path_stat.st_uid != expected_uid:
+                raise OSError("foreign-owned entry inside private Course storage")
+            if stat.S_ISLNK(path_stat.st_mode):
+                raise OSError("symbolic link inside private Course storage")
+            if stat.S_ISREG(path_stat.st_mode):
+                if path_stat.st_nlink > 1:
+                    raise OSError("hard link inside private Course storage")
+                total += path_stat.st_size
+            elif not stat.S_ISDIR(path_stat.st_mode):
+                raise OSError("non-regular entry inside private Course storage")
+    except OSError as exc:
+        raise HTTPException(
+            status_code=503,
+            detail="Course storage quota could not be verified",
+        ) from exc
+    return total
+
+
+def _admit_source_batch(
+    preflight: list[dict[str, int | str | None]],
+    *,
+    storage_root: Path,
+) -> CourseSourceStorageAdmission:
+    """Apply the controlled-beta request and per-user lifetime storage caps."""
+    if len(preflight) > COURSE_SOURCE_MAX_FILES:
+        raise HTTPException(
+            status_code=413,
+            detail=f"A Course material upload may contain at most {COURSE_SOURCE_MAX_FILES} files",
+        )
+    if any(str(item.get("path") or "").lower().endswith(".zip") for item in preflight):
+        raise HTTPException(
+            status_code=400,
+            detail="ZIP archives are not accepted for bounded Course material uploads",
+        )
+    sizes = [item.get("size_bytes") for item in preflight]
+    if any(not isinstance(size, int) or isinstance(size, bool) or size < 0 for size in sizes):
+        raise HTTPException(status_code=400, detail="Course material size could not be verified")
+    batch_bytes = sum(int(size) for size in sizes)
+    if batch_bytes > COURSE_SOURCE_MAX_BATCH_BYTES:
+        raise HTTPException(
+            status_code=413,
+            detail="Course material upload exceeds the 10 MiB batch limit",
+        )
+    tree_bytes_before = _private_tree_size(storage_root)
+    reserved_growth_bytes = max(
+        COURSE_SOURCE_MIN_STORAGE_RESERVATION_BYTES,
+        batch_bytes * COURSE_SOURCE_INDEX_EXPANSION_MULTIPLIER,
+    )
+    if (
+        tree_bytes_before + reserved_growth_bytes
+        > COURSE_SOURCE_MAX_USER_STORAGE_BYTES
+    ):
+        raise HTTPException(
+            status_code=413,
+            detail="Course material storage quota reached",
+        )
+    return CourseSourceStorageAdmission(
+        input_bytes=batch_bytes,
+        tree_bytes_before=tree_bytes_before,
+        reserved_growth_bytes=reserved_growth_bytes,
+    )
+
+
+def _owned_kb_dir(task: dict[str, Any]) -> Path:
+    required = {"owner_user_id", "course_id", "source_id", "base_dir", "kb_name"}
+    if not required.issubset(task):
+        raise ValueError("Course Knowledge shard identity is incomplete")
+    owner_user_id = str(task["owner_user_id"])
+    course_id = str(task["course_id"])
+    source_id = str(task["source_id"])
+    canonical_base = (
+        get_personal_path_service(owner_user_id)
+        .get_knowledge_bases_root()
+        .absolute()
+    )
+    base_dir = Path(str(task["base_dir"])).absolute()
+    if (
+        base_dir != canonical_base
+        or base_dir.is_symlink()
+        or base_dir.resolve(strict=False) != canonical_base.resolve(strict=False)
+    ):
+        raise ValueError("Course Knowledge root is unsafe")
+    kb_name = str(task["kb_name"])
+    expected_name = source_kb_name(course_id, source_id)
+    if (
+        kb_name != expected_name
+        or kb_name in {".", ".."}
+        or Path(kb_name).parts != (kb_name,)
+    ):
+        raise ValueError("Course Knowledge shard name is unsafe")
+    candidate = base_dir / kb_name
+    if candidate.parent != base_dir:
+        raise ValueError("Course Knowledge shard parent is unsafe")
+    return candidate
+
+
+def _remove_owned_kb_shard(task: dict[str, Any]) -> None:
+    """Remove only the exact opaque shard owned by this failed operation."""
+    if not {
+        "owner_user_id",
+        "course_id",
+        "source_id",
+        "base_dir",
+        "kb_name",
+    }.issubset(task):
+        return
+    try:
+        kb_dir = _owned_kb_dir(task)
+        if kb_dir.is_symlink():
+            kb_dir.unlink(missing_ok=True)
+        elif kb_dir.exists():
+            shutil.rmtree(kb_dir)
+    except Exception:
+        logger.exception("Could not clean failed Course Knowledge shard")
+
+
+def _seal_and_verify_source_storage(task: dict[str, Any]) -> None:
+    """Enforce reserved index growth before a source can become authority."""
+    try:
+        base_dir = Path(str(task["base_dir"])).absolute()
+        kb_dir = _owned_kb_dir(task)
+        if kb_dir.exists():
+            restrict_private_tree_permissions(kb_dir)
+        total_bytes = _private_tree_size(base_dir)
+        shard_bytes = _private_tree_size(kb_dir)
+        tree_bytes_before = int(task["tree_bytes_before"])
+        reserved_growth_bytes = int(task["reserved_growth_bytes"])
+        if (
+            total_bytes > COURSE_SOURCE_MAX_USER_STORAGE_BYTES
+            or shard_bytes > reserved_growth_bytes
+            or total_bytes - tree_bytes_before > reserved_growth_bytes
+        ):
+            raise HTTPException(
+                status_code=413,
+                detail="Course material index exceeded its storage reservation",
+            )
+    except Exception:
+        _remove_owned_kb_shard(task)
+        raise
 
 
 def _sha256_file(path: Path) -> str:
@@ -131,6 +313,27 @@ def prepare_source_upload(
             raise CourseConflictError("Idempotency key was already used for another source")
         return existing, None
 
+    base_dir = get_personal_path_service(service.owner_user_id).get_knowledge_bases_root()
+    storage_admission = _admit_source_batch(preflight, storage_root=base_dir)
+
+    source_admission_id = f"csi_{uuid4().hex}"
+    try:
+        get_course_source_admission_ledger().admit(
+            operation_id=source_admission_id,
+            owner_user_id=service.owner_user_id,
+            provider=provider,
+            admitted_input_bytes=storage_admission.input_bytes,
+        )
+    except CourseSourceAdmissionLimitError as exc:
+        raise HTTPException(
+            status_code=429,
+            detail="Course material upload budget reached",
+        ) from exc
+    except (CourseSourceAdmissionError, OSError, sqlite3.Error) as exc:
+        raise HTTPException(
+            status_code=503,
+            detail="Course material upload admission is unavailable",
+        ) from exc
     operation_id = TaskIDManager.get_instance().generate_task_id(
         "course_source", f"{course.id}:{uuid4().hex}"
     )
@@ -140,6 +343,7 @@ def prepare_source_upload(
         owner_user_id=service.owner_user_id,
         course_id=course.id,
         private_course=True,
+        source_admission_id=source_admission_id,
     )
     get_task_stream_manager().ensure_task(operation_id)
     target_dir: Path | None = None
@@ -164,7 +368,6 @@ def prepare_source_upload(
         raise
     kb_name = source_kb_name(course.id, source.id)
 
-    base_dir = get_personal_path_service(service.owner_user_id).get_knowledge_bases_root()
     manager = KnowledgeBaseManager(base_dir=str(base_dir))
     initializer = KnowledgeBaseInitializer(
         kb_name=kb_name,
@@ -246,6 +449,10 @@ def prepare_source_upload(
         "source_content_sha256": source.content_sha256,
         "rag_provider": provider,
         "initialize": not had_ready_index,
+        "admitted_input_bytes": storage_admission.input_bytes,
+        "tree_bytes_before": storage_admission.tree_bytes_before,
+        "reserved_growth_bytes": storage_admission.reserved_growth_bytes,
+        "source_admission_id": source_admission_id,
     }
     return source, task
 
@@ -286,6 +493,13 @@ def _current_personal_user(owner_user_id: str) -> CurrentUser | None:
     )
 
 
+def _course_source_upload_authorized(user: CurrentUser) -> bool:
+    """Re-read the live grant; a queued task never carries upload authority."""
+    return user.role == "admin" or (
+        load_grant(user.id).get("course_source_uploads") is True
+    )
+
+
 def _fail_source_row(task: dict[str, Any]) -> None:
     """Best-effort terminal cleanup for the exact owned source operation."""
     required = {
@@ -314,19 +528,41 @@ def _fail_source_row(task: dict[str, Any]) -> None:
         logger.exception("Could not terminalize failed Course source operation")
 
 
+async def _owned_to_thread(function: Any, /, *args: Any, **kwargs: Any) -> Any:
+    """Let bounded filesystem work finish before propagating cancellation."""
+    worker = asyncio.create_task(asyncio.to_thread(function, *args, **kwargs))
+    try:
+        return await asyncio.shield(worker)
+    except asyncio.CancelledError as cancelled:
+        try:
+            await worker
+        except Exception:
+            logger.exception("Course source worker failed while cancellation was draining")
+        raise cancelled
+
+
+async def cancel_source_operation(task: dict[str, Any], message: str) -> None:
+    """Clean and terminalize one exact staged Course source operation."""
+    await _owned_to_thread(_remove_owned_kb_shard, task)
+    await _owned_to_thread(_fail_source_row, task)
+    operation_id = str(task.get("operation_id") or "")
+    if not operation_id:
+        return
+    TaskIDManager.get_instance().update_task_status(
+        operation_id,
+        "cancelled",
+        error=message,
+    )
+    get_task_stream_manager().emit_failed(operation_id, message)
+
+
 async def run_source_operation(task: dict[str, Any]) -> None:
     """Run the existing provider task, then fence its Course commit."""
     operation_id = str(task["operation_id"])
     stream = get_task_stream_manager()
     user = _current_personal_user(str(task["owner_user_id"]))
     if user is None:
-        _fail_source_row(task)
-        TaskIDManager.get_instance().update_task_status(
-            operation_id,
-            "cancelled",
-            error="Course source owner is no longer active",
-        )
-        stream.emit_failed(operation_id, "Course source owner is no longer active")
+        await cancel_source_operation(task, "Course source owner is no longer active")
         return
 
     token = set_current_user(user)
@@ -357,67 +593,78 @@ async def run_source_operation(task: dict[str, Any]) -> None:
                 str(task["course_id"]), str(task["source_id"])
             ).content_sha256
 
-        if deterministic_enabled():
-            await delay_ingestion_for_runtime_proof()
-            provider_succeeded = build_deterministic_index(
-                Path(str(task["base_dir"])) / str(task["kb_name"]),
-                [str(item) for item in task["uploaded_paths"]],
-                source_content_sha256=str(source_content_sha256),
-            )
-        elif bool(task["initialize"]):
-            initializer = KnowledgeBaseInitializer(
-                kb_name=str(task["kb_name"]),
-                base_dir=str(task["base_dir"]),
-                rag_provider=str(task["rag_provider"]),
-            )
-            provider_succeeded = await run_initialization_task(
-                initializer, operation_id, finalize_task=False
-            )
-        else:
-            provider_succeeded = await run_upload_processing_task(
-                kb_name=str(task["kb_name"]),
-                base_dir=str(task["base_dir"]),
-                uploaded_file_paths=[str(item) for item in task["uploaded_paths"]],
-                task_id=operation_id,
-                rag_provider=str(task["rag_provider"]),
-                finalize_task=False,
-            )
+        # Re-read account role and the explicit upload grant immediately before
+        # provider work.  A grant captured by the request is never authority for
+        # a queued task.
+        provider_user = _current_personal_user(str(task["owner_user_id"]))
+        if provider_user is None or not _course_source_upload_authorized(provider_user):
+            await cancel_source_operation(task, "Course material upload access changed")
+            return
+
+        provider_token = set_current_user(provider_user)
+        try:
+            if deterministic_enabled():
+                await delay_ingestion_for_runtime_proof()
+                provider_succeeded = await _owned_to_thread(
+                    build_deterministic_index,
+                    Path(str(task["base_dir"])) / str(task["kb_name"]),
+                    [str(item) for item in task["uploaded_paths"]],
+                    source_content_sha256=str(source_content_sha256),
+                )
+            elif bool(task["initialize"]):
+                initializer = KnowledgeBaseInitializer(
+                    kb_name=str(task["kb_name"]),
+                    base_dir=str(task["base_dir"]),
+                    rag_provider=str(task["rag_provider"]),
+                )
+                provider_succeeded = await run_initialization_task(
+                    initializer, operation_id, finalize_task=False
+                )
+            else:
+                provider_succeeded = await run_upload_processing_task(
+                    kb_name=str(task["kb_name"]),
+                    base_dir=str(task["base_dir"]),
+                    uploaded_file_paths=[str(item) for item in task["uploaded_paths"]],
+                    task_id=operation_id,
+                    rag_provider=str(task["rag_provider"]),
+                    finalize_task=False,
+                )
+        finally:
+            reset_current_user(provider_token)
+
+        metadata = TaskIDManager.get_instance().get_task_metadata(operation_id) or {}
+        if provider_succeeded is None:
+            # Compatibility for deterministic test fakes and third-party
+            # wrappers that predate the explicit provider outcome.
+            provider_succeeded = metadata.get("status") == "completed"
 
         # Course Practice generation reads a small deterministic, exact-text
         # shard in addition to the provider-specific RAG index. Keep that
         # derived artifact in sync for both first-time initialization and later
         # uploads; otherwise a source can be marked ready while grounded
         # Practice and Flashcards cannot resolve its text.
-        if not deterministic_enabled():
-            build_deterministic_index(
+        if provider_succeeded and not deterministic_enabled():
+            await _owned_to_thread(
+                build_deterministic_index,
                 Path(str(task["base_dir"])) / str(task["kb_name"]),
                 [str(item) for item in task["uploaded_paths"]],
                 source_content_sha256=str(source_content_sha256),
             )
 
-        # Providers create index shards and metadata through several legacy
-        # adapters. Repair the owned shard before any database state can grant
-        # retrieval authority, independent of the host process umask.
-        kb_dir = Path(str(task["base_dir"])) / str(task["kb_name"])
-        if kb_dir.exists():
-            restrict_private_tree_permissions(kb_dir)
+        if provider_succeeded:
+            # Provider-created indexes are admitted against the full private
+            # tree and this exact shard before any database state can grant
+            # retrieval authority.
+            await _owned_to_thread(_seal_and_verify_source_storage, task)
+        else:
+            await _owned_to_thread(_remove_owned_kb_shard, task)
 
-        # Re-read account state and role immediately before the Course commit.
+        # Re-read account state, role, and grant immediately before the Course
+        # commit.  Revoked work is cleaned and never becomes learner-readable.
         refreshed = _current_personal_user(str(task["owner_user_id"]))
-        if refreshed is None:
-            _fail_source_row(task)
-            TaskIDManager.get_instance().update_task_status(
-                operation_id,
-                "cancelled",
-                error="Course source owner authorization changed",
-            )
-            stream.emit_failed(operation_id, "Course source owner authorization changed")
+        if refreshed is None or not _course_source_upload_authorized(refreshed):
+            await cancel_source_operation(task, "Course material upload access changed")
             return
-        metadata = TaskIDManager.get_instance().get_task_metadata(operation_id) or {}
-        if provider_succeeded is None:
-            # Compatibility for deterministic test fakes and third-party
-            # wrappers that predate the explicit provider outcome.
-            provider_succeeded = metadata.get("status") == "completed"
         final_state = "ready" if provider_succeeded else "failed"
         repo = CourseRepository(
             get_personal_path_service(refreshed.id).get_courses_db(), refreshed.id
@@ -439,18 +686,19 @@ async def run_source_operation(task: dict[str, Any]) -> None:
                 operation_id, "error", error="Course source processing failed"
             )
             stream.emit_failed(operation_id, "Course source processing failed")
+    except asyncio.CancelledError:
+        await cancel_source_operation(task, "Course source processing was cancelled")
+        raise
     except CourseConflictError:
         # Archive/revision/revocation fences intentionally win over late work.
-        _fail_source_row(task)
-        TaskIDManager.get_instance().update_task_status(
-            operation_id,
-            "cancelled",
-            error="Course source changed before processing completed",
+        await cancel_source_operation(
+            task,
+            "Course source changed before processing completed",
         )
-        stream.emit_failed(operation_id, "Course source changed before processing completed")
         return
-    except Exception as exc:
-        _fail_source_row(task)
+    except Exception:
+        await _owned_to_thread(_remove_owned_kb_shard, task)
+        await _owned_to_thread(_fail_source_row, task)
         TaskIDManager.get_instance().update_task_status(
             operation_id, "error", error="Course source processing failed"
         )

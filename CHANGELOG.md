@@ -2,6 +2,111 @@
 
 ## Unreleased
 
+- Closed additional controlled-beta resource and shared-browser boundaries.
+  Personal Knowledge Base indexing remains owner/admin-only. Course-source
+  uploads are deny-by-default per learner grant and now enforce pre-parse body
+  limits, per-user and global work permits, full-private-tree storage and index
+  growth reservations, server-owned provider selection, a durable lifetime
+  provider-operation ceiling, and live grant checks before provider work and
+  before publication. Learners retain private Course reads. Sandbox quota
+  identity now comes from the authenticated principal in every pipeline,
+  protocol-relative Markdown navigation is rejected, and successful logout
+  clears private saved capability forms without clearing unrelated browser
+  preferences. Chat input
+  attachments are removed when their message fails or is cancelled, and the
+  inline notebook-image endpoint now rejects oversized JSON before request-body
+  parsing as well as enforcing encoded-image limits during validation.
+
+- Closed the controlled-beta sharing boundary around bootstrap registration,
+  quiz judging, attachments, progress streaming, and learner-safe rendering.
+  First-user registration is atomic and invite-only afterward; ordinary quiz
+  requests revalidate the learner's model grant and use bounded process-local
+  admission; uploaded files and notebook images are size/type checked before
+  storage, receive server-owned identifiers, and require a same-user database
+  reference before download. Progress sockets revalidate ownership while
+  connected, failed delegated tools stay redacted, model HTML no longer
+  executes, SVG/Markdown remote fetches are blocked, and logout redirects only
+  after the server confirms the session ended. Bootstrap admission also treats
+  the configured fallback administrator as identity authority and performs the
+  winning password hash off the request event loop only after the locked store
+  check succeeds.
+
+- Preserved learner work across the demo loop: Strict Mode replay no longer
+  cancels initial unified-chat loading, Course Chat exposes a retry path,
+  Course navigation retains its scoped route, and the latest debounced Practice
+  answer is flushed with a keepalive request during reload or navigation.
+
+- Course and chat navigation now discard stale route reads by generation, so
+  normal client-side navigation and development effect replay do not surface as
+  aborted learner requests.
+
+- Hardened delegated Partner use: provider-registry OAuth classification and
+  unknown credential modes now fail closed even when mutable profile metadata
+  is missing, and learner-facing Partner failures no longer expose raw provider
+  exception text. Owner/admin diagnostics remain server-side.
+
+- Kept active login throttles from being evicted by identifier noise, reliably
+  discard failed Knowledge-progress WebSocket connections, and apply the same
+  download/CSP hardening to generated XML, XSL, and script outputs as active
+  HTML and SVG.
+
+- Added the Day 5 runtime-data backup/restore boundary. The explicit utility
+  creates a manifest-verified archive of one stopped `data/` tree, rejects
+  symbolic links, hard links, and special files, excludes the ephemeral Course
+  process lock, and restores into a validated staging tree. Replacing a
+  non-empty target requires `--replace` and preserves the prior tree beside the
+  restored one for recovery. Added isolated round-trip, lock, and private-tree
+  safety tests.
+
+- Hardened the school-ready learner Course loop for provider-off use. Active
+  Course Chat now discloses when answers are general, processing, failed, or
+  partially grounded without hiding the Chat surface. A learner can create and
+  recover the first manual Practice draft, including after reload or an
+  ambiguous revision-creation response; known revisions must finish opening or
+  expose Retry before draft recovery is offered. Materials polling is
+  serialized, preserves actionable failures, and rejects stale responses.
+  Flashcards keeps manual decks usable when optional generation support or deck
+  details fail, hides unpublished generated shells, and prevents stale support
+  responses from stealing a newer deck selection. Capability checks now fail
+  closed initially, preserve confirmed access during background refresh, expose
+  retryable failures, and do not discard an unsent Chat draft.
+
+- Restricted assigned-learner Partner consultations to a fail-closed delegated
+  boundary. Caller provenance, live assignment, model shareability, and
+  per-learner session identity are revalidated before Partner work; owner-bound
+  model profiles and owner/global memory, management commands, host execution,
+  cron, GitHub, notebooks, MCP/deferred tools, and other unreviewed capabilities
+  are unavailable to assignees while direct owner behavior remains compatible.
+  Added a disposable Day 3 browser campaign for two-user Course/source/study
+  isolation, provider-off repair presentation, deterministic-local grounding,
+  cold process restart, zero paid-provider usage, source identity, and
+  cleanup-before-sentinel evidence.
+
+- Kept normal learner chat from requesting deployment-wide subagent settings.
+  The composer now reads only an authenticated, learner-safe consult-budget
+  projection while backend models, prompts, and execution permissions remain
+  admin-only.
+
+- Hardened the school-ready multi-user boundary around subagents and Partners.
+  Subagent execution policy now always resolves from deployment-owned settings,
+  Partner assignments are revalidated whenever a saved connection is listed or
+  used, host-local CLI connections cannot be assigned to or activated by a
+  learner, and missing authenticated request context now fails closed instead
+  of inheriting local-administrator authority. Learner-safe Partner discovery
+  remains available while management deep links stay administrator-only.
+
+- Restricted learner Knowledge Base configuration to existing, writable bases
+  and reviewed retrieval fields, with learner-safe read/write responses that do
+  not expose stored paths or connector credentials. Host-folder and external
+  connector workflows are now administrator-only, generic grants exclude live
+  connected resources, and legacy learner pointer metadata remains inert. The
+  browser now hides those deployment controls unless administrator status is
+  confirmed. Legacy `/settings/mcp` links now carry learners to the account-safe
+  `/space/mcp` surface while the deployment registry remains administrator-only.
+  Added a disposable learner/admin browser campaign that records the safe
+  projections, denied admin surfaces, route gates, and browser errors without
+  touching real account data.
+
 - Added the learner Course surfaces for local-first beta qualification: distinct
   Overview, Practice, Flashcards, and Materials flows; Course-grounded quiz and
   flashcard creation; editable learner cards; and admin-only navigation and

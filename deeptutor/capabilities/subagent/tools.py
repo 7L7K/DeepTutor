@@ -80,6 +80,36 @@ class ConsultSubagentTool(BaseTool):
                 content="No subagent is connected on this turn; consult_subagent is unavailable.",
                 success=False,
             )
+        kind = str(spec.get("kind") or "")
+        from deeptutor.multi_user.context import MissingCurrentUserContext, get_current_user
+        from deeptutor.services.subagent.partner import PARTNER_BACKEND_KIND
+
+        # ``_subagent`` is normally injected by the capability, but this tool
+        # remains a defence-in-depth boundary for stale metadata or an internal
+        # caller that constructs a spec directly. Do this before resolving a
+        # backend or touching the per-turn budget/session state.
+        try:
+            user = get_current_user()
+        except MissingCurrentUserContext:
+            return ToolResult(
+                content="Authenticated user context is unavailable; consult_subagent is denied.",
+                success=False,
+            )
+        if not user.is_admin and kind != PARTNER_BACKEND_KIND:
+            return ToolResult(
+                content="This connected agent is available only to an administrator.",
+                success=False,
+            )
+        if kind == PARTNER_BACKEND_KIND:
+            from fastapi import HTTPException
+
+            from deeptutor.multi_user.partner_access import assert_partner_allowed
+
+            try:
+                assert_partner_allowed(str(spec.get("partner_id") or "").strip())
+            except (HTTPException, MissingCurrentUserContext) as exc:
+                detail = getattr(exc, "detail", str(exc))
+                return ToolResult(content=str(detail), success=False)
         question = str(kwargs.get("question") or "").strip()
         if not question:
             return ToolResult(
@@ -101,7 +131,7 @@ class ConsultSubagentTool(BaseTool):
 
         from deeptutor.services.subagent import get_backend
 
-        backend = get_backend(str(spec.get("kind") or ""))
+        backend = get_backend(kind)
         if backend is None:
             return ToolResult(
                 content=f"Unknown subagent backend: {spec.get('kind')!r}", success=False
@@ -153,6 +183,15 @@ class ConsultSubagentTool(BaseTool):
             )
         except Exception as exc:  # pragma: no cover - defensive: surface, don't crash the turn
             logger.warning("consult_subagent failed: %s", exc, exc_info=True)
+            if backend.kind == "partner":
+                # Partner provider failures can include a provider response,
+                # credential hint, or internal path. The delegated backend
+                # normally folds them into a safe result itself; keep this
+                # outer defensive path safe as well.
+                return ToolResult(
+                    content="The assigned Partner could not complete that request. Please try again later.",
+                    success=False,
+                )
             return ToolResult(content=f"The subagent run failed: {exc}", success=False)
         finally:
             if image_dir is not None:

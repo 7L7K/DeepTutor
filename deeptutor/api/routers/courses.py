@@ -2,13 +2,26 @@
 
 from __future__ import annotations
 
+import asyncio
+from contextlib import AsyncExitStack
+import logging
 import sqlite3
 from typing import Annotated, Any, Literal
 
-from fastapi import APIRouter, BackgroundTasks, File, Form, Header, HTTPException, Query, UploadFile
+from fastapi import (
+    APIRouter,
+    BackgroundTasks,
+    Depends,
+    Header,
+    HTTPException,
+    Query,
+    Request,
+)
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, ConfigDict, Field
+from starlette.datastructures import FormData, UploadFile
 
+from deeptutor.api.routers.auth import require_course_source_upload
 from deeptutor.courses.practice_models import (
     ExactAnswerContract,
     PracticeAnswerContract,
@@ -21,8 +34,103 @@ from deeptutor.courses.service import (
     get_current_course_service,
 )
 from deeptutor.learning.storage import LearningConflictError, LearningDataError
+from deeptutor.services.auth import TokenPayload
+from deeptutor.services.sandbox.quota import QuotaExceeded, UserExecQuota
 
 router = APIRouter()
+logger = logging.getLogger(__name__)
+
+_course_source_user_quota = UserExecQuota(max_concurrent=1, max_per_minute=6)
+_course_source_global_quota = UserExecQuota(max_concurrent=2, max_per_minute=24)
+_course_source_background_tasks: set[asyncio.Task[None]] = set()
+
+
+def _course_source_form_text(
+    form: FormData,
+    field: str,
+    *,
+    required: bool = False,
+    default: str | None = None,
+) -> str | None:
+    values = form.getlist(field)
+    if not values:
+        if required:
+            raise HTTPException(status_code=422, detail=f"Missing form field: {field}")
+        return default
+    if len(values) != 1 or not isinstance(values[0], str):
+        raise HTTPException(status_code=422, detail=f"Invalid form field: {field}")
+    return values[0]
+
+
+def _parse_course_source_form(
+    form: FormData,
+) -> tuple[list[UploadFile], str, str, str | None, list[str] | None, str | None]:
+    files = form.getlist("files")
+    if not files or any(not isinstance(item, UploadFile) for item in files):
+        raise HTTPException(status_code=422, detail="At least one source file is required")
+    rel_paths = form.getlist("rel_paths")
+    if any(not isinstance(item, str) for item in rel_paths):
+        raise HTTPException(status_code=422, detail="Invalid form field: rel_paths")
+    kind = _course_source_form_text(form, "kind", default="document")
+    display_name = _course_source_form_text(form, "display_name", required=True)
+    assert kind is not None and display_name is not None
+    return (
+        files,
+        kind,
+        display_name,
+        _course_source_form_text(form, "rag_provider"),
+        rel_paths or None,
+        _course_source_form_text(form, "supersedes_source_id"),
+    )
+
+
+async def _run_course_source_background(
+    task: dict[str, Any], quota_stack: AsyncExitStack
+) -> None:
+    """Hold both beta work permits until the exact background task ends."""
+    from deeptutor.courses.ingestion import run_source_operation
+
+    try:
+        await run_source_operation(task)
+    finally:
+        await quota_stack.aclose()
+
+
+def _course_source_background_done(task: asyncio.Task[None]) -> None:
+    _course_source_background_tasks.discard(task)
+    if task.cancelled():
+        return
+    try:
+        error = task.exception()
+    except asyncio.CancelledError:
+        return
+    if error is not None:
+        logger.error(
+            "Owned Course source task failed",
+            exc_info=(type(error), error, error.__traceback__),
+        )
+
+
+def _dispatch_course_source_background(
+    task: dict[str, Any], quota_stack: AsyncExitStack
+) -> asyncio.Task[None]:
+    """Start owned work before the response can be disconnected or rejected."""
+    background = asyncio.create_task(
+        _run_course_source_background(task, quota_stack),
+        name=f"course-source:{task.get('operation_id', 'unknown')}",
+    )
+    _course_source_background_tasks.add(background)
+    background.add_done_callback(_course_source_background_done)
+    return background
+
+
+async def shutdown_course_source_background_tasks() -> None:
+    """Cancel and drain owned ingestion before application resources close."""
+    tasks = tuple(_course_source_background_tasks)
+    for task in tasks:
+        task.cancel()
+    if tasks:
+        await asyncio.gather(*tasks, return_exceptions=True)
 
 
 class CreateCourseRequest(BaseModel):
@@ -2491,40 +2599,116 @@ async def list_course_sources(course_id: str):
     }
 
 
-@router.post("/{course_id}/sources", status_code=202)
+@router.post(
+    "/{course_id}/sources",
+    status_code=202,
+)
 async def create_course_source(
     course_id: str,
-    background_tasks: BackgroundTasks,
-    files: list[UploadFile] = File(...),
-    kind: str = Form("document"),
-    display_name: str = Form(...),
-    rag_provider: str | None = Form(None),
-    rel_paths: list[str] | None = Form(None),
-    supersedes_source_id: str | None = Form(None),
+    request: Request,
+    principal: Annotated[TokenPayload, Depends(require_course_source_upload)],
     idempotency_key: str = Header(..., alias="Idempotency-Key", min_length=8, max_length=160),
 ):
-    from deeptutor.courses.ingestion import prepare_source_upload, run_source_operation
+    from deeptutor.courses.ingestion import (
+        cancel_source_operation,
+        prepare_source_upload,
+    )
 
+    quota_stack = AsyncExitStack()
+    transferred_stack: AsyncExitStack | None = None
+    staged_task: dict[str, Any] | None = None
     try:
-        async with course_operation_lock(course_id):
-            source, task = prepare_source_upload(
-                course_id=course_id,
-                files=files,
-                kind=kind,
-                display_name=display_name,
-                rag_provider=rag_provider,
-                rel_paths=rel_paths,
-                supersedes_source_id=supersedes_source_id,
-                idempotency_key=idempotency_key,
+        try:
+            await quota_stack.enter_async_context(
+                await _course_source_user_quota.acquire(principal.user_id)
             )
+            await quota_stack.enter_async_context(
+                await _course_source_global_quota.acquire("course-source-global")
+            )
+        except QuotaExceeded as exc:
+            raise HTTPException(
+                status_code=429,
+                detail="Course material upload capacity is temporarily full",
+            ) from exc
+
+        async with request.form(
+            max_files=10,
+            max_fields=16,
+            max_part_size=10 * 1024 * 1024,
+        ) as form:
+            (
+                files,
+                kind,
+                display_name,
+                rag_provider,
+                rel_paths,
+                supersedes_source_id,
+            ) = _parse_course_source_form(form)
+            if principal.role != "admin" and str(rag_provider or "").strip():
+                raise HTTPException(
+                    status_code=403,
+                    detail="Course material provider selection is owner-managed",
+                )
+
+            async with course_operation_lock(course_id):
+                prepare_task = asyncio.create_task(
+                    asyncio.to_thread(
+                        prepare_source_upload,
+                        course_id=course_id,
+                        files=files,
+                        kind=kind,
+                        display_name=display_name,
+                        rag_provider=rag_provider if principal.role == "admin" else None,
+                        rel_paths=rel_paths,
+                        supersedes_source_id=supersedes_source_id,
+                        idempotency_key=idempotency_key,
+                    ),
+                    name=f"course-source-prepare:{course_id}",
+                )
+                try:
+                    source, staged_task = await asyncio.shield(prepare_task)
+                except asyncio.CancelledError as cancelled:
+                    try:
+                        _source, staged_task = await prepare_task
+                    except Exception:
+                        logger.exception(
+                            "Course source preparation failed after request cancellation"
+                        )
+                    if staged_task is not None:
+                        await cancel_source_operation(
+                            staged_task,
+                            "Course source request was cancelled",
+                        )
+                        staged_task = None
+                    raise cancelled
+
+        if staged_task is not None:
+            transferred_stack = quota_stack.pop_all()
+            try:
+                _dispatch_course_source_background(staged_task, transferred_stack)
+            except BaseException:
+                await transferred_stack.aclose()
+                await cancel_source_operation(
+                    staged_task,
+                    "Course source processing could not be started",
+                )
+                staged_task = None
+                raise
+    except asyncio.CancelledError:
+        if staged_task is not None:
+            await cancel_source_operation(
+                staged_task,
+                "Course source request was cancelled",
+            )
+        raise
     except CourseNotFoundError as exc:
         raise HTTPException(status_code=404, detail="Course resource not found") from exc
     except CourseConflictError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
-    if task is not None:
-        background_tasks.add_task(run_source_operation, task)
+    finally:
+        await quota_stack.aclose()
     return source.model_dump()
 
 
@@ -2554,7 +2738,12 @@ async def stream_course_source_progress(course_id: str, source_id: str):
 
 
 @router.post("/{course_id}/sources/{source_id}/archive")
-async def archive_course_source(course_id: str, source_id: str, body: RevisionRequest):
+async def archive_course_source(
+    course_id: str,
+    source_id: str,
+    body: RevisionRequest,
+    _principal: Annotated[TokenPayload, Depends(require_course_source_upload)],
+):
     try:
         async with course_operation_lock(course_id):
             source = await _service().archive_source(
