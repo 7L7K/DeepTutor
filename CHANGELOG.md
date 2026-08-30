@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Course and chat navigation now discard stale route reads by generation, so
+  normal client-side navigation and development effect replay do not surface as
+  aborted learner requests.
+
 - Hardened delegated Partner use: provider-registry OAuth classification and
   unknown credential modes now fail closed even when mutable profile metadata
   is missing, and learner-facing Partner failures no longer expose raw provider

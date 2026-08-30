@@ -14,21 +14,22 @@ test("a delayed Course A read cannot apply after Course B owns the route", () =>
   const courseAEpoch = 1;
   const courseBEpoch = 2;
 
-  assert.equal(isCurrentAbortableRequest(courseAEpoch, courseBEpoch, courseA.signal), false);
-  assert.equal(isCurrentAbortableRequest(courseBEpoch, courseBEpoch, courseB.signal), true);
+  assert.equal(isCurrentAbortableRequest(courseAEpoch, courseBEpoch), false);
+  assert.equal(isCurrentAbortableRequest(courseBEpoch, courseBEpoch), true);
 
   courseA.abort();
   assert.equal(isCurrentAbortableRequest(courseAEpoch, courseAEpoch, courseA.signal), false);
 });
 
-test("an aborted Course A chat snapshot cannot select shared chat state after Course B", () => {
+test("a cancelled or superseded Course A chat snapshot cannot select shared chat state after Course B", () => {
   const courseASession = new AbortController();
   const courseBSession = new AbortController();
   let selectedSession: string | null = null;
 
   courseASession.abort();
   if (canApplySessionLoad(courseASession.signal)) selectedSession = "course-a-session";
-  if (canApplySessionLoad(courseBSession.signal)) selectedSession = "course-b-session";
+  if (canApplySessionLoad(courseBSession.signal, () => false)) selectedSession = "stale-course-b-session";
+  if (canApplySessionLoad(courseBSession.signal, () => true)) selectedSession = "course-b-session";
 
   assert.equal(selectedSession, "course-b-session");
 });
@@ -48,8 +49,9 @@ test("learner surfaces use the cancellation guards rather than applying late res
   );
 
   assert.match(courseShell, /isCurrentAbortableRequest/);
-  assert.match(courseShell, /getCourse\(courseId, controller\.signal\)/);
-  assert.match(chatProvider, /if \(!canApplySessionLoad\(options\?\.signal\)\) return/);
+  assert.match(courseShell, /getCourse\(courseId\)/);
+  assert.match(chatProvider, /if \(!canApplySessionLoad\(options\?\.signal, options\?\.isCurrent\)\) return/);
   assert.match(chatPage, /sessionLoadEpochRef/);
+  assert.match(chatPage, /isCurrent: current/);
   assert.match(chatPage, /loadAbortRef\.current\?\.abort\(\)/);
 });

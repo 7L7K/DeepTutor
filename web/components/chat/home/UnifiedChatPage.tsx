@@ -1016,7 +1016,6 @@ export default function UnifiedChatPage({
    */
   const startSessionLoad = useCallback(
     (sid: string) => {
-      loadAbortRef.current?.abort()
       const ctrl = new AbortController()
       loadAbortRef.current = ctrl
       const requestEpoch = ++sessionLoadEpochRef.current
@@ -1029,6 +1028,7 @@ export default function UnifiedChatPage({
 
       void loadSession(sid, {
         signal: ctrl.signal,
+        isCurrent: current,
         revalidate: cached,
       })
         .then(() => {
@@ -1050,9 +1050,11 @@ export default function UnifiedChatPage({
     [loadSession, navigateToHome, showCachedSession]
   )
 
-  // Initial mount — load the session from the URL. Cleanup owns the request
-  // so an unmounted Course A cannot select a late session after Course B
-  // mounts. Reset the ref for Strict Mode's effect replay in development.
+  // Initial mount — load the session from the URL. Cleanup invalidates the
+  // route generation so an unmounted Course A cannot select a late session
+  // after Course B mounts. It intentionally does not abort the transport:
+  // Strict Mode's development effect replay must not manufacture an aborted
+  // request during an otherwise successful learner journey.
   useEffect(() => {
     if (initialLoadRef.current) return
     initialLoadRef.current = true
@@ -1063,7 +1065,6 @@ export default function UnifiedChatPage({
     }
     return () => {
       initialLoadRef.current = false
-      loadAbortRef.current?.abort()
       loadAbortRef.current = null
       sessionLoadEpochRef.current += 1
     }
@@ -1074,8 +1075,9 @@ export default function UnifiedChatPage({
   useEffect(() => {
     if (sessionIdParam === prevSessionIdParam.current) return
     prevSessionIdParam.current = sessionIdParam
-    // Abort any in-flight session load from the previous param
-    loadAbortRef.current?.abort()
+    // Invalidate any in-flight session load from the previous param. The
+    // logical generation gate prevents stale shared-state writes without
+    // producing an avoidable browser-level aborted request.
     loadAbortRef.current = null
     sessionLoadEpochRef.current += 1
     if (sessionIdParam) {

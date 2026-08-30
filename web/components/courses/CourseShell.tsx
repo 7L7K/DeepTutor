@@ -95,17 +95,12 @@ export default function CourseShell({
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const courseLoadEpochRef = useRef(0);
-  const courseLoadAbortRef = useRef<AbortController | null>(null);
 
   const loadCourse = useCallback(() => {
-    courseLoadAbortRef.current?.abort();
-    const controller = new AbortController();
-    courseLoadAbortRef.current = controller;
     const requestEpoch = ++courseLoadEpochRef.current;
     const current = () => isCurrentAbortableRequest(
       requestEpoch,
       courseLoadEpochRef.current,
-      controller.signal,
     );
     // The route parameter can change without remounting the workspace layout.
     // Clear the previous Course immediately so a direct-link transition never
@@ -113,7 +108,7 @@ export default function CourseShell({
     setLoading(true);
     setError(null);
     setCourse(null);
-    void getCourse(courseId, controller.signal)
+    void getCourse(courseId)
       .then((loaded) => {
         if (current()) setCourse(loaded);
       })
@@ -133,8 +128,9 @@ export default function CourseShell({
     // eslint-disable-next-line react-hooks/set-state-in-effect
     loadCourse();
     return () => {
-      courseLoadAbortRef.current?.abort();
-      courseLoadAbortRef.current = null;
+      // Generation invalidation is sufficient: the previous response cannot
+      // write route state, while the request may settle cleanly during React
+      // development effect replay or a normal client-side route change.
       courseLoadEpochRef.current += 1;
     };
   }, [loadCourse]);
