@@ -79,20 +79,34 @@ class LoginFailureLimiter:
         self._max_keys = max_keys
         self._clock = clock or time.monotonic
         self._failures: OrderedDict[str, deque[float]] = OrderedDict()
+        # A shared spillover bucket keeps new identifiers protected when every
+        # bounded per-identifier slot is occupied. It deliberately has no
+        # identifier association, so a successful login cannot clear failure
+        # history that may belong to somebody else.
+        self._overflow_failures: deque[float] = deque()
 
     def retry_after_seconds(self, identifier_hmac: str | None) -> int | None:
         """Return a bounded retry delay when another login should be rejected."""
         if not identifier_hmac:
             return None
+        now = self._clock()
         attempts = self._failures.get(identifier_hmac)
+        if attempts is not None:
+            self._discard_expired(attempts, now)
+            if not attempts:
+                self._failures.pop(identifier_hmac, None)
+                attempts = None
+            else:
+                self._failures.move_to_end(identifier_hmac)
+
+        if attempts is None and len(self._failures) >= self._max_keys:
+            self._discard_expired_keys(now)
+            if len(self._failures) >= self._max_keys:
+                attempts = self._overflow_failures
+                self._discard_expired(attempts, now)
+
         if attempts is None:
             return None
-        now = self._clock()
-        self._discard_expired(attempts, now)
-        if not attempts:
-            self._failures.pop(identifier_hmac, None)
-            return None
-        self._failures.move_to_end(identifier_hmac)
         if len(attempts) < self._max_failures:
             return None
         return max(1, math.ceil(attempts[0] + self._window_seconds - now))
@@ -100,17 +114,26 @@ class LoginFailureLimiter:
     def reserve_attempt(self, identifier_hmac: str | None) -> None:
         """Reserve a login-work slot before a credential check begins.
 
-        A successful login clears its reservation. Reserving before the async
-        worker is started prevents a simultaneous burst from passing the
-        limiter check and consuming unbounded bcrypt work.
+        A successful named login clears its per-identifier reservation.
+        Reserving before the async worker is started prevents a simultaneous
+        burst from passing the limiter check and consuming unbounded bcrypt
+        work. Shared overflow reservations remain until expiry because they
+        cannot safely be attributed to one successful identifier.
         """
         if not identifier_hmac:
             return
         now = self._clock()
+        # Prune every expired bucket before admitting a new identifier. When
+        # capacity is full, retaining live buckets is deliberate: evicting an
+        # older locked identifier lets a noise flood reset that account's
+        # throttle history. New identifiers then share the bounded overflow
+        # bucket, which fails closed instead of leaving attempts untracked.
+        self._discard_expired_keys(now)
         attempts = self._failures.get(identifier_hmac)
         if attempts is None:
             if len(self._failures) >= self._max_keys:
-                self._failures.popitem(last=False)
+                self._overflow_failures.append(now)
+                return
             attempts = deque()
             self._failures[identifier_hmac] = attempts
         self._discard_expired(attempts, now)
@@ -125,6 +148,14 @@ class LoginFailureLimiter:
     def _discard_expired(self, attempts: deque[float], now: float) -> None:
         while attempts and now - attempts[0] >= self._window_seconds:
             attempts.popleft()
+
+    def _discard_expired_keys(self, now: float) -> None:
+        """Free only naturally expired identifier buckets before admission."""
+        self._discard_expired(self._overflow_failures, now)
+        for identifier_hmac, attempts in tuple(self._failures.items()):
+            self._discard_expired(attempts, now)
+            if not attempts:
+                self._failures.pop(identifier_hmac, None)
 
 
 def resolve_attempt_id() -> str:

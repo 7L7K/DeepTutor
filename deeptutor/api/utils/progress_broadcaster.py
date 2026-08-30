@@ -71,7 +71,7 @@ class ProgressBroadcaster:
                     await websocket.send_json({"type": "progress", "data": progress})
                 except Exception as e:
                     # Connection closed or error, mark for removal
-                    logger.debug(f"Error sending to WebSocket for KB '{kb_name}': {e}")
+                    logger.debug("Error sending to WebSocket for resolved KB: %s", e)
                     to_remove.append(websocket)
 
             # Remove closed connections

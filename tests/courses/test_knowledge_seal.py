@@ -291,3 +291,20 @@ async def test_same_named_kbs_do_not_share_progress_websocket_room(monkeypatch, 
         await asyncio.gather(first_task, second_task)
         broadcaster._connections.clear()
         ProgressBroadcaster._instance = original_broadcaster
+
+
+@pytest.mark.asyncio
+async def test_progress_broadcaster_discards_a_socket_that_fails_to_send() -> None:
+    class DeadWebSocket:
+        async def send_json(self, _value: dict) -> None:
+            raise RuntimeError("socket closed")
+
+    broadcaster = ProgressBroadcaster()
+    subscription_key = progress_subscription_key("notes", "/tmp/learner/knowledge_bases")
+    websocket = DeadWebSocket()
+    await broadcaster.connect(subscription_key, websocket)
+
+    await broadcaster.broadcast(subscription_key, {"percent": 50})
+
+    assert broadcaster.get_connection_count(subscription_key) == 0
+    assert subscription_key not in broadcaster._connections

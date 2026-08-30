@@ -11,6 +11,11 @@
   is missing, and learner-facing Partner failures no longer expose raw provider
   exception text. Owner/admin diagnostics remain server-side.
 
+- Kept active login throttles from being evicted by identifier noise, reliably
+  discard failed Knowledge-progress WebSocket connections, and apply the same
+  download/CSP hardening to generated XML, XSL, and script outputs as active
+  HTML and SVG.
+
 - Added the Day 5 runtime-data backup/restore boundary. The explicit utility
   creates a manifest-verified archive of one stopped `data/` tree, rejects
   symbolic links, hard links, and special files, excludes the ephemeral Course

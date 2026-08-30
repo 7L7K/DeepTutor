@@ -129,6 +129,62 @@ def test_login_failure_limiter_is_bounded_and_expires_without_raw_identifiers() 
     assert limiter.retry_after_seconds(None) is None
 
 
+def test_login_failure_limiter_does_not_evict_a_live_lockout_for_noise() -> None:
+    clock = [100.0]
+    limiter = LoginFailureLimiter(
+        max_failures=2,
+        window_seconds=300.0,
+        max_keys=2,
+        clock=lambda: clock[0],
+    )
+
+    limiter.reserve_attempt("protected")
+    limiter.reserve_attempt("protected")
+    assert limiter.retry_after_seconds("protected") == 300
+
+    # The first noise identifier consumes the remaining bounded slot; further
+    # distinct attempts cannot evict a still-active protected lockout.
+    limiter.reserve_attempt("noise-one")
+    limiter.reserve_attempt("noise-two")
+    assert limiter.retry_after_seconds("protected") == 300
+    assert set(limiter._failures) == {"protected", "noise-one"}
+
+    # Natural expiry frees capacity for a later identifier without retaining
+    # raw identifiers or unbounded historical buckets.
+    clock[0] = 400.0
+    limiter.reserve_attempt("noise-two")
+    assert set(limiter._failures) == {"noise-two"}
+
+
+def test_login_failure_limiter_fails_closed_for_a_new_target_after_saturation() -> None:
+    clock = [100.0]
+    limiter = LoginFailureLimiter(
+        max_failures=2,
+        window_seconds=300.0,
+        max_keys=2,
+        clock=lambda: clock[0],
+    )
+
+    # Saturate the bounded named buckets before the target is ever seen.
+    limiter.reserve_attempt("noise-one")
+    limiter.reserve_attempt("noise-two")
+    assert set(limiter._failures) == {"noise-one", "noise-two"}
+
+    # A previously unseen target is still rate-limited through the shared
+    # bounded overflow bucket rather than being silently left untracked.
+    limiter.reserve_attempt("protected")
+    assert limiter.retry_after_seconds("protected") is None
+    limiter.reserve_attempt("protected")
+    assert limiter.retry_after_seconds("protected") == 300
+    assert limiter.retry_after_seconds("another-new-target") == 300
+    assert set(limiter._failures) == {"noise-one", "noise-two"}
+
+    clock[0] = 400.0
+    assert limiter.retry_after_seconds("protected") is None
+    limiter.reserve_attempt("protected")
+    assert set(limiter._failures) == {"protected"}
+
+
 def test_standard_login_runs_sync_credential_check_in_worker_thread(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

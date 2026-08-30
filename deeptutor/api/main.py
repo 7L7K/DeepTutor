@@ -407,6 +407,21 @@ _auth = [Depends(require_auth)]
 # process-wide, so management is admin-gated in multi-user deployments
 # (single-user local runs are implicitly admin — no behaviour change there).
 _admin = [Depends(require_admin)]
+_ACTIVE_OUTPUT_MEDIA_TYPES = frozenset(
+    {
+        "text/html",
+        "application/xhtml+xml",
+        "image/svg+xml",
+        "text/xml",
+        "application/xml",
+        "application/xslt+xml",
+        "text/xsl",
+        "text/javascript",
+        "application/javascript",
+        "text/ecmascript",
+        "application/ecmascript",
+    }
+)
 
 
 @app.get("/api/outputs/{output_path:path}", include_in_schema=False)
@@ -426,7 +441,7 @@ async def get_output(
         "Cache-Control": "private, no-store",
         "X-Content-Type-Options": "nosniff",
     }
-    if media_type in {"text/html", "application/xhtml+xml", "image/svg+xml", "text/xml"}:
+    if media_type in _ACTIVE_OUTPUT_MEDIA_TYPES:
         # Generated artifacts are user-controlled enough that active document
         # types must not execute in the authenticated application origin.
         headers["Content-Disposition"] = "attachment"
