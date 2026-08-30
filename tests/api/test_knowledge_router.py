@@ -1553,8 +1553,25 @@ def test_authenticated_regular_learner_cannot_reach_host_or_connector_side_effec
             else client.request(method, path, headers=headers)
             for method, path, payload in requests
         ]
+        responses.extend(
+            [
+                client.post(
+                    "/api/v1/knowledge/create",
+                    data={"name": "learner-index", "rag_provider": "llamaindex"},
+                    files=_upload_payload(),
+                    headers=headers,
+                ),
+                client.post(
+                    "/api/v1/knowledge/demo/upload",
+                    files=_upload_payload(),
+                    headers=headers,
+                ),
+                client.post("/api/v1/knowledge/demo/reindex", headers=headers),
+                client.post("/api/v1/knowledge/demo/retry", headers=headers),
+            ]
+        )
 
-    assert [response.status_code for response in responses] == [403] * len(requests)
+    assert [response.status_code for response in responses] == [403] * len(responses)
     assert all(response.json()["detail"] == "Admin access required" for response in responses)
     assert touched == []
 

@@ -127,6 +127,29 @@ export async function checkIsFirstUser(): Promise<boolean> {
   }
 }
 
+const PRIVATE_LOGOUT_STORAGE_PREFIXES = ["dt:chat:capability-config:"];
+
+/** Remove account-private browser state only after the server ends the session. */
+export function clearPrivateBrowserStateOnLogout(): void {
+  if (typeof window === "undefined") return;
+  try {
+    const keys: string[] = [];
+    for (let index = 0; index < window.localStorage.length; index += 1) {
+      const key = window.localStorage.key(index);
+      if (
+        key &&
+        PRIVATE_LOGOUT_STORAGE_PREFIXES.some((prefix) => key.startsWith(prefix))
+      ) {
+        keys.push(key);
+      }
+    }
+    for (const key of keys) window.localStorage.removeItem(key);
+  } catch {
+    // Browser privacy modes may deny localStorage access. The server-confirmed
+    // logout still succeeds; no storage contents are included in diagnostics.
+  }
+}
+
 /**
  * POST to the logout endpoint to clear the session cookie. A caller must only
  * clear its local auth state and navigate away after the server confirms this
@@ -143,6 +166,7 @@ export async function logout(): Promise<{ ok: boolean }> {
     if (!res.ok) return { ok: false };
 
     if (typeof window !== "undefined") {
+      clearPrivateBrowserStateOnLogout();
       window.dispatchEvent(new Event("dt:auth-changed"));
     }
     return { ok: true };

@@ -8,7 +8,7 @@ import logging
 import uuid as _uuid
 
 from fastapi import APIRouter, HTTPException, Query, Response
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 from deeptutor.services.session import get_sqlite_session_store
 from deeptutor.services.storage import get_attachment_store
@@ -106,6 +106,18 @@ class AnswerImageUpload(BaseModel):
     url: str = ""
     filename: str = "answer.png"
     mime_type: str = "image/png"
+
+    @field_validator("base64")
+    @classmethod
+    def base64_within_configured_file_limit(cls, value: str) -> str:
+        """Reject a huge encoded value before base64 decoding or storage."""
+        from deeptutor.services.config.runtime_settings import get_chat_attachment_limits
+
+        max_file_bytes = get_chat_attachment_limits().max_file_bytes
+        max_encoded_chars = ((max_file_bytes + 2) // 3) * 4
+        if len(value) > max_encoded_chars:
+            raise ValueError("answer image exceeds the configured file size limit")
+        return value
 
 
 class UpsertEntryRequest(BaseModel):

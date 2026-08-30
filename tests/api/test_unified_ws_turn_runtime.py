@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import asyncio
+import base64
 from types import SimpleNamespace
 
 import pytest
@@ -18,6 +20,61 @@ async def _noop_async(*_args, **_kwargs):
     return None
 
 
+class _RecordingAttachmentStore:
+    """In-memory attachment store that makes turn-cleanup observable."""
+
+    def __init__(self) -> None:
+        self.files: dict[tuple[str, str], bytes] = {}
+        self.deleted: list[tuple[str, str]] = []
+
+    async def put(self, *, session_id, attachment_id, filename, data, mime_type="") -> str:
+        self.files[(session_id, attachment_id)] = data
+        return f"/api/attachments/{session_id}/{attachment_id}/{filename}"
+
+    async def delete_attachment(self, session_id: str, attachment_id: str) -> None:
+        self.deleted.append((session_id, attachment_id))
+        self.files.pop((session_id, attachment_id), None)
+
+
+def _attachment_turn_payload(*, config: dict | None = None) -> dict:
+    return {
+        "type": "start_turn",
+        "content": "please inspect this image",
+        "session_id": None,
+        "capability": "chat",
+        "tools": [],
+        "knowledge_bases": [],
+        "attachments": [
+            {
+                "type": "image",
+                "filename": "answer.png",
+                "mime_type": "image/png",
+                "base64": base64.b64encode(b"\x89PNG\r\n\x1a\n").decode(),
+            }
+        ],
+        "language": "en",
+        "config": config or {},
+    }
+
+
+def _patch_attachment_turn_dependencies(monkeypatch, context_builder, orchestrator) -> None:
+    monkeypatch.setattr("deeptutor.services.llm.config.get_llm_config", lambda: SimpleNamespace())
+    monkeypatch.setattr(
+        "deeptutor.services.session.context_builder.ContextBuilder", context_builder
+    )
+    monkeypatch.setattr("deeptutor.runtime.orchestrator.ChatOrchestrator", orchestrator)
+    monkeypatch.setattr(
+        "deeptutor.book.context.build_book_context",
+        lambda *_args, **_kwargs: SimpleNamespace(text="", references=[], warnings=[]),
+    )
+    monkeypatch.setattr(
+        "deeptutor.services.memory.get_memory_store",
+        lambda: SimpleNamespace(read_l3_concat=lambda: "", emit=_noop_async),
+    )
+    monkeypatch.setattr("deeptutor.services.skill.get_skill_service", _fake_skill_service)
+    monkeypatch.setattr("deeptutor.services.persona.get_persona_service", _fake_persona_service)
+
+
 def test_uploaded_attachment_ids_are_server_generated() -> None:
     client_record = {
         "id": "chosen-id",
@@ -33,6 +90,143 @@ def test_uploaded_attachment_ids_are_server_generated() -> None:
     assert first["id"] != client_record["id"]
     assert second["id"] != client_record["id"]
     assert first["id"] != second["id"]
+
+
+@pytest.mark.asyncio
+async def test_external_persist_false_cannot_suppress_attachment_message(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path,
+) -> None:
+    """Only the internal regeneration path may skip a duplicate user row."""
+    store = SQLiteSessionStore(tmp_path / "chat_history.db")
+    runtime = TurnRuntimeManager(store)
+    attachment_store = _RecordingAttachmentStore()
+
+    class FakeContextBuilder:
+        def __init__(self, *_args, **_kwargs) -> None:
+            pass
+
+        async def build(self, **_kwargs):
+            return SimpleNamespace(
+                conversation_history=[],
+                conversation_summary="",
+                context_text="",
+                token_count=0,
+                budget=0,
+            )
+
+    class FakeOrchestrator:
+        async def handle(self, _context):
+            yield StreamEvent(type=StreamEventType.DONE, source="chat")
+
+    _patch_attachment_turn_dependencies(monkeypatch, FakeContextBuilder, FakeOrchestrator)
+    monkeypatch.setattr(
+        "deeptutor.services.storage.get_attachment_store", lambda: attachment_store
+    )
+
+    session, turn = await runtime.start_turn(
+        _attachment_turn_payload(config={"_persist_user_message": False})
+    )
+    async for _event in runtime.subscribe_turn(turn["id"], after_seq=0):
+        pass
+
+    detail = await store.get_session_with_messages(session["id"])
+    assert detail is not None
+    assert [message["role"] for message in detail["messages"]] == ["user", "assistant"]
+    record = detail["messages"][0]["attachments"][0]
+    assert (session["id"], record["id"]) in attachment_store.files
+    assert attachment_store.deleted == []
+
+    # The only trusted suppression path is internal regeneration. It reuses
+    # the persisted input record, does not write a second user row, and does
+    # not mistakenly delete that existing attachment in cleanup.
+    _, regenerated_turn = await runtime.regenerate_last_turn(session["id"])
+    async for _event in runtime.subscribe_turn(regenerated_turn["id"], after_seq=0):
+        pass
+    regenerated = await store.get_session_with_messages(session["id"])
+    assert regenerated is not None
+    assert [message["role"] for message in regenerated["messages"]] == ["user", "assistant"]
+    assert regenerated["messages"][0]["attachments"][0]["id"] == record["id"]
+    assert (session["id"], record["id"]) in attachment_store.files
+    assert attachment_store.deleted == []
+
+
+@pytest.mark.asyncio
+async def test_failed_attachment_turn_removes_uncommitted_uploads(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path,
+) -> None:
+    store = SQLiteSessionStore(tmp_path / "chat_history.db")
+    runtime = TurnRuntimeManager(store)
+    attachment_store = _RecordingAttachmentStore()
+
+    class FailingContextBuilder:
+        def __init__(self, *_args, **_kwargs) -> None:
+            pass
+
+        async def build(self, **_kwargs):
+            raise RuntimeError("context failed before user-message persistence")
+
+    class UnusedOrchestrator:
+        async def handle(self, _context):
+            if False:
+                yield StreamEvent(type=StreamEventType.DONE, source="chat")
+
+    _patch_attachment_turn_dependencies(monkeypatch, FailingContextBuilder, UnusedOrchestrator)
+    monkeypatch.setattr(
+        "deeptutor.services.storage.get_attachment_store", lambda: attachment_store
+    )
+
+    session, turn = await runtime.start_turn(_attachment_turn_payload())
+    async for _event in runtime.subscribe_turn(turn["id"], after_seq=0):
+        pass
+
+    detail = await store.get_session_with_messages(session["id"])
+    assert detail is not None
+    assert detail["messages"] == []
+    assert attachment_store.files == {}
+    assert len(attachment_store.deleted) == 1
+
+
+@pytest.mark.asyncio
+async def test_cancelled_attachment_turn_removes_uncommitted_uploads(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path,
+) -> None:
+    store = SQLiteSessionStore(tmp_path / "chat_history.db")
+    runtime = TurnRuntimeManager(store)
+    attachment_store = _RecordingAttachmentStore()
+    context_started = asyncio.Event()
+    block_context = asyncio.Event()
+
+    class BlockingContextBuilder:
+        def __init__(self, *_args, **_kwargs) -> None:
+            pass
+
+        async def build(self, **_kwargs):
+            context_started.set()
+            await block_context.wait()
+            raise AssertionError("cancelled turn should not resume")
+
+    class UnusedOrchestrator:
+        async def handle(self, _context):
+            if False:
+                yield StreamEvent(type=StreamEventType.DONE, source="chat")
+
+    _patch_attachment_turn_dependencies(monkeypatch, BlockingContextBuilder, UnusedOrchestrator)
+    monkeypatch.setattr(
+        "deeptutor.services.storage.get_attachment_store", lambda: attachment_store
+    )
+
+    session, turn = await runtime.start_turn(_attachment_turn_payload())
+    await context_started.wait()
+    assert await runtime.cancel_turn(turn["id"]) is True
+
+    detail = await store.get_session_with_messages(session["id"])
+    assert detail is not None
+    assert detail["messages"] == []
+    assert attachment_store.files == {}
+    assert len(attachment_store.deleted) == 1
 
 
 @pytest.fixture(autouse=True)
@@ -847,6 +1041,7 @@ async def test_regenerate_reuses_snapshot_or_override_llm_selection(tmp_path) ->
             *,
             preserved_course_context: dict | None = None,
             replace_assistant_message_id: int | str | None = None,
+            internal_regenerate: bool = False,
         ):
             captured_payloads.append(payload)
             captured_course_contexts.append(preserved_course_context)

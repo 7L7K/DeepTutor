@@ -67,15 +67,17 @@ export default function KnowledgePage() {
   const [pipelineOpen, setPipelineOpen] = useState(false);
 
   const openCreate = useCallback(() => {
+    if (!canManageKnowledgeInfrastructure) return;
     setCreatePreset(null);
     setCreateOpen(true);
-  }, []);
+  }, [canManageKnowledgeInfrastructure]);
   // Obsidian lives in the engines grid for discoverability but routes through
   // the unified create flow, pre-set to "link existing → Obsidian".
   const openObsidian = useCallback(() => {
+    if (!canManageKnowledgeInfrastructure) return;
     setCreatePreset({ mode: "link", source: "obsidian" });
     setCreateOpen(true);
-  }, []);
+  }, [canManageKnowledgeInfrastructure]);
   // Lands on the Overview console unless deep-linked to a KB or an engine.
   const [view, setView] = useState<"home" | "kb" | "engine">(
     initialEngine ? "engine" : initialKb ? "kb" : "home",
@@ -261,6 +263,7 @@ export default function KnowledgePage() {
               onCreate={openCreate}
               onConnectObsidian={openObsidian}
               canManageInfrastructure={canManageKnowledgeInfrastructure}
+              canCreate={canManageKnowledgeInfrastructure}
             />
           ) : view === "engine" &&
             selectedProvider &&
@@ -284,6 +287,7 @@ export default function KnowledgePage() {
               onCreate={openCreate}
               onConnectObsidian={openObsidian}
               canManageInfrastructure={canManageKnowledgeInfrastructure}
+              canCreate={canManageKnowledgeInfrastructure}
             />
           ) : (
             <KnowledgeBaseDetail
@@ -299,13 +303,14 @@ export default function KnowledgePage() {
               onDelete={handleDelete}
               onClearHistory={clearHistory}
               onBack={() => setView("home")}
+              canManageIndexing={canManageKnowledgeInfrastructure}
             />
           )}
         </div>
       )}
 
       <CreateKbModal
-        isOpen={createOpen}
+        isOpen={createOpen && canManageKnowledgeInfrastructure}
         onClose={() => setCreateOpen(false)}
         providers={providers}
         uploadPolicy={uploadPolicy}

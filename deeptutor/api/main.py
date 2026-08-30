@@ -9,6 +9,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse
 
 from deeptutor.api.auth_validation import login_validation_exception_handler
+from deeptutor.api.request_body_limits import NotebookUpsertBodyLimitMiddleware
 from deeptutor.logging import configure_logging
 from deeptutor.services.config import (
     ensure_runtime_settings_files,
@@ -333,6 +334,7 @@ async def enforce_cookie_origin(request, call_next):
     return await call_next(request)
 
 
+app.add_middleware(NotebookUpsertBodyLimitMiddleware)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=_cors_settings["allow_origins"],

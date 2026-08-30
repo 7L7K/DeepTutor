@@ -126,6 +126,7 @@ class _FakeStartTurnRecorder:
         self.calls: list[dict[str, Any]] = []
         self.preserved_course_contexts: list[dict[str, Any] | None] = []
         self.replaced_message_ids: list[int | str | None] = []
+        self.internal_regenerate_flags: list[bool] = []
 
     async def __call__(
         self,
@@ -133,10 +134,12 @@ class _FakeStartTurnRecorder:
         *,
         preserved_course_context: dict[str, Any] | None = None,
         replace_assistant_message_id: int | str | None = None,
+        internal_regenerate: bool = False,
     ) -> tuple[dict, dict]:
         self.calls.append(payload)
         self.preserved_course_contexts.append(preserved_course_context)
         self.replaced_message_ids.append(replace_assistant_message_id)
+        self.internal_regenerate_flags.append(internal_regenerate)
         return (
             {"id": payload["session_id"]},
             {"id": "fake-turn", "session_id": payload["session_id"]},
@@ -215,6 +218,7 @@ class TestRegenerateLastTurn:
         remaining = asyncio.run(store.get_messages(sid))
         assert [m["id"] for m in remaining] == [user_id, assistant_id]
         assert recorder.replaced_message_ids == [assistant_id]
+        assert recorder.internal_regenerate_flags == [True]
 
     @pytest.mark.parametrize(
         "message",

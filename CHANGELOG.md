@@ -2,6 +2,17 @@
 
 ## Unreleased
 
+- Closed additional controlled-beta resource and shared-browser boundaries.
+  Personal Knowledge Base creation, upload, and indexing are owner/admin-only
+  until durable per-user storage and provider-spend budgets exist; learners
+  retain assigned Course materials and read access. Sandbox quota identity now
+  comes from the authenticated principal in every pipeline, protocol-relative
+  Markdown navigation is rejected, and successful logout clears private saved
+  capability forms without clearing unrelated browser preferences. Chat input
+  attachments are removed when their message fails or is cancelled, and the
+  inline notebook-image endpoint now rejects oversized JSON before request-body
+  parsing as well as enforcing encoded-image limits during validation.
+
 - Closed the controlled-beta sharing boundary around bootstrap registration,
   quiz judging, attachments, progress streaming, and learner-safe rendering.
   First-user registration is atomic and invite-only afterward; ordinary quiz

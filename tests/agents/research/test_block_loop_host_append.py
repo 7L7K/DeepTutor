@@ -207,6 +207,28 @@ def test_block_tool_names_keep_only_research_evidence_tools(
     ]
 
 
+def test_code_execution_overwrites_model_authored_quota_identity(monkeypatch) -> None:
+    """Deep Research binds execution work to the authenticated principal."""
+    registry = _ToolRegistry({"code_execution"})
+    pipeline = _make_pipeline_with_registry(
+        monkeypatch,
+        registry=registry,
+        enabled_tools=["code_execution"],
+    )
+    monkeypatch.setattr(
+        "deeptutor.agents.research.pipeline.get_current_user",
+        lambda: SimpleNamespace(id="u_research_learner"),
+    )
+
+    kwargs = pipeline._augment_tool_kwargs(
+        "code_execution",
+        {"_sandbox_user_id": "model-chosen-fresh-bucket"},
+        UnifiedContext(user_message="analyze", metadata={}),
+    )
+
+    assert kwargs["_sandbox_user_id"] == "u_research_learner"
+
+
 @pytest.mark.asyncio
 async def test_block_host_rejects_finish_before_tool_when_tools_available(
     monkeypatch: pytest.MonkeyPatch,

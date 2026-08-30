@@ -216,6 +216,18 @@ test("markdownUrlTransform only allows data images on img src", () => {
   );
 });
 
+test("markdownUrlTransform rejects protocol-relative network paths", () => {
+  for (const value of [
+    "//attacker.example/login",
+    "  //attacker.example/login",
+    "\\\\attacker.example\\login",
+    "/\\attacker.example/login",
+  ]) {
+    assert.equal(markdownUrlTransform(value, "href", { tagName: "a" }), "");
+  }
+  assert.equal(markdownUrlTransform("/local/course", "href", { tagName: "a" }), "/local/course");
+});
+
 test("safeDecodeURIComponent decodes valid hash components", () => {
   assert.equal(safeDecodeURIComponent("section%201"), "section 1");
 });

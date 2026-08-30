@@ -2408,7 +2408,7 @@ async def stream_task_logs(task_id: str):
     )
 
 
-@router.post("/{kb_name}/upload")
+@router.post("/{kb_name}/upload", dependencies=_ADMIN_ENGINE_DEPENDENCIES)
 async def upload_files(
     kb_name: str,
     background_tasks: BackgroundTasks,
@@ -2487,7 +2487,7 @@ async def upload_files(
         raise HTTPException(status_code=500, detail=formatted_error) from e
 
 
-@router.post("/create")
+@router.post("/create", dependencies=_ADMIN_ENGINE_DEPENDENCIES)
 async def create_knowledge_base(
     background_tasks: BackgroundTasks,
     name: str = Form(...),
@@ -2728,7 +2728,7 @@ async def run_reindex_task(kb_name: str, base_dir: str, task_id: str, signature_
             task_stream_manager.emit_failed(task_id, error_msg, details=trace)
 
 
-@router.post("/{kb_name}/reindex")
+@router.post("/{kb_name}/reindex", dependencies=_ADMIN_ENGINE_DEPENDENCIES)
 async def reindex_knowledge_base(
     kb_name: str,
     background_tasks: BackgroundTasks,
@@ -2814,7 +2814,7 @@ async def reindex_knowledge_base(
         raise HTTPException(status_code=500, detail=format_exception_message(e))
 
 
-@router.post("/{kb_name}/retry")
+@router.post("/{kb_name}/retry", dependencies=_ADMIN_ENGINE_DEPENDENCIES)
 async def retry_knowledge_base(
     kb_name: str,
     background_tasks: BackgroundTasks,

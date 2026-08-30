@@ -42,6 +42,8 @@ interface KnowledgeBaseDetailProps {
   onDelete: (kbName: string) => Promise<void>;
   onClearHistory: (kbName: string) => void;
   onBack?: () => void;
+  /** Provider-backed indexing is owner/admin-only in the controlled beta. */
+  canManageIndexing: boolean;
 }
 
 const SECTIONS: {
@@ -71,6 +73,7 @@ export default function KnowledgeBaseDetail({
   onDelete,
   onClearHistory,
   onBack,
+  canManageIndexing,
 }: KnowledgeBaseDetailProps) {
   const { t } = useTranslation();
   const [section, setSection] = useState<DetailSection>("files");
@@ -87,17 +90,21 @@ export default function KnowledgeBaseDetail({
             {t("No knowledge base selected")}
           </div>
           <p className="mx-auto mt-2 text-[12px] leading-relaxed text-[var(--muted-foreground)]">
-            {t(
-              "Pick a knowledge base from the list, or create a new one to get started.",
-            )}
+            {canManageIndexing
+              ? t(
+                  "Pick a knowledge base from the list, or create a new one to get started.",
+                )
+              : t("Knowledge bases assigned for your courses will appear here.")}
           </p>
-          <button
-            type="button"
-            onClick={onCreate}
-            className="mt-4 inline-flex items-center gap-1.5 rounded-lg bg-[var(--primary)] px-3.5 py-1.5 text-[13px] font-medium text-[var(--primary-foreground)] transition-opacity hover:opacity-90"
-          >
-            {t("Create your first knowledge base")}
-          </button>
+          {canManageIndexing && (
+            <button
+              type="button"
+              onClick={onCreate}
+              className="mt-4 inline-flex items-center gap-1.5 rounded-lg bg-[var(--primary)] px-3.5 py-1.5 text-[13px] font-medium text-[var(--primary-foreground)] transition-opacity hover:opacity-90"
+            >
+              {t("Create your first knowledge base")}
+            </button>
+          )}
         </div>
       </main>
     );
@@ -118,7 +125,7 @@ export default function KnowledgeBaseDetail({
     (task?.kind === "reindex" || task?.kind === "retry") &&
     task.executing === true;
   const status = resolveKbStatus(kb);
-  const canRetry = status === "error" && !kb.read_only;
+  const canRetry = canManageIndexing && status === "error" && !kb.read_only;
 
   const handleRetry = async () => {
     if (!canRetry || retrySubmitting || isReindexingLocally) return;
@@ -130,7 +137,13 @@ export default function KnowledgeBaseDetail({
     }
   };
 
-  const fullBleed = FULL_BLEED_SECTIONS.has(section);
+  const visibleSections = canManageIndexing
+    ? SECTIONS
+    : SECTIONS.filter(({ key }) => key === "files" || key === "settings");
+  const effectiveSection = visibleSections.some(({ key }) => key === section)
+    ? section
+    : "files";
+  const fullBleed = FULL_BLEED_SECTIONS.has(effectiveSection);
 
   return (
     <main className="flex h-full flex-1 flex-col overflow-hidden bg-[var(--background)]">
@@ -199,8 +212,8 @@ export default function KnowledgeBaseDetail({
 
         {/* Section nav */}
         <nav className="-mb-3 mt-3 flex gap-1 overflow-x-auto">
-          {SECTIONS.map(({ key, label, Icon }) => {
-            const active = section === key;
+          {visibleSections.map(({ key, label, Icon }) => {
+            const active = effectiveSection === key;
             return (
               <button
                 key={key}
@@ -222,12 +235,12 @@ export default function KnowledgeBaseDetail({
 
       {/* Body */}
       <div className="min-h-0 flex-1 overflow-hidden">
-        {section === "files" ? (
+        {effectiveSection === "files" ? (
           <KbFilesTab key={kb.name} kb={kb} task={task} />
         ) : (
           <div className="h-full overflow-y-auto px-6 py-5">
             <div className={fullBleed ? "" : "mx-auto max-w-3xl"}>
-              {section === "add" && (
+              {effectiveSection === "add" && (
                 <KbDocumentsSection
                   kb={kb}
                   uploadPolicy={uploadPolicy}
@@ -240,7 +253,7 @@ export default function KnowledgeBaseDetail({
                   }
                 />
               )}
-              {section === "versions" && (
+              {effectiveSection === "versions" && (
                 <KbIndexVersionsSection
                   kb={kb}
                   task={task}
@@ -253,7 +266,7 @@ export default function KnowledgeBaseDetail({
                   }
                 />
               )}
-              {section === "settings" && (
+              {effectiveSection === "settings" && (
                 <KbSettingsSection
                   kb={kb}
                   onSetDefault={() =>

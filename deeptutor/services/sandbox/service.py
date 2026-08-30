@@ -103,9 +103,14 @@ class SandboxService:
             return False
 
     async def run(self, request: ExecRequest, *, user_id: str) -> ExecResult:
-        """Run *request* for *user_id*, enforcing quota; never raises for
-        command failure — only the sandbox/quota envelope is reported via
-        :attr:`ExecResult.error`."""
+        """Run *request* under the request principal's quota.
+
+        ``user_id`` is retained as a compatibility hint for existing tool
+        callers, but it is never quota authority: model-authored arguments and
+        a pipeline that forgot to inject the private field must not create a
+        shared or attacker-chosen quota bucket. Command failures are returned
+        through :attr:`ExecResult.error` rather than raised.
+        """
         if not await self._ensure_healthy() or self._backend is None:
             return ExecResult(error=self._health_detail or t("sandbox.no_backend"))
         # Backstop for the per-user exec grant: pipelines hide the exec tool
@@ -115,7 +120,16 @@ class SandboxService:
         if not await self.execution_authorized():
             return ExecResult(error=t("sandbox.disabled_for_account"))
         try:
-            lease = await self._quota.acquire(user_id)
+            from deeptutor.multi_user.context import get_current_user
+
+            principal_id = get_current_user().id
+        except Exception:
+            logger.warning("sandbox principal resolution failed; denying execution", exc_info=True)
+            return ExecResult(error=t("sandbox.disabled_for_account"))
+        if user_id and user_id != principal_id:
+            logger.warning("ignored mismatched caller-supplied sandbox quota identity")
+        try:
+            lease = await self._quota.acquire(principal_id)
         except QuotaExceeded as exc:
             return ExecResult(error=str(exc))
         async with lease:

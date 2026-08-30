@@ -136,17 +136,22 @@ def test_host_path_and_external_connector_knowledge_routes_are_admin_only() -> N
         ("/{kb_name}/linked-folders", "GET"),
         ("/{kb_name}/linked-folders/{folder_id}", "DELETE"),
         ("/{kb_name}/sync-folder/{folder_id}", "POST"),
+        # Personal indexing remains deployment-owned for the controlled beta:
+        # one learner account must not be able to consume shared disk, CPU, or
+        # embedding-provider spend without durable per-user budgets.
+        ("/create", "POST"),
+        ("/{kb_name}/upload", "POST"),
+        ("/{kb_name}/reindex", "POST"),
+        ("/{kb_name}/retry", "POST"),
     ):
         route = routes[(path, frozenset({method}))]
         assert any(
             dependency.call is require_admin for dependency in route.dependant.dependencies
         ), f"{method} {path} must require admin access"
 
-    # Learner-owned KB creation, upload, and content reads keep their existing
-    # authenticated-user policy; this change must not turn them into admin APIs.
+    # Learners retain assigned/personal KB reads and bounded retrieval choices;
+    # only indexing work moves behind the controlled-beta owner boundary.
     for path, method in (
-        ("/create", "POST"),
-        ("/{kb_name}/upload", "POST"),
         ("/{kb_name}", "GET"),
         ("/{kb_name}/files", "GET"),
         ("/{kb_name}/config", "GET"),

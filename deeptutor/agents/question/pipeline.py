@@ -65,6 +65,7 @@ from deeptutor.core.trace import (
     merge_trace_metadata,
     new_call_id,
 )
+from deeptutor.multi_user.context import get_current_user
 from deeptutor.runtime.registry.tool_registry import get_tool_registry
 from deeptutor.services.config import parse_language
 from deeptutor.services.llm import get_llm_config, prepare_multimodal_messages
@@ -1568,6 +1569,10 @@ class QuestionPipeline:
         elif tool_name == "code_execution":
             from deeptutor.services.sandbox import Mount
 
+            # Private execution authority is always server-owned. Overwrite a
+            # model-authored value so every pipeline shares the authenticated
+            # principal's quota bucket.
+            kwargs["_sandbox_user_id"] = get_current_user().id
             if task_dir is not None:
                 code_dir = task_dir / "code_runs"
                 code_dir.mkdir(parents=True, exist_ok=True)

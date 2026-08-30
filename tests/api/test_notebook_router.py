@@ -14,6 +14,7 @@ TestClient = pytest.importorskip("fastapi.testclient").TestClient
 notebook_router = importlib.import_module("deeptutor.api.routers.question_notebook").router
 sessions_router = importlib.import_module("deeptutor.api.routers.sessions").router
 
+from deeptutor.services.config.runtime_settings import ChatAttachmentLimits
 from deeptutor.services.session.sqlite_store import SQLiteSessionStore
 
 
@@ -486,3 +487,39 @@ def test_answer_images_are_cleaned_when_database_upsert_fails(store, monkeypatch
     assert response.status_code == 500
     assert response.json()["detail"] == "Could not save notebook entry"
     assert attachment_store.files == {}
+
+
+def test_answer_image_encoded_size_is_rejected_before_storage(store, monkeypatch) -> None:
+    """Pydantic rejects oversize base64 before the route can decode or write it."""
+    attachment_store = _MemoryAttachmentStore()
+    monkeypatch.setattr(
+        "deeptutor.api.routers.question_notebook.get_attachment_store", lambda: attachment_store
+    )
+    monkeypatch.setattr(
+        "deeptutor.services.config.runtime_settings.get_chat_attachment_limits",
+        lambda: ChatAttachmentLimits(
+            max_file_bytes=4,
+            max_total_bytes=4,
+            max_chars_per_doc=10_000,
+            max_chars_total=10_000,
+        ),
+    )
+    sid = asyncio.run(store.create_session())["id"]
+
+    with TestClient(_build_app(store)) as client:
+        response = client.post(
+            "/api/v1/question-notebook/entries/upsert",
+            json=_answer_image_payload(
+                sid,
+                user_answer_images=[
+                    {
+                        "filename": "answer.png",
+                        "mime_type": "image/png",
+                        "base64": base64.b64encode(b"too-large").decode(),
+                    }
+                ],
+            ),
+        )
+
+    assert response.status_code == 422
+    assert attachment_store.put_calls == 0

@@ -95,15 +95,17 @@ test("failed learner Partner connection stays on the learner-safe surface", () =
   assert.match(partners, /setOpenError/);
 });
 
-test("learners retain ordinary KB creation without host connector controls", () => {
+test("controlled-beta learners can read assigned KBs but cannot start indexing work", () => {
   const page = source("components/knowledge/KnowledgePage.tsx");
   const home = source("components/knowledge/KnowledgeHome.tsx");
   const modal = source("components/knowledge/CreateKbModal.tsx");
 
   assert.match(page, /allowExternalConnectors=\{canManageKnowledgeInfrastructure\}/);
   assert.match(page, /onCreate=\{handleCreate\}/);
+  assert.match(page, /isOpen=\{createOpen && canManageKnowledgeInfrastructure\}/);
   assert.match(home, /\{canManageInfrastructure \? \(/);
-  assert.match(home, /onClick=\{onCreate\}/);
+  assert.match(home, /\{canCreate && \(/);
+  assert.match(home, /Knowledge bases assigned for your courses will appear here/);
   assert.match(modal, /allowLink=\{allowExternalConnectors\}/);
   assert.match(modal, /!allowExternalConnectors \|\|/);
   assert.match(modal, /item\.id !== LIGHTRAG_SERVER_PROVIDER/);

@@ -206,6 +206,11 @@ export function markdownUrlTransform(
   key?: string,
   node?: unknown,
 ): string {
+  // A no-scheme network path (``//host`` or its backslash spellings)
+  // inherits the page's HTTPS scheme and navigates off-origin. Treat it as a
+  // remote URL rather than allowing it through the generic relative-path arm.
+  if (/^[\\/]{2}/.test(value.trimStart())) return "";
+
   if (
     isMarkdownImageSrc(key, node) &&
     SAFE_RASTER_DATA_IMAGE_REGEX.test(value)

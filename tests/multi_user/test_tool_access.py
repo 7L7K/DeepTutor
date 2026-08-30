@@ -195,3 +195,34 @@ async def test_sandbox_preserves_admin_execution_on_application_backend(as_user)
 
     assert result.ok
     assert backend.calls == 1
+
+
+@pytest.mark.asyncio
+async def test_sandbox_quota_identity_comes_from_request_principal(as_user) -> None:
+    """A private/model-authored hint cannot select a fresh quota bucket."""
+    service, backend = _sandbox_with_backend(IsolationLevel.APPLICATION)
+    captured: list[str] = []
+
+    class _Lease:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *_exc: object) -> None:
+            return None
+
+    class _Quota:
+        async def acquire(self, user_id: str):
+            captured.append(user_id)
+            return _Lease()
+
+    service._quota = _Quota()  # type: ignore[assignment]
+
+    with as_user("u_admin", role="admin"):
+        result = await service.run(
+            ExecRequest(command="echo admin"),
+            user_id="model-chosen-fresh-bucket",
+        )
+
+    assert result.ok
+    assert backend.calls == 1
+    assert captured == ["u_admin"]

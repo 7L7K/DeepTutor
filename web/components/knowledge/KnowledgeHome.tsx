@@ -38,6 +38,8 @@ interface KnowledgeHomeProps {
   onConnectObsidian: () => void;
   /** Whether deployment-owned engines and host connectors may be managed. */
   canManageInfrastructure: boolean;
+  /** Whether this account may create provider-backed indexes in this beta. */
+  canCreate: boolean;
 }
 
 const ENGINE_ICONS: Record<string, LucideIcon> = {
@@ -104,6 +106,7 @@ export default function KnowledgeHome({
   onCreate,
   onConnectObsidian,
   canManageInfrastructure,
+  canCreate,
 }: KnowledgeHomeProps) {
   const { t } = useTranslation();
   const [query, setQuery] = useState("");
@@ -141,14 +144,16 @@ export default function KnowledgeHome({
               {t("Manage your knowledge bases and retrieval engines.")}
             </p>
           </div>
-          <button
-            type="button"
-            onClick={onCreate}
-            className="inline-flex shrink-0 items-center gap-1.5 rounded-lg bg-[var(--primary)] px-3.5 py-2 text-[12.5px] font-medium text-[var(--primary-foreground)] transition-opacity hover:opacity-90"
-          >
-            <Plus size={14} />
-            {t("New knowledge base")}
-          </button>
+          {canCreate && (
+            <button
+              type="button"
+              onClick={onCreate}
+              className="inline-flex shrink-0 items-center gap-1.5 rounded-lg bg-[var(--primary)] px-3.5 py-2 text-[12.5px] font-medium text-[var(--primary-foreground)] transition-opacity hover:opacity-90"
+            >
+              <Plus size={14} />
+              {t("New knowledge base")}
+            </button>
+          )}
         </div>
 
         {/* Retrieval engines */}
@@ -274,18 +279,24 @@ export default function KnowledgeHome({
                 {t("No knowledge bases yet")}
               </div>
               <p className="mx-auto mt-1 max-w-sm text-[12px] leading-relaxed text-[var(--muted-foreground)]">
-                {t(
-                  "Create one to upload documents and retrieve grounded context in chat.",
-                )}
+                {canCreate
+                  ? t(
+                      "Create one to upload documents and retrieve grounded context in chat.",
+                    )
+                  : t(
+                      "Knowledge bases assigned for your courses will appear here.",
+                    )}
               </p>
-              <button
-                type="button"
-                onClick={onCreate}
-                className="mt-4 inline-flex items-center gap-1.5 rounded-lg bg-[var(--primary)] px-3.5 py-2 text-[12.5px] font-medium text-[var(--primary-foreground)] transition-opacity hover:opacity-90"
-              >
-                <Plus size={14} />
-                {t("New knowledge base")}
-              </button>
+              {canCreate && (
+                <button
+                  type="button"
+                  onClick={onCreate}
+                  className="mt-4 inline-flex items-center gap-1.5 rounded-lg bg-[var(--primary)] px-3.5 py-2 text-[12.5px] font-medium text-[var(--primary-foreground)] transition-opacity hover:opacity-90"
+                >
+                  <Plus size={14} />
+                  {t("New knowledge base")}
+                </button>
+              )}
             </div>
           ) : filteredKbs.length === 0 ? (
             <div className="rounded-2xl border border-dashed border-[var(--border)] px-4 py-8 text-center text-[12px] text-[var(--muted-foreground)]">

@@ -693,6 +693,7 @@ class TurnRuntimeManager:
         *,
         preserved_course_context: dict[str, Any] | None = None,
         replace_assistant_message_id: int | str | None = None,
+        internal_regenerate: bool = False,
     ) -> tuple[dict[str, Any], dict[str, Any]]:
         capability = str(payload.get("capability") or "chat")
         raw_config = dict(payload.get("config", {}) or {})
@@ -711,6 +712,14 @@ class TurnRuntimeManager:
         runtime_only_config = {
             key: raw_config.pop(key) for key in runtime_only_keys if key in raw_config
         }
+        if not internal_regenerate:
+            # These are runtime controls, not public WebSocket configuration.
+            # Only ``regenerate_last_turn`` may suppress the duplicate user
+            # row or mark a request as a regeneration.
+            runtime_only_config.pop("_persist_user_message", None)
+            runtime_only_config.pop("_regenerate", None)
+            runtime_only_config.pop("_regenerated_from_message_id", None)
+            runtime_only_config.pop("_superseded_turn_id", None)
         try:
             from deeptutor.runtime.request_contracts import validate_capability_config
 
@@ -1081,6 +1090,7 @@ class TurnRuntimeManager:
                 if last_message is not None and last_message.get("role") == "assistant"
                 else None
             ),
+            internal_regenerate=True,
         )
 
     async def cancel_turn(self, turn_id: str) -> bool:
@@ -1340,6 +1350,9 @@ class TurnRuntimeManager:
         turn_id = execution.turn_id
         attachments = []
         attachment_records = []
+        persisted_input_attachment_ids: list[str] = []
+        input_attachments_committed = False
+        attachment_store: Any | None = None
         assistant_events: list[dict[str, Any]] = []
         assistant_content = ""
         new_user_message_id: int | str | None = None
@@ -1407,9 +1420,9 @@ class TurnRuntimeManager:
             from deeptutor.services.skill import get_skill_service
 
             request_config = dict(payload.get("config", {}) or {})
+            is_regenerate = _extract_regenerate_flag(request_config)
             followup_question_context = _extract_followup_question_context(request_config)
             persist_user_message = _extract_persist_user_message(request_config)
-            is_regenerate = _extract_regenerate_flag(request_config)
             regenerated_from_message_id = request_config.pop("_regenerated_from_message_id", None)
             replace_assistant_message_id = request_config.pop("_replace_assistant_message_id", None)
             request_config.pop("_superseded_turn_id", None)
@@ -1453,45 +1466,51 @@ class TurnRuntimeManager:
             for item in payload.get("attachments", []):
                 if not isinstance(item, dict):
                     raise ValueError("attachments must contain objects")
-                raw_attachment_items.append(_new_uploaded_attachment_record(item))
+                raw_attachment_items.append(
+                    dict(item) if is_regenerate else _new_uploaded_attachment_record(item)
+                )
 
             # Enforce file type, strict base64, count, per-file, and total
             # limits before any byte reaches the attachment store.  Document
             # extraction has its own defensive limits, but it does not cover
             # images and previously ran only after persistence.
-            attachment_records = validate_chat_attachments(raw_attachment_items)
+            attachment_records = (
+                raw_attachment_items
+                if is_regenerate
+                else validate_chat_attachments(raw_attachment_items)
+            )
 
             # Persist only prevalidated original bytes before extraction so the
             # frontend preview drawer can fetch the file later. The extractor
             # clears base64 on documents to keep DB rows lean, but the URL we
             # record here outlives that pruning.
-            attachment_store = get_attachment_store()
-            persisted_attachment_ids: list[str] = []
-            for record in attachment_records:
-                raw_bytes = record.pop("_raw_bytes")
-                try:
-                    record["url"] = await attachment_store.put(
-                        session_id=session_id,
-                        attachment_id=record["id"],
-                        filename=record.get("filename", "") or "file",
-                        data=raw_bytes,
-                        mime_type=record.get("mime_type", "") or "",
-                    )
-                    persisted_attachment_ids.append(record["id"])
-                except Exception as exc:
-                    # The whole batch is rejected rather than persisting a
-                    # partial message with a silently missing attachment.
-                    for attachment_id in [*persisted_attachment_ids, record["id"]]:
-                        try:
-                            await attachment_store.delete_attachment(session_id, attachment_id)
-                        except Exception:
-                            logger.exception(
-                                "failed to clean up attachment %s after persistence error",
-                                attachment_id,
-                            )
-                    raise RuntimeError(
-                        f"failed to persist attachment {record.get('filename')!r}"
-                    ) from exc
+            if not is_regenerate:
+                attachment_store = get_attachment_store()
+                for record in attachment_records:
+                    raw_bytes = record.pop("_raw_bytes")
+                    try:
+                        record["url"] = await attachment_store.put(
+                            session_id=session_id,
+                            attachment_id=record["id"],
+                            filename=record.get("filename", "") or "file",
+                            data=raw_bytes,
+                            mime_type=record.get("mime_type", "") or "",
+                        )
+                        persisted_input_attachment_ids.append(record["id"])
+                    except Exception as exc:
+                        # The whole batch is rejected rather than persisting a
+                        # partial message with a silently missing attachment.
+                        for attachment_id in [*persisted_input_attachment_ids, record["id"]]:
+                            try:
+                                await attachment_store.delete_attachment(session_id, attachment_id)
+                            except Exception:
+                                logger.exception(
+                                    "failed to clean up attachment %s after persistence error",
+                                    attachment_id,
+                                )
+                        raise RuntimeError(
+                            f"failed to persist attachment {record.get('filename')!r}"
+                        ) from exc
 
             from deeptutor.utils.document_extractor import extract_documents_from_records
 
@@ -1817,6 +1836,7 @@ class TurnRuntimeManager:
                     ),
                     **parent_kwargs,
                 )
+                input_attachments_committed = True
 
             context = UnifiedContext(
                 session_id=session_id,
@@ -2160,6 +2180,14 @@ class TurnRuntimeManager:
                     await self._flush_buffered_events(execution)
                 await self.store.update_turn_status(turn_id, "failed", str(exc))
         finally:
+            if persisted_input_attachment_ids and not input_attachments_committed:
+                # A user message is the only durable reference for uploaded
+                # chat input. Do not leave bytes behind when the turn failed,
+                # was cancelled, or never reached its input-message commit.
+                if attachment_store is not None:
+                    for attachment_id in persisted_input_attachment_ids:
+                        with contextlib.suppress(Exception):
+                            await attachment_store.delete_attachment(session_id, attachment_id)
             if llm_scope_token is not None and reset_active_llm_selection is not None:
                 reset_active_llm_selection(llm_scope_token)
             if (
