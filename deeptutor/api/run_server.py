@@ -35,7 +35,7 @@ def main() -> None:
     # Get port from configuration
     from deeptutor.logging import configure_logging
     from deeptutor.runtime.mode import RunMode, set_mode
-    from deeptutor.services.config import get_ws_max_size
+    from deeptutor.services.config import UVICORN_WS_MAX_QUEUE, get_ws_max_size
     from deeptutor.services.setup import get_backend_port
 
     set_mode(RunMode.SERVER)
@@ -69,6 +69,7 @@ def main() -> None:
         log_level="info",
         access_log=False,
         ws_max_size=get_ws_max_size(),
+        ws_max_queue=UVICORN_WS_MAX_QUEUE,
     )
 
 

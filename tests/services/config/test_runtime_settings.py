@@ -464,3 +464,10 @@ def test_compute_ws_max_size_floor_and_inflation() -> None:
     total = 100 * 1024 * 1024
     derived = compute_ws_max_size(total)
     assert derived == 64 * 1024 * 1024
+
+
+def test_uvicorn_websocket_queue_is_fixed_to_one_frame() -> None:
+    from deeptutor.services.config.runtime_settings import UVICORN_WS_MAX_QUEUE
+
+    # This is a process-level parser backstop, not a user-tunable setting.
+    assert UVICORN_WS_MAX_QUEUE == 1

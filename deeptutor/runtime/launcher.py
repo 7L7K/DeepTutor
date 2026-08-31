@@ -772,6 +772,7 @@ def start(home: str | Path | None = None) -> None:
     _reset_runtime_singletons()
 
     from deeptutor.services.config import (
+        UVICORN_WS_MAX_QUEUE,
         ensure_runtime_settings_files,
         export_runtime_settings_to_env,
         get_ws_max_size,
@@ -896,6 +897,10 @@ def start(home: str | Path | None = None) -> None:
         # the attachment limits therefore takes a restart to fully apply.
         "--ws-max-size",
         str(get_ws_max_size()),
+        # Bound Uvicorn/websockets' per-connection protocol queue as a second
+        # backstop behind the application receive leases.
+        "--ws-max-queue",
+        str(UVICORN_WS_MAX_QUEUE),
     ]
 
     processes: list[ManagedProcess] = []

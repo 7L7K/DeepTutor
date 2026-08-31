@@ -41,6 +41,12 @@ DEFAULT_SYSTEM_SETTINGS: dict[str, Any] = {
     "chat_attachment_max_chars_total": 150_000,
 }
 
+# Bound Uvicorn/websockets' per-connection protocol queue as a second
+# backstop behind the application receive leases. This is intentionally not
+# user-configurable: raising it can reintroduce parser-memory amplification on
+# the small beta host.
+UVICORN_WS_MAX_QUEUE = 1
+
 # Clamp bounds for the chat attachment knobs. The unified WebSocket carries
 # attachments as base64, so keeping the total below 40 MiB leaves room for
 # inflation and JSON metadata under the fixed 64 MiB transport ceiling. Larger
