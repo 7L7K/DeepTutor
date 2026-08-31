@@ -316,6 +316,7 @@ async def test_deep_research_capability_delegates_to_pipeline(
     context = UnifiedContext(
         user_message="agent-native tutoring",
         enabled_tools=["rag", "web_search", "paper_search"],
+        allowed_builtin_tools=["rag"],
         knowledge_bases=["research-kb"],
         attachments=[Attachment(type="image", base64="ZmFrZQ==", filename="brief.png")],
         config_overrides={
@@ -342,6 +343,9 @@ async def test_deep_research_capability_delegates_to_pipeline(
     # unchanged. The pipeline's per-block ``compose_enabled_tools`` call
     # is what decides what the block loop actually exposes.
     assert init_kwargs["enabled_tools"] == ["rag", "web_search", "paper_search"]
+    # The server-owned built-in allowlist is independent of composer toggles
+    # and must reach the per-block tool-composition policy unchanged.
+    assert init_kwargs["allowed_builtin_tools"] == ["rag"]
     # Runtime config carries the structured policy sub-dicts the
     # pipeline reads at init time. We only assert the keys the runtime
     # config builder is contractually responsible for producing.

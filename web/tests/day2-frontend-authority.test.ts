@@ -137,3 +137,16 @@ test("administrators can explicitly admit one learner to bounded Course uploads"
   assert.match(courseMaterials, /useAuthStatus\(\)\.canUploadCourseSources/);
   assert.doesNotMatch(courseMaterials, /canManageDeployment/);
 });
+
+test("administrators explicitly allow built-in tools and new grants deny them by default", () => {
+  const editor = source("features/multi-user/components/GrantEditor.tsx");
+  const types = source("features/multi-user/types.ts");
+
+  assert.match(editor, /builtin_tools: \[\]/);
+  assert.match(editor, /SectionTitle>Built-in tools/);
+  assert.match(editor, /checked=\{grant\.builtin_tools\.includes\(tool\.name\)\}/);
+  assert.match(editor, /toggleGrantTool\("builtin_tools", tool\.name\)/);
+  assert.match(editor, /Built-in tools are denied by default/);
+  assert.match(types, /builtin_tools: string\[\];/);
+  assert.match(types, /builtin_tools: ToolOption\[\];/);
+});

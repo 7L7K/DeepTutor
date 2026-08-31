@@ -25,19 +25,21 @@ def empty_grant(user_id: str) -> dict[str, Any]:
         # grant only lets the user *see and consult* the named partners — same
         # shape as ``skills`` (``[{"partner_id": ...}]``).
         "partners": [],
-        # Learner built-in tools are deny-by-default: ``enabled_tools=[]``
-        # means none and a non-empty list is an explicit administrator-managed
-        # whitelist. MCP tools can
-        # proxy host-side capabilities, so non-admin runtime access treats
-        # ``mcp_tools=None`` as deny-by-default until an admin grants explicit
-        # names. ``cli_apps`` is the same posture for installed CLI apps, keyed
-        # by app id: each one is third-party code executing in the sandbox, so
-        # an absent grant is no access rather than all of them.
+        # User-toggleable tools are controlled by ``enabled_tools``. Auto-mounted
+        # built-ins are a separate authority: they can reach server-side
+        # resources without appearing in the composer, so ``builtin_tools`` is
+        # an explicit administrator-managed whitelist and defaults to empty.
+        # MCP tools can proxy host-side capabilities, so non-admin runtime
+        # access treats ``mcp_tools=None`` as deny-by-default until an admin
+        # grants explicit names. ``cli_apps`` is the same posture for installed
+        # CLI apps, keyed by app id: each one is third-party code executing in
+        # the sandbox, so an absent grant is no access rather than all of them.
         # ``exec_enabled`` is stored as an optional grant. For non-admin
         # callers, an absent value resolves to deny-by-default at runtime;
         # ``True`` is only honored where the sandbox can actually isolate
         # users (SYSTEM isolation).
         "enabled_tools": [],
+        "builtin_tools": [],
         "mcp_tools": None,
         "cli_apps": None,
         "exec_enabled": None,
@@ -88,6 +90,8 @@ def normalize_grant(user_id: str, payload: dict[str, Any] | None) -> dict[str, A
         base[key] = [dict(item) for item in values if isinstance(item, dict)]
     normalized_optional_tools = _normalize_tool_list(payload.get("enabled_tools"))
     base["enabled_tools"] = normalized_optional_tools or []
+    normalized_builtin_tools = _normalize_tool_list(payload.get("builtin_tools"))
+    base["builtin_tools"] = normalized_builtin_tools or []
     for key in ("mcp_tools", "cli_apps"):
         base[key] = _normalize_tool_list(payload.get(key))
     exec_enabled = payload.get("exec_enabled")

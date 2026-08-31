@@ -51,12 +51,15 @@ def test_submit_user_reply_bounds_each_answer() -> None:
         )
 
 
-@pytest.mark.parametrize("field", ["after_seq", "seq"])
-def test_replay_offsets_are_bounded_integers(field: str) -> None:
+@pytest.mark.parametrize(
+    ("message_type", "id_field", "field"),
+    [("subscribe_turn", "turn_id", "after_seq"), ("resume_from", "turn_id", "seq")],
+)
+def test_replay_offsets_are_bounded_integers(message_type: str, id_field: str, field: str) -> None:
     with pytest.raises(ValueError, match=field):
-        _validate_unified_ws_message({"type": "subscribe_turn", "turn_id": "t1", field: "1"})
+        _validate_unified_ws_message({"type": message_type, id_field: "t1", field: "1"})
     with pytest.raises(ValueError, match=field):
-        _validate_unified_ws_message({"type": "subscribe_turn", "turn_id": "t1", field: 10_000_001})
+        _validate_unified_ws_message({"type": message_type, id_field: "t1", field: 10_000_001})
 
 
 def test_transport_ceiling_is_fixed_and_independent_of_attachment_setting() -> None:
@@ -78,6 +81,13 @@ def test_transport_ceiling_is_fixed_and_independent_of_attachment_setting() -> N
         }
     )
     assert len(json.dumps({"type": "ping"})) < _MAX_UNIFIED_WS_MESSAGE_BYTES
+
+
+def test_ping_rejects_padding_and_unknown_message_types_reject_unknown_fields() -> None:
+    with pytest.raises(ValueError, match="unsupported fields"):
+        _validate_unified_ws_message({"type": "ping", "padding": "x" * 1_000_000})
+    with pytest.raises(ValueError, match="unsupported fields"):
+        _validate_unified_ws_message({"type": "unrecognized", "padding": "x"})
 
 
 def test_transport_limit_uses_utf8_bytes_without_encoding_a_duplicate_frame() -> None:

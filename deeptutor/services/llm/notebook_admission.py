@@ -57,11 +57,7 @@ def _selection_has_own_runtime_config(selection: dict[str, str]) -> bool:
     catalog = admin_catalog()
     profiles = catalog.get("services", {}).get("llm", {}).get("profiles", []) or []
     profile = next(
-        (
-            item
-            for item in profiles
-            if str(item.get("id") or "") == selection["profile_id"]
-        ),
+        (item for item in profiles if str(item.get("id") or "") == selection["profile_id"]),
         None,
     )
     if not isinstance(profile, dict):
@@ -103,15 +99,11 @@ async def admitted_notebook_llm_call() -> AsyncIterator[LLMConfig]:
         try:
             llm_config, llm_scope_token = activate_llm_selection(selection)
         except (KeyError, TypeError, ValueError) as exc:
-            raise NotebookLLMAdmissionError(
-                "No LLM model is assigned to this account."
-            ) from exc
+            raise NotebookLLMAdmissionError("No LLM model is assigned to this account.") from exc
         async with AsyncExitStack() as quota_stack:
             user_quota_lease = await _NOTEBOOK_LLM_USER_QUOTA.acquire(user_id)
             await quota_stack.enter_async_context(user_quota_lease)
-            global_quota_lease = await _NOTEBOOK_LLM_GLOBAL_QUOTA.acquire(
-                _NOTEBOOK_LLM_GLOBAL_KEY
-            )
+            global_quota_lease = await _NOTEBOOK_LLM_GLOBAL_QUOTA.acquire(_NOTEBOOK_LLM_GLOBAL_KEY)
             await quota_stack.enter_async_context(global_quota_lease)
             yield llm_config
     finally:

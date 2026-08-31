@@ -295,11 +295,48 @@ def test_question_initial_request_has_a_bounded_idle_timeout(
         asyncio.run(question_router_module._receive_bounded_request_json(FakeWebSocket()))
 
 
+def test_question_intake_leases_bound_and_release(monkeypatch: pytest.MonkeyPatch) -> None:
+    question_router_module = _load_question_router_module(monkeypatch)
+    from deeptutor.multi_user.context import (
+        reset_current_user,
+        set_current_user,
+        user_from_token_payload,
+    )
+    from deeptutor.services.sandbox.quota import QuotaExceeded, UserExecQuota
+
+    monkeypatch.setattr(
+        question_router_module,
+        "_QUESTION_INTAKE_USER_QUOTA",
+        UserExecQuota(max_concurrent=1, max_per_minute=10),
+    )
+    monkeypatch.setattr(
+        question_router_module,
+        "_QUESTION_INTAKE_GLOBAL_QUOTA",
+        UserExecQuota(max_concurrent=1, max_per_minute=10),
+    )
+
+    async def _exercise() -> None:
+        token = set_current_user(user_from_token_payload(None))
+        try:
+            first = await question_router_module._admit_question_intake()
+            with pytest.raises(QuotaExceeded):
+                await question_router_module._admit_question_intake()
+            await first.aclose()
+            released = await question_router_module._admit_question_intake()
+            await released.aclose()
+        finally:
+            reset_current_user(token)
+
+    asyncio.run(_exercise())
+
+
 def test_mimic_rejects_invalid_upload_without_question_admission(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     question_router_module = _load_question_router_module(monkeypatch)
     admission_calls = 0
+    intake_calls = 0
+    intake_releases = 0
 
     class _Lease:
         async def aclose(self) -> None:
@@ -310,7 +347,19 @@ def test_mimic_rejects_invalid_upload_without_question_admission(
         admission_calls += 1
         return None, _Lease()
 
+    async def _admit_intake():
+        nonlocal intake_calls
+        intake_calls += 1
+
+        class IntakeLease:
+            async def aclose(self) -> None:
+                nonlocal intake_releases
+                intake_releases += 1
+
+        return IntakeLease()
+
     monkeypatch.setattr(question_router_module, "_admit_question_generation", _admit)
+    monkeypatch.setattr(question_router_module, "_admit_question_intake", _admit_intake)
 
     with TestClient(_build_app(question_router_module)) as client:
         with client.websocket_connect("/api/v1/question/mimic") as websocket:
@@ -322,7 +371,77 @@ def test_mimic_rejects_invalid_upload_without_question_admission(
     # Local validation runs before scarce provider/process capacity is
     # reserved, so malformed input cannot occupy a generation lease.
     assert admission_calls == 0
+    assert (intake_calls, intake_releases) == (1, 1)
     assert message == {"type": "error", "content": "Question generation is unavailable."}
+
+
+def test_mimic_oversized_request_uses_and_releases_intake_without_generation_admission(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    question_router_module = _load_question_router_module(monkeypatch)
+    monkeypatch.setattr(question_router_module, "_MAX_REQUEST_JSON_CHARS", 8)
+    intake_releases = 0
+    generation_calls = 0
+
+    async def _admit_intake():
+        class IntakeLease:
+            async def aclose(self) -> None:
+                nonlocal intake_releases
+                intake_releases += 1
+
+        return IntakeLease()
+
+    async def _admit_generation():
+        nonlocal generation_calls
+        generation_calls += 1
+        raise AssertionError("oversized input must not reach generation admission")
+
+    monkeypatch.setattr(question_router_module, "_admit_question_intake", _admit_intake)
+    monkeypatch.setattr(question_router_module, "_admit_question_generation", _admit_generation)
+
+    with TestClient(_build_app(question_router_module)) as client:
+        with client.websocket_connect("/api/v1/question/mimic") as websocket:
+            websocket.send_text("x" * 9)
+            message = websocket.receive_json()
+
+    assert intake_releases == 1
+    assert generation_calls == 0
+    assert message == {"type": "error", "content": "Question generation is unavailable."}
+
+
+def test_empty_question_requirement_does_not_spend_generation_admission(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    question_router_module = _load_question_router_module(monkeypatch)
+    generation_calls = 0
+
+    class FakeWebSocket:
+        def __init__(self) -> None:
+            self.messages: list[dict] = []
+
+        async def accept(self) -> None:
+            return None
+
+        async def receive(self) -> dict:
+            return {"type": "websocket.receive", "text": '{"requirement":""}'}
+
+        async def send_json(self, payload: dict) -> None:
+            self.messages.append(payload)
+
+        async def close(self, *_args, **_kwargs) -> None:
+            return None
+
+    async def _admit_generation():
+        nonlocal generation_calls
+        generation_calls += 1
+        raise AssertionError("empty requests must not consume generation admission")
+
+    monkeypatch.setattr(question_router_module, "_admit_question_generation", _admit_generation)
+    websocket = FakeWebSocket()
+    asyncio.run(question_router_module.websocket_question_generate(websocket))
+
+    assert generation_calls == 0
+    assert websocket.messages == [{"type": "error", "content": "Requirement is required"}]
 
 
 def test_idle_question_socket_does_not_hold_generation_admission(

@@ -128,7 +128,9 @@ def test_notebook_admission_enforces_process_local_rate_quota(tmp_path, monkeypa
         reset_current_user(token)
 
 
-def test_notebook_admission_rejects_credential_empty_profile_fallback(tmp_path, monkeypatch) -> None:
+def test_notebook_admission_rejects_credential_empty_profile_fallback(
+    tmp_path, monkeypatch
+) -> None:
     token = set_current_user(_learner(tmp_path))
     try:
         monkeypatch.setattr(

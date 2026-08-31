@@ -12,6 +12,9 @@ Enforcement points:
 * ``allowed_optional_tools`` — turn_runtime filters every turn's ``tools``
   payload (single choke point for all capabilities), and the tools router
   filters the /settings/tools listing so the UI matches.
+* ``allowed_builtin_tools`` — turn_runtime owns the server-side allowlist for
+  auto-mounted built-ins such as ``web_fetch``; a client payload cannot widen
+  this surface.
 * ``allowed_mcp_tools`` — the chat pipeline intersects this with any
   caller-scoped ``mcp_tools_filter`` before building the deferred-tool
   loader, so a granted-away MCP tool can be neither listed nor loaded. For
@@ -46,6 +49,24 @@ def allowed_optional_tools() -> set[str] | None:
     if grant is None:
         return None
     value = grant.get("enabled_tools")
+    if value is None:
+        return set()
+    return {str(name) for name in value}
+
+
+def allowed_builtin_tools() -> set[str] | None:
+    """Whitelist of auto-mounted built-in tools.
+
+    ``None`` means unrestricted and is reserved for administrators. Every
+    real non-admin account fails closed when its grant omits ``builtin_tools``;
+    this is intentionally separate from ``enabled_tools`` because an optional
+    composer setting must not authorize a server-mounted network or workspace
+    tool.
+    """
+    grant = _current_grant()
+    if grant is None:
+        return None
+    value = grant.get("builtin_tools")
     if value is None:
         return set()
     return {str(name) for name in value}
@@ -112,6 +133,7 @@ def combine_whitelists(caller: set[str] | None, user: set[str] | None) -> set[st
 
 __all__ = [
     "allowed_cli_apps",
+    "allowed_builtin_tools",
     "allowed_mcp_tools",
     "allowed_optional_tools",
     "combine_whitelists",

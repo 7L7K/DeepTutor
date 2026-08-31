@@ -140,6 +140,7 @@ def _make_pipeline_with_registry(
     registry: _ToolRegistry,
     enabled_tools: list[str],
     kb_name: str | None = None,
+    allowed_builtin_tools: list[str] | None = None,
     binding: str = "openai",
     model: str = "gpt-x",
 ) -> ResearchPipeline:
@@ -168,6 +169,7 @@ def _make_pipeline_with_registry(
         runtime_config={"queue": {"max_length": 5}},
         enabled_tools=enabled_tools,
         kb_name=kb_name,
+        allowed_builtin_tools=allowed_builtin_tools,
     )
 
 
@@ -205,6 +207,31 @@ def test_block_tool_names_keep_only_research_evidence_tools(
         "rag",
         "code_execution",
     ]
+
+
+def test_block_tool_names_respect_empty_or_granted_builtin_allowlist(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Learner grants control Deep Research's auto-mounted retrieval tools."""
+    registry = _ToolRegistry({"rag", "code_execution"})
+
+    denied = _make_pipeline_with_registry(
+        monkeypatch,
+        registry=registry,
+        enabled_tools=[],
+        kb_name="kb-main",
+        allowed_builtin_tools=[],
+    )
+    assert denied._block_tool_names() == []
+
+    granted = _make_pipeline_with_registry(
+        monkeypatch,
+        registry=registry,
+        enabled_tools=[],
+        kb_name="kb-main",
+        allowed_builtin_tools=["rag"],
+    )
+    assert granted._block_tool_names() == ["rag"]
 
 
 def test_code_execution_overwrites_model_authored_quota_identity(monkeypatch) -> None:

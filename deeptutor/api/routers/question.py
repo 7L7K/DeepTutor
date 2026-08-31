@@ -37,6 +37,12 @@ _QUESTION_REQUEST_QUOTA = UserExecQuota(max_concurrent=1, max_per_minute=6)
 # task-scoped and is the only source of user-visible process logs.
 _QUESTION_GLOBAL_QUOTA = UserExecQuota(max_concurrent=1, max_per_minute=12)
 _QUESTION_GLOBAL_QUOTA_KEY = "question-generation-global"
+# Intake protection is intentionally separate from generation admission. It
+# bounds authenticated sockets while they receive and locally preprocess a
+# request, then releases before any provider work starts.
+_QUESTION_INTAKE_USER_QUOTA = UserExecQuota(max_concurrent=2, max_per_minute=24)
+_QUESTION_INTAKE_GLOBAL_QUOTA = UserExecQuota(max_concurrent=16, max_per_minute=192)
+_QUESTION_INTAKE_GLOBAL_KEY = "question-intake-global"
 _MAX_QUESTION_COUNT = 10
 _MAX_REQUIREMENT_CHARS = 12_000
 _MAX_KB_NAME_CHARS = 128
@@ -126,6 +132,22 @@ async def _admit_question_generation() -> tuple[object, AsyncExitStack]:
         raise
 
 
+async def _admit_question_intake() -> AsyncExitStack:
+    """Reserve a bounded socket/preprocess slot without selecting a model."""
+    from deeptutor.multi_user.context import get_current_user
+
+    leases = AsyncExitStack()
+    try:
+        user_lease = await _QUESTION_INTAKE_USER_QUOTA.acquire(get_current_user().id)
+        await leases.enter_async_context(user_lease)
+        global_lease = await _QUESTION_INTAKE_GLOBAL_QUOTA.acquire(_QUESTION_INTAKE_GLOBAL_KEY)
+        await leases.enter_async_context(global_lease)
+        return leases
+    except BaseException:
+        await leases.aclose()
+        raise
+
+
 def _resolve_parsed_mimic_path(value: object) -> str:
     raw = _bounded_text(value, maximum=_MAX_MIMIC_PATH_CHARS)
     candidate = Path(raw)
@@ -209,6 +231,7 @@ async def websocket_mimic_generate(websocket: WebSocket):
     pusher_task = None
     llm_scope_token = None
     admission_leases = None
+    intake_leases = None
     uploaded_pdf_bytes: bytes | None = None
 
     try:
@@ -219,29 +242,35 @@ async def websocket_mimic_generate(websocket: WebSocket):
         if not await ws_revalidate_auth(websocket):
             return
 
-        # 1. Wait for config
-        data = await _receive_bounded_request_json(websocket)
-        mode = data.get("mode", "parsed")
-        if mode not in {"upload", "parsed"}:
-            raise ValueError("mimic mode is invalid")
-        kb_name = _bounded_text(data.get("kb_name", "ai_textbook"), maximum=_MAX_KB_NAME_CHARS)
-        max_questions = _bounded_question_count(data.get("max_questions"), default=5)
-        if mode == "upload":
-            pdf_data = _bounded_text(data.get("pdf_data"), maximum=_MAX_MIMIC_PDF_B64_CHARS)
-            pdf_name = _bounded_text(data.get("pdf_name", "exam.pdf"), maximum=255)
-            try:
-                uploaded_pdf_bytes = base64.b64decode(pdf_data, validate=True)
-                if not uploaded_pdf_bytes.startswith(b"%PDF-"):
-                    raise ValueError("not a PDF")
-                safe_pdf_name = DocumentValidator.validate_upload_safety(
-                    pdf_name, len(uploaded_pdf_bytes), {".pdf"}
-                )
-            except (ValueError, TypeError):
-                raise ValueError("upload is invalid") from None
-            data = {**data, "pdf_name": safe_pdf_name}
-        else:
-            paper_path = _resolve_parsed_mimic_path(data.get("paper_path"))
-            data = {**data, "paper_path": paper_path}
+        intake_leases = await _admit_question_intake()
+        try:
+            # 1. Receive and locally validate/preprocess the request while
+            # holding only the bounded intake lease, never a provider lease.
+            data = await _receive_bounded_request_json(websocket)
+            mode = data.get("mode", "parsed")
+            if mode not in {"upload", "parsed"}:
+                raise ValueError("mimic mode is invalid")
+            kb_name = _bounded_text(data.get("kb_name", "ai_textbook"), maximum=_MAX_KB_NAME_CHARS)
+            max_questions = _bounded_question_count(data.get("max_questions"), default=5)
+            if mode == "upload":
+                pdf_data = _bounded_text(data.get("pdf_data"), maximum=_MAX_MIMIC_PDF_B64_CHARS)
+                pdf_name = _bounded_text(data.get("pdf_name", "exam.pdf"), maximum=255)
+                try:
+                    uploaded_pdf_bytes = base64.b64decode(pdf_data, validate=True)
+                    if not uploaded_pdf_bytes.startswith(b"%PDF-"):
+                        raise ValueError("not a PDF")
+                    safe_pdf_name = DocumentValidator.validate_upload_safety(
+                        pdf_name, len(uploaded_pdf_bytes), {".pdf"}
+                    )
+                except (ValueError, TypeError):
+                    raise ValueError("upload is invalid") from None
+                data = {**data, "pdf_name": safe_pdf_name}
+            else:
+                paper_path = _resolve_parsed_mimic_path(data.get("paper_path"))
+                data = {**data, "paper_path": paper_path}
+        finally:
+            await intake_leases.aclose()
+            intake_leases = None
 
         # Provider/model selection and the per-user + global bulkheads cover
         # actual generation only.  An authenticated but idle socket therefore
@@ -439,6 +468,8 @@ async def websocket_mimic_generate(websocket: WebSocket):
 
         if admission_leases is not None:
             await admission_leases.aclose()
+        if intake_leases is not None:
+            await intake_leases.aclose()
         if llm_scope_token is not None:
             from deeptutor.services.model_selection.runtime import reset_llm_selection
 
@@ -466,6 +497,7 @@ async def websocket_question_generate(websocket: WebSocket):
     task_manager = TaskIDManager.get_instance()
     llm_scope_token = None
     admission_leases = None
+    intake_leases = None
 
     try:
         # Do not let an idle authenticated socket reserve generation capacity.
@@ -473,21 +505,25 @@ async def websocket_question_generate(websocket: WebSocket):
         if not await ws_revalidate_auth(websocket):
             return
 
-        # 1. Wait for config
-        data = await _receive_bounded_request_json(websocket)
-        requirement = data.get("requirement")
-        if isinstance(requirement, dict):
-            requirement = {
-                key: _bounded_text(value, maximum=_MAX_REQUIREMENT_CHARS)
-                for key, value in requirement.items()
-                if key in {"knowledge_point", "preference", "difficulty", "question_type"}
-            }
-        else:
-            requirement = _bounded_text(requirement, maximum=_MAX_REQUIREMENT_CHARS)
-        kb_name = _bounded_text(data.get("kb_name", "ai_textbook"), maximum=_MAX_KB_NAME_CHARS)
-        count = _bounded_question_count(data.get("count"), default=1)
-
-        llm_scope_token, admission_leases = await _admit_question_generation()
+        intake_leases = await _admit_question_intake()
+        try:
+            # 1. Receive and locally validate the request before consuming a
+            # provider/generation rate-quota slot.
+            data = await _receive_bounded_request_json(websocket)
+            requirement = data.get("requirement")
+            if isinstance(requirement, dict):
+                requirement = {
+                    key: _bounded_text(value, maximum=_MAX_REQUIREMENT_CHARS)
+                    for key, value in requirement.items()
+                    if key in {"knowledge_point", "preference", "difficulty", "question_type"}
+                }
+            else:
+                requirement = _bounded_text(requirement, maximum=_MAX_REQUIREMENT_CHARS)
+            kb_name = _bounded_text(data.get("kb_name", "ai_textbook"), maximum=_MAX_KB_NAME_CHARS)
+            count = _bounded_question_count(data.get("count"), default=1)
+        finally:
+            await intake_leases.aclose()
+            intake_leases = None
 
         if not requirement:
             try:
@@ -495,6 +531,8 @@ async def websocket_question_generate(websocket: WebSocket):
             except (RuntimeError, WebSocketDisconnect):
                 pass
             return
+
+        llm_scope_token, admission_leases = await _admit_question_generation()
 
         # Generate task ID
         task_key = f"question_{kb_name}_{hash(str(requirement))}"
@@ -694,6 +732,8 @@ async def websocket_question_generate(websocket: WebSocket):
             pass
         if admission_leases is not None:
             await admission_leases.aclose()
+        if intake_leases is not None:
+            await intake_leases.aclose()
         if llm_scope_token is not None:
             from deeptutor.services.model_selection.runtime import reset_llm_selection
 

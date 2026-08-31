@@ -59,7 +59,9 @@ def app(tmp_path, monkeypatch):
         def get_records(self, notebook_id, record_ids):
             if notebook_id != "nb":
                 return []
-            return [self._records[record_id] for record_id in record_ids if record_id in self._records]
+            return [
+                self._records[record_id] for record_id in record_ids if record_id in self._records
+            ]
 
     monkeypatch.setattr(
         "deeptutor.api.routers.mastery_path.get_notebook_manager", lambda: _NotebookManager()

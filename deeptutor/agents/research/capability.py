@@ -71,6 +71,7 @@ class DeepResearchCapability(BaseCapability):
             runtime_config=runtime_config,
             kb_name=kb_name,
             enabled_tools=enabled_tools,
+            allowed_builtin_tools=context.allowed_builtin_tools,
         )
         result = await pipeline.run(
             context=context,

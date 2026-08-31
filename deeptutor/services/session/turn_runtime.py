@@ -785,6 +785,22 @@ class TurnRuntimeManager:
             # bypass archive/ownership checks.
             raise RuntimeError("Course learning paths require an authorized Course turn")
 
+        if not course_id:
+            # Auto-mounted built-ins can reach server-side resources without a
+            # composer selection. A generic learner turn therefore receives a
+            # server-owned grant allowlist; a client-supplied value can never
+            # widen it. Course turns retain their stricter resolver-derived
+            # allowlist above.
+            from deeptutor.multi_user.tool_access import allowed_builtin_tools
+
+            allowed_builtins = allowed_builtin_tools()
+            payload = {
+                **payload,
+                "allowed_builtin_tools": (
+                    None if allowed_builtins is None else sorted(allowed_builtins)
+                ),
+            }
+
         # Reject unavailable model-backed work before creating a generic
         # session. Course organization and model-free learning use separate
         # HTTP APIs and remain available without an assigned model.

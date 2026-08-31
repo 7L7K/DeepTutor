@@ -170,7 +170,9 @@ def test_stream_add_record_with_summary_strips_thinking_tags(
     assert detail["records"][0]["summary"] == "Final reusable summary."
 
 
-def test_generated_notebook_summary_rejects_ungranted_learner(manager, tmp_path, monkeypatch) -> None:
+def test_generated_notebook_summary_rejects_ungranted_learner(
+    manager, tmp_path, monkeypatch
+) -> None:
     user = CurrentUser(
         id="learner-1",
         username="learner",

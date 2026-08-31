@@ -50,6 +50,7 @@ def test_course_turn_derives_resources_and_learning_identity_server_side(monkeyp
         {
             "content": "Teach me",
             "tools": ["web_search"],
+            "allowed_builtin_tools": ["web_fetch"],
             "knowledge_bases": [],
             "attachments": [],
         },
@@ -72,6 +73,51 @@ def test_course_mastery_turn_explicitly_allows_interactive_answer_handoff(monkey
     payload = resolve_course_turn_payload("crs_one", {"capability": "mastery_path"})
 
     assert payload["allowed_builtin_tools"] == ["rag", "ask_user"]
+
+
+def test_course_mastery_allowlist_keeps_exclusive_answer_handoff(monkeypatch) -> None:
+    """Course mastery is the deliberate server-derived ``ask_user`` exception."""
+    from deeptutor.agents._shared.tool_composition import ToolMountFlags, compose_enabled_tools
+
+    service = SimpleNamespace(
+        get=lambda _course_id: _course(),
+        list_sources=lambda _course_id: [_source("src_one")],
+    )
+    monkeypatch.setattr("deeptutor.courses.service.get_current_course_service", lambda: service)
+    payload = resolve_course_turn_payload("crs_one", {"capability": "mastery_path"})
+
+    class EmptyRegistry:
+        def get_enabled(self, _requested):
+            return []
+
+    tools = compose_enabled_tools(
+        registry=EmptyRegistry(),
+        requested_tools=[],
+        optional_whitelist=[],
+        mount_flags=ToolMountFlags(),
+        capability_owned=["mastery_status"],
+        exclusive=True,
+        builtin_whitelist=set(payload["allowed_builtin_tools"]),
+    )
+
+    assert tools == ["mastery_status", "ask_user"]
+
+
+def test_empty_learner_builtin_allowlist_removes_exclusive_answer_handoff() -> None:
+    """Exclusive capabilities cannot restore ``ask_user`` for an ungranted learner."""
+    from deeptutor.agents._shared.tool_composition import ToolMountFlags, compose_enabled_tools
+
+    tools = compose_enabled_tools(
+        registry=object(),
+        requested_tools=[],
+        optional_whitelist=[],
+        mount_flags=ToolMountFlags(),
+        capability_owned=["mastery_status"],
+        exclusive=True,
+        builtin_whitelist=set(),
+    )
+
+    assert tools == ["mastery_status"]
 
 
 def test_course_turn_tool_surface_excludes_auto_mounted_side_effects(monkeypatch) -> None:
@@ -123,9 +169,7 @@ def test_course_mastery_tool_surface_keeps_only_course_safe_mastery_operations(m
         )
     )
 
-    assert {"rag", "ask_user", "mastery_status", "mastery_quiz", "mastery_grade"}.issubset(
-        tools
-    )
+    assert {"rag", "ask_user", "mastery_status", "mastery_quiz", "mastery_grade"}.issubset(tools)
     assert {"mastery_build", "mastery_assess"}.isdisjoint(tools)
 
 
@@ -138,16 +182,17 @@ def test_course_mastery_prompt_disables_unavailable_map_and_assessment_tools() -
         UnifiedContext(metadata={"mastery_mode": True}), language="en", prompts={}
     )
     course = capability.system_block(
-        UnifiedContext(
-            metadata={"mastery_mode": True, "course_context": {"course_id": "crs_one"}}
-        ),
+        UnifiedContext(metadata={"mastery_mode": True, "course_context": {"course_id": "crs_one"}}),
         language="en",
         prompts={},
     )
 
     assert generic is not None and generic.content == _load_system_prompt("en")
     assert course is not None
-    assert "Course map initialization happens only through the owned Course learning API/UI." in course.content
+    assert (
+        "Course map initialization happens only through the owned Course learning API/UI."
+        in course.content
+    )
     assert "Course initialization\nis required" in course.content
     assert "Qualitative model-judgment assessment is\ndisabled" in course.content
     assert "never request mastery_build or mastery_assess" in course.content
@@ -197,9 +242,7 @@ def test_archived_failed_and_superseded_sources_have_no_retrieval_authority(
 
     payload = resolve_course_turn_payload("crs_one", {"knowledge_bases": []})
 
-    assert payload["knowledge_bases"] == [
-        "personal:kb:course_crs_one_src_replacement"
-    ]
+    assert payload["knowledge_bases"] == ["personal:kb:course_crs_one_src_replacement"]
     assert payload["course_context"]["source_ids"] == ["src_replacement"]
 
 
@@ -227,9 +270,7 @@ def test_regeneration_preserves_exact_owned_source_revision_set(monkeypatch) -> 
         preserved_context=preserved,
     )
 
-    assert payload["knowledge_bases"] == [
-        "personal:kb:course_crs_one_src_original"
-    ]
+    assert payload["knowledge_bases"] == ["personal:kb:course_crs_one_src_original"]
     assert payload["course_context"] == preserved
 
 
@@ -256,9 +297,7 @@ def test_client_kb_name_never_grants_course_access(monkeypatch) -> None:
     )
     monkeypatch.setattr("deeptutor.courses.service.get_current_course_service", lambda: service)
     with pytest.raises(CourseUnavailableError, match="resolved by the server"):
-        resolve_course_turn_payload(
-            "crs_one", {"knowledge_bases": ["admin:kb:forbidden"]}
-        )
+        resolve_course_turn_payload("crs_one", {"knowledge_bases": ["admin:kb:forbidden"]})
 
 
 def test_managed_course_kb_requires_server_turn_authority(monkeypatch, tmp_path) -> None:
@@ -279,9 +318,7 @@ def test_managed_course_kb_requires_server_turn_authority(monkeypatch, tmp_path)
     monkeypatch.setattr(
         knowledge_access,
         "current_kb_manager",
-        lambda: SimpleNamespace(
-            list_knowledge_bases=lambda: ["course_crs_one_src_one"]
-        ),
+        lambda: SimpleNamespace(list_knowledge_bases=lambda: ["course_crs_one_src_one"]),
     )
     monkeypatch.setattr(knowledge_access, "current_kb_base_dir", lambda: user_root)
     token = set_current_user(user)
@@ -341,9 +378,7 @@ async def test_archive_winning_final_recheck_leaves_no_new_course_session(
         return {**payload, "tools": [], "knowledge_bases": [], "course_context": {}}
 
     monkeypatch.setattr("deeptutor.courses.service.resolve_course_turn_payload", resolve)
-    monkeypatch.setattr(
-        "deeptutor.multi_user.tool_access.allowed_optional_tools", lambda: None
-    )
+    monkeypatch.setattr("deeptutor.multi_user.tool_access.allowed_optional_tools", lambda: None)
 
     with pytest.raises(CourseUnavailableError, match="Archived"):
         await runtime.start_turn(

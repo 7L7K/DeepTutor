@@ -66,6 +66,44 @@ _UNIFIED_WS_IDLE_FRAME_TIMEOUT_S = 120.0
 # socket alive for an unbounded stream of malformed messages.
 _MAX_UNIFIED_INVALID_MESSAGES = 1
 
+_START_TURN_FIELDS = frozenset(
+    {
+        "type",
+        "content",
+        "tools",
+        "capability",
+        "knowledge_bases",
+        "session_id",
+        "course_id",
+        "attachments",
+        "language",
+        "config",
+        "notebook_references",
+        "history_references",
+        "question_notebook_references",
+        "book_references",
+        "persona",
+        "skills",
+        "memory_references",
+        "llm_selection",
+        "parent_message_id",
+    }
+)
+_UNIFIED_WS_ALLOWED_FIELDS: dict[str, frozenset[str]] = {
+    "message": _START_TURN_FIELDS,
+    "start_turn": _START_TURN_FIELDS,
+    "subscribe_turn": frozenset({"type", "turn_id", "after_seq", "course_id"}),
+    "subscribe_session": frozenset({"type", "session_id", "after_seq", "course_id"}),
+    "resume_from": frozenset({"type", "turn_id", "seq", "course_id"}),
+    "unsubscribe": frozenset({"type", "turn_id", "session_id", "course_id"}),
+    "cancel_turn": frozenset({"type", "turn_id", "course_id"}),
+    "regenerate": frozenset({"type", "session_id", "overrides", "course_id"}),
+    "check_active_turn": frozenset({"type", "session_id", "course_id"}),
+    "submit_user_reply": frozenset({"type", "turn_id", "text", "answers", "course_id"}),
+    "user_input": frozenset({"type", "turn_id", "content", "course_id"}),
+    "ping": frozenset({"type"}),
+}
+
 
 class _UnifiedWsFrameTooLarge(ValueError):
     """Raised before JSON parsing when a WebSocket text frame exceeds the cap."""
@@ -156,6 +194,9 @@ def _validate_unified_ws_message(message: object) -> dict[str, Any]:
     if not isinstance(message, dict):
         raise ValueError("Message must be an object.")
     msg_type = _bounded_ws_string(message.get("type"), label="Message type", maximum=64)
+    unexpected_fields = set(message).difference(_UNIFIED_WS_ALLOWED_FIELDS.get(msg_type, {"type"}))
+    if unexpected_fields:
+        raise ValueError("Message contains unsupported fields.")
 
     for key in ("session_id", "turn_id", "course_id"):
         if key in message and message[key] is not None:

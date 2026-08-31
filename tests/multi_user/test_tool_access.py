@@ -6,6 +6,7 @@ import pytest
 
 from deeptutor.multi_user.grants import load_grant, normalize_grant, save_grant
 from deeptutor.multi_user.tool_access import (
+    allowed_builtin_tools,
     allowed_mcp_tools,
     allowed_optional_tools,
     combine_whitelists,
@@ -69,6 +70,7 @@ def test_normalize_migrates_v1_to_v2():
     # Learner optional tools are deny-by-default; host-capable lanes remain
     # absent and resolve deny-by-default at runtime.
     assert grant["enabled_tools"] == []
+    assert grant["builtin_tools"] == []
     assert grant["mcp_tools"] is None
     assert grant["exec_enabled"] is None
     assert grant["course_source_uploads"] is False
@@ -84,6 +86,7 @@ def test_normalize_tool_lists_and_exec():
         },
     )
     assert grant["enabled_tools"] == ["web_search", "reason"]
+    assert grant["builtin_tools"] == []
     assert grant["mcp_tools"] == []
     assert grant["exec_enabled"] is False
     # Non-bool values remain absent in storage and resolve deny-by-default for users.
@@ -100,17 +103,48 @@ def test_normalize_tool_lists_and_exec():
 def test_admin_is_never_restricted(as_user):
     with as_user("u_admin", role="admin"):
         assert allowed_optional_tools() is None
+        assert allowed_builtin_tools() is None
         assert allowed_mcp_tools() is None
         assert exec_override() is None
 
 
-def test_user_without_grant_denies_builtins_mcp_and_exec(
-    as_user, mu_isolated_root
-):
+def test_user_without_grant_denies_builtins_mcp_and_exec(as_user, mu_isolated_root):
     with as_user("u_alice"):
         assert allowed_optional_tools() == set()
+        assert allowed_builtin_tools() == set()
         assert allowed_mcp_tools() == set()
         assert exec_override() is False
+
+
+def test_builtin_allowlist_is_explicit_and_admin_only_unrestricted(as_user, grantable_alice):
+    """A learner cannot turn on an auto-mounted tool from the chat payload."""
+    from deeptutor.agents._shared.tool_composition import (
+        ToolMountFlags,
+        compose_enabled_tools,
+    )
+
+    class EmptyRegistry:
+        def get_enabled(self, _requested):
+            return []
+
+    def compose(allowed: set[str] | None) -> list[str]:
+        return compose_enabled_tools(
+            registry=EmptyRegistry(),
+            requested_tools=[],
+            optional_whitelist=[],
+            mount_flags=ToolMountFlags(),
+            builtin_whitelist=allowed,
+        )
+
+    with as_user(grantable_alice):
+        assert "web_fetch" not in compose(allowed_builtin_tools())
+
+    save_grant(grantable_alice, {"builtin_tools": ["web_fetch"]})
+    with as_user(grantable_alice):
+        assert "web_fetch" in compose(allowed_builtin_tools())
+
+    with as_user("u_admin", role="admin"):
+        assert "web_fetch" in compose(allowed_builtin_tools())
 
 
 def test_user_whitelists_resolve_from_grant(as_user, grantable_alice):
@@ -118,12 +152,14 @@ def test_user_whitelists_resolve_from_grant(as_user, grantable_alice):
         grantable_alice,
         {
             "enabled_tools": ["web_search"],
+            "builtin_tools": ["web_fetch"],
             "mcp_tools": ["mcp_demo_search", "mcp_demo_write"],
             "exec_enabled": False,
         },
     )
     with as_user(grantable_alice):
         assert allowed_optional_tools() == {"web_search"}
+        assert allowed_builtin_tools() == {"web_fetch"}
         assert allowed_mcp_tools() == {"mcp_demo_search", "mcp_demo_write"}
         assert exec_override() is False
 
@@ -140,6 +176,7 @@ def test_saved_grant_round_trips_v2(grantable_alice):
     loaded = load_grant(grantable_alice)
     assert loaded["version"] == 2
     assert loaded["enabled_tools"] == ["reason"]
+    assert loaded["builtin_tools"] == []
     assert loaded["mcp_tools"] is None
     assert loaded["exec_enabled"] is False
     assert loaded["course_source_uploads"] is True
