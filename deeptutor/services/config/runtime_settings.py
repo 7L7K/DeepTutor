@@ -24,10 +24,11 @@ DEFAULT_SYSTEM_SETTINGS: dict[str, Any] = {
     "chat_attachment_dir": "",
     # Enable the restricted-subprocess code-execution sandbox (the `exec` /
     # `code_execution` tools the office skills — docx/pdf/pptx/xlsx — run on).
-    # Default on so document generation works out of the box across all
-    # deployment shapes; a stronger backend (runner sidecar / bwrap) still
-    # takes precedence when available. Set false to disable host-side exec.
-    "sandbox_allow_subprocess": True,
+    # Default off: this fallback runs in the application OS account and cannot
+    # provide tenant or host isolation. An administrator may opt in explicitly
+    # for a trusted local development machine; hosted deployments use the
+    # authenticated runner sidecar (or bwrap on supported bare-metal Linux).
+    "sandbox_allow_subprocess": False,
     # Chat attachment policy. Size caps gate what the composer accepts and
     # what the turn runtime / partner upload endpoints extract; the char
     # budgets bound how much extracted text is inlined into the LLM context
@@ -41,11 +42,18 @@ DEFAULT_SYSTEM_SETTINGS: dict[str, Any] = {
     "chat_attachment_max_chars_total": 150_000,
 }
 
-# Clamp bounds for the chat attachment knobs. The MB ceilings are deliberately
-# generous (local deployments parse in-process; the WS frame cap is derived
-# from the total) while still refusing nonsense like 0 or 10^9.
-CHAT_ATTACHMENT_MAX_FILE_MB_RANGE = (1, 1024)
-CHAT_ATTACHMENT_MAX_TOTAL_MB_RANGE = (1, 2048)
+# Bound Uvicorn/websockets' per-connection protocol queue as a second
+# backstop behind the application receive leases. This is intentionally not
+# user-configurable: raising it can reintroduce parser-memory amplification on
+# the small beta host.
+UVICORN_WS_MAX_QUEUE = 1
+
+# Clamp bounds for the chat attachment knobs. The unified WebSocket carries
+# attachments as base64, so keeping the total below 40 MiB leaves room for
+# inflation and JSON metadata under the fixed 64 MiB transport ceiling. Larger
+# source files should use the bounded Course/knowledge ingestion paths instead.
+CHAT_ATTACHMENT_MAX_FILE_MB_RANGE = (1, 40)
+CHAT_ATTACHMENT_MAX_TOTAL_MB_RANGE = (1, 40)
 CHAT_ATTACHMENT_CHARS_RANGE = (10_000, 5_000_000)
 
 DEFAULT_AUTH_SETTINGS: dict[str, Any] = {
@@ -890,7 +898,7 @@ class RuntimeSettingsService:
             "disable_ssl_verify": _coerce_bool(settings.get("disable_ssl_verify"), False),
             "chat_attachment_dir": _string(settings.get("chat_attachment_dir")),
             "sandbox_allow_subprocess": _coerce_bool(
-                settings.get("sandbox_allow_subprocess"), True
+                settings.get("sandbox_allow_subprocess"), False
             ),
             "chat_attachment_max_file_mb": max_file_mb,
             "chat_attachment_max_total_mb": max_total_mb,
@@ -991,6 +999,7 @@ def get_chat_attachment_limits() -> ChatAttachmentLimits:
 # uvicorn's default WebSocket frame ceiling. Never derive below it so chat
 # behaves identically to older builds even if the configured totals are tiny.
 _WS_MAX_SIZE_FLOOR = 16 * 1024 * 1024
+_WS_MAX_SIZE_HARD_CAP = 64 * 1024 * 1024
 
 
 def compute_ws_max_size(max_total_bytes: int) -> int:
@@ -1002,7 +1011,7 @@ def compute_ws_max_size(max_total_bytes: int) -> int:
     (message text, metadata, quoting) on top of the inflated payload.
     """
     inflated = (max_total_bytes * 4) // 3
-    return max(_WS_MAX_SIZE_FLOOR, inflated + 8 * 1024 * 1024)
+    return min(_WS_MAX_SIZE_HARD_CAP, max(_WS_MAX_SIZE_FLOOR, inflated + 8 * 1024 * 1024))
 
 
 def get_ws_max_size() -> int:

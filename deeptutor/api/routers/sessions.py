@@ -32,7 +32,9 @@ def _distinct_session_stores(*, sqlite_only: bool = False):
         return [primary]
     primary_path = getattr(primary, "db_path", None)
     personal_path = getattr(personal, "db_path", None)
-    return [primary] if primary is personal or primary_path == personal_path else [primary, personal]
+    return (
+        [primary] if primary is personal or primary_path == personal_path else [primary, personal]
+    )
 
 
 async def _owned_session_store(session_id: str, *, sqlite_only: bool = False):
@@ -76,14 +78,14 @@ class BranchSelectionRequest(BaseModel):
 
 
 class QuizResultItem(BaseModel):
-    question_id: str = ""
-    question: str = Field(..., min_length=1)
-    question_type: str = ""
-    options: dict[str, str] | None = None
-    user_answer: str = ""
-    correct_answer: str = ""
-    explanation: str | None = ""
-    difficulty: str | None = ""
+    question_id: str = Field(default="", max_length=100)
+    question: str = Field(..., min_length=1, max_length=50_000)
+    question_type: str = Field(default="", max_length=100)
+    options: dict[str, str] | None = Field(default=None, max_length=100)
+    user_answer: str = Field(default="", max_length=20_000)
+    correct_answer: str = Field(default="", max_length=20_000)
+    explanation: str | None = Field(default="", max_length=20_000)
+    difficulty: str | None = Field(default="", max_length=100)
     is_correct: bool
 
     @field_validator("options", mode="before")
@@ -96,10 +98,19 @@ class QuizResultItem(BaseModel):
     def _coerce_str(cls, v):
         return v if isinstance(v, str) else ""
 
+    @field_validator("options")
+    @classmethod
+    def option_text_is_bounded(cls, value: dict[str, str] | None) -> dict[str, str] | None:
+        if value is not None and any(
+            len(key) > 100 or len(text) > 2_000 for key, text in value.items()
+        ):
+            raise ValueError("quiz options are too large")
+        return value
+
 
 class QuizResultsRequest(BaseModel):
-    answers: list[QuizResultItem] = Field(default_factory=list)
-    turn_id: str = ""
+    answers: list[QuizResultItem] = Field(default_factory=list, max_length=100)
+    turn_id: str = Field(default="", max_length=100)
 
 
 def _format_quiz_results_message(answers: list[QuizResultItem]) -> str:

@@ -2,9 +2,12 @@
 
 from __future__ import annotations
 
+import asyncio
 import importlib
 import json
 import re
+import sys
+import types
 from typing import Any
 
 import pytest
@@ -123,3 +126,32 @@ def test_plugin_chat_stream_creates_session_when_missing(monkeypatch):
     assert session_id != "web"
     assert mgr.calls[0]["session_id"] == session_id
     assert mgr.calls[0]["chat_id"] == session_id
+
+
+def test_playground_tool_stream_does_not_redirect_process_stdout(monkeypatch) -> None:
+    plugins_router_mod = importlib.import_module("deeptutor.api.routers.plugins_api")
+    original_stdout = sys.stdout
+
+    class FakeTool:
+        async def execute(self, **_params):
+            assert sys.stdout is original_stdout
+            print("unstructured tool output remains process-local")
+            return types.SimpleNamespace(
+                success=True,
+                content="done",
+                sources=[],
+                metadata={},
+            )
+
+    monkeypatch.setattr(
+        plugins_router_mod,
+        "get_tool_registry",
+        lambda: types.SimpleNamespace(get=lambda _name: FakeTool()),
+    )
+
+    async def _collect() -> list[str]:
+        return [chunk async for chunk in plugins_router_mod._execute_stream("demo", {})]
+
+    chunks = asyncio.run(_collect())
+    assert any("event: result" in chunk for chunk in chunks)
+    assert not any("event: process_log" in chunk for chunk in chunks)

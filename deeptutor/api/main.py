@@ -105,6 +105,70 @@ def _build_cors_settings() -> dict[str, object]:
     }
 
 
+def validate_production_auth_configuration() -> None:
+    """Reject a production process that would synthesize a local admin.
+
+    Authentication is deliberately optional for local, single-user development.
+    The same default is unsafe on an Internet-facing deployment: absent or
+    disabled ``auth.json`` would otherwise make every request the synthetic
+    local administrator.  Check the effective settings during startup rather
+    than trusting a compose-file convention, because runtime settings are the
+    authoritative configuration source.
+    """
+    if not is_production_environment():
+        return
+
+    auth_settings = load_auth_settings()
+    if not auth_settings["enabled"]:
+        raise RuntimeError(
+            "Production requires authentication to be enabled; configure "
+            "data/user/settings/auth.json before starting TEEECHR"
+        )
+
+    if not auth_settings.get("cookie_secure", False):
+        raise RuntimeError(
+            "Production requires secure authentication cookies; set "
+            "data/user/settings/auth.json cookie_secure to true before "
+            "starting TEEECHR"
+        )
+
+    if not _has_durable_production_identity(auth_settings):
+        raise RuntimeError(
+            "Production requires a durable owner identity; persist "
+            "data/system/auth/users.json or configure a persisted auth.json "
+            "bootstrap account before starting TEEECHR"
+        )
+
+
+def _has_durable_production_identity(auth_settings: dict[str, object]) -> bool:
+    """Return whether production has an identity source that survives restart.
+
+    The single-user ``auth.json`` bootstrap remains supported when both its
+    username and password hash are configured; the multi-user path requires a
+    readable identity store with at least one active administrator. An empty or
+    missing store is not a safe production bootstrap state because the public
+    first-user registration route would otherwise be reachable after recreation.
+    """
+    username = str(auth_settings.get("username") or "").strip()
+    password_hash = str(auth_settings.get("password_hash") or "").strip()
+    if username and password_hash:
+        return True
+
+    from deeptutor.multi_user.identity import USERS_FILE, load_users
+
+    if not USERS_FILE.is_file():
+        return False
+    try:
+        users = load_users()
+    except RuntimeError:
+        # Preserve the identity module's fail-closed error at startup.
+        raise
+    return any(
+        str(record.get("role") or "") == "admin" and not bool(record.get("disabled", False))
+        for record in users.values()
+    )
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """
@@ -115,6 +179,7 @@ async def lifespan(app: FastAPI):
     logger.info("Application startup")
 
     # Validate configuration consistency
+    validate_production_auth_configuration()
     validate_tool_consistency()
     validate_course_backend_compatibility()
     from deeptutor.courses.deployment import SingleProcessCourseLock

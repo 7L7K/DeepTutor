@@ -131,73 +131,154 @@ async def _execute_chat_job(job: CronJob) -> tuple[str, str | None]:
     originating session, so the result is waiting in their chat history."""
     from deeptutor.core.context import UnifiedContext
     from deeptutor.core.stream import StreamEventType
-    from deeptutor.multi_user.models import CurrentUser
+    from deeptutor.multi_user.models import LOCAL_ADMIN_ID, CurrentUser
     from deeptutor.multi_user.paths import local_admin_user, scope_for_user, user_context
     from deeptutor.runtime.orchestrator import ChatOrchestrator
     from deeptutor.services.session import get_sqlite_session_store
 
-    if job.owner.is_admin:
+    # The single-user runtime has no durable identity record for its local
+    # administrator.  Preserve that narrowly-defined sentinel, but never
+    # treat an arbitrary persisted ``is_admin`` bit as live authority.
+    if job.owner.is_admin and job.owner.user_id == LOCAL_ADMIN_ID:
         user = local_admin_user()
     else:
+        # Jobs persist longer than a login session.  Re-resolve the owner
+        # instead of trusting a historical username/role snapshot so a removed,
+        # disabled, or reclassified learner cannot keep spending shared model
+        # capacity through an old scheduled job.
+        from deeptutor.multi_user.identity import get_user_by_id
+
+        live_owner = get_user_by_id(job.owner.user_id)
+        if live_owner is None:
+            return "skipped", "scheduled job owner no longer exists"
+        username, record = live_owner
+        if record.get("disabled") is True:
+            return "skipped", "scheduled job owner is disabled"
+        live_role = str(record.get("role") or "user")
+        expected_role = "admin" if job.owner.is_admin else "user"
+        if live_role != expected_role:
+            return "skipped", (
+                "scheduled job owner is no longer an administrator"
+                if expected_role == "admin"
+                else "scheduled job owner is no longer a learner"
+            )
         user = CurrentUser(
             id=job.owner.user_id,
-            username=job.owner.user_id,
-            role="user",
-            scope=scope_for_user(job.owner.user_id, is_admin=False),
+            username=username,
+            role=live_role,
+            scope=scope_for_user(job.owner.user_id, is_admin=live_role == "admin"),
         )
 
     prompt = _reminder_prompt(job)
     with user_context(user):
-        store = get_sqlite_session_store()
-        session = await store.get_session(job.owner.session_id)
-        if session is None:
-            return "error", "session no longer exists"
+        # Cron re-enters the chat pipeline without going through turn_runtime,
+        # so it must reconstruct the same server-owned built-in-tool boundary
+        # here.  A scheduled job is not an authority escalation for its owner.
+        from deeptutor.multi_user.tool_access import allowed_builtin_tools
 
-        history = await store.get_messages_for_context(job.owner.session_id)
-        context = UnifiedContext(
-            session_id=job.owner.session_id,
-            user_message=prompt,
-            conversation_history=[
-                {"role": m.get("role"), "content": m.get("content")}
-                for m in history
-                if m.get("role") in {"user", "assistant"} and m.get("content")
-            ],
-            active_capability="chat",
-            language=job.owner.language or "en",
-            metadata={
-                "turn_id": f"cron-{job.id}-{uuid.uuid4().hex[:8]}",
-                "source": "cron",
-                "cron_job_id": job.id,
-            },
-        )
+        allowed_builtins = allowed_builtin_tools()
+        llm_scope_token = None
+        reset_llm_selection = None
+        if not user.is_admin:
+            # A learner must retain the cron built-in grant at execution time;
+            # possessing a job record is not a standing permission.  Resolve
+            # one currently usable assigned model and install it in this task's
+            # context so the scheduled turn cannot use deployment-global LLM
+            # settings as a fallback.
+            if allowed_builtins is None or "cron" not in allowed_builtins:
+                return "skipped", "scheduled job no longer has cron permission"
+            from deeptutor.multi_user.model_access import (
+                has_capability_access,
+                redacted_model_access,
+            )
 
-        final_text = ""
-        errors: list[str] = []
-        async for event in ChatOrchestrator().handle(context):
-            meta: dict[str, Any] = event.metadata or {}
-            if event.type == StreamEventType.RESULT and event.source == "chat":
-                final_text = str(meta.get("response") or "")
-            elif event.type == StreamEventType.ERROR and event.content:
-                errors.append(event.content)
+            if not has_capability_access("llm"):
+                return "skipped", "scheduled job owner has no usable assigned LLM model"
+            assigned_llms = [
+                item
+                for item in redacted_model_access(user.id).get("llm", [])
+                if isinstance(item, dict)
+                and item.get("available")
+                and str(item.get("profile_id") or "").strip()
+                and str(item.get("model_id") or "").strip()
+            ]
+            if not assigned_llms:
+                return "skipped", "scheduled job owner has no usable assigned LLM model"
+            selection = {
+                "profile_id": assigned_llms[0].get("profile_id"),
+                "model_id": assigned_llms[0].get("model_id"),
+            }
+            from deeptutor.services.model_selection.runtime import (
+                activate_llm_selection,
+            )
+            from deeptutor.services.model_selection.runtime import (
+                reset_llm_selection as reset_active_llm_selection,
+            )
 
-        if not final_text.strip():
-            return "error", (errors[-1] if errors else "turn produced no answer")
+            try:
+                _config, llm_scope_token = activate_llm_selection(selection)
+            except (RuntimeError, ValueError) as exc:
+                logger.warning("Cron job %s could not activate its assigned model: %s", job.id, exc)
+                return "skipped", "scheduled job owner has no usable assigned LLM model"
+            reset_llm_selection = reset_active_llm_selection
 
-        await store.add_message(
-            session_id=job.owner.session_id,
-            role="user",
-            content=prompt,
-            capability="chat",
-            metadata={"cron_job_id": job.id},
-        )
-        await store.add_message(
-            session_id=job.owner.session_id,
-            role="assistant",
-            content=final_text,
-            capability="chat",
-            metadata={"cron_job_id": job.id},
-        )
-        await _maybe_send_desktop_notification(job, final_text)
+        try:
+            store = get_sqlite_session_store()
+            session = await store.get_session(job.owner.session_id)
+            if session is None:
+                return "error", "session no longer exists"
+
+            history = await store.get_messages_for_context(job.owner.session_id)
+            context = UnifiedContext(
+                session_id=job.owner.session_id,
+                user_message=prompt,
+                conversation_history=[
+                    {"role": m.get("role"), "content": m.get("content")}
+                    for m in history
+                    if m.get("role") in {"user", "assistant"} and m.get("content")
+                ],
+                allowed_builtin_tools=(
+                    None if allowed_builtins is None else sorted(allowed_builtins)
+                ),
+                active_capability="chat",
+                language=job.owner.language or "en",
+                metadata={
+                    "turn_id": f"cron-{job.id}-{uuid.uuid4().hex[:8]}",
+                    "source": "cron",
+                    "cron_job_id": job.id,
+                },
+            )
+
+            final_text = ""
+            errors: list[str] = []
+            async for event in ChatOrchestrator().handle(context):
+                meta: dict[str, Any] = event.metadata or {}
+                if event.type == StreamEventType.RESULT and event.source == "chat":
+                    final_text = str(meta.get("response") or "")
+                elif event.type == StreamEventType.ERROR and event.content:
+                    errors.append(event.content)
+
+            if not final_text.strip():
+                return "error", (errors[-1] if errors else "turn produced no answer")
+
+            await store.add_message(
+                session_id=job.owner.session_id,
+                role="user",
+                content=prompt,
+                capability="chat",
+                metadata={"cron_job_id": job.id},
+            )
+            await store.add_message(
+                session_id=job.owner.session_id,
+                role="assistant",
+                content=final_text,
+                capability="chat",
+                metadata={"cron_job_id": job.id},
+            )
+            await _maybe_send_desktop_notification(job, final_text)
+        finally:
+            if reset_llm_selection is not None:
+                reset_llm_selection(llm_scope_token)
     return "ok", None
 
 

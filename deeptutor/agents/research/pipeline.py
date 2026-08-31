@@ -281,10 +281,14 @@ class ResearchPipeline:
         runtime_config: dict[str, Any] | None = None,
         kb_name: str | None = None,
         enabled_tools: list[str] | None = None,
+        allowed_builtin_tools: list[str] | None = None,
     ) -> None:
         self.language = parse_language(language)
         self.kb_name = (kb_name or "").strip() or None
         self.enabled_tools = list(enabled_tools or [])
+        self.allowed_builtin_tools = (
+            set(allowed_builtin_tools) if allowed_builtin_tools is not None else None
+        )
         self.runtime_config: dict[str, Any] = dict(runtime_config or {})
 
         # Read structured policy sub-dicts produced by
@@ -1762,6 +1766,7 @@ class ResearchPipeline:
                 has_notebooks=user_has_notebooks(),
                 has_code=exec_capability_available(),
             ),
+            builtin_whitelist=self.allowed_builtin_tools,
         )
         return [
             name

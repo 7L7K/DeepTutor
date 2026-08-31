@@ -3,6 +3,9 @@ from __future__ import annotations
 import io
 import json
 from pathlib import Path
+import signal
+import socket
+import time
 import zipfile
 
 import httpx as real_httpx
@@ -210,6 +213,45 @@ def test_pdf_parser_streams_output_lines(tmp_path: Path, monkeypatch: pytest.Mon
     assert (out / "exam" / "auto" / "exam.md").exists()
 
 
+def test_local_parser_deadline_terminates_the_process_group(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A silent local CLI cannot keep a parsing worker forever."""
+
+    from deeptutor.services.parsing.engines.mineru import local as pdf_parser
+
+    class BlockingStdout:
+        def __iter__(self):
+            return self
+
+        def __next__(self):
+            time.sleep(60)
+            return ""
+
+    class FakeProcess:
+        pid = 4242
+        stdout = BlockingStdout()
+
+        def poll(self):
+            return None
+
+        def wait(self, timeout=None):  # noqa: ANN001
+            return 0
+
+    killed: list[tuple[int, signal.Signals]] = []
+    monkeypatch.setattr(pdf_parser.os, "killpg", lambda pid, sig: killed.append((pid, sig)))
+
+    result = pdf_parser._stream_process_output(
+        FakeProcess(),
+        tail=pdf_parser.deque(maxlen=40),
+        on_output=None,
+        timeout=0.01,
+    )
+
+    assert result is None
+    assert killed == [(4242, signal.SIGTERM)]
+
+
 def test_parse_cloud_reports_progress(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     pdf = tmp_path / "exam.pdf"
     pdf.write_bytes(b"%PDF-1.4")
@@ -292,6 +334,195 @@ def test_extract_archive_rejects_zip_slip(tmp_path: Path) -> None:
     assert not (tmp_path / "evil.txt").exists()
 
 
+def test_extract_archive_rejects_unsafe_compression_ratio(tmp_path: Path) -> None:
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w", compression=zipfile.ZIP_DEFLATED) as archive:
+        archive.writestr("huge.md", b"0" * (2 * 1024 * 1024))
+
+    with pytest.raises(MinerUError, match="compression ratio"):
+        mineru_cloud._extract_archive(buf.getvalue(), tmp_path / "wd")
+
+
+def test_download_rejects_oversized_response_before_extraction(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class _Response:
+        headers = {"content-length": str(mineru_cloud._MAX_DOWNLOAD_BYTES + 1)}
+
+        def __enter__(self) -> "_Response":
+            return self
+
+        def __exit__(self, *args: object) -> bool:
+            return False
+
+        def raise_for_status(self) -> None:
+            return None
+
+        def iter_bytes(self, *, chunk_size: int):
+            assert chunk_size == mineru_cloud._DOWNLOAD_CHUNK_BYTES
+            yield b""
+
+    response = _Response()
+    from types import SimpleNamespace
+
+    fake = SimpleNamespace(
+        stream=lambda *args, **kwargs: response,
+        HTTPError=real_httpx.HTTPError,
+    )
+    monkeypatch.setattr(mineru_cloud, "httpx", fake)
+    monkeypatch.setattr(mineru_cloud, "_assert_public_https_url", lambda value, **kwargs: value)
+
+    with pytest.raises(MinerUError, match="download size limit"):
+        mineru_cloud._download("https://zip")
+
+
+def test_download_streams_and_rejects_oversized_chunked_response(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class _StreamingResponse:
+        headers: dict[str, str] = {}
+
+        def __enter__(self) -> "_StreamingResponse":
+            return self
+
+        def __exit__(self, *args: object) -> bool:
+            return False
+
+        def raise_for_status(self) -> None:
+            return None
+
+        @property
+        def content(self) -> bytes:
+            raise AssertionError("download must not materialize response.content")
+
+        def iter_bytes(self, *, chunk_size: int):
+            assert chunk_size == mineru_cloud._DOWNLOAD_CHUNK_BYTES
+            yield b"12345"
+            yield b"67890"
+            yield b"x"
+
+    from types import SimpleNamespace
+
+    fake = SimpleNamespace(
+        stream=lambda *args, **kwargs: _StreamingResponse(),
+        HTTPError=real_httpx.HTTPError,
+    )
+    monkeypatch.setattr(mineru_cloud, "httpx", fake)
+    monkeypatch.setattr(mineru_cloud, "_MAX_DOWNLOAD_BYTES", 10)
+    monkeypatch.setattr(mineru_cloud, "_assert_public_https_url", lambda value, **kwargs: value)
+
+    with pytest.raises(MinerUError, match="download size limit"):
+        mineru_cloud._download("https://zip")
+
+
+def test_provider_urls_require_public_https(monkeypatch: pytest.MonkeyPatch) -> None:
+    with pytest.raises(MinerUError, match="unsafe"):
+        mineru_cloud._assert_public_https_url("http://example.test/upload", purpose="upload")
+
+    monkeypatch.setattr(
+        mineru_cloud.socket,
+        "getaddrinfo",
+        lambda *args, **kwargs: [(2, 1, 6, "", ("127.0.0.1", 443))],
+    )
+    with pytest.raises(MinerUError, match="unsafe"):
+        mineru_cloud._assert_public_https_url("https://example.test/upload", purpose="upload")
+
+
+def test_provider_connection_uses_validated_numeric_address_without_reresolving(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A DNS rebinding after validation cannot change the TCP destination."""
+
+    calls: list[tuple[object, ...]] = []
+
+    def initial_lookup(*args: object, **kwargs: object):  # noqa: ANN002, ANN003
+        calls.append(args)
+        return [(socket.AF_INET, socket.SOCK_STREAM, 6, "", ("93.184.216.34", 443))]
+
+    monkeypatch.setattr(mineru_cloud.socket, "getaddrinfo", initial_lookup)
+    destination = mineru_cloud._assert_public_https_url(
+        "https://provider.example.test/upload", purpose="upload"
+    )
+    assert calls
+
+    # A later resolver answer is malicious, but the pinning backend must not
+    # consult DNS again and therefore never sees/dials it.
+    monkeypatch.setattr(
+        mineru_cloud.socket,
+        "getaddrinfo",
+        lambda *args, **kwargs: [(socket.AF_INET, socket.SOCK_STREAM, 6, "", ("127.0.0.1", 443))],
+    )
+    backend = mineru_cloud._PinnedNetworkBackend(destination)
+    dialed: dict[str, object] = {}
+
+    class Delegate:
+        def connect_tcp(self, **kwargs: object) -> str:
+            dialed.update(kwargs)
+            return "connected"
+
+        def connect_unix_socket(self, *args: object, **kwargs: object) -> object:
+            raise AssertionError("unexpected Unix socket connection")
+
+        def sleep(self, seconds: float) -> None:
+            return None
+
+    backend._backend = Delegate()  # type: ignore[assignment]
+    assert backend.connect_tcp("provider.example.test", 443) == "connected"
+    assert dialed["host"] == "93.184.216.34"
+
+
+def test_provider_connection_rejects_unvalidated_host(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(
+        mineru_cloud.socket,
+        "getaddrinfo",
+        lambda *args, **kwargs: [
+            (socket.AF_INET, socket.SOCK_STREAM, 6, "", ("93.184.216.34", 443))
+        ],
+    )
+    destination = mineru_cloud._assert_public_https_url(
+        "https://provider.example.test/upload", purpose="upload"
+    )
+    backend = mineru_cloud._PinnedNetworkBackend(destination)
+
+    with pytest.raises(mineru_cloud.httpcore.ConnectError, match="unvalidated"):
+        backend.connect_tcp("other.example.test", 443)
+
+
+def test_upload_streams_pdf_without_reading_the_whole_file(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    pdf = tmp_path / "exam.pdf"
+    pdf.write_bytes(b"123456789")
+    captured: list[bytes] = []
+
+    class Response:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):  # noqa: ANN002
+            return False
+
+        def raise_for_status(self) -> None:
+            return None
+
+    def stream(method, url, **kwargs):  # noqa: ANN001
+        assert method == "PUT"
+        assert url == "https://uploads.example.test/signed"
+        captured.extend(kwargs["content"])
+        return Response()
+
+    from types import SimpleNamespace
+
+    monkeypatch.setattr(
+        mineru_cloud, "httpx", SimpleNamespace(stream=stream, HTTPError=real_httpx.HTTPError)
+    )
+    monkeypatch.setattr(mineru_cloud, "_assert_public_https_url", lambda value, **kwargs: value)
+
+    mineru_cloud._upload_file(pdf, "https://uploads.example.test/signed")
+
+    assert b"".join(captured) == b"123456789"
+
+
 # ---------------------------------------------------------------------------
 # Cloud client end-to-end (mocked transport)
 # ---------------------------------------------------------------------------
@@ -321,6 +552,15 @@ class _Resp:
             response = real_httpx.Response(self.status_code, request=request)
             raise real_httpx.HTTPStatusError("err", request=request, response=response)
 
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *args):  # noqa: ANN002
+        return False
+
+    def iter_bytes(self, *, chunk_size: int):
+        yield self.content
+
 
 def _install_fake_httpx(monkeypatch: pytest.MonkeyPatch, *, submit, poll, download) -> None:
     from types import SimpleNamespace
@@ -341,14 +581,22 @@ def _install_fake_httpx(monkeypatch: pytest.MonkeyPatch, *, submit, poll, downlo
         def get(self, path, timeout=None):  # noqa: ANN001
             return poll(path)
 
+    def stream(method, url, **kwargs):  # noqa: ANN001
+        if method == "PUT":
+            # Consume the iterator to retain the same file-read behavior as a
+            # real HTTP client while keeping this transport fully local.
+            list(kwargs.get("content") or [])
+            return _Resp(status=200)
+        return download(url)
+
     fake = SimpleNamespace(
         Client=FakeClient,
-        put=lambda url, content=None, timeout=None: _Resp(status=200),
-        get=lambda url, timeout=None, follow_redirects=False: download(url),
+        stream=stream,
         HTTPError=real_httpx.HTTPError,
         HTTPStatusError=real_httpx.HTTPStatusError,
     )
     monkeypatch.setattr(mineru_cloud, "httpx", fake)
+    monkeypatch.setattr(mineru_cloud, "_assert_public_https_url", lambda value, **kwargs: value)
 
 
 def test_parse_cloud_happy_path(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

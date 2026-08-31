@@ -18,6 +18,7 @@ function emptyGrant(userId: string): GrantPayload {
     skills: [],
     partners: [],
     enabled_tools: null,
+    builtin_tools: [],
     mcp_tools: null,
     exec_enabled: null,
     course_source_uploads: false,
@@ -81,8 +82,8 @@ function CheckRow({
 /**
  * Default-vs-custom switch for a whitelist field. ``null`` selects the
  * "default" mode; what that resolves to server-side depends on the field —
- * built-in tools default to *all*, MCP tools default to *none* (deny until
- * explicitly granted) — so the default-mode label is caller-supplied.
+ * for example, MCP tools default to *none* (deny until explicitly granted) —
+ * so the default-mode label is caller-supplied.
  */
 function ModeSwitch({
   isCustom,
@@ -277,7 +278,7 @@ export function GrantEditor({ userId }: { userId: string }) {
 
   // Named apart from the imported `toggleName` helper it wraps, and narrowed to
   // the one key that still uses it: MCP rows go through McpToolGroups now.
-  function toggleGrantTool(key: "enabled_tools", name: string) {
+  function toggleGrantTool(key: "enabled_tools" | "builtin_tools", name: string) {
     setGrant((current) => {
       const list = current[key];
       if (list === null) return current;
@@ -323,6 +324,7 @@ export function GrantEditor({ userId }: { userId: string }) {
     grant.enabled_tools === null
       ? "all tools"
       : `${grant.enabled_tools.length} tools`;
+  const builtinToolsSummary = `${grant.builtin_tools.length} built-ins`;
   // MCP tools deny-by-default for non-admin users: ``null`` grants none until
   // the admin switches to Custom and picks specific tool names.
   const mcpSummary =
@@ -368,6 +370,9 @@ export function GrantEditor({ userId }: { userId: string }) {
               </span>
               <span className="rounded-full bg-[var(--muted)]/60 px-2 py-1">
                 {toolsSummary}
+              </span>
+              <span className="rounded-full bg-[var(--muted)]/60 px-2 py-1">
+                {builtinToolsSummary}
               </span>
               <span className="rounded-full bg-[var(--muted)]/60 px-2 py-1">
                 {mcpSummary}
@@ -569,6 +574,33 @@ export function GrantEditor({ userId }: { userId: string }) {
                     No MCP servers configured.
                   </p>
                 ))}
+            </section>
+            <section className="min-w-0">
+              <SectionTitle>Built-in tools</SectionTitle>
+              {(resources?.builtin_tools?.length ?? 0) > 0 ? (
+                <div className="space-y-1.5 text-xs">
+                  {(resources?.builtin_tools || []).map((tool) => (
+                    <CheckRow
+                      key={tool.name}
+                      label={tool.name}
+                      description={tool.description}
+                      checked={grant.builtin_tools.includes(tool.name)}
+                      disabled={controlsDisabled}
+                      onToggle={() =>
+                        toggleGrantTool("builtin_tools", tool.name)
+                      }
+                    />
+                  ))}
+                </div>
+              ) : (
+                <p className="text-xs text-[var(--muted-foreground)]">
+                  No configurable built-in tools available.
+                </p>
+              )}
+              <p className="mt-2 px-1 text-[11px] leading-relaxed text-[var(--muted-foreground)]">
+                Built-in tools are denied by default. Select only the tools this
+                learner should be allowed to use.
+              </p>
             </section>
             <section className="min-w-0">
               <SectionTitle>Course materials</SectionTitle>

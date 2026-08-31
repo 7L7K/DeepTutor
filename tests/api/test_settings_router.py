@@ -36,9 +36,7 @@ async def test_provider_usage_policy_is_admin_operable_and_fail_closed(
 
     ledger = provider_usage.ProviderUsageLedger(tmp_path / "provider_usage.db")
     monkeypatch.setattr(settings_router, "_require_settings_admin", lambda: None)
-    monkeypatch.setattr(
-        provider_usage, "get_provider_usage_ledger", lambda: ledger
-    )
+    monkeypatch.setattr(provider_usage, "get_provider_usage_ledger", lambda: ledger)
 
     initial = await settings_router.get_provider_usage_policy()
     assert initial["policy"]["enabled"] is False
@@ -70,9 +68,7 @@ async def test_flashcard_provider_settings_are_admin_only_and_redacted(
         FlashcardProviderConfigService,
     )
 
-    service = FlashcardProviderConfigService(
-        tmp_path / "settings" / "flashcard_provider.json"
-    )
+    service = FlashcardProviderConfigService(tmp_path / "settings" / "flashcard_provider.json")
     monkeypatch.setattr(settings_router, "_require_settings_admin", lambda: None)
     monkeypatch.setattr(
         settings_router,
@@ -104,9 +100,7 @@ async def test_flashcard_provider_cannot_enable_without_credential(
         FlashcardProviderConfigService,
     )
 
-    service = FlashcardProviderConfigService(
-        tmp_path / "settings" / "flashcard_provider.json"
-    )
+    service = FlashcardProviderConfigService(tmp_path / "settings" / "flashcard_provider.json")
     monkeypatch.setattr(settings_router, "_require_settings_admin", lambda: None)
     monkeypatch.setattr(
         settings_router,
@@ -355,18 +349,18 @@ async def test_chat_attachment_settings_roundtrip(
     assert initial["effective"]["max_file_bytes"] == 20 * 1024 * 1024
 
     payload = settings_router.ChatAttachmentSettingsUpdate(
-        max_file_mb=100,
-        max_total_mb=200,
+        max_file_mb=32,
+        max_total_mb=40,
         max_chars_per_doc=400_000,
         max_chars_total=300_000,
     )
     response = await settings_router.update_chat_attachment_settings(payload)
 
-    assert response["settings"]["max_file_mb"] == 100
-    assert response["settings"]["max_total_mb"] == 200
-    assert response["effective"]["max_total_bytes"] == 200 * 1024 * 1024
-    # WS frame ceiling covers the base64-inflated total.
-    assert response["effective"]["ws_max_size"] > (200 * 1024 * 1024 * 4) // 3
+    assert response["settings"]["max_file_mb"] == 32
+    assert response["settings"]["max_total_mb"] == 40
+    assert response["effective"]["max_total_bytes"] == 40 * 1024 * 1024
+    # WS frame ceiling covers the base64-inflated total under the fixed cap.
+    assert response["effective"]["ws_max_size"] == 40 * 1024 * 1024 * 4 // 3 + 8 * 1024 * 1024
     # Other system.json keys survive the partial update.
     stored = service.load_system(include_process_overrides=False)
     assert stored["backend_port"] == 8001

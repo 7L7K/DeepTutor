@@ -624,6 +624,7 @@ def resolve_llm_runtime_config(
     service: ModelCatalogService | None = None,
     llm_selection: dict[str, Any] | LLMSelection | None = None,
     text_generation_feature: str | None = None,
+    strict_profile_credentials: bool = False,
 ) -> ResolvedLLMConfig:
     """Resolve active LLM config with TutorBot-style provider matching."""
     catalog_service = service or get_model_catalog_service()
@@ -661,6 +662,8 @@ def resolve_llm_runtime_config(
     profile, model = _active_profile_and_model(loaded, catalog_service, "llm")
     resolved_model = _as_str((model or {}).get("model"))
     if not resolved_model:
+        if strict_profile_credentials:
+            raise ValueError("Selected LLM model has no concrete API model")
         resolved_model = "gpt-4o-mini"
 
     binding_hint_raw = _as_str((profile or {}).get("binding"))
@@ -672,7 +675,11 @@ def resolve_llm_runtime_config(
     # the process environment. The environment value is used at runtime only;
     # it is never written back to model_catalog.json or exposed by the public
     # catalog response.
-    if not active_api_key and binding_hint in {"openai", "azure_openai"}:
+    if (
+        not strict_profile_credentials
+        and not active_api_key
+        and binding_hint in {"openai", "azure_openai"}
+    ):
         active_api_key = (
             os.environ.get("LLM_API_KEY", "").strip()
             or os.environ.get("OPENAI_API_KEY", "").strip()
@@ -700,7 +707,11 @@ def resolve_llm_runtime_config(
         provider_pool=provider_pool,
     )
 
-    mapped = provider_pool.get(spec.name)
+    # Deployment-global resolution retains the legacy provider-pool fallback.
+    # A learner-scoped selection must use only the selected profile: otherwise
+    # two profiles with the same binding can silently share a credential or
+    # endpoint even when only the credential-empty profile was granted.
+    mapped = None if strict_profile_credentials else provider_pool.get(spec.name)
     api_key = active_api_key or (mapped.api_key if mapped else "")
     api_base = active_api_base or ((mapped.api_base or "") if mapped else "")
     api_version = active_api_version or ((mapped.api_version or "") if mapped else "")
@@ -709,6 +720,10 @@ def resolve_llm_runtime_config(
     if not api_key and spec.is_local:
         api_key = "sk-no-key-required"
     extra_headers = active_extra_headers or ((mapped.extra_headers or {}) if mapped else {})
+    if strict_profile_credentials and not spec.is_local and not api_key:
+        raise ValueError("Selected LLM profile has no usable credential")
+    if strict_profile_credentials and not api_base:
+        raise ValueError("Selected LLM profile has no usable provider endpoint")
 
     return ResolvedLLMConfig(
         model=resolved_model,

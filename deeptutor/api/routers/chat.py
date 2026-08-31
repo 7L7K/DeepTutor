@@ -7,7 +7,6 @@ REST endpoints for session operations.
 """
 
 import logging
-import os
 
 from fastapi import APIRouter, HTTPException, WebSocket, WebSocketDisconnect
 
@@ -23,24 +22,17 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
-_LEGACY_CHAT_WEBSOCKET_OPT_IN_ENV = "TEEECHR_ENABLE_LEGACY_CHAT_WEBSOCKET"
-
 
 def _legacy_chat_websocket_enabled() -> bool:
     """Whether the pre-unified chat socket may accept requests.
 
     ``/api/v1/ws`` is the supported learner chat transport.  This older route
-    still constructs a deployment-global LLM configuration, so it is closed in
-    production unless an operator sets the deliberately named compatibility
-    override.  Local development remains available for migration work.
+    still constructs a deployment-global LLM configuration, so it is always
+    closed in production.  Local development remains available for migration
+    work, but no environment-variable compatibility override may reopen the
+    production route.
     """
-    if not is_production_environment():
-        return True
-    return os.getenv(_LEGACY_CHAT_WEBSOCKET_OPT_IN_ENV, "").strip().lower() in {
-        "1",
-        "true",
-        "yes",
-    }
+    return not is_production_environment()
 
 
 def _get_session_manager() -> SessionManager:
@@ -81,7 +73,7 @@ async def delete_session(session_id: str):
 async def websocket_chat(websocket: WebSocket):
     # Reject before authentication, session writes, or any LLM/provider work.
     # The current learner interface uses ``/api/v1/ws``; this is only a
-    # production compatibility escape hatch for an explicitly approved client.
+    # local-development compatibility route only.
     if not _legacy_chat_websocket_enabled():
         logger.warning("Rejected disabled legacy /api/v1/chat WebSocket in production")
         await websocket.close(code=1008)

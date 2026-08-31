@@ -65,6 +65,57 @@ def test_tts_rejects_empty_text(client: TestClient) -> None:
     assert resp.status_code == 422  # pydantic min_length
 
 
+def test_tts_rejects_oversized_text(client: TestClient) -> None:
+    resp = client.post("/api/v1/voice/tts", json={"text": "x" * 12_001})
+    assert resp.status_code == 422
+
+
+def test_tts_returns_busy_when_voice_quota_is_exhausted(
+    client: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class DenyQuota:
+        async def acquire(self, _user_id: str):
+            raise voice_router.QuotaExceeded("busy")
+
+    monkeypatch.setattr(voice_router, "_VOICE_USER_QUOTA", DenyQuota())
+    resp = client.post("/api/v1/voice/tts", json={"text": "hello"})
+    assert resp.status_code == 429
+
+
+@pytest.mark.parametrize(
+    ("path", "request_kwargs"),
+    [
+        ("/api/v1/voice/tts", {"json": {"text": "hello"}}),
+        (
+            "/api/v1/voice/stt",
+            {"files": {"file": ("clip.webm", b"audiobytes", "audio/webm")}},
+        ),
+    ],
+)
+def test_voice_fails_closed_for_non_admins(
+    client: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
+    path: str,
+    request_kwargs: dict[str, Any],
+) -> None:
+    class Learner:
+        id = "learner"
+        is_admin = False
+
+    async def provider_must_not_run(*_: Any, **__: Any):
+        raise AssertionError("voice provider must not run for learners")
+
+    monkeypatch.setattr(voice_router, "get_current_user", lambda: Learner())
+    monkeypatch.setattr(voice_router, "synthesize_speech", provider_must_not_run)
+    monkeypatch.setattr(voice_router, "transcribe_audio", provider_must_not_run)
+
+    resp = client.post(path, **request_kwargs)
+
+    assert resp.status_code == 403
+    assert resp.json()["detail"] == "Voice is not enabled for this account."
+
+
 def test_tts_provider_error_is_502(client: TestClient, monkeypatch: pytest.MonkeyPatch) -> None:
     async def boom(*_: Any, **__: Any):
         raise VoiceProviderError("upstream down")
@@ -109,3 +160,15 @@ def test_stt_rejects_empty_upload(client: TestClient) -> None:
         files={"file": ("empty.webm", b"", "audio/webm")},
     )
     assert resp.status_code == 400
+
+
+def test_stt_rejects_oversized_upload_without_forwarding(
+    client: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(voice_router, "_MAX_AUDIO_BYTES", 3)
+    resp = client.post(
+        "/api/v1/voice/stt",
+        files={"file": ("large.webm", b"1234", "audio/webm")},
+    )
+    assert resp.status_code == 413

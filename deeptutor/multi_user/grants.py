@@ -25,19 +25,21 @@ def empty_grant(user_id: str) -> dict[str, Any]:
         # grant only lets the user *see and consult* the named partners — same
         # shape as ``skills`` (``[{"partner_id": ...}]``).
         "partners": [],
-        # Tool whitelists share the partner-config semantics for built-ins:
-        # ``enabled_tools=None`` means "default" (every tool in the pool),
-        # ``[]`` means none, a list is an explicit whitelist. MCP tools can
-        # proxy host-side capabilities, so non-admin runtime access treats
-        # ``mcp_tools=None`` as deny-by-default until an admin grants explicit
-        # names. ``cli_apps`` is the same posture for installed CLI apps, keyed
-        # by app id: each one is third-party code executing in the sandbox, so
-        # an absent grant is no access rather than all of them.
+        # User-toggleable tools are controlled by ``enabled_tools``. Auto-mounted
+        # built-ins are a separate authority: they can reach server-side
+        # resources without appearing in the composer, so ``builtin_tools`` is
+        # an explicit administrator-managed whitelist and defaults to empty.
+        # MCP tools can proxy host-side capabilities, so non-admin runtime
+        # access treats ``mcp_tools=None`` as deny-by-default until an admin
+        # grants explicit names. ``cli_apps`` is the same posture for installed
+        # CLI apps, keyed by app id: each one is third-party code executing in
+        # the sandbox, so an absent grant is no access rather than all of them.
         # ``exec_enabled`` is stored as an optional grant. For non-admin
         # callers, an absent value resolves to deny-by-default at runtime;
         # ``True`` is only honored where the sandbox can actually isolate
         # users (SYSTEM isolation).
-        "enabled_tools": None,
+        "enabled_tools": [],
+        "builtin_tools": [],
         "mcp_tools": None,
         "cli_apps": None,
         "exec_enabled": None,
@@ -66,9 +68,9 @@ def normalize_grant(user_id: str, payload: dict[str, Any] | None) -> dict[str, A
 
     v1 grants normalize losslessly for everything that was ever enforced:
     ``models.embedding`` / ``models.search`` / ``spaces`` had no runtime
-    consumers and are dropped. Optional-tool fields retain their historical
-    defaults; missing ``exec_enabled`` is resolved deny-by-default for
-    non-admin callers by :func:`deeptutor.multi_user.tool_access.exec_override`.
+    consumers and are dropped. Built-in optional tools, execution, MCP tools,
+    and CLI apps all resolve deny-by-default for non-admin callers unless an
+    administrator explicitly grants them.
     """
     base = empty_grant(user_id)
     if not isinstance(payload, dict):
@@ -86,7 +88,11 @@ def normalize_grant(user_id: str, payload: dict[str, Any] | None) -> dict[str, A
         raw = payload.get(key)
         values = raw if isinstance(raw, list) else []
         base[key] = [dict(item) for item in values if isinstance(item, dict)]
-    for key in ("enabled_tools", "mcp_tools", "cli_apps"):
+    normalized_optional_tools = _normalize_tool_list(payload.get("enabled_tools"))
+    base["enabled_tools"] = normalized_optional_tools or []
+    normalized_builtin_tools = _normalize_tool_list(payload.get("builtin_tools"))
+    base["builtin_tools"] = normalized_builtin_tools or []
+    for key in ("mcp_tools", "cli_apps"):
         base[key] = _normalize_tool_list(payload.get(key))
     exec_enabled = payload.get("exec_enabled")
     base["exec_enabled"] = bool(exec_enabled) if isinstance(exec_enabled, bool) else None

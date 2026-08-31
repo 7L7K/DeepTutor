@@ -12,6 +12,17 @@ from dataclasses import dataclass, field
 from enum import Enum
 import shlex
 
+# The runner is a tiny stdlib-only image and cannot import the application
+# package at runtime. These constants define the app-side wire contract and
+# are mirrored in runner/server.py. The versioned endpoint makes a stale
+# sidecar reject requests instead of ignoring newer authorization fields.
+RUNNER_PROTOCOL_VERSION = 2
+RUNNER_EXEC_PATH = "/v2/exec"
+RUNNER_CAPABILITIES_PATH = "/capabilities"
+RUNNER_REQUIRED_CAPABILITIES = frozenset(
+    {"authorization", "principal_root", "argv", "bounded_execution"}
+)
+
 
 class IsolationLevel(str, Enum):
     """How strongly a backend isolates an execution from the host.
@@ -61,10 +72,9 @@ class ExecRequest:
     When ``argv`` is set a backend runs it **without a shell**, which is how a
     caller that assembles arguments from model output (a CLI app invocation)
     avoids shell metacharacters mattering at all. ``command`` still holds the
-    equivalent shell string, produced by :meth:`of_argv` via ``shlex.join``, so a
-    runner sidecar built before ``argv`` existed keeps working — an older image is
-    the normal state of affairs during a rolling deploy, and a request it does not
-    fully understand must degrade to a correct execution rather than a wrong one.
+    equivalent shell string, produced by :meth:`of_argv` via ``shlex.join``.
+    Runner deployments use a versioned, capability-checked endpoint, so a stale
+    sidecar rejects the request instead of silently ignoring these fields.
     """
 
     command: str

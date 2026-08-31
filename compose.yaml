@@ -60,6 +60,10 @@
 #     NEXT_PUBLIC_API_BASE_EXTERNAL, AUTH_ENABLED, POCKETBASE_URL, etc.
 #     and re-exports them from the JSONs on every start. So: edit JSONs
 #     + `podman compose restart deeptutor`, NOT compose env vars.
+#   * Set DEEPTUTOR_IMAGE_DIGEST in `.env` to the 64-character lowercase
+#     sha256 digest from the reviewed GHCR release receipt before starting.
+#     The image reference is constructed with Docker's @sha256 syntax, so a
+#     mutable tag cannot be substituted into this production-shaped file.
 # ============================================
 
 name: deeptutor
@@ -72,7 +76,7 @@ services:
   # `http://pocketbase:8090` in data/user/settings/integrations.json.
   # Leave blank to run with the SQLite fallback (single-user / invite-only).
   pocketbase:
-    image: ghcr.io/muchobien/pocketbase:latest
+    image: ghcr.io/muchobien/pocketbase@sha256:3854997f39cb005bc33c73cdd2c52a83cc4fbafe116570e625761ae1dcf152ec
     container_name: deeptutor-pocketbase
     pull_policy: always
     restart: unless-stopped
@@ -118,7 +122,7 @@ services:
   # the supervisord children's environment, so changing ports/auth/providers
   # means editing JSONs + `podman compose restart`.
   deeptutor:
-    image: ghcr.io/hkuds/deeptutor:latest
+    image: ghcr.io/hkuds/deeptutor@sha256:${DEEPTUTOR_IMAGE_DIGEST:?Set DEEPTUTOR_IMAGE_DIGEST to a 64-character sha256 digest}
     container_name: deeptutor
     pull_policy: always
     restart: unless-stopped
@@ -192,7 +196,8 @@ services:
     # Resource limits. Honored on cgroup v2 hosts; podman warns and skips
     # on cgroup v1 or no-cgroup environments.
     # pids_limit: 1024
-    # mem_limit: 4g
+    # Keep the app below the 4 GiB VPS ceiling when this Podman variant is used.
+    mem_limit: 2g
     # cpus: 4.0
 
 networks:

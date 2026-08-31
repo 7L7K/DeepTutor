@@ -48,6 +48,16 @@ def test_summarize_agent_empty_extra_headers(monkeypatch) -> None:
     assert agent.extra_headers == {}
 
 
+def test_summarize_agent_system_prompt_marks_record_fields_untrusted(monkeypatch) -> None:
+    monkeypatch.setattr(
+        "deeptutor.agents.notebook.summarize_agent.get_llm_config",
+        lambda: _make_cfg(),
+    )
+    from deeptutor.agents.notebook.summarize_agent import NotebookSummarizeAgent
+
+    assert "untrusted data" in NotebookSummarizeAgent(language="en")._system_prompt()
+
+
 @pytest.mark.asyncio
 async def test_summarize_agent_forwards_extra_headers(monkeypatch) -> None:
     """extra_headers must reach the underlying llm_stream call."""

@@ -11,8 +11,11 @@ pytest.importorskip("fastapi")
 
 FastAPI = pytest.importorskip("fastapi").FastAPI
 TestClient = pytest.importorskip("fastapi.testclient").TestClient
-notebook_router = importlib.import_module("deeptutor.api.routers.question_notebook").router
-sessions_router = importlib.import_module("deeptutor.api.routers.sessions").router
+notebook_module = importlib.import_module("deeptutor.api.routers.notebook")
+question_notebook_module = importlib.import_module("deeptutor.api.routers.question_notebook")
+sessions_module = importlib.import_module("deeptutor.api.routers.sessions")
+notebook_router = question_notebook_module.router
+sessions_router = sessions_module.router
 
 from deeptutor.services.config.runtime_settings import ChatAttachmentLimits
 from deeptutor.services.session.sqlite_store import SQLiteSessionStore
@@ -99,6 +102,32 @@ def test_list_entries_empty(store: SQLiteSessionStore) -> None:
         resp = client.get("/api/v1/question-notebook/entries")
         assert resp.status_code == 200
         assert resp.json() == {"items": [], "total": 0}
+
+
+def test_notebook_mutation_models_bound_text_and_metadata() -> None:
+    with pytest.raises(ValueError):
+        notebook_module.CreateNotebookRequest(name="x" * 201)
+    with pytest.raises(ValueError):
+        notebook_module.UpdateRecordRequest(metadata={"blob": "x" * 8_001})
+    with pytest.raises(ValueError):
+        notebook_module.AddRecordRequest(
+            notebook_ids=["n1"],
+            record_type="chat",
+            title="title",
+            user_query="query",
+            output="x" * 24_001,
+        )
+
+
+def test_quiz_result_model_bounds_answers_and_option_text() -> None:
+    with pytest.raises(ValueError):
+        sessions_module.QuizResultsRequest(answers=[{} for _ in range(101)])
+    with pytest.raises(ValueError):
+        sessions_module.QuizResultItem(
+            question="question",
+            options={"A": "x" * 2_001},
+            is_correct=False,
+        )
 
 
 def test_quiz_results_populates_notebook(store: SQLiteSessionStore) -> None:

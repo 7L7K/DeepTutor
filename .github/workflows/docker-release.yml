@@ -129,6 +129,7 @@ jobs:
           labels: ${{ steps.meta.outputs.labels }}
           build-args: |
             TEEECHR_APP_VERSION=${{ steps.version.outputs.version }}
+            TEEECHR_SOURCE_REVISION=${{ steps.version.outputs.commit }}
           outputs: type=image,name=ghcr.io/hkuds/deeptutor,push-by-digest=true,name-canonical=true,push=true
           cache-from: type=gha
           cache-to: type=gha,mode=max
@@ -146,6 +147,7 @@ jobs:
           labels: ${{ steps.meta.outputs.labels }}
           build-args: |
             TEEECHR_APP_VERSION=${{ steps.version.outputs.version }}
+            TEEECHR_SOURCE_REVISION=${{ steps.version.outputs.commit }}
           outputs: type=image,name=ghcr.io/hkuds/deeptutor,push-by-digest=true,name-canonical=true,push=true
           cache-from: type=gha
           cache-to: type=gha,mode=max
@@ -193,6 +195,7 @@ jobs:
               --platform "$platform" \
               --entrypoint python \
               -e EXPECTED_RELEASE_VERSION="$RELEASE_VERSION" \
+              -e EXPECTED_RELEASE_REVISION="$RELEASE_COMMIT" \
               -e PYTHONPATH=/app \
               "$image_ref" \
               /app/scripts/verify-teeechr-release-container.py

@@ -2,6 +2,35 @@
 
 ## Unreleased
 
+- Made the sandbox runner rollout fail closed across mixed image versions. The
+  app now probes an authenticated capability contract and uses a versioned
+  execution endpoint, so a stale runner cannot silently ignore principal or
+  authorization fields; standalone GHCR Compose instructions now point to the
+  required durable-owner bootstrap.
+
+- Fixed a BlueWay account-disable race after the final Course bundle becomes
+  visible: the winning bundle now completes its matching sync receipt before a
+  later identity change is observed.
+
+- Tightened the remaining controlled-beta release boundaries. Production now
+  requires a durable owner identity, the GHCR recipe persists `data/system`,
+  PocketBase scopes tokens by immutable record ID, fallback subprocesses clean
+  up descendants, and the runner clamps caller-supplied resource limits.
+
+- Made optional learner tools deny-by-default and closed remaining legacy
+  learner AI admission gaps. Missing or null built-in-tool grants now expose no
+  optional tools; legacy Question, Notebook summary, and mastery-generation
+  paths require live scoped model authority and bounded beta admission instead
+  of falling back to deployment-global provider access.
+
+- Closed the remaining controlled-beta resource edges before release review.
+  Unified WebSocket frames and nested payloads now have fixed transport and
+  schema ceilings; generic provider turns share per-learner and process-wide
+  admission; notebook identifiers are resolved inside the owner workspace;
+  redirect hops, Office/MinerU archives, and local sandbox output/resources are
+  bounded; and learner notebook, mastery, and quiz mutations reject oversized
+  nested bodies before they can expand into unbounded work.
+
 - Closed additional controlled-beta resource and shared-browser boundaries.
   Personal Knowledge Base indexing remains owner/admin-only. Course-source
   uploads are deny-by-default per learner grant and now enforce pre-parse body

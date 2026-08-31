@@ -5,22 +5,35 @@ from __future__ import annotations
 import json
 import os
 from pathlib import Path
+import re
 from tempfile import TemporaryDirectory
 
 from deeptutor.courses.migrations.runner import discover_migrations, ensure_course_schema
 from deeptutor.integrations.blueway.observability import emit_blueway_event
 
 REQUIRED_LATEST_COURSE_MIGRATION = 19
+_GIT_REVISION = re.compile(r"^[0-9a-f]{40}$")
 
 
 def main() -> int:
     expected_version = os.environ.get("EXPECTED_RELEASE_VERSION", "").strip()
     if not expected_version:
         raise RuntimeError("EXPECTED_RELEASE_VERSION is required")
+    expected_revision = os.environ.get("EXPECTED_RELEASE_REVISION", "").strip()
+    # The local exact-VPS controller predates the explicit revision variable
+    # and passes the target full SHA as EXPECTED_RELEASE_VERSION. Keep that
+    # path exact rather than weakening the check to a mutable tag: the fallback
+    # is accepted only when the version itself is a full Git revision.
+    if not expected_revision and _GIT_REVISION.fullmatch(expected_version):
+        expected_revision = expected_version
+    if not _GIT_REVISION.fullmatch(expected_revision):
+        raise RuntimeError("EXPECTED_RELEASE_REVISION must be a full Git SHA")
     if os.environ.get("TEEECHR_ENVIRONMENT") != "production":
         raise RuntimeError("Release image environment is not production")
     if os.environ.get("TEEECHR_APP_VERSION") != expected_version:
         raise RuntimeError("Release image version does not match the release tag")
+    if os.environ.get("TEEECHR_SOURCE_REVISION") != expected_revision:
+        raise RuntimeError("Release image revision does not match the release source")
 
     artifacts = discover_migrations()
     if not artifacts or artifacts[-1].version != REQUIRED_LATEST_COURSE_MIGRATION:
@@ -55,6 +68,7 @@ def main() -> int:
                 "application_version": event["application_version"],
                 "environment": event["environment"],
                 "latest_migration": artifacts[-1].version,
+                "source_revision": expected_revision,
             },
             sort_keys=True,
         )

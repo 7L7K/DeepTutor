@@ -12,6 +12,7 @@ from __future__ import annotations
 import asyncio
 import base64
 import binascii
+from contextlib import AsyncExitStack
 import json
 import logging
 from typing import Any, AsyncGenerator, Literal
@@ -19,7 +20,7 @@ from uuid import uuid4
 
 from fastapi import APIRouter, HTTPException, Query, WebSocket, WebSocketDisconnect
 from fastapi.responses import StreamingResponse
-from pydantic import BaseModel, ConfigDict, Field, ValidationError
+from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator
 
 from deeptutor.core.i18n import t
 from deeptutor.partners.config.paths import get_partner_media_dir
@@ -44,9 +45,36 @@ from deeptutor.services.partners.workspace import (
     strip_frontmatter,
     write_soul,
 )
+from deeptutor.services.sandbox.quota import QuotaExceeded, UserExecQuota
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
+
+
+# Partner chat can carry policy-sized base64 attachments, but it should never
+# inherit the generic WebSocket transport ceiling as its application contract.
+# These limits are intentionally independent of client-supplied metadata.
+_PARTNER_WS_CONTENT_CHARS = 200_000
+_PARTNER_WS_FIELD_CHARS = 512
+_PARTNER_WS_URL_CHARS = 4_096
+_PARTNER_WS_FILENAME_CHARS = 255
+_PARTNER_WS_MIME_CHARS = 255
+_PARTNER_WS_MAX_ATTACHMENTS = 10
+_PARTNER_WS_MAX_FRAME_BYTES = 64 * 1024 * 1024
+_PARTNER_WS_FIRST_FRAME_TIMEOUT_S = 30.0
+_PARTNER_WS_IDLE_FRAME_TIMEOUT_S = 120.0
+_PARTNER_WS_MAX_INVALID_MESSAGES = 1
+# Bounded admission applies while waiting for / decoding one frame, not while
+# an intentionally long-running partner turn streams its result.
+_PARTNER_WS_RECEIVE_USER_QUOTA = UserExecQuota(max_concurrent=2, max_per_minute=120)
+_PARTNER_WS_RECEIVE_GLOBAL_QUOTA = UserExecQuota(max_concurrent=8, max_per_minute=960)
+_PARTNER_WS_ACTION_USER_QUOTA = UserExecQuota(max_concurrent=1, max_per_minute=24)
+_PARTNER_WS_ACTION_GLOBAL_QUOTA = UserExecQuota(max_concurrent=4, max_per_minute=96)
+_PARTNER_WS_RECEIVE_GLOBAL_KEY = "partner-ws-receive-global"
+_PARTNER_WS_ACTION_GLOBAL_KEY = "partner-ws-action-global"
+_PARTNER_LLM_SELECTION_MAX_ITEMS = 16
+_PARTNER_LLM_SELECTION_KEY_CHARS = 128
+_PARTNER_LLM_SELECTION_VALUE_CHARS = 512
 
 
 # Per-partner async locks used to dedupe concurrent WebSocket-driven
@@ -159,22 +187,46 @@ class AssetAddRequest(AssetSpec):
 
 
 class ChatAttachmentRequest(BaseModel):
-    type: str = "file"
-    url: str = ""
-    base64: str = ""
-    filename: str = ""
-    mime_type: str = ""
+    """One bounded browser attachment accepted by partner chat."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    type: str = Field(default="file", max_length=64)
+    url: str = Field(default="", max_length=_PARTNER_WS_URL_CHARS)
+    # The policy-derived per-file check below is stricter in normal operation;
+    # this hard ceiling still protects HTTP request parsing if settings cannot
+    # be loaded and matches the transport's fixed 64 MiB cap.
+    base64: str = Field(default="", max_length=_PARTNER_WS_MAX_FRAME_BYTES)
+    filename: str = Field(default="", max_length=_PARTNER_WS_FILENAME_CHARS)
+    mime_type: str = Field(default="", max_length=_PARTNER_WS_MIME_CHARS)
 
 
 class ChatMessageRequest(BaseModel):
-    model_config = ConfigDict(populate_by_name=True)
+    model_config = ConfigDict(populate_by_name=True, extra="forbid")
 
-    content: str = ""
-    session_id: str | None = None
-    session_key: str | None = None
-    chat_id: str | None = None
-    attachments: list[ChatAttachmentRequest] = Field(default_factory=list)
+    content: str = Field(default="", max_length=_PARTNER_WS_CONTENT_CHARS)
+    session_id: str | None = Field(default=None, max_length=_PARTNER_WS_FIELD_CHARS)
+    session_key: str | None = Field(default=None, max_length=_PARTNER_WS_FIELD_CHARS)
+    chat_id: str | None = Field(default=None, max_length=_PARTNER_WS_FIELD_CHARS)
+    attachments: list[ChatAttachmentRequest] = Field(
+        default_factory=list,
+        max_length=_PARTNER_WS_MAX_ATTACHMENTS,
+    )
     llm_selection: dict[str, str] | None = Field(default=None, alias="llmSelection")
+
+    @field_validator("llm_selection")
+    @classmethod
+    def _bound_llm_selection(cls, value: dict[str, str] | None) -> dict[str, str] | None:
+        """Keep provider-selection metadata small before it reaches the turn."""
+        if value is None:
+            return None
+        if len(value) > _PARTNER_LLM_SELECTION_MAX_ITEMS or any(
+            len(key) > _PARTNER_LLM_SELECTION_KEY_CHARS
+            or len(item) > _PARTNER_LLM_SELECTION_VALUE_CHARS
+            for key, item in value.items()
+        ):
+            raise ValueError("llm_selection is too large")
+        return value
 
 
 class SessionKeyBody(BaseModel):
@@ -842,6 +894,134 @@ def _clean_attachment_base64(value: str) -> str:
     return text
 
 
+def _base64_wire_limit(decoded_bytes: int) -> int:
+    """Largest unpadded/padded base64 field that can decode within a byte cap."""
+    return ((max(0, decoded_bytes) + 2) // 3) * 4 + 16
+
+
+def _utf8_byte_length(value: str) -> int:
+    """Measure a frame without allocating a second encoded copy."""
+    total = 0
+    for char in value:
+        codepoint = ord(char)
+        total += (
+            1 if codepoint <= 0x7F else 2 if codepoint <= 0x7FF else 3 if codepoint <= 0xFFFF else 4
+        )
+    return total
+
+
+def _reject_duplicate_json_fields(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
+    """Reject ambiguous last-key-wins JSON objects at the WebSocket boundary."""
+    result: dict[str, Any] = {}
+    for key, value in pairs:
+        if key in result:
+            raise ValueError("duplicate JSON field")
+        result[key] = value
+    return result
+
+
+_PARTNER_WS_ACTION_FIELDS: dict[str, frozenset[str]] = {
+    "message": frozenset(
+        {"action", "content", "session_id", "session_key", "chat_id", "attachments"}
+    ),
+    "attach": frozenset({"action", "session_id", "session_key", "chat_id"}),
+    "stop": frozenset({"action", "session_id", "session_key", "chat_id"}),
+}
+
+
+def _bounded_partner_ws_string(value: object, *, maximum: int) -> str:
+    if not isinstance(value, str) or len(value) > maximum:
+        raise ValueError("invalid message")
+    return value
+
+
+def _validate_partner_ws_message(value: object) -> dict[str, Any]:
+    """Validate the small partner WebSocket protocol before side effects.
+
+    ``action`` historically was optional for a normal user turn, so an absent
+    action remains the ``message`` form.  The three explicit forms otherwise
+    use a closed root schema so ignored padding cannot accumulate in memory or
+    silently change future protocol behavior.
+    """
+    if not isinstance(value, dict):
+        raise ValueError("invalid message")
+    raw_action = value.get("action")
+    action = "message" if raw_action in (None, "") else raw_action
+    if action not in _PARTNER_WS_ACTION_FIELDS:
+        raise ValueError("invalid message")
+    if set(value).difference(_PARTNER_WS_ACTION_FIELDS[action]):
+        raise ValueError("invalid message")
+
+    result = dict(value)
+    if action == "message":
+        result["content"] = _bounded_partner_ws_string(
+            value.get("content", ""), maximum=_PARTNER_WS_CONTENT_CHARS
+        )
+        raw_attachments = value.get("attachments", [])
+        if (
+            not isinstance(raw_attachments, list)
+            or len(raw_attachments) > _PARTNER_WS_MAX_ATTACHMENTS
+        ):
+            raise ValueError("invalid message")
+        try:
+            attachments = [ChatAttachmentRequest.model_validate(item) for item in raw_attachments]
+        except ValidationError as exc:
+            raise ValueError("invalid message") from exc
+        max_file_bytes, max_total_bytes = _partner_upload_caps()
+        encoded_total = 0
+        for attachment in attachments:
+            encoded = _clean_attachment_base64(attachment.base64)
+            if len(encoded) > _base64_wire_limit(max_file_bytes):
+                raise ValueError("attachment is too large")
+            # Strict validation prevents the permissive decoder from silently
+            # discarding arbitrary padding or non-base64 characters.
+            try:
+                decoded = base64.b64decode(encoded, validate=True) if encoded else b""
+            except (binascii.Error, ValueError) as exc:
+                raise ValueError("invalid attachment") from exc
+            if len(decoded) > max_file_bytes:
+                raise ValueError("attachment is too large")
+            encoded_total += len(decoded)
+            if encoded_total > max_total_bytes:
+                raise ValueError("attachment batch is too large")
+        result["attachments"] = attachments
+
+    for name in ("session_id", "session_key", "chat_id"):
+        if name in value and value[name] is not None:
+            result[name] = _bounded_partner_ws_string(value[name], maximum=_PARTNER_WS_FIELD_CHARS)
+    return result
+
+
+async def _receive_bounded_partner_ws_message(
+    ws: WebSocket,
+    *,
+    timeout_s: float,
+) -> dict[str, Any]:
+    """Receive and validate one rate-limited, bounded text frame."""
+    from deeptutor.multi_user.context import get_current_user
+
+    leases = AsyncExitStack()
+    try:
+        user = get_current_user()
+        await leases.enter_async_context(await _PARTNER_WS_RECEIVE_USER_QUOTA.acquire(user.id))
+        await leases.enter_async_context(
+            await _PARTNER_WS_RECEIVE_GLOBAL_QUOTA.acquire(_PARTNER_WS_RECEIVE_GLOBAL_KEY)
+        )
+        frame = await asyncio.wait_for(ws.receive(), timeout=timeout_s)
+        if frame.get("type") == "websocket.disconnect":
+            raise WebSocketDisconnect(frame.get("code", 1000))
+        raw = frame.get("text")
+        if not isinstance(raw, str) or _utf8_byte_length(raw) > _PARTNER_WS_MAX_FRAME_BYTES:
+            raise ValueError("message is too large")
+        try:
+            decoded = json.loads(raw, object_pairs_hook=_reject_duplicate_json_fields)
+        except (json.JSONDecodeError, RecursionError, TypeError, ValueError) as exc:
+            raise ValueError("invalid message") from exc
+        return _validate_partner_ws_message(decoded)
+    finally:
+        await leases.aclose()
+
+
 def _default_attachment_prompt(attachments: list[ChatAttachmentRequest]) -> str:
     if attachments and all(str(item.type).lower() == "image" for item in attachments):
         return t("Please analyze the attached image(s).")
@@ -866,8 +1046,13 @@ def _materialize_partner_attachments(
             # Partner web chat accepts uploaded bytes only. URL-only
             # attachments are ignored rather than fetched server-side.
             continue
+        if len(raw_b64) > _base64_wire_limit(max_file_bytes):
+            raise HTTPException(
+                status_code=413,
+                detail=f"Attachment too large: {item.filename or 'file'}",
+            )
         try:
-            data = base64.b64decode(raw_b64, validate=False)
+            data = base64.b64decode(raw_b64, validate=True)
         except (binascii.Error, ValueError) as exc:
             raise HTTPException(
                 status_code=422,
@@ -1007,8 +1192,8 @@ async def partner_chat_ws(ws: WebSocket, partner_id: str):
     * ``{"type": "content", "content": str}`` — the final reply;
     * ``{"type": "done"}`` / ``{"type": "error"}`` / ``{"type": "proactive"}``.
     """
-    from deeptutor.api.routers.auth import ws_auth_failed, ws_require_auth
-    from deeptutor.multi_user.context import reset_current_user
+    from deeptutor.api.routers.auth import ws_auth_failed, ws_require_auth, ws_revalidate_auth
+    from deeptutor.multi_user.context import get_current_user, reset_current_user
 
     user_token = await ws_require_auth(ws)
     if user_token is ws_auth_failed:
@@ -1068,64 +1253,102 @@ async def partner_chat_ws(ws: WebSocket, partner_id: str):
         )
 
     async def _handle_user_messages():
+        invalid_messages = 0
+        first_frame = True
         while not disconnected.is_set():
             try:
-                raw = await ws.receive_text()
+                data = await _receive_bounded_partner_ws_message(
+                    ws,
+                    timeout_s=(
+                        _PARTNER_WS_FIRST_FRAME_TIMEOUT_S
+                        if first_frame
+                        else _PARTNER_WS_IDLE_FRAME_TIMEOUT_S
+                    ),
+                )
             except WebSocketDisconnect:
                 disconnected.set()
                 break
-            try:
-                data = json.loads(raw)
-            except json.JSONDecodeError:
-                if not await _safe_send({"type": "error", "content": "Invalid JSON"}):
+            except asyncio.TimeoutError:
+                await _safe_send({"type": "error", "content": "Session timed out"})
+                await ws.close(code=1008, reason="idle timeout")
+                disconnected.set()
+                break
+            except (QuotaExceeded, ValueError):
+                invalid_messages += 1
+                if not await _safe_send({"type": "error", "content": "Invalid message"}):
+                    break
+                if invalid_messages >= _PARTNER_WS_MAX_INVALID_MESSAGES:
+                    await ws.close(code=1008, reason="invalid message")
+                    disconnected.set()
                     break
                 continue
 
-            action = data.get("action")
-            if action == "stop":
-                mgr.stop_web_turn(partner_id, _resolve_key(data))
+            first_frame = False
+            if not await ws_revalidate_auth(ws):
+                disconnected.set()
+                break
+            try:
+                current_user = get_current_user()
+                user_lease = await _PARTNER_WS_ACTION_USER_QUOTA.acquire(current_user.id)
+                try:
+                    global_lease = await _PARTNER_WS_ACTION_GLOBAL_QUOTA.acquire(
+                        _PARTNER_WS_ACTION_GLOBAL_KEY
+                    )
+                except QuotaExceeded:
+                    await user_lease.__aexit__(None, None, None)
+                    raise
+            except QuotaExceeded:
+                if not await _safe_send({"type": "error", "content": "Rate limit exceeded"}):
+                    break
                 continue
-            if action == "attach":
-                # Reconnect (a page refresh) — replay an in-flight turn so the
-                # streaming answer the user was watching survives the reload.
-                turn = mgr.subscribe_web_turn(partner_id, _resolve_key(data))
-                if turn is not None:
-                    await _safe_send({"type": "resuming"})
-                    if turn.user_content:
-                        await _safe_send({"type": "user_echo", "content": turn.user_content})
+
+            try:
+                async with user_lease, global_lease:
+                    action = data.get("action")
+                    if action == "stop":
+                        mgr.stop_web_turn(partner_id, _resolve_key(data))
+                        continue
+                    if action == "attach":
+                        # Reconnect (a page refresh) — replay an in-flight turn so the
+                        # streaming answer the user was watching survives the reload.
+                        turn = mgr.subscribe_web_turn(partner_id, _resolve_key(data))
+                        if turn is not None:
+                            await _safe_send({"type": "resuming"})
+                            if turn.user_content:
+                                await _safe_send(
+                                    {"type": "user_echo", "content": turn.user_content}
+                                )
+                            _start_drain(turn.subscribe())
+                        continue
+
+                    content = data["content"].strip()
+                    attachments = data["attachments"]
+                    if not content and not attachments:
+                        continue
+                    try:
+                        media_paths = _materialize_partner_attachments(partner_id, attachments)
+                    except HTTPException as exc:
+                        if not await _safe_send({"type": "error", "content": str(exc.detail)}):
+                            break
+                        continue
+                    if not content and media_paths:
+                        content = _default_attachment_prompt(attachments)
+
+                    try:
+                        turn = mgr.start_web_turn(
+                            partner_id,
+                            _resolve_key(data),
+                            content,
+                            media_paths,
+                        )
+                    except RuntimeError as exc:
+                        if not await _safe_send({"type": "error", "content": str(exc)}):
+                            break
+                        continue
                     _start_drain(turn.subscribe())
-                continue
-
-            content = data.get("content", "").strip()
-            try:
-                attachments = [
-                    ChatAttachmentRequest.model_validate(item)
-                    for item in (data.get("attachments") or [])
-                    if isinstance(item, dict)
-                ]
-            except ValidationError:
-                if not await _safe_send({"type": "error", "content": "Invalid attachments"}):
+            except QuotaExceeded:
+                if not await _safe_send({"type": "error", "content": "Rate limit exceeded"}):
                     break
-                continue
-
-            if not content and not attachments:
-                continue
-            try:
-                media_paths = _materialize_partner_attachments(partner_id, attachments)
-            except HTTPException as exc:
-                if not await _safe_send({"type": "error", "content": str(exc.detail)}):
-                    break
-                continue
-            if not content and media_paths:
-                content = _default_attachment_prompt(attachments)
-
-            try:
-                turn = mgr.start_web_turn(partner_id, _resolve_key(data), content, media_paths)
-            except RuntimeError as exc:
-                if not await _safe_send({"type": "error", "content": str(exc)}):
-                    break
-                continue
-            _start_drain(turn.subscribe())
 
     async def _handle_notifications():
         while not disconnected.is_set():

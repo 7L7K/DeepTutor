@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import pytest
+
 from deeptutor.multi_user import router as multi_user_router
 
 
@@ -31,3 +33,30 @@ def test_admin_kb_summary_excludes_connected_pointers_but_keeps_normal_kbs(
     assert multi_user_router._admin_kb_summary() == [
         {"resource_id": "admin:kb:CourseNotes", "name": "CourseNotes", "source": "admin"}
     ]
+
+
+@pytest.mark.asyncio
+async def test_admin_resources_exposes_builtin_tool_options(monkeypatch) -> None:
+    from deeptutor.api.utils import tool_options
+
+    async def fake_build_tool_options() -> dict[str, list[dict[str, str]]]:
+        return {
+            "tools": [{"name": "web_search"}],
+            "builtin_tools": [{"name": "rag"}, {"name": "web_fetch"}],
+            "mcp_tools": [{"name": "mcp_docs_search"}],
+        }
+
+    monkeypatch.setattr(tool_options, "build_tool_options", fake_build_tool_options)
+    monkeypatch.setattr(multi_user_router, "_admin_catalog_summary", lambda: {"llm": []})
+    monkeypatch.setattr(multi_user_router, "_admin_kb_summary", lambda: [])
+    monkeypatch.setattr(multi_user_router, "_admin_skill_summary", lambda: [])
+    monkeypatch.setattr(multi_user_router, "_admin_partner_summary", lambda: [])
+
+    resources = await multi_user_router.admin_resources(None)
+
+    assert resources["tools"] == [{"name": "web_search"}]
+    assert resources["builtin_tools"] == [
+        {"name": "rag"},
+        {"name": "web_fetch"},
+    ]
+    assert resources["mcp_tools"] == [{"name": "mcp_docs_search"}]

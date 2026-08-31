@@ -22,6 +22,8 @@ async def mimic_exam_questions(
     output_dir: str | None = None,
     max_questions: int | None = None,
     ws_callback: WsCallback | None = None,
+    *,
+    allowed_builtin_tools: list[str] | None = None,
 ) -> dict[str, Any]:
     """
     Backward utility wrapper that delegates to the new coordinator pipeline.
@@ -38,6 +40,7 @@ async def mimic_exam_questions(
         api_version=getattr(llm_config, "api_version", None),
         kb_name=kb_name,
         output_dir=output_dir,
+        allowed_builtin_tools=allowed_builtin_tools,
     )
 
     if ws_callback:

@@ -343,6 +343,16 @@ class TestHistory:
 
 
 class TestChatAttachments:
+    def test_http_chat_bounds_model_selection_metadata(self):
+        from deeptutor.api.routers.partners import ChatMessageRequest
+
+        valid = ChatMessageRequest(llmSelection={"profile_id": "profile", "model_id": "model"})
+        assert valid.llm_selection == {"profile_id": "profile", "model_id": "model"}
+        with pytest.raises(ValueError):
+            ChatMessageRequest(llmSelection={str(index): "x" for index in range(17)})
+        with pytest.raises(ValueError):
+            ChatMessageRequest(llmSelection={"x" * 129: "profile"})
+
     def test_chat_does_not_auto_start_stopped_partner(self, client):
         # ``start=True`` spawns a real PartnerRunner task; drive every request
         # through one shared event loop (context-managed TestClient) so the

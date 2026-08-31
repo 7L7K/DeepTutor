@@ -9,14 +9,15 @@
 #
 # Build/run (normally orchestrated by docker-compose, not by hand):
 #   docker build -f Dockerfile.runner -t deeptutor-sandbox-runner:local .
-#   docker run --rm -p 8900:8900 deeptutor-sandbox-runner:local
+#   docker run --rm -e DEEPTUTOR_SANDBOX_RUNNER_TOKEN="$(openssl rand -hex 32)" \
+#     -p 8900:8900 deeptutor-sandbox-runner:local
 #
 # Why no app code beyond server.py: the runner ships ONLY the stdlib HTTP server
 # plus a set of common CLI tools. It must not depend on the DeepTutor package or
 # any heavy framework — keeping the attack surface and image size minimal.
 # ============================================
 
-FROM python:3.11-slim
+FROM python:3.11-slim@sha256:1042b61448fef4ba92d16a8c7eb4996d027568ce64792a7877fd88511e0af7c6
 
 # ----- Common CLI + data tooling -------------------------------------------
 # A pragmatic toolbelt for the kinds of shell tasks the model runs (clone a
@@ -27,6 +28,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         git \
         curl \
         ca-certificates \
+        tini \
         ripgrep \
         jq \
         build-essential \
@@ -82,11 +84,12 @@ RUN pip install --no-cache-dir \
 #           libreoffice-writer libreoffice-calc libreoffice-impress \
 #       && rm -rf /var/lib/apt/lists/*
 
-# ----- Non-root user --------------------------------------------------------
-# Commands run as an unprivileged user (uid 1000) so a sandbox escape cannot act
-# as root inside the container. uid 1000 matches the host user that owns the
-# shared task-workspace volume in the common single-user deployment, so files
-# written into ./data/user stay readable by the main app.
+# ----- Unprivileged command identity ----------------------------------------
+# Commands run as uid 1000 so a sandbox escape cannot act as root inside the
+# container. uid 1000 matches the host user that owns the shared task-workspace
+# volume in the common single-user deployment, so files written into
+# ./data/user stay readable by the main app. The server itself remains root
+# only long enough to drop each child and protect its bearer token.
 RUN useradd --create-home --uid 1000 --shell /bin/bash runner
 
 WORKDIR /app
@@ -97,14 +100,19 @@ WORKDIR /app
 # not resolve. Direct-file execution is the simple, dependency-free choice.
 COPY deeptutor/services/sandbox/runner/server.py /app/server.py
 
-# The workspace shared with the main app is mounted here at runtime by
-# docker-compose (./data/user:/app/data/user), at the *same* path in both
-# containers so the mount contract (host_path == sandbox_path) holds.
+# The admin workspace shared with the main app is mounted here at runtime by
+# docker-compose (./data/user/workspace:/app/data/user/workspace), at the *same*
+# path in both containers so the mount contract (host_path == sandbox_path)
+# holds. Per-user roots are intentionally not mounted into this long-lived
+# sidecar; learner execution fails closed until per-user/job isolation exists.
 
 ENV RUNNER_PORT=8900 \
     PYTHONUNBUFFERED=1
 EXPOSE 8900
 
-USER runner
-
+# The server/tini remain root with only the three capabilities granted by
+# docker-compose. server.py drops every command to uid/gid 1000 before exec;
+# keeping the credential-owning parents at a different uid prevents untrusted
+# commands from reading their /proc/*/environ entries.
+ENTRYPOINT ["/usr/bin/tini", "--"]
 CMD ["python", "/app/server.py"]

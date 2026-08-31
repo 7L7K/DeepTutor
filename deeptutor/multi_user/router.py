@@ -123,7 +123,7 @@ def _require_assignable_user(user_id: str) -> tuple[str, dict[str, Any]]:
 @router.get("/admin/resources")
 async def admin_resources(_: object = Depends(require_admin)) -> dict[str, Any]:
     """Everything an admin can assign to a user: models, KBs, skills, and
-    the tool surface (system tools + MCP tools, same pool partners use)."""
+    the tool surface (system tools, built-ins, and MCP tools)."""
     from deeptutor.api.utils.tool_options import build_tool_options
 
     tool_options = await build_tool_options()
@@ -133,6 +133,7 @@ async def admin_resources(_: object = Depends(require_admin)) -> dict[str, Any]:
         "skills": _admin_skill_summary(),
         "partners": _admin_partner_summary(),
         "tools": tool_options["tools"],
+        "builtin_tools": tool_options["builtin_tools"],
         "mcp_tools": tool_options["mcp_tools"],
     }
 
@@ -163,6 +164,7 @@ async def put_user_grants(
             "skill_count": len(grant.get("skills", []) or []),
             "partner_count": len(grant.get("partners", []) or []),
             "enabled_tools": grant.get("enabled_tools"),
+            "builtin_tools": grant.get("builtin_tools"),
             "mcp_tool_count": (
                 None if grant.get("mcp_tools") is None else len(grant.get("mcp_tools") or [])
             ),

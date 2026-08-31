@@ -30,6 +30,11 @@ logger = logging.getLogger(__name__)
 # cheap, and it picks up externally-edited stores within a minute.
 _MAX_SLEEP_SECONDS = 60.0
 _MAX_RUN_HISTORY = 10
+# Scheduled chat turns can spend shared model capacity without an active
+# browser session. Keep the persistent queue bounded both per conversation
+# owner and for the deployment as a whole.
+_MAX_ENABLED_JOBS_PER_OWNER = 8
+_MAX_ENABLED_JOBS_GLOBAL = 64
 
 
 def _now_ms() -> int:
@@ -53,7 +58,9 @@ class CronOwner:
 
     kind: str  # "chat" | "partner"
     user_id: str = ""  # chat: owning user
-    is_admin: bool = True  # chat: scope restore
+    # Missing ownership metadata must fail closed when loading legacy jobs;
+    # only the explicit local-admin sentinel below may use admin scope.
+    is_admin: bool = False  # chat: scope restore
     session_id: str = ""  # chat: reply lands in this session
     language: str = "en"
     partner_id: str = ""  # partner: owning partner
@@ -215,6 +222,52 @@ class CronService:
             except OSError:
                 pass
             logger.exception("Corrupt cron store moved to %s", backup)
+            return
+
+        if self._normalize_persisted_enabled_job_capacity():
+            # Persist the fail-closed normalization so the same bounded subset
+            # is retained on subsequent restarts.  Overflow jobs remain in the
+            # store as disabled records for audit/recovery.  A write failure
+            # must not make a valid store look corrupt or trigger a rename;
+            # the in-memory view is already fail-closed and will retry on the
+            # next save/restart.
+            try:
+                self._save()
+            except Exception:
+                logger.exception("Failed to persist normalized cron job capacity")
+
+    def _normalize_persisted_enabled_job_capacity(self) -> bool:
+        """Disable persisted enabled jobs that exceed the durable queue caps.
+
+        Earlier releases only applied the limits at creation time.  A legacy
+        or manually-edited store could therefore restart with an unbounded
+        queue.  Preserve each overflow job instead of deleting it, but make it
+        inert before the scheduler ever sees it.
+        """
+        enabled_total = 0
+        enabled_by_owner: dict[str, int] = {}
+        changed = False
+        for job in self._jobs.values():
+            if not job.enabled:
+                continue
+            owner_count = enabled_by_owner.get(job.owner.key, 0)
+            reason: str | None = None
+            if enabled_total >= _MAX_ENABLED_JOBS_GLOBAL:
+                reason = f"global enabled-job limit ({_MAX_ENABLED_JOBS_GLOBAL})"
+            elif owner_count >= _MAX_ENABLED_JOBS_PER_OWNER:
+                reason = (
+                    f"owner enabled-job limit ({_MAX_ENABLED_JOBS_PER_OWNER}) for {job.owner.key}"
+                )
+            if reason is not None:
+                job.enabled = False
+                job.state.last_status = "skipped"
+                job.state.last_error = f"Disabled while loading: {reason}."
+                changed = True
+                logger.warning("Disabled persisted cron job %s: %s", job.id, reason)
+                continue
+            enabled_total += 1
+            enabled_by_owner[job.owner.key] = owner_count + 1
+        return changed
 
     def _save(self) -> None:
         self.store_path.parent.mkdir(parents=True, exist_ok=True)
@@ -224,6 +277,19 @@ class CronService:
         tmp.replace(self.store_path)
 
     # ── job management ────────────────────────────────────────────
+
+    def _assert_enabled_job_capacity(self, owner: CronOwner) -> None:
+        """Reject a new enabled job when its durable queue is at capacity."""
+        enabled_jobs = [job for job in self._jobs.values() if job.enabled]
+        if len(enabled_jobs) >= _MAX_ENABLED_JOBS_GLOBAL:
+            raise ValueError(
+                f"Cron global limit reached ({_MAX_ENABLED_JOBS_GLOBAL} enabled jobs)."
+            )
+        owner_enabled_jobs = [job for job in enabled_jobs if job.owner.key == owner.key]
+        if len(owner_enabled_jobs) >= _MAX_ENABLED_JOBS_PER_OWNER:
+            raise ValueError(
+                f"Cron owner limit reached ({_MAX_ENABLED_JOBS_PER_OWNER} enabled jobs per owner)."
+            )
 
     def add_job(
         self,
@@ -238,6 +304,7 @@ class CronService:
         validate_schedule(schedule)
         if not message.strip():
             raise ValueError("message is required")
+        self._assert_enabled_job_capacity(owner)
         job = CronJob(
             id=uuid.uuid4().hex[:10],
             name=name.strip() or message.strip()[:48],

@@ -10,16 +10,25 @@ from fastapi import FastAPI, Request
 from fastapi.testclient import TestClient
 
 from deeptutor.api.request_body_limits import (
+    _MASTERY_STRUCTURE_BODY_BYTES,
     _NOTEBOOK_UPSERT_PATH,
+    _QUIZ_RESULTS_BODY_BYTES,
+    _VOICE_STT_BODY_BYTES,
+    _VOICE_STT_PATH,
+    _VOICE_TTS_BODY_BYTES,
+    _VOICE_TTS_PATH,
     NotebookUpsertBodyLimitMiddleware,
+    QuotaExceeded,
+    _request_body_limit,
+    partner_chat_body_limit,
 )
 
 
-def _limited_app(seen: list[int]) -> FastAPI:
+def _limited_app(seen: list[int], path: str = _NOTEBOOK_UPSERT_PATH) -> FastAPI:
     app = FastAPI()
     app.add_middleware(NotebookUpsertBodyLimitMiddleware)
 
-    @app.post(_NOTEBOOK_UPSERT_PATH)
+    @app.post(path)
     async def upsert(request: Request):
         body = await request.body()
         seen.append(len(body))
@@ -40,6 +49,35 @@ def _limited_app(seen: list[int]) -> FastAPI:
     return app
 
 
+@pytest.mark.parametrize(
+    ("path", "expected"),
+    [
+        (_VOICE_TTS_PATH, _VOICE_TTS_BODY_BYTES),
+        (_VOICE_STT_PATH, _VOICE_STT_BODY_BYTES),
+    ],
+)
+def test_voice_routes_have_request_body_limits(path: str, expected: int) -> None:
+    assert _request_body_limit({"path": path, "method": "POST"}) == expected
+
+
+def test_partner_chat_routes_have_policy_sized_raw_body_limits(monkeypatch) -> None:
+    class Limits:
+        max_total_bytes = 6
+
+    monkeypatch.setattr(
+        "deeptutor.api.request_body_limits.get_chat_attachment_limits", lambda: Limits()
+    )
+    expected = partner_chat_body_limit()
+    assert _request_body_limit({"path": "/api/v1/partners/demo/chat", "method": "POST"}) == expected
+    assert (
+        _request_body_limit({"path": "/api/v1/partners/demo/chat/execute-stream", "method": "POST"})
+        == expected
+    )
+    assert (
+        _request_body_limit({"path": "/api/v1/partners/demo/chat/nested", "method": "POST"}) is None
+    )
+
+
 def test_content_length_over_limit_is_rejected_before_downstream(monkeypatch) -> None:
     monkeypatch.setattr("deeptutor.api.request_body_limits.notebook_upsert_body_limit", lambda: 8)
     seen: list[int] = []
@@ -53,6 +91,22 @@ def test_content_length_over_limit_is_rejected_before_downstream(monkeypatch) ->
 
     assert response.status_code == 413
     assert response.json() == {"detail": "Request body too large"}
+    assert seen == []
+
+
+def test_partner_chat_body_is_rejected_before_fastapi_parsing(monkeypatch) -> None:
+    monkeypatch.setattr("deeptutor.api.request_body_limits.partner_chat_body_limit", lambda: 8)
+    seen: list[int] = []
+    path = "/api/v1/partners/demo/chat"
+
+    with TestClient(_limited_app(seen, path)) as client:
+        response = client.post(
+            path,
+            content=b"123456789",
+            headers={"content-type": "application/json"},
+        )
+
+    assert response.status_code == 413
     assert seen == []
 
 
@@ -116,6 +170,27 @@ def test_chunked_body_over_limit_is_rejected_without_materializing(monkeypatch) 
     assert seen == []
 
 
+def test_voice_stt_intake_quota_rejects_before_downstream(monkeypatch) -> None:
+    class DenyQuota:
+        async def acquire(self, _key: str):
+            raise QuotaExceeded("busy")
+
+    monkeypatch.setattr("deeptutor.api.request_body_limits._VOICE_STT_INTAKE_QUOTA", DenyQuota())
+    seen: list[int] = []
+
+    with TestClient(_limited_app(seen, _VOICE_STT_PATH)) as client:
+        response = client.post(
+            _VOICE_STT_PATH,
+            content=b"not parsed",
+            headers={"content-type": "application/octet-stream"},
+        )
+
+    assert response.status_code == 429
+    assert response.json() == {"detail": "Request capacity is busy. Retry shortly"}
+    assert response.headers["retry-after"] == "1"
+    assert seen == []
+
+
 @pytest.mark.parametrize("content_length", [b"invalid", b"-1"])
 def test_invalid_content_length_is_rejected(monkeypatch, content_length: bytes) -> None:
     monkeypatch.setattr("deeptutor.api.request_body_limits.notebook_upsert_body_limit", lambda: 8)
@@ -151,6 +226,57 @@ def test_invalid_content_length_is_rejected(monkeypatch, content_length: bytes) 
     asyncio.run(invoke())
 
     assert sent[0]["status"] == 413
+    assert seen == []
+
+
+@pytest.mark.parametrize(
+    ("path", "expected_limit"),
+    [
+        ("/api/v1/notebook/add_record", 64 * 1024),
+        ("/api/v1/notebook/add_record/", 64 * 1024),
+        ("/api/v1/notebook/add_record_with_summary", 64 * 1024),
+        ("/api/v1/notebook/add_record_with_summary/", 64 * 1024),
+        ("/api/v1/learning/progress/book-1/generate-from-notebook", 96 * 1024),
+        ("/api/v1/learning/progress/book-1/generate-from-notebook/", 96 * 1024),
+        ("/api/v1/learning/progress/book-1/init-modules", _MASTERY_STRUCTURE_BODY_BYTES),
+        ("/api/v1/learning/progress/book-1/import-from-book", _MASTERY_STRUCTURE_BODY_BYTES),
+        ("/api/v1/sessions/session-1/quiz-results", _QUIZ_RESULTS_BODY_BYTES),
+    ],
+)
+def test_notebook_llm_routes_have_raw_body_limits(path: str, expected_limit: int) -> None:
+    assert _request_body_limit({"method": "POST", "path": path}) == expected_limit
+
+
+def test_notebook_summary_trailing_slash_is_rejected_before_downstream(monkeypatch) -> None:
+    monkeypatch.setattr("deeptutor.api.request_body_limits._NOTEBOOK_SUMMARY_BODY_BYTES", 8)
+    seen: list[int] = []
+    path = "/api/v1/notebook/add_record/"
+
+    with TestClient(_limited_app(seen, path)) as client:
+        response = client.post(
+            path,
+            content=b"123456789",
+            headers={"content-type": "application/json"},
+        )
+
+    assert response.status_code == 413
+    assert seen == []
+
+
+def test_mastery_notebook_trailing_slash_is_rejected_before_downstream(monkeypatch) -> None:
+    monkeypatch.setattr("deeptutor.api.request_body_limits._MASTERY_NOTEBOOK_BODY_BYTES", 8)
+    seen: list[int] = []
+    path = "/api/v1/learning/progress/book-1/generate-from-notebook/"
+
+    with TestClient(_limited_app(seen, path)) as client:
+        response = client.post(
+            path,
+            content=b"123456789",
+            headers={"content-type": "application/json"},
+            follow_redirects=False,
+        )
+
+    assert response.status_code == 413
     assert seen == []
 
 

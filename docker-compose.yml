@@ -4,13 +4,17 @@
 # This file provides orchestration for DeepTutor services
 #
 # Usage:
-#   Production:  python scripts/docker_compose.py up -d
-#   Development: python scripts/docker_compose.py -f docker-compose.yml -f docker-compose.dev.yml up
+#   Production:  export DEEPTUTOR_SANDBOX_RUNNER_TOKEN="$(openssl rand -hex 32)"
+#                python scripts/docker_compose.py up -d
+#   Development: export DEEPTUTOR_SANDBOX_RUNNER_TOKEN="$(openssl rand -hex 32)"
+#                python scripts/docker_compose.py -f docker-compose.yml -f docker-compose.dev.yml up
 #   Build only:  python scripts/docker_compose.py build
 #
 # Prerequisites:
 #   1. Runtime settings are stored in ./data/user/settings (created automatically)
-#   2. Configure model providers from the web Settings page or model_catalog.json
+#   2. Seed a durable owner with scripts/bootstrap-teeechr-owner.py before a
+#      production start; configure model providers from the web Settings page
+#      or model_catalog.json after login.
 #   3. Use scripts/docker_compose.py so port mappings are rendered from system.json
 #
 # Local LLM (LM Studio / Ollama / vLLM):
@@ -25,11 +29,16 @@ services:
   # Leave integrations.pocketbase_url blank to run without PocketBase (SQLite fallback).
   # ============================================
   pocketbase:
-    image: ghcr.io/muchobien/pocketbase:latest
+    # Pin the sidecar by manifest digest so restarts cannot silently pick up
+    # a different PocketBase build. Update this only through a reviewed
+    # release/change record.
+    image: ghcr.io/muchobien/pocketbase@sha256:3854997f39cb005bc33c73cdd2c52a83cc4fbafe116570e625761ae1dcf152ec
     container_name: pocketbase
     restart: unless-stopped
     ports:
-      - "${DEEPTUTOR_DOCKER_POCKETBASE_PORT:-8090}:8090"
+      # PocketBase is an internal dependency. Reach it through the app or a
+      # deliberately configured reverse proxy, never from the public network.
+      - "127.0.0.1:${DEEPTUTOR_DOCKER_POCKETBASE_PORT:-8090}:8090"
     volumes:
       # The upstream pocketbase image's entrypoint uses absolute paths
       # (no /pb/ prefix): --dir=/pb_data --publicDir=/pb_public
@@ -58,19 +67,24 @@ services:
       target: production
     container_name: deeptutor
     restart: unless-stopped
+    # Keep parser/provider bursts from exhausting the host. The VPS beta host
+    # has 4 GiB RAM; the runner is independently capped at 1 GiB below.
+    mem_limit: 2g
     ports:
-      - "${DEEPTUTOR_DOCKER_BACKEND_PORT:-8001}:${DEEPTUTOR_DOCKER_BACKEND_PORT:-8001}"
-      - "${DEEPTUTOR_DOCKER_FRONTEND_PORT:-3782}:${DEEPTUTOR_DOCKER_FRONTEND_PORT:-3782}"
+      # The VPS reverse proxy is the public ingress. Keeping application ports
+      # on loopback prevents direct HTTP/TLS-bypass access to backend auth.
+      - "127.0.0.1:${DEEPTUTOR_DOCKER_BACKEND_PORT:-8001}:${DEEPTUTOR_DOCKER_BACKEND_PORT:-8001}"
+      - "127.0.0.1:${DEEPTUTOR_DOCKER_FRONTEND_PORT:-3782}:${DEEPTUTOR_DOCKER_FRONTEND_PORT:-3782}"
 
     volumes:
       # Everything DeepTutor persists lives under ./data — one tree to mount
       # and back up: admin workspace + runtime settings (data/user), per-user
       # workspaces (data/users), partners (data/partners), accounts/grants/
-      # audit (data/system), knowledge bases, memory.
+      # audit (data/system), knowledge bases, memory. The sandbox-runner gets
+      # only the admin workspace, never the aggregate users tree.
       # The sandbox-runner gets a narrower slice of this volume: never
       # data/system, which holds auth state, provider API keys, and per-owner
-      # secrets. What it *does* carry for non-admin accounts is wider than
-      # workspace subtrees — see the scope note on that service's own volumes.
+      # secrets.
       - ./data:/app/data
 
     environment:
@@ -81,6 +95,12 @@ services:
       # this unset: the app degrades to bwrap (Linux, if installed) or, only when
       # DEEPTUTOR_SANDBOX_ALLOW_SUBPROCESS=1, a restricted subprocess.
       - DEEPTUTOR_SANDBOX_RUNNER_URL=http://sandbox-runner:8900
+      # Required shared service credential. Docker Compose fails before start
+      # when it is absent, so execution never silently falls back to an open
+      # runner protocol. The app also probes the authenticated v2 capability
+      # contract; a stale runner image cannot accept the v2 execution path.
+      # Keep this out of source control.
+      - DEEPTUTOR_SANDBOX_RUNNER_TOKEN=${DEEPTUTOR_SANDBOX_RUNNER_TOKEN:?Set DEEPTUTOR_SANDBOX_RUNNER_TOKEN to a strong random value}
 
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:${DEEPTUTOR_DOCKER_BACKEND_PORT:-8001}/"]
@@ -118,15 +138,11 @@ services:
 
     # Share the task workspaces at the SAME paths as the main app so the mount
     # contract holds: a request with host_path == sandbox_path under
-    # /app/data/user/workspace (admin) or /app/data/users/<uid> (per-user)
-    # is already visible here, no per-command mounting needed.
-    # Scope note: every command in this container shares one filesystem view
-    # (per-command isolation is a roadmap item). The admin mount is narrowed to
-    # its workspace subtree, but the per-user mount is a whole user root, so for
-    # non-admin accounts it also carries data/users/<uid>/user/settings,
-    # user/chat_history.db, and knowledge_bases — every account's exec can read
-    # every other account's copy of those. That cross-user visibility is
-    # accepted for the invite-only trust posture and enforced no further.
+    # /app/data/user/workspace is already visible here, no per-command mounting
+    # needed. Per-user roots are deliberately NOT mounted: a single long-lived
+    # container cannot kernel-confine arbitrary shell commands to one subfolder
+    # of a shared users tree. Learner exec therefore fails closed until the
+    # deployment provisions a genuinely isolated runner per user/job.
     # data/system is never mounted here, which is why credentials that authorize
     # a person (Codex OAuth tokens) live under data/system/user-secrets/<owner>
     # instead of inside a user root — and why installed CLI apps live in a third
@@ -135,13 +151,19 @@ services:
     # workspace subtree is out too.
     volumes:
       - ./data/user/workspace:/app/data/user/workspace
-      - ./data/users:/app/data/users
       # Installed CLI apps, READ-ONLY. This is the one directory the runner
       # executes code from that it did not receive in a request, so it must not
       # be writable here: an escaped command that could overwrite an app's entry
       # point would run as that app in every later turn, for every account.
       # Installing writes it from the main container instead (services/cli_apps).
       - ./data/cli-apps:/app/data/cli-apps:ro
+
+    environment:
+      - DEEPTUTOR_SANDBOX_RUNNER_TOKEN=${DEEPTUTOR_SANDBOX_RUNNER_TOKEN:?Set DEEPTUTOR_SANDBOX_RUNNER_TOKEN to a strong random value}
+      - DEEPTUTOR_RUNNER_ALLOWED_PRINCIPAL_ROOTS=/app/data/user/workspace
+      - DEEPTUTOR_RUNNER_ALLOWED_READ_ONLY_ROOTS=/app/data/cli-apps
+      - DEEPTUTOR_RUNNER_EXEC_UID=1000
+      - DEEPTUTOR_RUNNER_EXEC_GID=1000
 
     # No `ports:` — intentionally not published to the host.
 
@@ -150,6 +172,12 @@ services:
       - no-new-privileges:true
     cap_drop:
       - ALL
+    cap_add:
+      # The root-owned server uses these only to drop each child to uid/gid
+      # 1000 and to terminate adopted descendants that escape a process group.
+      - SETUID
+      - SETGID
+      - KILL
     # Read-only root filesystem: the runner only needs to read its own code and
     # write under the shared volume (and scratch space). Give it tmpfs for the
     # paths shell tooling expects to be writable (/tmp, $HOME). If a workload
@@ -164,6 +192,8 @@ services:
     # per-command RLIMIT_AS in server.py is a cheaper secondary guard.
 
     healthcheck:
+      # Liveness only; the app performs the authenticated /capabilities
+      # protocol-readiness probe before enabling SYSTEM execution.
       test: ["CMD", "python", "-c",
              "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:8900/health',timeout=3).status==200 else 1)"]
       interval: 10s

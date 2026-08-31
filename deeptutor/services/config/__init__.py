@@ -26,6 +26,7 @@ from .loader import (
 )
 from .model_catalog import ModelCatalogService, get_model_catalog_service
 from .runtime_settings import (
+    UVICORN_WS_MAX_QUEUE,
     ChatAttachmentLimits,
     RuntimeSettingsService,
     ensure_runtime_settings_files,
@@ -83,6 +84,7 @@ __all__ = [
     "get_config_test_runner",
     "ChatAttachmentLimits",
     "RuntimeSettingsService",
+    "UVICORN_WS_MAX_QUEUE",
     "ensure_runtime_settings_files",
     "export_runtime_settings_to_env",
     "get_chat_attachment_limits",

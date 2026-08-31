@@ -10,6 +10,8 @@ export type GrantPayload = {
   partners: Array<Record<string, unknown>>;
   /** null = default (all system tools), [] = none, array = whitelist. */
   enabled_tools: string[] | null;
+  /** Explicit server-owned built-in tool allowlist; [] = none. */
+  builtin_tools: string[];
   /** null = default (all MCP tools), [] = none, array = whitelist. */
   mcp_tools: string[] | null;
   /** null = follow deployment exec policy, false = always disabled. */
@@ -46,5 +48,6 @@ export type MultiUserResources = {
   skills: Array<{ name: string; description?: string; tags?: string[] }>;
   partners: Array<{ partner_id: string; name: string; description?: string }>;
   tools: ToolOption[];
+  builtin_tools: ToolOption[];
   mcp_tools: McpToolOption[];
 };

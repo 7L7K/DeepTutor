@@ -20,11 +20,17 @@ import asyncio
 from contextlib import suppress
 import os
 from pathlib import Path
+import resource
 import shutil
+import signal
 
 import httpx
 
 from deeptutor.services.sandbox.spec import (
+    RUNNER_CAPABILITIES_PATH,
+    RUNNER_EXEC_PATH,
+    RUNNER_PROTOCOL_VERSION,
+    RUNNER_REQUIRED_CAPABILITIES,
     ExecRequest,
     ExecResult,
     IsolationLevel,
@@ -49,19 +55,36 @@ class RunnerSidecarBackend(SandboxBackend):
 
     level = IsolationLevel.SYSTEM
 
-    def __init__(self, base_url: str, *, connect_timeout_s: float = 5.0) -> None:
+    def __init__(
+        self,
+        base_url: str,
+        *,
+        token: str = "",
+        connect_timeout_s: float = 5.0,
+    ) -> None:
         self._base_url = base_url.rstrip("/")
+        self._token = token.strip()
         self._connect_timeout_s = connect_timeout_s
 
     async def exec(self, request: ExecRequest) -> ExecResult:
+        if not self._token:
+            return ExecResult(error="runner unavailable: authentication token is not configured")
+        principal_root = _request_principal_root(request)
+        if not principal_root:
+            return ExecResult(
+                error="runner refused request: workdir must be inside a declared writable mount"
+            )
         payload = {
-            # Both spellings travel. A runner that understands ``argv`` prefers
-            # it and runs without a shell; an older image ignores the unknown
-            # field and executes the equivalent shell string. That keeps a
-            # rolling deploy correct in either order, with no version handshake.
+            # Both spellings travel. A current runner prefers ``argv`` and runs
+            # without a shell; the versioned endpoint below makes a stale image
+            # reject the request instead of ignoring the newer fields.
             "command": request.command,
             "argv": list(request.argv),
             "workdir": request.workdir,
+            # The authenticated app binds each request to the narrowest
+            # writable mount containing its workdir. The runner independently
+            # checks this root against its deployment allowlist before exec.
+            "principal_root": principal_root,
             "env": request.env,
             "mounts": [
                 {
@@ -86,7 +109,11 @@ class RunnerSidecarBackend(SandboxBackend):
         )
         try:
             async with httpx.AsyncClient(timeout=http_timeout) as client:
-                resp = await client.post(f"{self._base_url}/exec", json=payload)
+                resp = await client.post(
+                    f"{self._base_url}{RUNNER_EXEC_PATH}",
+                    json=payload,
+                    headers={"Authorization": f"Bearer {self._token}"},
+                )
                 resp.raise_for_status()
                 data = resp.json()
         except httpx.HTTPError as exc:
@@ -100,13 +127,34 @@ class RunnerSidecarBackend(SandboxBackend):
         )
 
     async def health(self) -> tuple[bool, str]:
+        if not self._token:
+            return False, "runner authentication token is not configured"
         try:
             async with httpx.AsyncClient(timeout=self._connect_timeout_s) as client:
-                resp = await client.get(f"{self._base_url}/health")
+                resp = await client.get(
+                    f"{self._base_url}{RUNNER_CAPABILITIES_PATH}",
+                    headers={"Authorization": f"Bearer {self._token}"},
+                )
                 resp.raise_for_status()
-            return True, "runner reachable"
+                payload = resp.json()
+            if not isinstance(payload, dict):
+                return False, "runner protocol probe returned a non-object"
+            version = payload.get("protocol_version")
+            if version != RUNNER_PROTOCOL_VERSION:
+                return False, f"runner protocol mismatch: expected v{RUNNER_PROTOCOL_VERSION}"
+            capabilities = payload.get("capabilities")
+            if not isinstance(capabilities, list) or not all(
+                isinstance(item, str) for item in capabilities
+            ):
+                return False, "runner protocol probe omitted capabilities"
+            missing = sorted(RUNNER_REQUIRED_CAPABILITIES.difference(capabilities))
+            if missing:
+                return False, f"runner missing capabilities: {', '.join(missing)}"
+            return True, f"runner protocol v{RUNNER_PROTOCOL_VERSION} ready"
         except httpx.HTTPError as exc:
             return False, f"runner unreachable: {type(exc).__name__}"
+        except (TypeError, ValueError) as exc:
+            return False, f"runner protocol probe invalid: {type(exc).__name__}"
 
 
 class BwrapBackend(SandboxBackend):
@@ -122,6 +170,9 @@ class BwrapBackend(SandboxBackend):
     def _build_argv(self, request: ExecRequest) -> list[str]:
         argv = [
             self._bwrap,
+            # Prevent the sandboxed command from inheriting provider, auth, or
+            # runner credentials from the application process.
+            "--clearenv",
             "--die-with-parent",
             "--unshare-all",
             "--new-session",
@@ -140,6 +191,9 @@ class BwrapBackend(SandboxBackend):
             argv += [flag, mount.host_path, mount.sandbox_path]
         if request.workdir:
             argv += ["--chdir", request.workdir]
+        for key in RestrictedSubprocessBackend._SAFE_ENV_KEYS:
+            if key in os.environ and key not in request.env:
+                argv += ["--setenv", key, os.environ[key]]
         for key, value in request.env.items():
             argv += ["--setenv", key, value]
         if request.argv:
@@ -151,15 +205,27 @@ class BwrapBackend(SandboxBackend):
 
     async def exec(self, request: ExecRequest) -> ExecResult:
         argv = self._build_argv(request)
+        launcher_env = {
+            key: os.environ[key]
+            for key in RestrictedSubprocessBackend._SAFE_ENV_KEYS
+            if key in os.environ
+        }
         try:
             process = await asyncio.create_subprocess_exec(
                 *argv,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
+                preexec_fn=_build_preexec_fn(request),
+                env=launcher_env,
+                start_new_session=os.name == "posix",
             )
         except FileNotFoundError:
             return ExecResult(error="bwrap not found on host")
-        return await _communicate(process, request.limits.timeout_s)
+        return await _communicate(
+            process,
+            request.limits.timeout_s,
+            max_output_chars=request.limits.max_output_chars,
+        )
 
     async def health(self) -> tuple[bool, str]:
         if shutil.which(self._bwrap) is None:
@@ -192,6 +258,8 @@ class RestrictedSubprocessBackend(SandboxBackend):
                     stderr=asyncio.subprocess.PIPE,
                     cwd=cwd,
                     env=env,
+                    preexec_fn=_build_preexec_fn(request),
+                    start_new_session=os.name == "posix",
                 )
             else:
                 process = await asyncio.create_subprocess_shell(
@@ -200,20 +268,133 @@ class RestrictedSubprocessBackend(SandboxBackend):
                     stderr=asyncio.subprocess.PIPE,
                     cwd=cwd,
                     env=env,
+                    preexec_fn=_build_preexec_fn(request),
+                    start_new_session=os.name == "posix",
                 )
         except Exception as exc:
             return ExecResult(error=f"{type(exc).__name__}: {exc}")
-        return await _communicate(process, request.limits.timeout_s)
+        return await _communicate(
+            process,
+            request.limits.timeout_s,
+            max_output_chars=request.limits.max_output_chars,
+        )
 
 
-async def _communicate(process: asyncio.subprocess.Process, timeout_s: int) -> ExecResult:
+def _build_preexec_fn(request: ExecRequest):
+    """Apply resource limits in a local child before it executes."""
+    if os.name != "posix":
+        return None
+    memory_mb = max(0, int(request.limits.memory_mb))
+    cpu_seconds = max(0, int(request.limits.cpu_seconds))
+
+    def _apply() -> None:
+        if memory_mb:
+            try:
+                limit = memory_mb * 1024 * 1024
+                resource.setrlimit(resource.RLIMIT_AS, (limit, limit))
+            except (ValueError, OSError):
+                pass
+        if cpu_seconds:
+            try:
+                resource.setrlimit(resource.RLIMIT_CPU, (cpu_seconds, cpu_seconds))
+            except (ValueError, OSError):
+                pass
+        try:
+            resource.setrlimit(resource.RLIMIT_NOFILE, (4096, 4096))
+        except (AttributeError, ValueError, OSError):
+            pass
+        try:
+            max_file_bytes = 256 * 1024 * 1024
+            resource.setrlimit(resource.RLIMIT_FSIZE, (max_file_bytes, max_file_bytes))
+        except (AttributeError, ValueError, OSError):
+            pass
+        # Do not set RLIMIT_NPROC here. It is per real UID, and this local
+        # fallback runs under the application UID alongside the server and any
+        # xdist/worker processes; a small global limit would starve unrelated
+        # work before the child starts. The dedicated Docker runner applies its
+        # process limit after dropping commands to its separate execution UID.
+
+    return _apply
+
+
+def _request_principal_root(request: ExecRequest) -> str:
+    """Return the narrow writable mount that owns ``request.workdir``.
+
+    A sidecar request without this binding is unsafe: a bearer-authenticated
+    caller could otherwise select any path mounted into the runner. Read-only
+    mounts (for installed CLI applications) are never principal roots.
+    """
+    if not request.workdir:
+        return ""
+    workdir = os.path.realpath(request.workdir)
+    candidates: list[str] = []
+    for mount in request.mounts:
+        if mount.read_only:
+            continue
+        root = os.path.realpath(mount.sandbox_path)
+        if workdir == root or workdir.startswith(root + os.sep):
+            candidates.append(root)
+    return max(candidates, key=len) if candidates else ""
+
+
+async def _communicate(
+    process: asyncio.subprocess.Process,
+    timeout_s: int,
+    *,
+    max_output_chars: int,
+) -> ExecResult:
+    """Read both pipes with a byte budget so output cannot fill memory."""
+    max_bytes = max(1, int(max_output_chars)) * 4
+    overflow = asyncio.Event()
+
+    def _stop_process_tree() -> None:
+        """Terminate the request's process group, including descendants."""
+        if os.name == "posix":
+            with suppress(ProcessLookupError, OSError):
+                os.killpg(process.pid, signal.SIGKILL)
+                return
+        with suppress(ProcessLookupError):
+            process.kill()
+
+    async def _read_bounded(stream: asyncio.StreamReader | None) -> bytes:
+        if stream is None:
+            return b""
+        chunks: list[bytes] = []
+        total = 0
+        while True:
+            chunk = await stream.read(min(64 * 1024, max_bytes - total + 1))
+            if not chunk:
+                break
+            remaining = max_bytes - total
+            if len(chunk) > remaining:
+                chunks.append(chunk[:remaining])
+                overflow.set()
+                _stop_process_tree()
+                break
+            chunks.append(chunk)
+            total += len(chunk)
+        return b"".join(chunks)
+
     try:
-        stdout, stderr = await asyncio.wait_for(process.communicate(), timeout=timeout_s)
+        stdout, stderr = await asyncio.wait_for(
+            asyncio.gather(_read_bounded(process.stdout), _read_bounded(process.stderr)),
+            timeout=timeout_s,
+        )
     except asyncio.TimeoutError:
-        process.kill()
+        _stop_process_tree()
         with suppress(asyncio.TimeoutError):
             await asyncio.wait_for(process.wait(), timeout=5.0)
         return ExecResult(timed_out=True, exit_code=124)
+    if overflow.is_set():
+        with suppress(asyncio.TimeoutError):
+            await asyncio.wait_for(process.wait(), timeout=5.0)
+        return ExecResult(
+            stdout=stdout.decode("utf-8", errors="replace"),
+            stderr=stderr.decode("utf-8", errors="replace"),
+            exit_code=process.returncode if process.returncode is not None else 137,
+            error="sandbox output limit exceeded",
+        )
+    await process.wait()
     return ExecResult(
         stdout=stdout.decode("utf-8", errors="replace") if stdout else "",
         stderr=stderr.decode("utf-8", errors="replace") if stderr else "",

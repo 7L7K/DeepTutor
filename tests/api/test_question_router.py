@@ -4,6 +4,7 @@ import asyncio
 import base64
 from contextlib import contextmanager
 import importlib
+import json
 from pathlib import Path
 import sys
 import types
@@ -70,6 +71,11 @@ def _load_question_router_module(monkeypatch: pytest.MonkeyPatch):
         return set_current_user(user_from_token_payload(None))
 
     fake_auth.ws_require_auth = _allow_local_test_user
+
+    async def _still_authenticated(_websocket):
+        return True
+
+    fake_auth.ws_revalidate_auth = _still_authenticated
     monkeypatch.setitem(sys.modules, "deeptutor.api.routers.auth", fake_auth)
 
     fake_llm_package = _package("deeptutor.services.llm")
@@ -116,6 +122,7 @@ def test_mimic_websocket_accepts_config_and_returns_messages(
     question_router_module = _load_question_router_module(monkeypatch)
 
     async def _fake_mimic_exam_questions(*_args, **_kwargs):
+        print("unstructured output must not be sent to a learner socket")
         return {"success": False, "error": "stub mimic failure"}
 
     monkeypatch.setattr(question_router_module, "mimic_exam_questions", _fake_mimic_exam_questions)
@@ -125,13 +132,31 @@ def test_mimic_websocket_accepts_config_and_returns_messages(
     monkeypatch.setattr(
         question_router_module, "_mimic_output_dir", lambda: tmp_path / "mimic_papers"
     )
+    (tmp_path / "paper").mkdir()
+    monkeypatch.setattr(
+        question_router_module,
+        "get_path_service",
+        lambda: types.SimpleNamespace(get_question_dir=lambda: tmp_path),
+    )
+
+    class _Lease:
+        async def __aexit__(self, *_args) -> None:
+            return None
+
+        async def aclose(self) -> None:
+            return None
+
+    async def _admit():
+        return None, _Lease()
+
+    monkeypatch.setattr(question_router_module, "_admit_question_generation", _admit)
 
     with TestClient(_build_app(question_router_module)) as client:
         with client.websocket_connect("/api/v1/question/mimic") as websocket:
             websocket.send_json(
                 {
                     "mode": "parsed",
-                    "paper_path": str(tmp_path / "paper"),
+                    "paper_path": "paper",
                     "kb_name": "demo-kb",
                     "max_questions": 3,
                 }
@@ -141,7 +166,635 @@ def test_mimic_websocket_accepts_config_and_returns_messages(
     assert [message["type"] for message in messages] == ["status", "status", "error"]
     assert messages[0]["stage"] == "init"
     assert messages[1]["stage"] == "processing"
-    assert messages[2]["content"] == "stub mimic failure"
+    assert messages[2]["content"] == "Question generation is unavailable."
+    assert not any(message.get("type") == "process_log" for message in messages)
+
+
+def test_question_generate_uses_current_topic_contract(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    question_router_module = _load_question_router_module(monkeypatch)
+    received: dict = {}
+    coordinator_init: dict = {}
+
+    class FakeCoordinator:
+        def __init__(self, **kwargs) -> None:
+            coordinator_init.update(kwargs)
+            pass
+
+        def set_ws_callback(self, _callback) -> None:
+            pass
+
+        async def generate_from_topic(self, **kwargs):
+            received.update(kwargs)
+            return {"success": True, "completed": 2, "failed": 0}
+
+    class FakeTaskManager:
+        def generate_task_id(self, *_args) -> str:
+            return "question-task"
+
+        def update_task_status(self, *_args, **_kwargs) -> None:
+            pass
+
+    class FakeConfig:
+        api_key = "test-key"
+        base_url = "https://example.test/v1"
+        api_version = None
+        model = "test-model"
+
+    class FakeAdmission:
+        async def aclose(self) -> None:
+            pass
+
+    class FakeWebSocket:
+        def __init__(self) -> None:
+            self.messages: list[dict] = []
+
+        async def accept(self) -> None:
+            pass
+
+        async def receive_json(self) -> dict:
+            return {
+                "requirement": {
+                    "knowledge_point": "fractions",
+                    "difficulty": "easy",
+                    "question_type": "choice",
+                    "preference": "ignored by the current contract",
+                },
+                "kb_name": "demo-kb",
+                "count": 2,
+            }
+
+        async def receive(self) -> dict:
+            return {"type": "websocket.receive", "text": json.dumps(await self.receive_json())}
+
+        async def send_json(self, payload: dict) -> None:
+            self.messages.append(payload)
+
+        async def close(self, *_args, **_kwargs) -> None:
+            pass
+
+    async def _admit():
+        return None, FakeAdmission()
+
+    monkeypatch.setattr(question_router_module, "AgentCoordinator", FakeCoordinator)
+    monkeypatch.setattr(
+        question_router_module,
+        "TaskIDManager",
+        types.SimpleNamespace(get_instance=lambda: FakeTaskManager()),
+    )
+    monkeypatch.setattr(question_router_module, "get_llm_config", lambda: FakeConfig())
+    monkeypatch.setattr(
+        question_router_module,
+        "get_path_service",
+        lambda: types.SimpleNamespace(
+            get_question_batch_dir=lambda _task_id: tmp_path,
+            get_question_dir=lambda: tmp_path,
+        ),
+    )
+    monkeypatch.setattr(question_router_module, "_admit_question_generation", _admit)
+    monkeypatch.setattr(question_router_module, "_allowed_question_builtin_tools", lambda: [])
+
+    websocket = FakeWebSocket()
+    asyncio.run(question_router_module.websocket_question_generate(websocket))
+
+    assert received == {
+        "user_topic": "fractions",
+        "num_questions": 2,
+        "difficulty": "easy",
+        "question_types": ["choice"],
+        "per_type_counts": {"choice": 2},
+    }
+    assert coordinator_init["allowed_builtin_tools"] == []
+    assert any(message.get("type") == "complete" for message in websocket.messages)
+
+
+def test_mimic_websocket_passes_only_server_granted_builtin_tools(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    question_router_module = _load_question_router_module(monkeypatch)
+    received: dict = {}
+
+    async def _fake_mimic_exam_questions(*_args, **kwargs):
+        received.update(kwargs)
+        return {"success": False}
+
+    class _Lease:
+        async def aclose(self) -> None:
+            return None
+
+    async def _admit():
+        return None, _Lease()
+
+    parsed = tmp_path / "parsed-paper"
+    parsed.mkdir()
+    monkeypatch.setattr(question_router_module, "mimic_exam_questions", _fake_mimic_exam_questions)
+    monkeypatch.setattr(question_router_module, "_admit_question_generation", _admit)
+    monkeypatch.setattr(
+        question_router_module,
+        "get_path_service",
+        lambda: types.SimpleNamespace(get_question_dir=lambda: tmp_path),
+    )
+    monkeypatch.setattr(question_router_module, "_mimic_output_dir", lambda: tmp_path / "mimics")
+    monkeypatch.setattr(
+        question_router_module,
+        "_allowed_question_builtin_tools",
+        lambda: ["web_fetch"],
+    )
+
+    with TestClient(_build_app(question_router_module)) as client:
+        with client.websocket_connect("/api/v1/question/mimic") as websocket:
+            websocket.send_json(
+                {
+                    "mode": "parsed",
+                    "paper_path": "parsed-paper",
+                }
+            )
+            messages = [websocket.receive_json() for _ in range(3)]
+
+    assert received["allowed_builtin_tools"] == ["web_fetch"]
+    assert [message["type"] for message in messages] == ["status", "status", "error"]
+
+
+def test_question_request_envelope_is_limited_before_json_parsing(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    question_router_module = _load_question_router_module(monkeypatch)
+    monkeypatch.setattr(question_router_module, "_MAX_REQUEST_JSON_CHARS", 16)
+
+    class FakeWebSocket:
+        async def receive(self) -> dict:
+            return {"type": "websocket.receive", "text": "{" + "x" * 16}
+
+    with pytest.raises(ValueError):
+        asyncio.run(question_router_module._receive_bounded_request_json(FakeWebSocket()))
+
+
+def test_generate_request_envelope_rejects_unknown_top_level_and_requirement_fields(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    question_router_module = _load_question_router_module(monkeypatch)
+
+    with pytest.raises(ValueError):
+        question_router_module._validate_generate_request_envelope(
+            {"requirement": "fractions", "padding": "ignored-before-this-fix"}
+        )
+    with pytest.raises(ValueError):
+        question_router_module._validate_generate_request_envelope(
+            {"requirement": {"knowledge_point": "fractions", "padding": "ignored-before-this-fix"}}
+        )
+
+
+def test_generate_oversized_envelope_never_reaches_generation_admission(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    question_router_module = _load_question_router_module(monkeypatch)
+    monkeypatch.setattr(question_router_module, "_MAX_GENERATE_REQUEST_JSON_CHARS", 16)
+    generation_calls = 0
+
+    class _IntakeLease:
+        async def aclose(self) -> None:
+            return None
+
+    class FakeWebSocket:
+        def __init__(self) -> None:
+            self.messages: list[dict] = []
+
+        async def accept(self) -> None:
+            return None
+
+        async def receive(self) -> dict:
+            return {
+                "type": "websocket.receive",
+                "text": json.dumps({"requirement": "fractions"}),
+            }
+
+        async def send_json(self, payload: dict) -> None:
+            self.messages.append(payload)
+
+        async def close(self, *_args, **_kwargs) -> None:
+            return None
+
+    async def _admit_intake():
+        return _IntakeLease()
+
+    async def _admit_generation():
+        nonlocal generation_calls
+        generation_calls += 1
+        raise AssertionError("oversized input must not reach generation admission")
+
+    monkeypatch.setattr(question_router_module, "_admit_question_intake", _admit_intake)
+    monkeypatch.setattr(question_router_module, "_admit_question_generation", _admit_generation)
+
+    websocket = FakeWebSocket()
+    asyncio.run(question_router_module.websocket_question_generate(websocket))
+
+    assert generation_calls == 0
+    assert websocket.messages == [
+        {"type": "error", "content": "Question generation is unavailable."}
+    ]
+
+
+def test_question_initial_request_has_a_bounded_idle_timeout(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    question_router_module = _load_question_router_module(monkeypatch)
+    monkeypatch.setattr(question_router_module, "_QUESTION_INITIAL_REQUEST_TIMEOUT_S", 0.01)
+
+    class FakeWebSocket:
+        async def receive(self) -> dict:
+            await asyncio.sleep(1)
+            return {"type": "websocket.receive", "text": "{}"}
+
+    with pytest.raises(TimeoutError):
+        asyncio.run(question_router_module._receive_bounded_request_json(FakeWebSocket()))
+
+
+def test_question_intake_leases_bound_and_release(monkeypatch: pytest.MonkeyPatch) -> None:
+    question_router_module = _load_question_router_module(monkeypatch)
+    from deeptutor.multi_user.context import (
+        reset_current_user,
+        set_current_user,
+        user_from_token_payload,
+    )
+    from deeptutor.services.sandbox.quota import QuotaExceeded, UserExecQuota
+
+    monkeypatch.setattr(
+        question_router_module,
+        "_QUESTION_INTAKE_USER_QUOTA",
+        UserExecQuota(max_concurrent=1, max_per_minute=10),
+    )
+    monkeypatch.setattr(
+        question_router_module,
+        "_QUESTION_INTAKE_GLOBAL_QUOTA",
+        UserExecQuota(max_concurrent=1, max_per_minute=10),
+    )
+
+    async def _exercise() -> None:
+        token = set_current_user(user_from_token_payload(None))
+        try:
+            first = await question_router_module._admit_question_intake()
+            with pytest.raises(QuotaExceeded):
+                await question_router_module._admit_question_intake()
+            await first.aclose()
+            released = await question_router_module._admit_question_intake()
+            await released.aclose()
+        finally:
+            reset_current_user(token)
+
+    asyncio.run(_exercise())
+
+
+def test_mimic_rejects_invalid_upload_without_question_admission(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    question_router_module = _load_question_router_module(monkeypatch)
+    admission_calls = 0
+    intake_calls = 0
+    intake_releases = 0
+
+    class _Lease:
+        async def aclose(self) -> None:
+            return None
+
+    async def _admit():
+        nonlocal admission_calls
+        admission_calls += 1
+        return None, _Lease()
+
+    async def _admit_intake():
+        nonlocal intake_calls
+        intake_calls += 1
+
+        class IntakeLease:
+            async def aclose(self) -> None:
+                nonlocal intake_releases
+                intake_releases += 1
+
+        return IntakeLease()
+
+    monkeypatch.setattr(question_router_module, "_admit_question_generation", _admit)
+    monkeypatch.setattr(question_router_module, "_admit_question_intake", _admit_intake)
+
+    with TestClient(_build_app(question_router_module)) as client:
+        with client.websocket_connect("/api/v1/question/mimic") as websocket:
+            websocket.send_json(
+                {"mode": "upload", "pdf_data": "not valid base64", "pdf_name": "exam.pdf"}
+            )
+            message = websocket.receive_json()
+
+    # Local validation runs before scarce provider/process capacity is
+    # reserved, so malformed input cannot occupy a generation lease.
+    assert admission_calls == 0
+    assert (intake_calls, intake_releases) == (1, 1)
+    assert message == {"type": "error", "content": "Question generation is unavailable."}
+
+
+def test_mimic_oversized_request_uses_and_releases_intake_without_generation_admission(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    question_router_module = _load_question_router_module(monkeypatch)
+    monkeypatch.setattr(question_router_module, "_MAX_REQUEST_JSON_CHARS", 8)
+    intake_releases = 0
+    generation_calls = 0
+
+    async def _admit_intake():
+        class IntakeLease:
+            async def aclose(self) -> None:
+                nonlocal intake_releases
+                intake_releases += 1
+
+        return IntakeLease()
+
+    async def _admit_generation():
+        nonlocal generation_calls
+        generation_calls += 1
+        raise AssertionError("oversized input must not reach generation admission")
+
+    monkeypatch.setattr(question_router_module, "_admit_question_intake", _admit_intake)
+    monkeypatch.setattr(question_router_module, "_admit_question_generation", _admit_generation)
+
+    with TestClient(_build_app(question_router_module)) as client:
+        with client.websocket_connect("/api/v1/question/mimic") as websocket:
+            websocket.send_text("x" * 9)
+            message = websocket.receive_json()
+
+    assert intake_releases == 1
+    assert generation_calls == 0
+    assert message == {"type": "error", "content": "Question generation is unavailable."}
+
+
+def test_mimic_parsed_request_rejects_unknown_padding_before_json_parsing(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    question_router_module = _load_question_router_module(monkeypatch)
+    raw = '{"mode":"parsed","paper_path":"paper","padding":"' + ("x" * 1_000_000) + '"}'
+
+    with pytest.raises(ValueError, match="request is invalid"):
+        question_router_module._mimic_raw_request_limit(raw)
+
+
+def test_mimic_parsed_request_cap_rejects_before_generation_admission(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    question_router_module = _load_question_router_module(monkeypatch)
+    monkeypatch.setattr(question_router_module, "_MAX_MIMIC_PARSED_REQUEST_JSON_CHARS", 32)
+    generation_calls = 0
+
+    class _IntakeLease:
+        async def aclose(self) -> None:
+            return None
+
+    async def _admit_intake():
+        return _IntakeLease()
+
+    async def _admit_generation():
+        nonlocal generation_calls
+        generation_calls += 1
+        raise AssertionError("oversized parsed input must not reach generation admission")
+
+    monkeypatch.setattr(question_router_module, "_admit_question_intake", _admit_intake)
+    monkeypatch.setattr(question_router_module, "_admit_question_generation", _admit_generation)
+
+    class FakeWebSocket:
+        def __init__(self) -> None:
+            self.messages: list[dict] = []
+
+        async def accept(self) -> None:
+            return None
+
+        async def receive(self) -> dict:
+            return {
+                "type": "websocket.receive",
+                "text": '{"mode":"parsed","paper_path":"paper"}' + (" " * 40),
+            }
+
+        async def send_json(self, payload: dict) -> None:
+            self.messages.append(payload)
+
+        async def close(self, *_args, **_kwargs) -> None:
+            return None
+
+    websocket = FakeWebSocket()
+    asyncio.run(question_router_module.websocket_mimic_generate(websocket))
+
+    assert generation_calls == 0
+    assert websocket.messages == [
+        {"type": "error", "content": "Question generation is unavailable."}
+    ]
+
+
+def test_mimic_request_envelope_is_mode_specific(monkeypatch: pytest.MonkeyPatch) -> None:
+    question_router_module = _load_question_router_module(monkeypatch)
+
+    with pytest.raises(ValueError, match="request is invalid"):
+        question_router_module._validate_mimic_request_envelope(
+            {"mode": "parsed", "paper_path": "paper", "pdf_data": "ignored"}
+        )
+    with pytest.raises(ValueError, match="request is invalid"):
+        question_router_module._validate_mimic_request_envelope(
+            {"mode": "upload", "pdf_data": "data", "padding": "ignored"}
+        )
+
+
+def test_empty_question_requirement_does_not_spend_generation_admission(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    question_router_module = _load_question_router_module(monkeypatch)
+    generation_calls = 0
+
+    class FakeWebSocket:
+        def __init__(self) -> None:
+            self.messages: list[dict] = []
+
+        async def accept(self) -> None:
+            return None
+
+        async def receive(self) -> dict:
+            return {"type": "websocket.receive", "text": '{"requirement":""}'}
+
+        async def send_json(self, payload: dict) -> None:
+            self.messages.append(payload)
+
+        async def close(self, *_args, **_kwargs) -> None:
+            return None
+
+    async def _admit_generation():
+        nonlocal generation_calls
+        generation_calls += 1
+        raise AssertionError("empty requests must not consume generation admission")
+
+    monkeypatch.setattr(question_router_module, "_admit_question_generation", _admit_generation)
+    websocket = FakeWebSocket()
+    asyncio.run(question_router_module.websocket_question_generate(websocket))
+
+    assert generation_calls == 0
+    assert websocket.messages == [{"type": "error", "content": "Requirement is required"}]
+
+
+def test_idle_question_socket_does_not_hold_generation_admission(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    question_router_module = _load_question_router_module(monkeypatch)
+    admission_calls = 0
+
+    class FakeWebSocket:
+        def __init__(self) -> None:
+            self.receive_started = asyncio.Event()
+            self.release_receive = asyncio.Event()
+
+        async def accept(self) -> None:
+            return None
+
+        async def receive(self) -> dict:
+            self.receive_started.set()
+            await self.release_receive.wait()
+            return {
+                "type": "websocket.receive",
+                "text": json.dumps({"requirement": "fractions", "kb_name": "demo-kb"}),
+            }
+
+        async def send_json(self, _payload: dict) -> None:
+            return None
+
+        async def close(self, *_args, **_kwargs) -> None:
+            return None
+
+    async def _admit():
+        nonlocal admission_calls
+        admission_calls += 1
+
+        class Lease:
+            async def aclose(self) -> None:
+                return None
+
+        return None, Lease()
+
+    monkeypatch.setattr(question_router_module, "_admit_question_generation", _admit)
+
+    async def _exercise() -> None:
+        websocket = FakeWebSocket()
+        task = asyncio.create_task(question_router_module.websocket_question_generate(websocket))
+        await asyncio.wait_for(websocket.receive_started.wait(), timeout=1)
+        assert admission_calls == 0
+        websocket.release_receive.set()
+        await task
+        assert admission_calls == 1
+
+    asyncio.run(_exercise())
+
+
+def test_question_global_bulkhead_serializes_generation(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    question_router_module = _load_question_router_module(monkeypatch)
+
+    assert question_router_module._QUESTION_GLOBAL_QUOTA._max_concurrent == 1
+
+
+def test_mimic_parsed_path_is_jailed_to_the_authenticated_workspace(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    question_router_module = _load_question_router_module(monkeypatch)
+    allowed = tmp_path / "parsed-paper"
+    allowed.mkdir()
+    monkeypatch.setattr(
+        question_router_module,
+        "get_path_service",
+        lambda: types.SimpleNamespace(get_question_dir=lambda: tmp_path),
+    )
+
+    assert question_router_module._resolve_parsed_mimic_path("parsed-paper") == str(allowed)
+    with pytest.raises(ValueError):
+        question_router_module._resolve_parsed_mimic_path(str(allowed))
+    with pytest.raises(ValueError):
+        question_router_module._resolve_parsed_mimic_path("../outside")
+
+
+def test_question_scope_rejects_blank_resolved_model(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    question_router_module = _load_question_router_module(monkeypatch)
+
+    reset_tokens: list[object] = []
+    scope_token = object()
+    fake_runtime = types.ModuleType("deeptutor.services.model_selection.runtime")
+    fake_runtime.activate_llm_selection = lambda _selection: (
+        types.SimpleNamespace(model="   "),
+        scope_token,
+    )
+    fake_runtime.reset_llm_selection = reset_tokens.append
+    monkeypatch.setitem(sys.modules, "deeptutor.services.model_selection.runtime", fake_runtime)
+    fake_model_access = types.ModuleType("deeptutor.multi_user.model_access")
+    fake_model_access.has_capability_access = lambda _capability: True
+    fake_model_access.redacted_model_access = lambda _user_id: {"llm": []}
+    monkeypatch.setitem(sys.modules, "deeptutor.multi_user.model_access", fake_model_access)
+    from deeptutor.multi_user.context import (
+        reset_current_user,
+        set_current_user,
+        user_from_token_payload,
+    )
+
+    user_token = set_current_user(
+        user_from_token_payload(
+            types.SimpleNamespace(username="admin", role="admin", user_id="test-admin")
+        )
+    )
+
+    try:
+        with pytest.raises(PermissionError, match="Configured LLM model is unavailable"):
+            question_router_module._activate_question_llm_scope()
+    finally:
+        reset_current_user(user_token)
+
+    assert reset_tokens == [scope_token]
+
+
+def test_question_admission_releases_user_lease_if_global_acquisition_is_cancelled(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    question_router_module = _load_question_router_module(monkeypatch)
+    from deeptutor.multi_user.context import (
+        reset_current_user,
+        set_current_user,
+        user_from_token_payload,
+    )
+    from deeptutor.services.sandbox.quota import UserExecQuota
+
+    class CancelledGlobalQuota:
+        async def acquire(self, _key: str):
+            raise asyncio.CancelledError()
+
+    scope_token = object()
+    reset_tokens: list[object] = []
+    user_quota = UserExecQuota(max_concurrent=1, max_per_minute=10)
+    fake_runtime = types.ModuleType("deeptutor.services.model_selection.runtime")
+    fake_runtime.reset_llm_selection = reset_tokens.append
+    monkeypatch.setitem(sys.modules, "deeptutor.services.model_selection.runtime", fake_runtime)
+    monkeypatch.setattr(question_router_module, "_activate_question_llm_scope", lambda: scope_token)
+    monkeypatch.setattr(question_router_module, "_QUESTION_REQUEST_QUOTA", user_quota)
+    monkeypatch.setattr(question_router_module, "_QUESTION_GLOBAL_QUOTA", CancelledGlobalQuota())
+    user_token = set_current_user(
+        user_from_token_payload(
+            types.SimpleNamespace(username="cancel", role="user", user_id="cancel-user")
+        )
+    )
+
+    async def _exercise() -> None:
+        with pytest.raises(asyncio.CancelledError):
+            await question_router_module._admit_question_generation()
+        lease = await user_quota.acquire("cancel-user")
+        await lease.__aexit__(None, None, None)
+
+    try:
+        asyncio.run(_exercise())
+    finally:
+        reset_current_user(user_token)
+
+    assert reset_tokens == [scope_token]
 
 
 def test_quiz_judge_revalidates_after_upgrade_before_starting_provider_work(
