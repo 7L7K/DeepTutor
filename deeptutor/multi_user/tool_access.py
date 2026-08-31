@@ -1,11 +1,9 @@
 """Per-user tool and exec access resolution (grant v2).
 
-Optional built-in tools keep the partner config semantics for real users:
-``None`` means "unrestricted / follow defaults", a set is an explicit
-whitelist. MCP tools are different because they can proxy host-side
-capabilities through configured MCP servers. For non-admin real users an
-absent MCP grant is therefore deny-by-default; administrators remain
-unrestricted. Synthetic scopes (partners) are handled by the chat pipeline,
+Optional built-in tools are deny-by-default for real non-admin users: an
+absent, null, or empty grant means no optional tools, while a set is an
+explicit administrator-managed whitelist. Administrators remain unrestricted.
+Synthetic scopes (partners) are handled by the chat pipeline,
 where their owner-scoped whitelist travels through context metadata
 (``mcp_tools_filter`` / ``enabled_tools``).
 
@@ -43,13 +41,13 @@ def _current_grant() -> dict | None:
 
 
 def allowed_optional_tools() -> set[str] | None:
-    """Whitelist of user-toggleable tool names, ``None`` = unrestricted."""
+    """Whitelist of user-toggleable tools; only admins are unrestricted."""
     grant = _current_grant()
     if grant is None:
         return None
     value = grant.get("enabled_tools")
     if value is None:
-        return None
+        return set()
     return {str(name) for name in value}
 
 

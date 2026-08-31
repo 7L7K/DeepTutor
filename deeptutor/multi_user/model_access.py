@@ -40,6 +40,26 @@ def _model_by_id(profile: dict[str, Any], model_id: str) -> dict[str, Any] | Non
     return None
 
 
+def _profile_has_usable_credentials(profile: dict[str, Any]) -> bool:
+    """Whether *profile* can run without borrowing another profile's config.
+
+    Learner grants name one concrete profile.  A blank credential on that
+    profile must not become usable merely because another profile has the same
+    binding (or because an operator-level environment fallback exists).
+    Credential-free local providers are the narrow exception: their configured
+    or registry-default local endpoint is the complete runtime authority.
+    """
+
+    spec = find_by_name(str(profile.get("binding") or ""))
+    if spec is None or spec.is_oauth:
+        return False
+    base_url = str(profile.get("base_url") or "").strip()
+    if spec.is_local:
+        return bool(base_url or spec.default_api_base)
+    api_key = str(profile.get("api_key") or "").strip()
+    return bool(api_key and (base_url or spec.default_api_base))
+
+
 def is_owner_bound(profile: dict[str, Any]) -> bool:
     """Whether a profile is tied to the identity of the operator who set it up.
 
@@ -136,14 +156,19 @@ def redacted_model_access(user_id: str | None = None) -> dict[str, list[dict[str
             continue
         for model_id in item.get("model_ids") or []:
             model = _model_by_id(profile, str(model_id))
+            model_value = str((model or {}).get("model") or "").strip()
             result["llm"].append(
                 {
                     "profile_id": profile_id,
                     "model_id": str(model_id),
                     "name": (model or {}).get("name") or str(model_id),
-                    "model": (model or {}).get("model") or "",
+                    "model": model_value,
                     "source": "admin",
-                    "available": model is not None,
+                    "available": bool(
+                        model is not None
+                        and model_value
+                        and _profile_has_usable_credentials(profile)
+                    ),
                 }
             )
     return result
@@ -195,6 +220,10 @@ def apply_allowed_llm_selection(selection: dict[str, Any] | None) -> dict[str, A
     profile_id = str(selection.get("profile_id") or "")
     model_id = str(selection.get("model_id") or "")
     for item in redacted_model_access(user.id).get("llm", []):
-        if item.get("profile_id") == profile_id and item.get("model_id") == model_id:
+        if (
+            item.get("available")
+            and item.get("profile_id") == profile_id
+            and item.get("model_id") == model_id
+        ):
             return selection
     raise PermissionError("This model is not assigned to your account.")

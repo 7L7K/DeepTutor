@@ -12,14 +12,15 @@ from fastapi.testclient import TestClient
 from deeptutor.api.request_body_limits import (
     _NOTEBOOK_UPSERT_PATH,
     NotebookUpsertBodyLimitMiddleware,
+    _request_body_limit,
 )
 
 
-def _limited_app(seen: list[int]) -> FastAPI:
+def _limited_app(seen: list[int], path: str = _NOTEBOOK_UPSERT_PATH) -> FastAPI:
     app = FastAPI()
     app.add_middleware(NotebookUpsertBodyLimitMiddleware)
 
-    @app.post(_NOTEBOOK_UPSERT_PATH)
+    @app.post(path)
     async def upsert(request: Request):
         body = await request.body()
         seen.append(len(body))
@@ -151,6 +152,54 @@ def test_invalid_content_length_is_rejected(monkeypatch, content_length: bytes) 
     asyncio.run(invoke())
 
     assert sent[0]["status"] == 413
+    assert seen == []
+
+
+@pytest.mark.parametrize(
+    ("path", "expected_limit"),
+    [
+        ("/api/v1/notebook/add_record", 64 * 1024),
+        ("/api/v1/notebook/add_record/", 64 * 1024),
+        ("/api/v1/notebook/add_record_with_summary", 64 * 1024),
+        ("/api/v1/notebook/add_record_with_summary/", 64 * 1024),
+        ("/api/v1/learning/progress/book-1/generate-from-notebook", 96 * 1024),
+        ("/api/v1/learning/progress/book-1/generate-from-notebook/", 96 * 1024),
+    ],
+)
+def test_notebook_llm_routes_have_raw_body_limits(path: str, expected_limit: int) -> None:
+    assert _request_body_limit({"method": "POST", "path": path}) == expected_limit
+
+
+def test_notebook_summary_trailing_slash_is_rejected_before_downstream(monkeypatch) -> None:
+    monkeypatch.setattr("deeptutor.api.request_body_limits._NOTEBOOK_SUMMARY_BODY_BYTES", 8)
+    seen: list[int] = []
+    path = "/api/v1/notebook/add_record/"
+
+    with TestClient(_limited_app(seen, path)) as client:
+        response = client.post(
+            path,
+            content=b"123456789",
+            headers={"content-type": "application/json"},
+        )
+
+    assert response.status_code == 413
+    assert seen == []
+
+
+def test_mastery_notebook_trailing_slash_is_rejected_before_downstream(monkeypatch) -> None:
+    monkeypatch.setattr("deeptutor.api.request_body_limits._MASTERY_NOTEBOOK_BODY_BYTES", 8)
+    seen: list[int] = []
+    path = "/api/v1/learning/progress/book-1/generate-from-notebook/"
+
+    with TestClient(_limited_app(seen, path)) as client:
+        response = client.post(
+            path,
+            content=b"123456789",
+            headers={"content-type": "application/json"},
+            follow_redirects=False,
+        )
+
+    assert response.status_code == 413
     assert seen == []
 
 

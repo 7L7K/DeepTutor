@@ -37,10 +37,19 @@ def resolve_llm_config_for_selection(
     """Resolve the LLM config for a chat/session selection reference."""
     if selection is None and text_generation_feature is None:
         return llm_config_module.get_llm_config()
+    strict_profile_credentials = False
+    if selection is not None:
+        # Authenticated learners may activate only the exact server-side
+        # profile approved by their grant.  Admin/global selection keeps the
+        # compatibility fallbacks used by single-user and operator workflows.
+        from deeptutor.multi_user.context import get_current_user
+
+        strict_profile_credentials = not get_current_user().is_admin
     return llm_config_from_resolved(
         resolve_llm_runtime_config(
             llm_selection=selection,
             text_generation_feature=text_generation_feature,
+            strict_profile_credentials=strict_profile_credentials,
         )
     )
 

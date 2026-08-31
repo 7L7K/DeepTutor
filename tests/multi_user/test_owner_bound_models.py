@@ -31,6 +31,7 @@ def _catalog(*, owner_bound: bool) -> dict:
         "id": CODEX_PROFILE,
         "name": "OpenAI Codex",
         "binding": "openai",
+        "api_key": "shared-api-key",
         "models": [{"id": "m-sol", "name": "GPT-5.6-Sol", "model": "gpt-5.6-sol"}],
     }
     if owner_bound:
@@ -88,6 +89,50 @@ def test_ordinary_shared_profiles_stay_grantable(tmp_path, monkeypatch):
         assert model_access.apply_allowed_llm_selection(
             {"profile_id": CODEX_PROFILE, "model_id": "m-sol"}
         ) == {"profile_id": CODEX_PROFILE, "model_id": "m-sol"}
+    finally:
+        reset_current_user(token)
+
+
+def test_granted_model_without_concrete_api_model_is_unavailable(tmp_path, monkeypatch):
+    catalog = _catalog(owner_bound=False)
+    catalog["services"]["llm"]["profiles"][0]["models"][0]["model"] = "  "
+    monkeypatch.setattr(model_access, "admin_catalog", lambda: catalog)
+    monkeypatch.setattr(model_access, "load_grant", _grant)
+    token = set_current_user(make_user(tmp_path))
+    selection = {"profile_id": CODEX_PROFILE, "model_id": "m-sol"}
+    try:
+        granted = model_access.redacted_model_access()["llm"]
+        assert granted[0]["available"] is False
+        assert model_access.allowed_llm_options()["options"] == []
+        assert model_access.has_capability_access("llm") is False
+        with pytest.raises(PermissionError):
+            model_access.apply_allowed_llm_selection(selection)
+    finally:
+        reset_current_user(token)
+
+
+def test_credential_empty_grant_cannot_borrow_same_binding_profile(tmp_path, monkeypatch):
+    granted_profile = _catalog(owner_bound=False)["services"]["llm"]["profiles"][0]
+    granted_profile["api_key"] = ""
+    ungranted_profile = {
+        "id": "p-ungranted",
+        "name": "Ungrantable OpenAI",
+        "binding": "openai",
+        "api_key": "ungranted-key",
+        "base_url": "https://ungranted.example/v1",
+        "models": [{"id": "m-ungranted", "model": "gpt-ungranted"}],
+    }
+    catalog = {"services": {"llm": {"profiles": [granted_profile, ungranted_profile]}}}
+    monkeypatch.setattr(model_access, "admin_catalog", lambda: catalog)
+    monkeypatch.setattr(model_access, "load_grant", _grant)
+    token = set_current_user(make_user(tmp_path))
+    selection = {"profile_id": CODEX_PROFILE, "model_id": "m-sol"}
+    try:
+        granted = model_access.redacted_model_access()["llm"]
+        assert granted[0]["available"] is False
+        assert model_access.has_capability_access("llm") is False
+        with pytest.raises(PermissionError):
+            model_access.apply_allowed_llm_selection(selection)
     finally:
         reset_current_user(token)
 

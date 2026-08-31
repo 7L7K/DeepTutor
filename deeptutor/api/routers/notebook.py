@@ -8,10 +8,15 @@ from typing import AsyncGenerator, Literal
 
 from fastapi import APIRouter, HTTPException
 from fastapi.responses import StreamingResponse
-from pydantic import BaseModel
+from pydantic import BaseModel, Field, field_validator
 
 from deeptutor.agents.notebook import NotebookSummarizeAgent
 from deeptutor.services.llm import clean_thinking_tags
+from deeptutor.services.llm.notebook_admission import (
+    NotebookLLMAdmissionError,
+    QuotaExceeded,
+    admitted_notebook_llm_call,
+)
 from deeptutor.services.notebook import notebook_manager
 
 router = APIRouter()
@@ -41,14 +46,21 @@ class UpdateNotebookRequest(BaseModel):
 class AddRecordRequest(BaseModel):
     """Add record request"""
 
-    notebook_ids: list[str]
+    notebook_ids: list[str] = Field(max_length=20)
     record_type: Literal["solve", "question", "research", "chat", "co_writer", "tutorbot"]
-    title: str
-    summary: str = ""
-    user_query: str
-    output: str
-    metadata: dict = {}
-    kb_name: str | None = None
+    title: str = Field(max_length=500)
+    summary: str = Field(default="", max_length=4_000)
+    user_query: str = Field(max_length=12_000)
+    output: str = Field(max_length=24_000)
+    metadata: dict = Field(default_factory=dict)
+    kb_name: str | None = Field(default=None, max_length=500)
+
+    @field_validator("metadata")
+    @classmethod
+    def metadata_is_bounded(cls, value: dict) -> dict:
+        if len(json.dumps(value, ensure_ascii=False, separators=(",", ":"))) > 8_000:
+            raise ValueError("metadata is too large")
+        return value
 
 
 class RemoveRecordRequest(BaseModel):
@@ -74,23 +86,23 @@ class UpdateRecordRequest(BaseModel):
 async def _build_record_summary(request: AddRecordRequest) -> str:
     if request.summary.strip():
         return clean_thinking_tags(request.summary).strip()
-    agent = NotebookSummarizeAgent(language=str(request.metadata.get("ui_language", "en")))
-    return clean_thinking_tags(
-        await agent.summarize(
-            title=request.title,
-            record_type=request.record_type,
-            user_query=request.user_query,
-            output=request.output,
-            metadata=request.metadata,
-        )
-    ).strip()
+    async with admitted_notebook_llm_call():
+        agent = NotebookSummarizeAgent(language=str(request.metadata.get("ui_language", "en")))
+        return clean_thinking_tags(
+            await agent.summarize(
+                title=request.title,
+                record_type=request.record_type,
+                user_query=request.user_query,
+                output=request.output,
+                metadata=request.metadata,
+            )
+        ).strip()
 
 
 async def _stream_add_record_with_summary(
     request: AddRecordRequest,
 ) -> AsyncGenerator[str, None]:
     try:
-        agent = NotebookSummarizeAgent(language=str(request.metadata.get("ui_language", "en")))
         summary_parts: list[str] = []
         if request.summary.strip():
             summary = clean_thinking_tags(request.summary).strip()
@@ -98,16 +110,18 @@ async def _stream_add_record_with_summary(
             if summary:
                 yield f"data: {json.dumps({'type': 'summary_chunk', 'content': summary}, ensure_ascii=False)}\n\n"
         else:
-            async for chunk in agent.stream_summary(
-                title=request.title,
-                record_type=request.record_type,
-                user_query=request.user_query,
-                output=request.output,
-                metadata=request.metadata,
-            ):
-                if not chunk:
-                    continue
-                summary_parts.append(chunk)
+            async with admitted_notebook_llm_call():
+                agent = NotebookSummarizeAgent(language=str(request.metadata.get("ui_language", "en")))
+                async for chunk in agent.stream_summary(
+                    title=request.title,
+                    record_type=request.record_type,
+                    user_query=request.user_query,
+                    output=request.output,
+                    metadata=request.metadata,
+                ):
+                    if not chunk:
+                        continue
+                    summary_parts.append(chunk)
 
             summary = clean_thinking_tags("".join(summary_parts)).strip()
             if summary:
@@ -292,6 +306,10 @@ async def add_record(request: AddRecordRequest):
             "record": result["record"],
             "added_to_notebooks": result["added_to_notebooks"],
         }
+    except NotebookLLMAdmissionError as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
+    except QuotaExceeded as exc:
+        raise HTTPException(status_code=429, detail="Notebook LLM request limit reached.") from exc
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 

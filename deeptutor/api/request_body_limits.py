@@ -8,6 +8,16 @@ from deeptutor.services.config.runtime_settings import get_chat_attachment_limit
 
 _NOTEBOOK_UPSERT_PATH = "/api/v1/question-notebook/entries/upsert"
 _JSON_ENVELOPE_BYTES = 1024 * 1024
+_NOTEBOOK_SUMMARY_PATHS = frozenset(
+    {
+        "/api/v1/notebook/add_record",
+        "/api/v1/notebook/add_record_with_summary",
+    }
+)
+_NOTEBOOK_SUMMARY_BODY_BYTES = 64 * 1024
+_MASTERY_NOTEBOOK_PREFIX = "/api/v1/learning/progress/"
+_MASTERY_NOTEBOOK_SUFFIX = "/generate-from-notebook"
+_MASTERY_NOTEBOOK_BODY_BYTES = 96 * 1024
 _COURSE_SOURCE_PREFIX = "/api/v1/courses/"
 _COURSE_SOURCE_SUFFIX = "/sources"
 _COURSE_SOURCE_BODY_BYTES = 12 * 1024 * 1024
@@ -34,8 +44,20 @@ def _request_body_limit(scope: Scope) -> int | None:
     method = str(scope.get("method") or "").upper()
     if method != "POST":
         return None
-    if path == _NOTEBOOK_UPSERT_PATH:
+    if normalized_path == _NOTEBOOK_UPSERT_PATH:
         return notebook_upsert_body_limit()
+    if normalized_path in _NOTEBOOK_SUMMARY_PATHS:
+        return _NOTEBOOK_SUMMARY_BODY_BYTES
+    if (
+        normalized_path.startswith(_MASTERY_NOTEBOOK_PREFIX)
+        and normalized_path.endswith(_MASTERY_NOTEBOOK_SUFFIX)
+        and len(normalized_path) > len(_MASTERY_NOTEBOOK_PREFIX) + len(_MASTERY_NOTEBOOK_SUFFIX)
+        and "/"
+        not in normalized_path[
+            len(_MASTERY_NOTEBOOK_PREFIX) : -len(_MASTERY_NOTEBOOK_SUFFIX)
+        ]
+    ):
+        return _MASTERY_NOTEBOOK_BODY_BYTES
     if (
         normalized_path.startswith(_COURSE_SOURCE_PREFIX)
         and normalized_path.endswith(_COURSE_SOURCE_SUFFIX)

@@ -7,6 +7,7 @@ Verifies that records can only be saved using real notebook UUIDs
 from __future__ import annotations
 
 import asyncio
+from contextlib import asynccontextmanager
 import importlib
 import json
 
@@ -19,6 +20,8 @@ TestClient = pytest.importorskip("fastapi.testclient").TestClient
 
 notebook_router = importlib.import_module("deeptutor.api.routers.notebook").router
 
+from deeptutor.multi_user.context import reset_current_user, set_current_user
+from deeptutor.multi_user.models import CurrentUser, UserScope
 from deeptutor.services.notebook.service import NotebookManager
 
 
@@ -133,6 +136,12 @@ def test_stream_add_record_with_summary_strips_thinking_tags(
         "deeptutor.api.routers.notebook.NotebookSummarizeAgent",
         FakeSummarizeAgent,
     )
+
+    @asynccontextmanager
+    async def admitted():
+        yield None
+
+    monkeypatch.setattr("deeptutor.api.routers.notebook.admitted_notebook_llm_call", admitted)
     nb = manager.create_notebook(name="My Notes")
 
     async def collect_events() -> list[dict]:
@@ -159,3 +168,68 @@ def test_stream_add_record_with_summary_strips_thinking_tags(
     detail = manager.get_notebook(nb["id"])
     assert detail is not None
     assert detail["records"][0]["summary"] == "Final reusable summary."
+
+
+def test_generated_notebook_summary_rejects_ungranted_learner(manager, tmp_path, monkeypatch) -> None:
+    user = CurrentUser(
+        id="learner-1",
+        username="learner",
+        role="user",
+        scope=UserScope(kind="user", user_id="learner-1", root=tmp_path),
+    )
+    token = set_current_user(user)
+    try:
+        monkeypatch.setattr(
+            "deeptutor.multi_user.model_access.has_capability_access", lambda _capability: False
+        )
+        request = importlib.import_module("deeptutor.api.routers.notebook").AddRecordRequest(
+            notebook_ids=[manager.create_notebook(name="My Notes")["id"]],
+            record_type="chat",
+            title="No grant",
+            user_query="Explain Fourier",
+            output="Fourier transform is...",
+        )
+        with pytest.raises(PermissionError, match="No LLM model"):
+            asyncio.run(
+                importlib.import_module("deeptutor.api.routers.notebook")._build_record_summary(
+                    request
+                )
+            )
+    finally:
+        reset_current_user(token)
+
+
+def test_streamed_summary_reports_ungranted_learner_without_provider_call(
+    manager, tmp_path, monkeypatch
+) -> None:
+    user = CurrentUser(
+        id="learner-1",
+        username="learner",
+        role="user",
+        scope=UserScope(kind="user", user_id="learner-1", root=tmp_path),
+    )
+    token = set_current_user(user)
+    try:
+        monkeypatch.setattr(
+            "deeptutor.multi_user.model_access.has_capability_access", lambda _capability: False
+        )
+        request = importlib.import_module("deeptutor.api.routers.notebook").AddRecordRequest(
+            notebook_ids=[manager.create_notebook(name="My Notes")["id"]],
+            record_type="chat",
+            title="No grant",
+            user_query="Explain Fourier",
+            output="Fourier transform is...",
+        )
+
+        async def collect_events() -> list[dict]:
+            events: list[dict] = []
+            async for raw in importlib.import_module(
+                "deeptutor.api.routers.notebook"
+            )._stream_add_record_with_summary(request):
+                events.append(json.loads(raw.removeprefix("data: ").strip()))
+            return events
+
+        events = asyncio.run(collect_events())
+        assert events == [{"type": "error", "detail": "No LLM model is assigned to this account."}]
+    finally:
+        reset_current_user(token)

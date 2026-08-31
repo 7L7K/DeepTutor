@@ -1,6 +1,8 @@
 import asyncio
 import base64
+from contextlib import AsyncExitStack
 from datetime import datetime
+import json
 import logging
 from pathlib import Path
 import re
@@ -20,10 +22,10 @@ from deeptutor.logging import (
 from deeptutor.services.config import PROJECT_ROOT, load_config_with_main
 from deeptutor.services.llm.config import get_llm_config
 from deeptutor.services.path_service import get_path_service
+from deeptutor.services.sandbox.quota import UserExecQuota
 from deeptutor.services.settings.interface_settings import get_ui_language
 from deeptutor.tools.question import mimic_exam_questions
 from deeptutor.utils.document_validator import DocumentValidator
-from deeptutor.utils.error_utils import format_exception_message
 
 # Setup module logger with unified logging system (from config)
 config = load_config_with_main("main.yaml", PROJECT_ROOT)
@@ -31,6 +33,129 @@ log_dir = config.get("paths", {}).get("user_log_dir") or config.get("logging", {
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
+
+_QUESTION_REQUEST_QUOTA = UserExecQuota(max_concurrent=1, max_per_minute=6)
+_QUESTION_GLOBAL_QUOTA = UserExecQuota(max_concurrent=2, max_per_minute=12)
+_QUESTION_GLOBAL_QUOTA_KEY = "question-generation-global"
+_MAX_QUESTION_COUNT = 10
+_MAX_REQUIREMENT_CHARS = 12_000
+_MAX_KB_NAME_CHARS = 128
+_MAX_MIMIC_PATH_CHARS = 512
+_MAX_MIMIC_PDF_B64_CHARS = (DocumentValidator.MAX_FILE_SIZE * 4) // 3 + 4
+_MAX_REQUEST_JSON_CHARS = _MAX_MIMIC_PDF_B64_CHARS + 64 * 1024
+
+# These are deliberately conservative, process-local beta bulkheads. They
+# protect one application process from accidental or abusive provider usage;
+# they are not distributed billing or durable rate-limit authority.
+
+
+def _bounded_text(value: object, *, maximum: int) -> str:
+    if not isinstance(value, str) or len(value) > maximum:
+        raise ValueError("request text is invalid")
+    return value
+
+
+def _bounded_question_count(value: object, *, default: int) -> int:
+    if value is None:
+        return default
+    if isinstance(value, bool):
+        raise ValueError("question count is invalid")
+    try:
+        count = int(value)
+    except (TypeError, ValueError) as exc:
+        raise ValueError("question count is invalid") from exc
+    if not 1 <= count <= _MAX_QUESTION_COUNT:
+        raise ValueError("question count is invalid")
+    return count
+
+
+def _activate_question_llm_scope() -> object:
+    """Pin non-admin generation to a currently assigned configured model."""
+    from deeptutor.multi_user.context import get_current_user
+    from deeptutor.multi_user.model_access import has_capability_access, redacted_model_access
+    from deeptutor.services.model_selection.runtime import activate_llm_selection
+
+    user = get_current_user()
+    selection: dict[str, str] | None = None
+    if not user.is_admin:
+        if not has_capability_access("llm"):
+            raise PermissionError("No LLM model is assigned to this account.")
+        granted = [
+            item
+            for item in redacted_model_access(user.id).get("llm", [])
+            if item.get("available")
+        ]
+        if not granted:
+            raise PermissionError("No LLM model is assigned to this account.")
+        selection = {
+            "profile_id": str(granted[0].get("profile_id") or ""),
+            "model_id": str(granted[0].get("model_id") or ""),
+        }
+        if not all(selection.values()):
+            raise PermissionError("No LLM model is assigned to this account.")
+    resolved_config, token = activate_llm_selection(selection)
+    if not str(getattr(resolved_config, "model", "") or "").strip():
+        from deeptutor.services.model_selection.runtime import reset_llm_selection
+
+        reset_llm_selection(token)
+        raise PermissionError("Configured LLM model is unavailable")
+    return token
+
+
+async def _admit_question_generation() -> tuple[object, AsyncExitStack]:
+    """Install the authorized model and reserve beta bulkhead leases."""
+    from deeptutor.multi_user.context import get_current_user
+
+    scope_token = _activate_question_llm_scope()
+    leases = AsyncExitStack()
+    try:
+        user_lease = await _QUESTION_REQUEST_QUOTA.acquire(get_current_user().id)
+        await leases.enter_async_context(user_lease)
+        global_lease = await _QUESTION_GLOBAL_QUOTA.acquire(_QUESTION_GLOBAL_QUOTA_KEY)
+        await leases.enter_async_context(global_lease)
+        return scope_token, leases
+    except BaseException:
+        await leases.aclose()
+        from deeptutor.services.model_selection.runtime import reset_llm_selection
+
+        reset_llm_selection(scope_token)
+        raise
+
+
+def _resolve_parsed_mimic_path(value: object) -> str:
+    raw = _bounded_text(value, maximum=_MAX_MIMIC_PATH_CHARS)
+    candidate = Path(raw)
+    if candidate.is_absolute():
+        raise ValueError("parsed paper path is invalid")
+    root = get_path_service().get_question_dir().resolve()
+    resolved = (root / candidate).resolve()
+    try:
+        resolved.relative_to(root)
+    except ValueError as exc:
+        raise ValueError("parsed paper path is invalid") from exc
+    if not resolved.is_dir():
+        raise ValueError("parsed paper path is invalid")
+    return str(resolved)
+
+
+def _validate_request_envelope(data: object) -> dict:
+    if not isinstance(data, dict):
+        raise ValueError("request is invalid")
+    return data
+
+
+async def _receive_bounded_request_json(websocket: WebSocket) -> dict:
+    """Receive one text JSON envelope without parsing an unbounded payload."""
+    message = await websocket.receive()
+    if message.get("type") == "websocket.disconnect":
+        raise WebSocketDisconnect(message.get("code", 1000))
+    raw = message.get("text")
+    if not isinstance(raw, str) or len(raw) > _MAX_REQUEST_JSON_CHARS:
+        raise ValueError("request is invalid")
+    try:
+        return _validate_request_envelope(json.loads(raw))
+    except (TypeError, ValueError, json.JSONDecodeError) as exc:
+        raise ValueError("request is invalid") from exc
 
 
 def _mimic_output_dir():
@@ -66,7 +191,7 @@ async def websocket_mimic_generate(websocket: WebSocket):
         "max_questions": 5  // optional
     }
     """
-    from deeptutor.api.routers.auth import ws_auth_failed, ws_require_auth
+    from deeptutor.api.routers.auth import ws_auth_failed, ws_require_auth, ws_revalidate_auth
     from deeptutor.multi_user.context import reset_current_user
 
     user_token = await ws_require_auth(websocket)
@@ -77,13 +202,38 @@ async def websocket_mimic_generate(websocket: WebSocket):
 
     pusher_task = None
     original_stdout = sys.stdout
+    llm_scope_token = None
+    admission_leases = None
+    uploaded_pdf_bytes: bytes | None = None
 
     try:
         # 1. Wait for config
-        data = await websocket.receive_json()
-        mode = data.get("mode", "parsed")  # "upload" or "parsed"
-        kb_name = data.get("kb_name", "ai_textbook")
-        max_questions = data.get("max_questions")
+        data = await _receive_bounded_request_json(websocket)
+        mode = data.get("mode", "parsed")
+        if mode not in {"upload", "parsed"}:
+            raise ValueError("mimic mode is invalid")
+        kb_name = _bounded_text(data.get("kb_name", "ai_textbook"), maximum=_MAX_KB_NAME_CHARS)
+        max_questions = _bounded_question_count(data.get("max_questions"), default=5)
+        if mode == "upload":
+            pdf_data = _bounded_text(data.get("pdf_data"), maximum=_MAX_MIMIC_PDF_B64_CHARS)
+            pdf_name = _bounded_text(data.get("pdf_name", "exam.pdf"), maximum=255)
+            try:
+                uploaded_pdf_bytes = base64.b64decode(pdf_data, validate=True)
+                if not uploaded_pdf_bytes.startswith(b"%PDF-"):
+                    raise ValueError("not a PDF")
+                safe_pdf_name = DocumentValidator.validate_upload_safety(
+                    pdf_name, len(uploaded_pdf_bytes), {".pdf"}
+                )
+            except (ValueError, TypeError):
+                raise ValueError("upload is invalid") from None
+            data = {**data, "pdf_name": safe_pdf_name}
+        else:
+            paper_path = _resolve_parsed_mimic_path(data.get("paper_path"))
+            data = {**data, "paper_path": paper_path}
+
+        if not await ws_revalidate_auth(websocket):
+            return
+        llm_scope_token, admission_leases = await _admit_question_generation()
 
         logger.info(f"Starting mimic generation (mode: {mode}, kb: {kb_name})")
 
@@ -164,32 +314,11 @@ async def websocket_mimic_generate(websocket: WebSocket):
 
             # Handle PDF upload mode
             if mode == "upload":
-                pdf_data = data.get("pdf_data")
                 pdf_name = data.get("pdf_name", "exam.pdf")
-
-                if not pdf_data:
-                    await websocket.send_json(
-                        {"type": "error", "content": "PDF data is required for upload mode"}
-                    )
-                    return
-
-                # Decode PDF data first to check size
-                try:
-                    pdf_bytes = base64.b64decode(pdf_data)
-                except Exception as e:
-                    await websocket.send_json(
-                        {"type": "error", "content": f"Invalid base64 PDF data: {e}"}
-                    )
-                    return
-
-                # Pre-validate filename and file size before writing
-                try:
-                    safe_name = DocumentValidator.validate_upload_safety(
-                        pdf_name, len(pdf_bytes), {".pdf"}
-                    )
-                except ValueError as e:
-                    await websocket.send_json({"type": "error", "content": str(e)})
-                    return
+                pdf_bytes = uploaded_pdf_bytes
+                if pdf_bytes is None:
+                    raise ValueError("upload is invalid")
+                safe_name = pdf_name
 
                 # Create batch directory for this mimic session
                 timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -211,10 +340,12 @@ async def websocket_mimic_generate(websocket: WebSocket):
                 # Additional validation (file readability, etc.)
                 try:
                     DocumentValidator.validate_file(pdf_path)
-                except (ValueError, FileNotFoundError, PermissionError) as e:
+                except (ValueError, FileNotFoundError, PermissionError):
                     # Clean up invalid or inaccessible file
                     pdf_path.unlink(missing_ok=True)
-                    await websocket.send_json({"type": "error", "content": str(e)})
+                    await websocket.send_json(
+                        {"type": "error", "content": "Invalid generation request."}
+                    )
                     return
 
                 await websocket.send_json(
@@ -246,7 +377,9 @@ async def websocket_mimic_generate(websocket: WebSocket):
                 output_dir = str(batch_dir)
 
             else:
-                await websocket.send_json({"type": "error", "content": f"Unknown mode: {mode}"})
+                await websocket.send_json(
+                    {"type": "error", "content": "Invalid generation request."}
+                )
                 return
 
             # Create WebSocket callback for real-time progress updates
@@ -294,7 +427,7 @@ async def websocket_mimic_generate(websocket: WebSocket):
                 except (RuntimeError, WebSocketDisconnect):
                     logger.debug("WebSocket closed before complete signal could be sent")
             else:
-                error_msg = result.get("error", "Unknown error")
+                error_msg = "Question generation is unavailable."
                 try:
                     await websocket.send_json({"type": "error", "content": error_msg})
                 except (RuntimeError, WebSocketDisconnect):
@@ -309,11 +442,10 @@ async def websocket_mimic_generate(websocket: WebSocket):
 
     except WebSocketDisconnect:
         logger.debug("Client disconnected during mimic generation")
-    except Exception as e:
+    except Exception:
         logger.exception("Mimic generation error")
-        error_msg = format_exception_message(e)
         try:
-            await websocket.send_json({"type": "error", "content": error_msg})
+            await websocket.send_json({"type": "error", "content": "Question generation is unavailable."})
         except Exception:
             pass
     finally:
@@ -343,6 +475,13 @@ async def websocket_mimic_generate(websocket: WebSocket):
         except Exception:
             pass
 
+        if admission_leases is not None:
+            await admission_leases.aclose()
+        if llm_scope_token is not None:
+            from deeptutor.services.model_selection.runtime import reset_llm_selection
+
+            reset_llm_selection(llm_scope_token)
+
         if user_token is not None:
             try:
                 reset_current_user(user_token)
@@ -352,7 +491,7 @@ async def websocket_mimic_generate(websocket: WebSocket):
 
 @router.websocket("/generate")
 async def websocket_question_generate(websocket: WebSocket):
-    from deeptutor.api.routers.auth import ws_auth_failed, ws_require_auth
+    from deeptutor.api.routers.auth import ws_auth_failed, ws_require_auth, ws_revalidate_auth
     from deeptutor.multi_user.context import reset_current_user
 
     user_token = await ws_require_auth(websocket)
@@ -363,13 +502,23 @@ async def websocket_question_generate(websocket: WebSocket):
 
     # Get task ID manager
     task_manager = TaskIDManager.get_instance()
+    llm_scope_token = None
+    admission_leases = None
 
     try:
         # 1. Wait for config
-        data = await websocket.receive_json()
+        data = await _receive_bounded_request_json(websocket)
         requirement = data.get("requirement")
-        kb_name = data.get("kb_name", "ai_textbook")
-        count = data.get("count", 1)
+        if isinstance(requirement, dict):
+            requirement = {
+                key: _bounded_text(value, maximum=_MAX_REQUIREMENT_CHARS)
+                for key, value in requirement.items()
+                if key in {"knowledge_point", "preference", "difficulty", "question_type"}
+            }
+        else:
+            requirement = _bounded_text(requirement, maximum=_MAX_REQUIREMENT_CHARS)
+        kb_name = _bounded_text(data.get("kb_name", "ai_textbook"), maximum=_MAX_KB_NAME_CHARS)
+        count = _bounded_question_count(data.get("count"), default=1)
 
         if not requirement:
             try:
@@ -377,6 +526,10 @@ async def websocket_question_generate(websocket: WebSocket):
             except (RuntimeError, WebSocketDisconnect):
                 pass
             return
+
+        if not await ws_revalidate_auth(websocket):
+            return
+        llm_scope_token, admission_leases = await _admit_question_generation()
 
         # Generate task ID
         task_key = f"question_{kb_name}_{hash(str(requirement))}"
@@ -389,23 +542,19 @@ async def websocket_question_generate(websocket: WebSocket):
             logger.debug("WebSocket closed, cannot send task_id")
             return
 
-        logger.info(
-            f"[{task_id}] Starting question generation: {requirement.get('knowledge_point', 'Unknown')}"
-        )
+        topic_for_log = requirement.get("knowledge_point", "Unknown") if isinstance(requirement, dict) else requirement
+        logger.info(f"[{task_id}] Starting question generation: {topic_for_log}")
 
         # 2. Initialize Coordinator
         path_service = get_path_service()
         output_base = path_service.get_question_batch_dir(task_id)
 
-        try:
-            llm_config = get_llm_config()
-            api_key = llm_config.api_key
-            base_url = llm_config.base_url
-            api_version = getattr(llm_config, "api_version", None)
-        except Exception:
-            api_key = None
-            base_url = None
-            api_version = None
+        llm_config = get_llm_config()
+        if not str(getattr(llm_config, "model", "") or "").strip():
+            raise PermissionError("Configured LLM model is unavailable")
+        api_key = llm_config.api_key
+        base_url = llm_config.base_url
+        api_version = getattr(llm_config, "api_version", None)
 
         coordinator = AgentCoordinator(
             api_key=api_key,
@@ -460,9 +609,6 @@ async def websocket_question_generate(websocket: WebSocket):
                         if isinstance(requirement, dict)
                         else str(requirement)
                     )
-                    preference = (
-                        requirement.get("preference", "") if isinstance(requirement, dict) else ""
-                    )
                     difficulty = (
                         requirement.get("difficulty", "") if isinstance(requirement, dict) else ""
                     )
@@ -471,6 +617,8 @@ async def websocket_question_generate(websocket: WebSocket):
                         if isinstance(requirement, dict)
                         else ""
                     )
+                    question_types = [question_type] if question_type else []
+                    per_type_counts = {question_type: count} if question_type else {}
 
                     logger.info(
                         f"Starting question generation for {count} question(s), topic: {user_topic}"
@@ -478,10 +626,10 @@ async def websocket_question_generate(websocket: WebSocket):
 
                     batch_result = await coordinator.generate_from_topic(
                         user_topic=user_topic,
-                        preference=preference,
                         num_questions=count,
                         difficulty=difficulty,
-                        question_type=question_type,
+                        question_types=question_types,
+                        per_type_counts=per_type_counts,
                     )
 
                     # Send batch summary
@@ -516,8 +664,8 @@ async def websocket_question_generate(websocket: WebSocket):
                     except (RuntimeError, WebSocketDisconnect):
                         logger.debug("WebSocket closed, cannot send complete signal")
 
-        except Exception as e:
-            error_msg = format_exception_message(e)
+        except Exception:
+            error_msg = "Question generation is unavailable."
             error_traceback = traceback.format_exc()
             logger.error(f"Question generation error: {error_msg}")
             logger.error(f"Error traceback:\n{error_traceback}")
@@ -555,14 +703,32 @@ async def websocket_question_generate(websocket: WebSocket):
                 await pusher_task
             except asyncio.CancelledError:
                 pass
-            await websocket.close()
+            try:
+                await websocket.close()
+            except Exception:
+                pass
 
     except WebSocketDisconnect:
         logger.debug("Client disconnected")
-    except Exception as e:
-        error_msg = format_exception_message(e)
-        logger.error(f"WebSocket error: {error_msg}")
+    except Exception:
+        logger.exception("Question generation WebSocket error")
+        try:
+            await websocket.send_json(
+                {"type": "error", "content": "Question generation is unavailable."}
+            )
+        except (RuntimeError, WebSocketDisconnect):
+            pass
     finally:
+        try:
+            await websocket.close()
+        except Exception:
+            pass
+        if admission_leases is not None:
+            await admission_leases.aclose()
+        if llm_scope_token is not None:
+            from deeptutor.services.model_selection.runtime import reset_llm_selection
+
+            reset_llm_selection(llm_scope_token)
         if user_token is not None:
             try:
                 reset_current_user(user_token)

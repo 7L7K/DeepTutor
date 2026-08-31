@@ -113,12 +113,8 @@ def test_chat_policy_can_resolve_luna_from_configured_profile() -> None:
     }
     catalog = _build_catalog(llm_profile=profile, llm_model=profile["models"][0])
     catalog["text_generation"]["default_model"] = "gpt-5.6-luna"
-    catalog["text_generation"]["features"]["flashcard_generation"]["model"] = (
-        "rollback"
-    )
-    catalog["text_generation"]["features"]["practice_generation"]["model"] = (
-        "rollback"
-    )
+    catalog["text_generation"]["features"]["flashcard_generation"]["model"] = "rollback"
+    catalog["text_generation"]["features"]["practice_generation"]["model"] = "rollback"
 
     resolved = resolve_llm_runtime_config(
         catalog=catalog,
@@ -133,12 +129,8 @@ def test_chat_policy_can_resolve_luna_from_configured_profile() -> None:
 def test_chat_policy_rejects_model_without_provider_configuration() -> None:
     catalog = _build_catalog()
     catalog["text_generation"]["default_model"] = "gpt-5.6-luna"
-    catalog["text_generation"]["features"]["flashcard_generation"]["model"] = (
-        "rollback"
-    )
-    catalog["text_generation"]["features"]["practice_generation"]["model"] = (
-        "rollback"
-    )
+    catalog["text_generation"]["features"]["flashcard_generation"]["model"] = "rollback"
+    catalog["text_generation"]["features"]["practice_generation"]["model"] = "rollback"
 
     with pytest.raises(ValueError, match="no configured provider profile"):
         resolve_llm_runtime_config(
@@ -481,6 +473,97 @@ def test_llm_selection_overrides_active_model_without_mutating_catalog() -> None
     assert resolved.provider_mode == "local"
     assert catalog["services"]["llm"]["active_profile_id"] == "p-a"
     assert catalog["services"]["llm"]["active_model_id"] == "m-a"
+
+
+def test_strict_llm_selection_does_not_borrow_same_binding_credentials(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("LLM_API_KEY", "operator-environment-key")
+    monkeypatch.setenv("OPENAI_API_KEY", "operator-openai-key")
+    granted_profile = {
+        "id": "p-granted",
+        "name": "Granted OpenAI",
+        "binding": "openai",
+        "base_url": "",
+        "api_key": "",
+        "api_version": "",
+        "extra_headers": {},
+        "models": [{"id": "m-granted", "name": "GPT", "model": "gpt-granted"}],
+    }
+    ungranted_profile = {
+        "id": "p-ungranted",
+        "name": "Ungrantable OpenAI",
+        "binding": "openai",
+        "base_url": "https://ungranted.example/v1",
+        "api_key": "ungranted-key",
+        "api_version": "",
+        "extra_headers": {},
+        "models": [{"id": "m-ungranted", "name": "GPT", "model": "gpt-ungranted"}],
+    }
+    catalog = _build_catalog(llm_profile=granted_profile)
+    catalog["services"]["llm"]["profiles"].append(ungranted_profile)
+
+    with pytest.raises(ValueError, match="no usable credential"):
+        resolve_llm_runtime_config(
+            catalog=catalog,
+            llm_selection={"profile_id": "p-granted", "model_id": "m-granted"},
+            strict_profile_credentials=True,
+        )
+
+
+def test_strict_llm_selection_uses_provider_default_not_ungranted_base_url() -> None:
+    granted_profile = {
+        "id": "p-granted",
+        "name": "Granted OpenAI",
+        "binding": "openai",
+        "base_url": "",
+        "api_key": "granted-key",
+        "api_version": "",
+        "extra_headers": {},
+        "models": [{"id": "m-granted", "name": "GPT", "model": "gpt-granted"}],
+    }
+    ungranted_profile = {
+        "id": "p-ungranted",
+        "name": "Ungrantable OpenAI",
+        "binding": "openai",
+        "base_url": "https://ungranted.example/v1",
+        "api_key": "ungranted-key",
+        "api_version": "",
+        "extra_headers": {},
+        "models": [{"id": "m-ungranted", "name": "GPT", "model": "gpt-ungranted"}],
+    }
+    catalog = _build_catalog(llm_profile=granted_profile)
+    catalog["services"]["llm"]["profiles"].append(ungranted_profile)
+
+    resolved = resolve_llm_runtime_config(
+        catalog=catalog,
+        llm_selection={"profile_id": "p-granted", "model_id": "m-granted"},
+        strict_profile_credentials=True,
+    )
+
+    assert resolved.api_key == "granted-key"
+    assert resolved.base_url == "https://api.openai.com/v1"
+
+
+def test_strict_llm_selection_rejects_blank_api_model() -> None:
+    profile = {
+        "id": "p-granted",
+        "name": "Granted OpenAI",
+        "binding": "openai",
+        "base_url": "https://api.openai.com/v1",
+        "api_key": "granted-key",
+        "api_version": "",
+        "extra_headers": {},
+        "models": [{"id": "m-granted", "name": "Blank", "model": ""}],
+    }
+    catalog = _build_catalog(llm_profile=profile)
+
+    with pytest.raises(ValueError, match="no concrete API model"):
+        resolve_llm_runtime_config(
+            catalog=catalog,
+            llm_selection={"profile_id": "p-granted", "model_id": "m-granted"},
+            strict_profile_credentials=True,
+        )
 
 
 def test_llm_reasoning_effort_resolves_from_catalog() -> None:

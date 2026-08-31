@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- Made optional learner tools deny-by-default and closed remaining legacy
+  learner AI admission gaps. Missing or null built-in-tool grants now expose no
+  optional tools; legacy Question, Notebook summary, and mastery-generation
+  paths require live scoped model authority and bounded beta admission instead
+  of falling back to deployment-global provider access.
+
 - Closed additional controlled-beta resource and shared-browser boundaries.
   Personal Knowledge Base indexing remains owner/admin-only. Course-source
   uploads are deny-by-default per learner grant and now enforce pre-parse body
