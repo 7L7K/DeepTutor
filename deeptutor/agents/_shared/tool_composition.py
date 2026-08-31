@@ -175,9 +175,7 @@ def compose_enabled_tools(
             else []
         )
         ask_user_floor = (
-            ["ask_user"]
-            if builtin_whitelist is None or "ask_user" in builtin_whitelist
-            else []
+            ["ask_user"] if builtin_whitelist is None or "ask_user" in builtin_whitelist else []
         )
         return _finalize([*owned, *extra, *ask_user_floor], forced, suppressed)
 
