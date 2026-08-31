@@ -72,6 +72,11 @@ def test_compose_files_do_not_consume_legacy_env_names() -> None:
         assert "\n      - AUTH_ENABLED" not in content
         assert "DEEPTUTOR_DOCKER_BACKEND_PORT" in content
 
+    ghcr = (Path(__file__).resolve().parents[2] / "docker-compose.ghcr.yml").read_text(
+        encoding="utf-8"
+    )
+    assert "./data/system:/app/data/system" in ghcr
+
 
 def test_dockerfile_is_json_driven_without_bundle_sed() -> None:
     """The image no longer rewrites the built bundle at startup (the runtime

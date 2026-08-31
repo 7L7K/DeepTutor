@@ -49,6 +49,9 @@ services:
     volumes:
       # Persistent data (created automatically on first start)
       - ./data/user:/app/data/user
+      # Durable identity, grants, audit, and provider-owner state. Keeping this
+      # tree persistent prevents recreation from reopening first-admin bootstrap.
+      - ./data/system:/app/data/system
       - ./data/memory:/app/data/memory
       - ./data/knowledge_bases:/app/data/knowledge_bases
 

@@ -22,6 +22,7 @@ import os
 from pathlib import Path
 import resource
 import shutil
+import signal
 
 import httpx
 
@@ -199,6 +200,7 @@ class RestrictedSubprocessBackend(SandboxBackend):
                     cwd=cwd,
                     env=env,
                     preexec_fn=_build_preexec_fn(request),
+                    start_new_session=os.name == "posix",
                 )
             else:
                 process = await asyncio.create_subprocess_shell(
@@ -208,6 +210,7 @@ class RestrictedSubprocessBackend(SandboxBackend):
                     cwd=cwd,
                     env=env,
                     preexec_fn=_build_preexec_fn(request),
+                    start_new_session=os.name == "posix",
                 )
         except Exception as exc:
             return ExecResult(error=f"{type(exc).__name__}: {exc}")
@@ -251,6 +254,15 @@ async def _communicate(
     max_bytes = max(1, int(max_output_chars)) * 4
     overflow = asyncio.Event()
 
+    def _stop_process_tree() -> None:
+        """Terminate the request's process group, including descendants."""
+        if os.name == "posix":
+            with suppress(ProcessLookupError, OSError):
+                os.killpg(process.pid, signal.SIGKILL)
+                return
+        with suppress(ProcessLookupError):
+            process.kill()
+
     async def _read_bounded(stream: asyncio.StreamReader | None) -> bytes:
         if stream is None:
             return b""
@@ -264,8 +276,7 @@ async def _communicate(
             if len(chunk) > remaining:
                 chunks.append(chunk[:remaining])
                 overflow.set()
-                with suppress(ProcessLookupError):
-                    process.kill()
+                _stop_process_tree()
                 break
             chunks.append(chunk)
             total += len(chunk)
@@ -277,8 +288,7 @@ async def _communicate(
             timeout=timeout_s,
         )
     except asyncio.TimeoutError:
-        with suppress(ProcessLookupError):
-            process.kill()
+        _stop_process_tree()
         with suppress(asyncio.TimeoutError):
             await asyncio.wait_for(process.wait(), timeout=5.0)
         return ExecResult(timed_out=True, exit_code=124)

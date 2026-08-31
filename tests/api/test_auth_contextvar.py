@@ -285,3 +285,26 @@ def test_decode_token_rejects_mismatched_or_missing_immutable_user_id(monkeypatc
         algorithm="HS256",
     )
     assert auth.decode_token(missing) is None
+
+
+def test_decode_token_requires_immutable_pocketbase_id(monkeypatch) -> None:
+    from deeptutor.services import auth
+    import deeptutor.services.pocketbase_client as pocketbase_client
+
+    monkeypatch.setattr(auth, "POCKETBASE_ENABLED", True)
+    monkeypatch.setattr(
+        pocketbase_client,
+        "validate_pb_token",
+        lambda _token: {"username": "alice", "role": "user", "id": "pb_alice"},
+    )
+
+    payload = auth.decode_token("pocketbase-token")
+    assert payload is not None
+    assert payload.user_id == "pb_alice"
+
+    monkeypatch.setattr(
+        pocketbase_client,
+        "validate_pb_token",
+        lambda _token: {"username": "alice", "role": "user"},
+    )
+    assert auth.decode_token("missing-id-token") is None

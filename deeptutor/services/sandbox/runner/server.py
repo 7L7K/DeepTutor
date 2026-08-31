@@ -90,6 +90,14 @@ _DEFAULT_MEMORY_MB = 512
 _DEFAULT_CPU_SECONDS = 30
 _DEFAULT_MAX_OUTPUT_CHARS = 10_000
 
+# Per-request ceilings are deliberately stricter than the container's cgroup
+# limits. A caller must not turn a valid request into an unbounded wait,
+# allocation, or output buffer by supplying a large positive integer.
+_MAX_TIMEOUT_S = 300
+_MAX_MEMORY_MB = 1_024
+_MAX_CPU_SECONDS = 300
+_MAX_OUTPUT_CHARS = 1_000_000
+
 # Generous file-descriptor ceiling: high enough for normal tooling (git, build
 # steps), low enough to bound a runaway fd leak.
 _RLIMIT_NOFILE = 4096
@@ -227,10 +235,12 @@ def execute(payload: dict[str, Any]) -> dict[str, Any]:
     limits = payload.get("limits") or {}
     if not isinstance(limits, dict):
         return _error_result("'limits' must be an object")
-    timeout_s = _int(limits.get("timeout_s"), _DEFAULT_TIMEOUT_S)
-    memory_mb = _int(limits.get("memory_mb"), _DEFAULT_MEMORY_MB)
-    cpu_seconds = _int(limits.get("cpu_seconds"), _DEFAULT_CPU_SECONDS)
-    max_output_chars = _int(limits.get("max_output_chars"), _DEFAULT_MAX_OUTPUT_CHARS)
+    timeout_s = _bounded_int(limits.get("timeout_s"), _DEFAULT_TIMEOUT_S, _MAX_TIMEOUT_S)
+    memory_mb = _bounded_int(limits.get("memory_mb"), _DEFAULT_MEMORY_MB, _MAX_MEMORY_MB)
+    cpu_seconds = _bounded_int(limits.get("cpu_seconds"), _DEFAULT_CPU_SECONDS, _MAX_CPU_SECONDS)
+    max_output_chars = _bounded_int(
+        limits.get("max_output_chars"), _DEFAULT_MAX_OUTPUT_CHARS, _MAX_OUTPUT_CHARS
+    )
 
     preexec_fn = _build_preexec_fn(memory_mb, cpu_seconds)
 
@@ -380,6 +390,11 @@ def _int(value: Any, default: int) -> int:
     except (TypeError, ValueError):
         return default
     return result if result > 0 else default
+
+
+def _bounded_int(value: Any, default: int, maximum: int) -> int:
+    """Coerce a positive integer and clamp it to a server-side ceiling."""
+    return min(_int(value, default), maximum)
 
 
 def _error_result(message: str) -> dict[str, Any]:

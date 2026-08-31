@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- Tightened the remaining controlled-beta release boundaries. Production now
+  requires a durable owner identity, the GHCR recipe persists `data/system`,
+  PocketBase scopes tokens by immutable record ID, fallback subprocesses clean
+  up descendants, and the runner clamps caller-supplied resource limits.
+
 - Made optional learner tools deny-by-default and closed remaining legacy
   learner AI admission gaps. Missing or null built-in-tool grants now expose no
   optional tools; legacy Question, Notebook summary, and mastery-generation

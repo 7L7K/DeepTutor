@@ -275,10 +275,15 @@ def decode_token(token: str) -> TokenPayload | None:
         payload = validate_pb_token(token)
         if payload is None:
             return None
+        user_id = str(payload.get("id") or payload.get("uid") or payload.get("user_id") or "")
+        if not user_id:
+            # PocketBase tenant scope must be bound to its immutable record id;
+            # falling back to a mutable username can cross account boundaries.
+            return None
         return TokenPayload(
             username=payload["username"],
             role=payload.get("role", "user"),
-            user_id=str(payload.get("id") or payload.get("uid") or payload.get("user_id") or ""),
+            user_id=user_id,
         )
 
     # Standard JWT + bcrypt mode

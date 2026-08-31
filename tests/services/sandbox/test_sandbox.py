@@ -93,6 +93,43 @@ async def test_restricted_subprocess_stops_when_output_budget_is_exceeded() -> N
     assert len(result.stdout) <= 400
 
 
+@pytest.mark.skipif(os.name != "posix", reason="process-group cleanup requires POSIX")
+@pytest.mark.parametrize("limit", ["timeout", "output"])
+@pytest.mark.asyncio
+async def test_restricted_subprocess_limit_stops_descendant_processes(tmp_path, limit: str) -> None:
+    """The local fallback must not leave a child alive after enforcement."""
+    marker = tmp_path / f"{limit}-fallback-descendant-survived"
+    child_script = (
+        "import pathlib, time; "
+        "time.sleep(1.5); "
+        f"pathlib.Path({str(marker)!r}).write_text('survived', encoding='utf-8')"
+    )
+    parent_script = (
+        "import subprocess, sys, time; "
+        f"subprocess.Popen([sys.executable, '-c', {child_script!r}]); "
+        + (
+            "time.sleep(30)"
+            if limit == "timeout"
+            else "print('x' * 100000, flush=True); time.sleep(30)"
+        )
+    )
+    limits = ResourceLimits(timeout_s=1, max_output_chars=10_000)
+    if limit == "output":
+        limits = ResourceLimits(timeout_s=5, max_output_chars=16)
+
+    result = await RestrictedSubprocessBackend().exec(
+        ExecRequest.of_argv([sys.executable, "-c", parent_script], limits=limits)
+    )
+
+    if limit == "timeout":
+        assert result.timed_out
+        assert result.exit_code == 124
+    else:
+        assert "output limit exceeded" in result.error
+    await asyncio.sleep(0.8 if limit == "timeout" else 1.8)
+    assert not marker.exists(), "fallback limit left a descendant process alive"
+
+
 @pytest.mark.asyncio
 async def test_service_disabled_when_no_backend() -> None:
     svc = SandboxService(SandboxSettings(runner_url="", allow_subprocess=False))
@@ -173,6 +210,37 @@ def test_runner_server_executes_and_truncates_output() -> None:
     assert result["error"] == ""
     assert "truncated" in result["stdout"]
     assert len(result["stdout"]) < 120
+
+
+def test_runner_server_clamps_request_limits(monkeypatch: pytest.MonkeyPatch) -> None:
+    from deeptutor.services.sandbox.runner import server
+
+    captured: dict[str, int] = {}
+
+    def fake_run(command, **kwargs):  # noqa: ANN001, ANN002
+        captured.update(
+            {
+                "timeout_s": kwargs["timeout_s"],
+                "max_output_chars": kwargs["max_output_chars"],
+            }
+        )
+        return b"", b"", False, False, 0
+
+    monkeypatch.setattr(server, "_run_bounded_process", fake_run)
+    result = server.execute(
+        {
+            "command": "true",
+            "limits": {
+                "timeout_s": 10**9,
+                "memory_mb": 10**9,
+                "cpu_seconds": 10**9,
+                "max_output_chars": 10**9,
+            },
+        }
+    )
+
+    assert result["error"] == ""
+    assert captured == {"timeout_s": 300, "max_output_chars": 1_000_000}
 
 
 @pytest.mark.skipif(os.name != "posix", reason="runner process groups require POSIX")

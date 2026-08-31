@@ -91,8 +91,39 @@ def test_production_startup_rejects_disabled_or_missing_auth(monkeypatch) -> Non
 def test_production_startup_accepts_enabled_auth(monkeypatch) -> None:
     monkeypatch.setattr(api_main, "is_production_environment", lambda: True)
     monkeypatch.setattr(api_main, "load_auth_settings", lambda: {"enabled": True})
+    monkeypatch.setattr(api_main, "_has_durable_production_identity", lambda _settings: True)
 
     api_main.validate_production_auth_configuration()
+
+
+def test_production_startup_rejects_missing_durable_identity(monkeypatch) -> None:
+    monkeypatch.setattr(api_main, "is_production_environment", lambda: True)
+    monkeypatch.setattr(api_main, "load_auth_settings", lambda: {"enabled": True})
+    monkeypatch.setattr(api_main, "_has_durable_production_identity", lambda _settings: False)
+
+    with pytest.raises(RuntimeError, match="durable owner identity"):
+        api_main.validate_production_auth_configuration()
+
+
+def test_durable_identity_accepts_persisted_admin_store(monkeypatch, tmp_path) -> None:
+    from deeptutor.multi_user import identity
+
+    users_file = tmp_path / "auth" / "users.json"
+    monkeypatch.setattr(identity, "USERS_FILE", users_file)
+    assert not api_main._has_durable_production_identity({"enabled": True})
+
+    users_file.parent.mkdir(parents=True)
+    users_file.write_text(
+        '{"owner": {"id": "u_owner", "hash": "hash", "role": "admin", "disabled": false}}',
+        encoding="utf-8",
+    )
+    assert api_main._has_durable_production_identity({"enabled": True})
+
+
+def test_durable_identity_accepts_persisted_single_user_bootstrap() -> None:
+    assert api_main._has_durable_production_identity(
+        {"enabled": True, "username": "owner", "password_hash": "hash"}
+    )
 
 
 def test_local_startup_allows_auth_disabled_for_single_user_development(monkeypatch) -> None:
