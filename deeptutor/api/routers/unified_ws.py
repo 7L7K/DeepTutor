@@ -31,11 +31,14 @@ Supported client message ``type`` values:
 from __future__ import annotations
 
 import asyncio
+from contextlib import AsyncExitStack
 import json
 import logging
 from typing import Any
 
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
+
+from deeptutor.services.sandbox.quota import QuotaExceeded, UserExecQuota
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
@@ -50,6 +53,82 @@ _MAX_UNIFIED_FIELD_CHARS = 512
 _MAX_UNIFIED_REPLY_CHARS = 12_000
 _MAX_UNIFIED_LIST_ITEMS = 100
 _MAX_UNIFIED_CONFIG_BYTES = 256 * 1024
+# Only a small, bounded number of authenticated sockets may be waiting for a
+# frame. Leases are released as soon as a frame arrives or the timeout fires;
+# they do not cover turn execution.
+_UNIFIED_WS_RECEIVE_USER_QUOTA = UserExecQuota(max_concurrent=2, max_per_minute=240)
+_UNIFIED_WS_RECEIVE_GLOBAL_QUOTA = UserExecQuota(max_concurrent=32, max_per_minute=2_000)
+_UNIFIED_WS_RECEIVE_GLOBAL_KEY = "unified-ws-receive-global"
+_UNIFIED_WS_FIRST_FRAME_TIMEOUT_S = 30.0
+_UNIFIED_WS_IDLE_FRAME_TIMEOUT_S = 120.0
+# Invalid client frames are never useful after the first protocol violation.
+# Close after sending one generic error rather than keeping an authenticated
+# socket alive for an unbounded stream of malformed messages.
+_MAX_UNIFIED_INVALID_MESSAGES = 1
+
+
+class _UnifiedWsFrameTooLarge(ValueError):
+    """Raised before JSON parsing when a WebSocket text frame exceeds the cap."""
+
+
+def _fits_utf8_byte_limit(value: str, maximum: int) -> bool:
+    """Check a UTF-8 byte ceiling without allocating a duplicate encoded frame."""
+    if value.isascii():
+        return len(value) <= maximum
+    # Every code point needs at least one byte.  This quick check avoids a
+    # long scan for the common clearly-oversized non-ASCII case.
+    if len(value) > maximum:
+        return False
+    total = 0
+    for char in value:
+        codepoint = ord(char)
+        total += (
+            1 if codepoint <= 0x7F else 2 if codepoint <= 0x7FF else 3 if codepoint <= 0xFFFF else 4
+        )
+        if total > maximum:
+            return False
+    return True
+
+
+def _decode_bounded_unified_ws_text(raw: object) -> dict[str, Any]:
+    """Apply the transport ceiling before allocating JSON parser structures."""
+    if not isinstance(raw, str):
+        raise ValueError("WebSocket frame must be text.")
+    if not _fits_utf8_byte_limit(raw, _MAX_UNIFIED_WS_MESSAGE_BYTES):
+        raise _UnifiedWsFrameTooLarge("Message is too large.")
+    try:
+        message = json.loads(raw)
+        return _validate_unified_ws_message(message)
+    except (json.JSONDecodeError, RecursionError, TypeError, ValueError) as exc:
+        if isinstance(exc, _UnifiedWsFrameTooLarge):
+            raise
+        raise ValueError("Invalid message.") from exc
+
+
+async def _receive_bounded_unified_ws_message(ws: WebSocket, *, timeout_s: float) -> dict[str, Any]:
+    """Receive a text frame and reject it before JSON parsing when oversized.
+
+    Uvicorn is configured with the same 64 MiB hard cap, so an oversized
+    network frame is rejected by the server protocol before ASGI receives it.
+    This application-level guard covers direct/test ASGI invocation and avoids
+    allocating a second encoded copy merely to measure UTF-8 bytes.
+    """
+    from deeptutor.multi_user.context import get_current_user
+
+    leases = AsyncExitStack()
+    try:
+        user_lease = await _UNIFIED_WS_RECEIVE_USER_QUOTA.acquire(get_current_user().id)
+        await leases.enter_async_context(user_lease)
+        global_lease = await _UNIFIED_WS_RECEIVE_GLOBAL_QUOTA.acquire(
+            _UNIFIED_WS_RECEIVE_GLOBAL_KEY
+        )
+        await leases.enter_async_context(global_lease)
+        frame = await asyncio.wait_for(ws.receive(), timeout=timeout_s)
+        if frame.get("type") == "websocket.disconnect":
+            raise WebSocketDisconnect(frame.get("code", 1000))
+        return _decode_bounded_unified_ws_text(frame.get("text"))
+    finally:
+        await leases.aclose()
 
 
 def _bounded_ws_string(
@@ -344,22 +423,54 @@ async def unified_websocket(ws: WebSocket) -> None:
         await stop_subscription(key)
         subscription_tasks[key] = asyncio.create_task(_forward())
 
+    invalid_messages = 0
+    received_messages = 0
+
     try:
         while not closed:
-            raw = await ws.receive_text()
             if not await ws_revalidate_auth(ws):
                 closed = True
                 break
-            if len(raw.encode("utf-8")) > _MAX_UNIFIED_WS_MESSAGE_BYTES:
+            try:
+                msg = await _receive_bounded_unified_ws_message(
+                    ws,
+                    timeout_s=(
+                        _UNIFIED_WS_FIRST_FRAME_TIMEOUT_S
+                        if received_messages == 0
+                        else _UNIFIED_WS_IDLE_FRAME_TIMEOUT_S
+                    ),
+                )
+            except _UnifiedWsFrameTooLarge:
                 await safe_send({"type": "error", "content": "Message is too large."})
                 closed = True
                 break
-            try:
-                msg = json.loads(raw)
-                _validate_unified_ws_message(msg)
-            except (json.JSONDecodeError, RecursionError, ValueError, TypeError):
+            except QuotaExceeded:
+                await safe_send(
+                    {"type": "error", "content": "Socket capacity is busy. Retry shortly."}
+                )
+                closed = True
+                break
+            except TimeoutError:
+                await safe_send({"type": "error", "content": "Socket request timed out."})
+                closed = True
+                break
+            except ValueError:
                 await safe_send({"type": "error", "content": "Invalid message."})
+                invalid_messages += 1
+                if invalid_messages >= _MAX_UNIFIED_INVALID_MESSAGES:
+                    closed = True
+                    break
                 continue
+
+            received_messages += 1
+
+            # The first check protects an idle socket before it blocks on
+            # receive; this second check preserves the existing guarantee
+            # that a user disabled while the socket was waiting cannot start
+            # a turn with the just-received message.
+            if not await ws_revalidate_auth(ws):
+                closed = True
+                break
 
             msg_type = msg.get("type")
             requested_course_id = str(msg.get("course_id") or "").strip() or None

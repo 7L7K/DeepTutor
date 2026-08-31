@@ -7,10 +7,8 @@ Provides direct tool execution for the Playground tester.
 """
 
 import asyncio
-import contextlib
 import json
 import logging
-import re
 import time
 from typing import Any, AsyncGenerator
 
@@ -25,7 +23,6 @@ from deeptutor.logging import (
     ProcessLogEvent,
     bind_log_context,
     capture_process_logs,
-    current_log_context,
 )
 from deeptutor.runtime.registry.capability_registry import get_capability_registry
 from deeptutor.runtime.registry.tool_registry import get_tool_registry
@@ -33,7 +30,6 @@ from deeptutor.runtime.registry.tool_registry import get_tool_registry
 logger = logging.getLogger(__name__)
 
 router = APIRouter(dependencies=[Depends(require_admin)])
-ANSI_ESCAPE_RE = re.compile(r"\x1B\[[0-?]*[ -/]*[@-~]")
 
 
 def _discover_plugins() -> list[Any]:
@@ -150,61 +146,6 @@ def _queue_process_emit(
     return emit
 
 
-class _QueueTextStream:
-    """Capture stdout/stderr lines as process-log events."""
-
-    def __init__(
-        self,
-        queue: asyncio.Queue[dict[str, Any]],
-        loop: asyncio.AbstractEventLoop,
-        stream,
-        *,
-        logger_name: str,
-    ):
-        self._queue = queue
-        self._loop = loop
-        self._stream = stream
-        self._logger_name = logger_name
-        self._buffer = ""
-
-    def write(self, text: str) -> int:
-        if self._stream is not None:
-            self._stream.write(text)
-            self._stream.flush()
-
-        self._buffer += text
-        while "\n" in self._buffer:
-            line, self._buffer = self._buffer.split("\n", 1)
-            self._emit_line(line.rstrip("\r"))
-        return len(text)
-
-    def flush(self):
-        if self._stream is not None:
-            self._stream.flush()
-        if self._buffer.strip():
-            self._emit_line(self._buffer)
-            self._buffer = ""
-
-    def isatty(self) -> bool:
-        return False
-
-    def _emit_line(self, line: str) -> None:
-        clean = ANSI_ESCAPE_RE.sub("", line).strip()
-        if not clean:
-            return
-        event = ProcessLogEvent(
-            level="INFO",
-            message=clean,
-            logger=self._logger_name,
-            timestamp=time.time(),
-            context=current_log_context(),
-        )
-        self._loop.call_soon_threadsafe(
-            self._queue.put_nowait,
-            {"kind": "process_log", "payload": event.to_dict()},
-        )
-
-
 async def _execute_stream(tool_name: str, params: dict[str, Any]) -> AsyncGenerator[str, None]:
     """Run a tool while streaming structured process logs and the final result."""
     registry = get_tool_registry()
@@ -215,12 +156,6 @@ async def _execute_stream(tool_name: str, params: dict[str, Any]) -> AsyncGenera
 
     event_queue: asyncio.Queue[dict[str, Any]] = asyncio.Queue()
     loop = asyncio.get_running_loop()
-    stdout_stream = _QueueTextStream(
-        event_queue, loop, stream=None, logger_name="deeptutor.playground.stdout"
-    )
-    stderr_stream = _QueueTextStream(
-        event_queue, loop, stream=None, logger_name="deeptutor.playground.stderr"
-    )
 
     result_holder: dict[str, Any] = {}
     error_holder: dict[str, str] = {}
@@ -229,17 +164,9 @@ async def _execute_stream(tool_name: str, params: dict[str, Any]) -> AsyncGenera
 
     async def _run():
         try:
-            import sys
-
-            stdout_stream._stream = sys.stdout
-            stderr_stream._stream = sys.stderr
             with bind_log_context(task_id=task_id, capability="playground", sink="ui"):
                 with capture_process_logs(_queue_process_emit(event_queue, loop), task_id=task_id):
-                    with (
-                        contextlib.redirect_stdout(stdout_stream),
-                        contextlib.redirect_stderr(stderr_stream),
-                    ):
-                        result = await tool.execute(**params)
+                    result = await tool.execute(**params)
             result_holder["data"] = {
                 "success": result.success,
                 "content": result.content,
@@ -249,8 +176,6 @@ async def _execute_stream(tool_name: str, params: dict[str, Any]) -> AsyncGenera
         except Exception as exc:
             error_holder["detail"] = str(exc)
         finally:
-            stdout_stream.flush()
-            stderr_stream.flush()
             done.set()
 
     task = asyncio.create_task(_run())
@@ -351,12 +276,6 @@ async def _execute_capability_stream(
 
     event_queue: asyncio.Queue[dict[str, Any]] = asyncio.Queue()
     loop = asyncio.get_running_loop()
-    stdout_stream = _QueueTextStream(
-        event_queue, loop, stream=None, logger_name="deeptutor.playground.stdout"
-    )
-    stderr_stream = _QueueTextStream(
-        event_queue, loop, stream=None, logger_name="deeptutor.playground.stderr"
-    )
 
     final_result: dict[str, Any] | None = None
     error_holder: dict[str, str] = {}
@@ -366,30 +285,20 @@ async def _execute_capability_stream(
     async def _run():
         nonlocal final_result
         try:
-            import sys
-
-            stdout_stream._stream = sys.stdout
-            stderr_stream._stream = sys.stderr
             with bind_log_context(
                 task_id=task_id,
                 capability=capability_name,
                 sink="ui",
             ):
                 with capture_process_logs(_queue_process_emit(event_queue, loop), task_id=task_id):
-                    with (
-                        contextlib.redirect_stdout(stdout_stream),
-                        contextlib.redirect_stderr(stderr_stream),
-                    ):
-                        async for event in orch.handle(ctx):
-                            if event.type.value == "result":
-                                final_result = dict(event.metadata)
-                                continue
-                            await event_queue.put({"kind": "stream", "payload": event.to_dict()})
+                    async for event in orch.handle(ctx):
+                        if event.type.value == "result":
+                            final_result = dict(event.metadata)
+                            continue
+                        await event_queue.put({"kind": "stream", "payload": event.to_dict()})
         except Exception as exc:
             error_holder["detail"] = str(exc)
         finally:
-            stdout_stream.flush()
-            stderr_stream.flush()
             done.set()
 
     task = asyncio.create_task(_run())

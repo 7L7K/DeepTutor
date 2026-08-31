@@ -5,8 +5,6 @@ from datetime import datetime
 import json
 import logging
 from pathlib import Path
-import re
-import sys
 import traceback
 
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
@@ -17,7 +15,6 @@ from deeptutor.logging import (
     ProcessLogEvent,
     bind_log_context,
     capture_process_logs,
-    current_log_context,
 )
 from deeptutor.services.config import PROJECT_ROOT, load_config_with_main
 from deeptutor.services.llm.config import get_llm_config
@@ -35,9 +32,9 @@ logger = logging.getLogger(__name__)
 router = APIRouter()
 
 _QUESTION_REQUEST_QUOTA = UserExecQuota(max_concurrent=1, max_per_minute=6)
-# Question/mimic generation uses process-global logging and stdout capture in
-# the legacy workflow.  Serialize the whole admitted socket so one tenant's
-# process output can never be routed to another tenant's WebSocket.
+# Question/mimic generation is deliberately serialized across the process.
+# The legacy stdout interception has been removed; structured log capture is
+# task-scoped and is the only source of user-visible process logs.
 _QUESTION_GLOBAL_QUOTA = UserExecQuota(max_concurrent=1, max_per_minute=12)
 _QUESTION_GLOBAL_QUOTA_KEY = "question-generation-global"
 _MAX_QUESTION_COUNT = 10
@@ -49,6 +46,9 @@ _MAX_MIMIC_PATH_CHARS = 512
 # validator remains broader for HTTP/Course ingestion paths.
 _MAX_MIMIC_PDF_B64_CHARS = ((40 * 1024 * 1024 + 2) // 3) * 4 + 4
 _MAX_REQUEST_JSON_CHARS = _MAX_MIMIC_PDF_B64_CHARS + 64 * 1024
+# Generation capacity is acquired only for validated work, but an upgraded
+# socket still gets a finite chance to supply that first request.
+_QUESTION_INITIAL_REQUEST_TIMEOUT_S = 30.0
 
 # These are deliberately conservative, process-local beta bulkheads. They
 # protect one application process from accidental or abusive provider usage;
@@ -150,7 +150,9 @@ def _validate_request_envelope(data: object) -> dict:
 
 async def _receive_bounded_request_json(websocket: WebSocket) -> dict:
     """Receive one text JSON envelope without parsing an unbounded payload."""
-    message = await websocket.receive()
+    message = await asyncio.wait_for(
+        websocket.receive(), timeout=_QUESTION_INITIAL_REQUEST_TIMEOUT_S
+    )
     if message.get("type") == "websocket.disconnect":
         raise WebSocketDisconnect(message.get("code", 1000))
     raw = message.get("text")
@@ -205,19 +207,17 @@ async def websocket_mimic_generate(websocket: WebSocket):
     await websocket.accept()
 
     pusher_task = None
-    original_stdout = sys.stdout
     llm_scope_token = None
     admission_leases = None
     uploaded_pdf_bytes: bytes | None = None
 
     try:
-        # Revalidate and reserve the bounded per-user/global slot before
-        # receiving a potentially large WebSocket frame.  This prevents an
-        # authenticated caller from opening many sockets that all buffer or
-        # decode large envelopes before quota admission.
+        # A socket may remain idle after it authenticates.  Revalidate before
+        # reading its one bounded envelope, but do not reserve scarce provider
+        # or process-wide generation capacity until that envelope has passed
+        # local validation.
         if not await ws_revalidate_auth(websocket):
             return
-        llm_scope_token, admission_leases = await _admit_question_generation()
 
         # 1. Wait for config
         data = await _receive_bounded_request_json(websocket)
@@ -243,6 +243,11 @@ async def websocket_mimic_generate(websocket: WebSocket):
             paper_path = _resolve_parsed_mimic_path(data.get("paper_path"))
             data = {**data, "paper_path": paper_path}
 
+        # Provider/model selection and the per-user + global bulkheads cover
+        # actual generation only.  An authenticated but idle socket therefore
+        # cannot monopolize the single global generation lease.
+        llm_scope_token, admission_leases = await _admit_question_generation()
+
         logger.info(f"Starting mimic generation (mode: {mode}, kb: {kb_name})")
 
         # 2. Setup Log Queue
@@ -263,54 +268,6 @@ async def websocket_mimic_generate(websocket: WebSocket):
                 log_queue.task_done()
 
         pusher_task = asyncio.create_task(log_pusher())
-
-        # 3. Stdout interceptor for capturing prints
-        # ANSI escape sequence pattern for stripping color codes
-        ANSI_ESCAPE_PATTERN = re.compile(r"\x1b\[[0-9;]*[a-zA-Z]")
-
-        class StdoutInterceptor:
-            def __init__(self, queue, original):
-                self.queue = queue
-                self.original_stdout = original
-                self._closed = False
-
-            def write(self, message):
-                if self._closed:
-                    return
-                # Write to terminal first (with ANSI codes for color)
-                try:
-                    self.original_stdout.write(message)
-                except Exception:
-                    pass
-                # Strip ANSI escape codes before sending to frontend
-                clean_message = ANSI_ESCAPE_PATTERN.sub("", message).strip()
-                # Then send to frontend (non-blocking)
-                if clean_message:
-                    try:
-                        event = ProcessLogEvent(
-                            level="INFO",
-                            message=clean_message,
-                            logger="deeptutor.question.stdout",
-                            timestamp=datetime.now().timestamp(),
-                            context=current_log_context(),
-                        )
-                        self.queue.put_nowait(event.to_dict())
-                    except (asyncio.QueueFull, RuntimeError):
-                        pass
-
-            def flush(self):
-                if not self._closed:
-                    try:
-                        self.original_stdout.flush()
-                    except Exception:
-                        pass
-
-            def close(self):
-                """Mark interceptor as closed to prevent further writes."""
-                self._closed = True
-
-        interceptor = StdoutInterceptor(log_queue, original_stdout)
-        sys.stdout = interceptor
 
         try:
             await websocket.send_json(
@@ -443,10 +400,8 @@ async def websocket_mimic_generate(websocket: WebSocket):
                 logger.error(f"Mimic generation failed: {error_msg}")
 
         finally:
-            # Close interceptor and restore stdout
-            if "interceptor" in locals():
-                interceptor.close()
-            sys.stdout = original_stdout
+            # The outer cleanup owns sockets, log tasks, and admission leases.
+            pass
 
     except WebSocketDisconnect:
         logger.debug("Client disconnected during mimic generation")
@@ -459,9 +414,6 @@ async def websocket_mimic_generate(websocket: WebSocket):
         except Exception:
             pass
     finally:
-        # Ensure stdout is always restored
-        sys.stdout = original_stdout
-
         # Clean up pusher task
         if pusher_task:
             try:
@@ -516,11 +468,10 @@ async def websocket_question_generate(websocket: WebSocket):
     admission_leases = None
 
     try:
-        # Revalidate and reserve the bounded per-user/global slot before
-        # receiving a potentially large WebSocket frame.
+        # Do not let an idle authenticated socket reserve generation capacity.
+        # Validate its bounded request before taking provider/process leases.
         if not await ws_revalidate_auth(websocket):
             return
-        llm_scope_token, admission_leases = await _admit_question_generation()
 
         # 1. Wait for config
         data = await _receive_bounded_request_json(websocket)
@@ -535,6 +486,8 @@ async def websocket_question_generate(websocket: WebSocket):
             requirement = _bounded_text(requirement, maximum=_MAX_REQUIREMENT_CHARS)
         kb_name = _bounded_text(data.get("kb_name", "ai_textbook"), maximum=_MAX_KB_NAME_CHARS)
         count = _bounded_question_count(data.get("count"), default=1)
+
+        llm_scope_token, admission_leases = await _admit_question_generation()
 
         if not requirement:
             try:

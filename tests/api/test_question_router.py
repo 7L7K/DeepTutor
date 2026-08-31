@@ -122,6 +122,7 @@ def test_mimic_websocket_accepts_config_and_returns_messages(
     question_router_module = _load_question_router_module(monkeypatch)
 
     async def _fake_mimic_exam_questions(*_args, **_kwargs):
+        print("unstructured output must not be sent to a learner socket")
         return {"success": False, "error": "stub mimic failure"}
 
     monkeypatch.setattr(question_router_module, "mimic_exam_questions", _fake_mimic_exam_questions)
@@ -166,6 +167,7 @@ def test_mimic_websocket_accepts_config_and_returns_messages(
     assert messages[0]["stage"] == "init"
     assert messages[1]["stage"] == "processing"
     assert messages[2]["content"] == "Question generation is unavailable."
+    assert not any(message.get("type") == "process_log" for message in messages)
 
 
 def test_question_generate_uses_current_topic_contract(
@@ -278,7 +280,22 @@ def test_question_request_envelope_is_limited_before_json_parsing(
         asyncio.run(question_router_module._receive_bounded_request_json(FakeWebSocket()))
 
 
-def test_mimic_rejects_invalid_upload_before_question_admission(
+def test_question_initial_request_has_a_bounded_idle_timeout(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    question_router_module = _load_question_router_module(monkeypatch)
+    monkeypatch.setattr(question_router_module, "_QUESTION_INITIAL_REQUEST_TIMEOUT_S", 0.01)
+
+    class FakeWebSocket:
+        async def receive(self) -> dict:
+            await asyncio.sleep(1)
+            return {"type": "websocket.receive", "text": "{}"}
+
+    with pytest.raises(TimeoutError):
+        asyncio.run(question_router_module._receive_bounded_request_json(FakeWebSocket()))
+
+
+def test_mimic_rejects_invalid_upload_without_question_admission(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     question_router_module = _load_question_router_module(monkeypatch)
@@ -302,13 +319,65 @@ def test_mimic_rejects_invalid_upload_before_question_admission(
             )
             message = websocket.receive_json()
 
-    # Admission intentionally precedes frame receipt so an attacker cannot
-    # make many sockets buffer/decode large envelopes before the bulkhead.
-    assert admission_calls == 1
+    # Local validation runs before scarce provider/process capacity is
+    # reserved, so malformed input cannot occupy a generation lease.
+    assert admission_calls == 0
     assert message == {"type": "error", "content": "Question generation is unavailable."}
 
 
-def test_question_global_bulkhead_serializes_process_stdout_capture(
+def test_idle_question_socket_does_not_hold_generation_admission(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    question_router_module = _load_question_router_module(monkeypatch)
+    admission_calls = 0
+
+    class FakeWebSocket:
+        def __init__(self) -> None:
+            self.receive_started = asyncio.Event()
+            self.release_receive = asyncio.Event()
+
+        async def accept(self) -> None:
+            return None
+
+        async def receive(self) -> dict:
+            self.receive_started.set()
+            await self.release_receive.wait()
+            return {
+                "type": "websocket.receive",
+                "text": json.dumps({"requirement": "fractions", "kb_name": "demo-kb"}),
+            }
+
+        async def send_json(self, _payload: dict) -> None:
+            return None
+
+        async def close(self, *_args, **_kwargs) -> None:
+            return None
+
+    async def _admit():
+        nonlocal admission_calls
+        admission_calls += 1
+
+        class Lease:
+            async def aclose(self) -> None:
+                return None
+
+        return None, Lease()
+
+    monkeypatch.setattr(question_router_module, "_admit_question_generation", _admit)
+
+    async def _exercise() -> None:
+        websocket = FakeWebSocket()
+        task = asyncio.create_task(question_router_module.websocket_question_generate(websocket))
+        await asyncio.wait_for(websocket.receive_started.wait(), timeout=1)
+        assert admission_calls == 0
+        websocket.release_receive.set()
+        await task
+        assert admission_calls == 1
+
+    asyncio.run(_exercise())
+
+
+def test_question_global_bulkhead_serializes_generation(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     question_router_module = _load_question_router_module(monkeypatch)
