@@ -28,19 +28,19 @@ router = APIRouter()
 class CreateNotebookRequest(BaseModel):
     """Create notebook request"""
 
-    name: str
-    description: str = ""
-    color: str = "#3B82F6"
-    icon: str = "book"
+    name: str = Field(..., max_length=200)
+    description: str = Field(default="", max_length=4_000)
+    color: str = Field(default="#3B82F6", max_length=32)
+    icon: str = Field(default="book", max_length=64)
 
 
 class UpdateNotebookRequest(BaseModel):
     """Update notebook request"""
 
-    name: str | None = None
-    description: str | None = None
-    color: str | None = None
-    icon: str | None = None
+    name: str | None = Field(default=None, max_length=200)
+    description: str | None = Field(default=None, max_length=4_000)
+    color: str | None = Field(default=None, max_length=32)
+    icon: str | None = Field(default=None, max_length=64)
 
 
 class AddRecordRequest(BaseModel):
@@ -66,18 +66,28 @@ class AddRecordRequest(BaseModel):
 class RemoveRecordRequest(BaseModel):
     """Remove record request"""
 
-    record_id: str
+    record_id: str = Field(..., max_length=100)
 
 
 class UpdateRecordRequest(BaseModel):
     """Update an existing notebook record."""
 
-    title: str | None = None
-    summary: str | None = None
-    user_query: str | None = None
-    output: str | None = None
+    title: str | None = Field(default=None, max_length=500)
+    summary: str | None = Field(default=None, max_length=4_000)
+    user_query: str | None = Field(default=None, max_length=12_000)
+    output: str | None = Field(default=None, max_length=24_000)
     metadata: dict | None = None
-    kb_name: str | None = None
+    kb_name: str | None = Field(default=None, max_length=500)
+
+    @field_validator("metadata")
+    @classmethod
+    def metadata_is_bounded(cls, value: dict | None) -> dict | None:
+        if (
+            value is not None
+            and len(json.dumps(value, ensure_ascii=False, separators=(",", ":"))) > 8_000
+        ):
+            raise ValueError("metadata is too large")
+        return value
 
 
 # === API Endpoints ===
@@ -111,7 +121,9 @@ async def _stream_add_record_with_summary(
                 yield f"data: {json.dumps({'type': 'summary_chunk', 'content': summary}, ensure_ascii=False)}\n\n"
         else:
             async with admitted_notebook_llm_call():
-                agent = NotebookSummarizeAgent(language=str(request.metadata.get("ui_language", "en")))
+                agent = NotebookSummarizeAgent(
+                    language=str(request.metadata.get("ui_language", "en"))
+                )
                 async for chunk in agent.stream_summary(
                     title=request.title,
                     record_type=request.record_type,

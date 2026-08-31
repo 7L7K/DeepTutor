@@ -20,6 +20,7 @@ import asyncio
 from contextlib import suppress
 import os
 from pathlib import Path
+import resource
 import shutil
 
 import httpx
@@ -156,10 +157,15 @@ class BwrapBackend(SandboxBackend):
                 *argv,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
+                preexec_fn=_build_preexec_fn(request),
             )
         except FileNotFoundError:
             return ExecResult(error="bwrap not found on host")
-        return await _communicate(process, request.limits.timeout_s)
+        return await _communicate(
+            process,
+            request.limits.timeout_s,
+            max_output_chars=request.limits.max_output_chars,
+        )
 
     async def health(self) -> tuple[bool, str]:
         if shutil.which(self._bwrap) is None:
@@ -192,6 +198,7 @@ class RestrictedSubprocessBackend(SandboxBackend):
                     stderr=asyncio.subprocess.PIPE,
                     cwd=cwd,
                     env=env,
+                    preexec_fn=_build_preexec_fn(request),
                 )
             else:
                 process = await asyncio.create_subprocess_shell(
@@ -200,20 +207,91 @@ class RestrictedSubprocessBackend(SandboxBackend):
                     stderr=asyncio.subprocess.PIPE,
                     cwd=cwd,
                     env=env,
+                    preexec_fn=_build_preexec_fn(request),
                 )
         except Exception as exc:
             return ExecResult(error=f"{type(exc).__name__}: {exc}")
-        return await _communicate(process, request.limits.timeout_s)
+        return await _communicate(
+            process,
+            request.limits.timeout_s,
+            max_output_chars=request.limits.max_output_chars,
+        )
 
 
-async def _communicate(process: asyncio.subprocess.Process, timeout_s: int) -> ExecResult:
+def _build_preexec_fn(request: ExecRequest):
+    """Apply resource limits in a local child before it executes."""
+    if os.name != "posix":
+        return None
+    memory_mb = max(0, int(request.limits.memory_mb))
+    cpu_seconds = max(0, int(request.limits.cpu_seconds))
+
+    def _apply() -> None:
+        if memory_mb:
+            try:
+                limit = memory_mb * 1024 * 1024
+                resource.setrlimit(resource.RLIMIT_AS, (limit, limit))
+            except (ValueError, OSError):
+                pass
+        if cpu_seconds:
+            try:
+                resource.setrlimit(resource.RLIMIT_CPU, (cpu_seconds, cpu_seconds))
+            except (ValueError, OSError):
+                pass
+
+    return _apply
+
+
+async def _communicate(
+    process: asyncio.subprocess.Process,
+    timeout_s: int,
+    *,
+    max_output_chars: int,
+) -> ExecResult:
+    """Read both pipes with a byte budget so output cannot fill memory."""
+    max_bytes = max(1, int(max_output_chars)) * 4
+    overflow = asyncio.Event()
+
+    async def _read_bounded(stream: asyncio.StreamReader | None) -> bytes:
+        if stream is None:
+            return b""
+        chunks: list[bytes] = []
+        total = 0
+        while True:
+            chunk = await stream.read(min(64 * 1024, max_bytes - total + 1))
+            if not chunk:
+                break
+            remaining = max_bytes - total
+            if len(chunk) > remaining:
+                chunks.append(chunk[:remaining])
+                overflow.set()
+                with suppress(ProcessLookupError):
+                    process.kill()
+                break
+            chunks.append(chunk)
+            total += len(chunk)
+        return b"".join(chunks)
+
     try:
-        stdout, stderr = await asyncio.wait_for(process.communicate(), timeout=timeout_s)
+        stdout, stderr = await asyncio.wait_for(
+            asyncio.gather(_read_bounded(process.stdout), _read_bounded(process.stderr)),
+            timeout=timeout_s,
+        )
     except asyncio.TimeoutError:
-        process.kill()
+        with suppress(ProcessLookupError):
+            process.kill()
         with suppress(asyncio.TimeoutError):
             await asyncio.wait_for(process.wait(), timeout=5.0)
         return ExecResult(timed_out=True, exit_code=124)
+    if overflow.is_set():
+        with suppress(asyncio.TimeoutError):
+            await asyncio.wait_for(process.wait(), timeout=5.0)
+        return ExecResult(
+            stdout=stdout.decode("utf-8", errors="replace"),
+            stderr=stderr.decode("utf-8", errors="replace"),
+            exit_code=process.returncode if process.returncode is not None else 137,
+            error="sandbox output limit exceeded",
+        )
+    await process.wait()
     return ExecResult(
         stdout=stdout.decode("utf-8", errors="replace") if stdout else "",
         stderr=stderr.decode("utf-8", errors="replace") if stderr else "",

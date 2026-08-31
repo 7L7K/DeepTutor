@@ -18,6 +18,11 @@ _NOTEBOOK_SUMMARY_BODY_BYTES = 64 * 1024
 _MASTERY_NOTEBOOK_PREFIX = "/api/v1/learning/progress/"
 _MASTERY_NOTEBOOK_SUFFIX = "/generate-from-notebook"
 _MASTERY_NOTEBOOK_BODY_BYTES = 96 * 1024
+_MASTERY_STRUCTURE_SUFFIXES = ("/init-modules", "/import-from-book")
+_MASTERY_STRUCTURE_BODY_BYTES = 1024 * 1024
+_QUIZ_RESULTS_PREFIX = "/api/v1/sessions/"
+_QUIZ_RESULTS_SUFFIX = "/quiz-results"
+_QUIZ_RESULTS_BODY_BYTES = 1024 * 1024
 _COURSE_SOURCE_PREFIX = "/api/v1/courses/"
 _COURSE_SOURCE_SUFFIX = "/sources"
 _COURSE_SOURCE_BODY_BYTES = 12 * 1024 * 1024
@@ -53,11 +58,23 @@ def _request_body_limit(scope: Scope) -> int | None:
         and normalized_path.endswith(_MASTERY_NOTEBOOK_SUFFIX)
         and len(normalized_path) > len(_MASTERY_NOTEBOOK_PREFIX) + len(_MASTERY_NOTEBOOK_SUFFIX)
         and "/"
-        not in normalized_path[
-            len(_MASTERY_NOTEBOOK_PREFIX) : -len(_MASTERY_NOTEBOOK_SUFFIX)
-        ]
+        not in normalized_path[len(_MASTERY_NOTEBOOK_PREFIX) : -len(_MASTERY_NOTEBOOK_SUFFIX)]
     ):
         return _MASTERY_NOTEBOOK_BODY_BYTES
+    if normalized_path.startswith(_MASTERY_NOTEBOOK_PREFIX):
+        for suffix in _MASTERY_STRUCTURE_SUFFIXES:
+            if not normalized_path.endswith(suffix):
+                continue
+            book_id = normalized_path[len(_MASTERY_NOTEBOOK_PREFIX) : -len(suffix)]
+            if book_id and "/" not in book_id:
+                return _MASTERY_STRUCTURE_BODY_BYTES
+    if (
+        normalized_path.startswith(_QUIZ_RESULTS_PREFIX)
+        and normalized_path.endswith(_QUIZ_RESULTS_SUFFIX)
+        and "/" not in normalized_path[len(_QUIZ_RESULTS_PREFIX) : -len(_QUIZ_RESULTS_SUFFIX)]
+        and len(normalized_path) > len(_QUIZ_RESULTS_PREFIX) + len(_QUIZ_RESULTS_SUFFIX)
+    ):
+        return _QUIZ_RESULTS_BODY_BYTES
     if (
         normalized_path.startswith(_COURSE_SOURCE_PREFIX)
         and normalized_path.endswith(_COURSE_SOURCE_SUFFIX)

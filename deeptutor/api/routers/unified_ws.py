@@ -40,6 +40,168 @@ from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 router = APIRouter()
 logger = logging.getLogger(__name__)
 
+# Unified chat messages may carry a base64 attachment batch, so this is larger
+# than ordinary text input. It is still a fixed transport ceiling, independent
+# of the configurable document parser limits; the latter must never turn into
+# a multi-gigabyte WebSocket frame allowance.
+_MAX_UNIFIED_WS_MESSAGE_BYTES = 64 * 1024 * 1024
+_MAX_UNIFIED_CONTENT_CHARS = 200_000
+_MAX_UNIFIED_FIELD_CHARS = 512
+_MAX_UNIFIED_REPLY_CHARS = 12_000
+_MAX_UNIFIED_LIST_ITEMS = 100
+_MAX_UNIFIED_CONFIG_BYTES = 256 * 1024
+
+
+def _bounded_ws_string(
+    value: object, *, label: str, maximum: int = _MAX_UNIFIED_FIELD_CHARS
+) -> str:
+    if not isinstance(value, str) or len(value) > maximum:
+        raise ValueError(f"{label} is invalid")
+    return value
+
+
+def _bounded_ws_list(value: object, *, label: str, maximum: int = _MAX_UNIFIED_LIST_ITEMS) -> list:
+    if not isinstance(value, list) or len(value) > maximum:
+        raise ValueError(f"{label} is invalid")
+    return value
+
+
+def _bounded_ws_nonnegative_int(value: object, *, label: str, maximum: int = 10_000_000) -> int:
+    if isinstance(value, bool) or not isinstance(value, int) or value < 0 or value > maximum:
+        raise ValueError(f"{label} is invalid")
+    return value
+
+
+def _validate_unified_ws_message(message: object) -> dict[str, Any]:
+    """Validate transport shape before dispatching or persisting a turn."""
+    if not isinstance(message, dict):
+        raise ValueError("Message must be an object.")
+    msg_type = _bounded_ws_string(message.get("type"), label="Message type", maximum=64)
+
+    for key in ("session_id", "turn_id", "course_id"):
+        if key in message and message[key] is not None:
+            _bounded_ws_string(message[key], label=key)
+    for key in ("after_seq", "seq"):
+        if key in message and message[key] is not None:
+            _bounded_ws_nonnegative_int(message[key], label=key)
+
+    if msg_type in {"message", "start_turn"}:
+        _bounded_ws_string(
+            message.get("content"), label="content", maximum=_MAX_UNIFIED_CONTENT_CHARS
+        )
+        for key in ("capability", "language", "persona"):
+            if key in message and message[key] is not None:
+                _bounded_ws_string(message[key], label=key)
+        for key in ("tools", "knowledge_bases", "skills", "memory_references"):
+            if key not in message:
+                continue
+            values = _bounded_ws_list(message[key], label=key)
+            for value in values:
+                _bounded_ws_string(value, label=f"{key} item")
+
+        attachments = message.get("attachments")
+        if attachments is not None:
+            for item in _bounded_ws_list(attachments, label="attachments", maximum=10):
+                if not isinstance(item, dict):
+                    raise ValueError("attachments are invalid")
+                for key, maximum in (
+                    ("type", _MAX_UNIFIED_FIELD_CHARS),
+                    ("url", _MAX_UNIFIED_FIELD_CHARS),
+                    ("filename", 255),
+                    ("mime_type", 255),
+                ):
+                    if key in item and item[key] is not None:
+                        _bounded_ws_string(item[key], label=f"attachment {key}", maximum=maximum)
+                if "base64" in item and item["base64"] is not None:
+                    _bounded_ws_string(
+                        item["base64"],
+                        label="attachment base64",
+                        maximum=_MAX_UNIFIED_WS_MESSAGE_BYTES,
+                    )
+
+        for key in ("notebook_references", "book_references"):
+            if key not in message or message[key] is None:
+                continue
+            references = _bounded_ws_list(message[key], label=key, maximum=50)
+            for reference in references:
+                if not isinstance(reference, dict):
+                    raise ValueError(f"{key} are invalid")
+                _bounded_ws_string(
+                    reference.get("notebook_id", reference.get("book_id")), label=f"{key} id"
+                )
+                id_key = "record_ids" if key == "notebook_references" else "page_ids"
+                for item_id in _bounded_ws_list(reference.get(id_key, []), label=id_key):
+                    _bounded_ws_string(item_id, label=f"{id_key} item")
+        if "question_notebook_references" in message:
+            for item in _bounded_ws_list(
+                message["question_notebook_references"],
+                label="question_notebook_references",
+            ):
+                _bounded_ws_nonnegative_int(
+                    item, label="question_notebook_reference", maximum=2**63 - 1
+                )
+        if "config" in message and message["config"] is not None:
+            if not isinstance(message["config"], dict):
+                raise ValueError("config is invalid")
+            if len(json.dumps(message["config"], ensure_ascii=False)) > _MAX_UNIFIED_CONFIG_BYTES:
+                raise ValueError("config is too large")
+        selection = message.get("llm_selection")
+        if selection is not None:
+            if not isinstance(selection, dict):
+                raise ValueError("llm_selection is invalid")
+            for key in ("profile_id", "model_id"):
+                _bounded_ws_string(selection.get(key), label=f"llm_selection.{key}")
+        if "parent_message_id" in message:
+            parent_id = message["parent_message_id"]
+            if parent_id is not None:
+                _bounded_ws_nonnegative_int(parent_id, label="parent_message_id", maximum=2**63 - 1)
+        return message
+
+    if msg_type in {"submit_user_reply", "user_input"}:
+        if msg_type == "submit_user_reply":
+            if "text" in message and message["text"] is not None:
+                _bounded_ws_string(message["text"], label="text", maximum=_MAX_UNIFIED_REPLY_CHARS)
+            answers = message.get("answers")
+            if answers is not None:
+                for answer in _bounded_ws_list(answers, label="answers", maximum=50):
+                    if not isinstance(answer, dict):
+                        raise ValueError("answers are invalid")
+                    _bounded_ws_string(
+                        answer.get("questionId", answer.get("id")), label="answer questionId"
+                    )
+                    _bounded_ws_string(
+                        answer.get("text", ""),
+                        label="answer text",
+                        maximum=_MAX_UNIFIED_REPLY_CHARS,
+                    )
+        else:
+            _bounded_ws_string(
+                message.get("content", ""), label="content", maximum=_MAX_UNIFIED_REPLY_CHARS
+            )
+        return message
+
+    if msg_type in {
+        "subscribe_turn",
+        "subscribe_session",
+        "resume_from",
+        "cancel_turn",
+        "regenerate",
+        "check_active_turn",
+        "unsubscribe",
+        "ping",
+    }:
+        if msg_type == "regenerate" and message.get("overrides") is not None:
+            overrides = message["overrides"]
+            if not isinstance(overrides, dict):
+                raise ValueError("overrides are invalid")
+            if len(json.dumps(overrides, ensure_ascii=False)) > _MAX_UNIFIED_CONFIG_BYTES:
+                raise ValueError("overrides are too large")
+        return message
+
+    # Unknown types are still returned so the route can issue its existing
+    # protocol error; their envelope has already been bounded above.
+    return message
+
 
 @router.websocket("/ws")
 async def unified_websocket(ws: WebSocket) -> None:
@@ -188,10 +350,15 @@ async def unified_websocket(ws: WebSocket) -> None:
             if not await ws_revalidate_auth(ws):
                 closed = True
                 break
+            if len(raw.encode("utf-8")) > _MAX_UNIFIED_WS_MESSAGE_BYTES:
+                await safe_send({"type": "error", "content": "Message is too large."})
+                closed = True
+                break
             try:
                 msg = json.loads(raw)
-            except json.JSONDecodeError:
-                await safe_send({"type": "error", "content": "Invalid JSON."})
+                _validate_unified_ws_message(msg)
+            except (json.JSONDecodeError, RecursionError, ValueError, TypeError):
+                await safe_send({"type": "error", "content": "Invalid message."})
                 continue
 
             msg_type = msg.get("type")
@@ -215,9 +382,7 @@ async def unified_websocket(ws: WebSocket) -> None:
                         }
                     )
                     continue
-                await subscribe_turn(
-                    turn["id"], after_seq=0, course_id=requested_course_id
-                )
+                await subscribe_turn(turn["id"], after_seq=0, course_id=requested_course_id)
                 continue
 
             if msg_type == "ping":
@@ -316,9 +481,7 @@ async def unified_websocket(ws: WebSocket) -> None:
                     await safe_send({"type": "error", "content": "Missing turn_id."})
                     continue
                 runtime = runtime_for(requested_course_id)
-                if not await authorize_turn(
-                    runtime, turn_id, requested_course_id, writable=True
-                ):
+                if not await authorize_turn(runtime, turn_id, requested_course_id, writable=True):
                     continue
                 cancelled = await runtime.cancel_turn(turn_id)
                 if not cancelled:
@@ -349,9 +512,7 @@ async def unified_websocket(ws: WebSocket) -> None:
                         cleaned.append({"questionId": qid, "text": str(entry.get("text") or "")})
                     answers = cleaned or None
                 runtime = runtime_for(requested_course_id)
-                if not await authorize_turn(
-                    runtime, turn_id, requested_course_id, writable=True
-                ):
+                if not await authorize_turn(runtime, turn_id, requested_course_id, writable=True):
                     continue
                 accepted = await runtime.submit_user_reply(turn_id, text=text_str, answers=answers)
                 if not accepted:
@@ -397,9 +558,7 @@ async def unified_websocket(ws: WebSocket) -> None:
                         }
                     )
                     continue
-                await subscribe_turn(
-                    turn["id"], after_seq=0, course_id=requested_course_id
-                )
+                await subscribe_turn(turn["id"], after_seq=0, course_id=requested_course_id)
                 continue
 
             if msg_type == "user_input":
@@ -408,9 +567,7 @@ async def unified_websocket(ws: WebSocket) -> None:
                     await safe_send({"type": "error", "content": "Missing turn_id for user_input."})
                     continue
                 runtime = runtime_for(requested_course_id)
-                if not await authorize_turn(
-                    runtime, turn_id, requested_course_id, writable=True
-                ):
+                if not await authorize_turn(runtime, turn_id, requested_course_id, writable=True):
                     continue
                 from deeptutor.core.stream_bus import get_bus
 

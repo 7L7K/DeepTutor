@@ -6,7 +6,7 @@ import html
 import json
 
 from fastapi import APIRouter, HTTPException
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 from pydantic import ValidationError as PydanticValidationError
 
 from deeptutor.learning import policy as learning_policy
@@ -38,7 +38,15 @@ def get_learning_service() -> LearningService:
 
 def _validate_book_id(book_id: str) -> None:
     """Reject empty or path-traversal-bearing book ids (shared by all endpoints)."""
-    if not book_id or ".." in book_id or "/" in book_id or "\\" in book_id or ":" in book_id:
+    if (
+        not book_id
+        or len(book_id) > 100
+        or ".." in book_id
+        or "/" in book_id
+        or "\\" in book_id
+        or ":" in book_id
+        or any(ord(char) < 0x20 for char in book_id)
+    ):
         raise HTTPException(status_code=400, detail="Invalid book_id")
     if book_id.startswith("lp_crs_"):
         raise HTTPException(status_code=404, detail="Learning path not found")
@@ -100,18 +108,38 @@ async def _cancel_active_learning_turn(session_id: str | None) -> None:
 
 
 class InitModulesRequest(BaseModel):
-    modules: list[dict]  # list of LearningModule-compatible dicts
-    session_id: str | None = None
+    modules: list[dict] = Field(..., max_length=100)  # list of LearningModule-compatible dicts
+    session_id: str | None = Field(default=None, max_length=100)
+
+    @field_validator("modules")
+    @classmethod
+    def module_payload_is_bounded(cls, value: list[dict]) -> list[dict]:
+        # The ASGI middleware caps the raw envelope; this count check keeps a
+        # small body full of empty objects from expanding into a large parse.
+        for module in value:
+            if not isinstance(module, dict):
+                raise ValueError("modules must contain objects")
+            knowledge_points = module.get("knowledge_points", [])
+            if not isinstance(knowledge_points, list) or len(knowledge_points) > 100:
+                raise ValueError("each module may contain at most 100 knowledge points")
+        return value
 
 
 class ChapterImport(BaseModel):
-    title: str
-    knowledge_points: list[str] = []
+    title: str = Field(..., max_length=300)
+    knowledge_points: list[str] = Field(default_factory=list, max_length=100)
+
+    @field_validator("knowledge_points")
+    @classmethod
+    def knowledge_point_names_are_bounded(cls, value: list[str]) -> list[str]:
+        if any(len(name) > 500 for name in value):
+            raise ValueError("knowledge point names must be at most 500 characters")
+        return value
 
 
 class ImportFromBookRequest(BaseModel):
-    chapters: list[ChapterImport]
-    session_id: str | None = None
+    chapters: list[ChapterImport] = Field(..., max_length=100)
+    session_id: str | None = Field(default=None, max_length=100)
 
 
 # ── Endpoints ────────────────────────────────────────────────────────────────

@@ -10,7 +10,9 @@ from fastapi import FastAPI, Request
 from fastapi.testclient import TestClient
 
 from deeptutor.api.request_body_limits import (
+    _MASTERY_STRUCTURE_BODY_BYTES,
     _NOTEBOOK_UPSERT_PATH,
+    _QUIZ_RESULTS_BODY_BYTES,
     NotebookUpsertBodyLimitMiddleware,
     _request_body_limit,
 )
@@ -164,6 +166,9 @@ def test_invalid_content_length_is_rejected(monkeypatch, content_length: bytes) 
         ("/api/v1/notebook/add_record_with_summary/", 64 * 1024),
         ("/api/v1/learning/progress/book-1/generate-from-notebook", 96 * 1024),
         ("/api/v1/learning/progress/book-1/generate-from-notebook/", 96 * 1024),
+        ("/api/v1/learning/progress/book-1/init-modules", _MASTERY_STRUCTURE_BODY_BYTES),
+        ("/api/v1/learning/progress/book-1/import-from-book", _MASTERY_STRUCTURE_BODY_BYTES),
+        ("/api/v1/sessions/session-1/quiz-results", _QUIZ_RESULTS_BODY_BYTES),
     ],
 )
 def test_notebook_llm_routes_have_raw_body_limits(path: str, expected_limit: int) -> None:

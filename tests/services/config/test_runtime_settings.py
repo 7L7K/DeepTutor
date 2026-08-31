@@ -413,10 +413,10 @@ def test_chat_attachment_limits_defaults_and_clamping(tmp_path: Path) -> None:
 
     # Total below the per-file cap is contradictory — lifted to match.
     saved = service.save_system(
-        {"chat_attachment_max_file_mb": 200, "chat_attachment_max_total_mb": 50}
+        {"chat_attachment_max_file_mb": 32, "chat_attachment_max_total_mb": 20}
     )
-    assert saved["chat_attachment_max_file_mb"] == 200
-    assert saved["chat_attachment_max_total_mb"] == 200
+    assert saved["chat_attachment_max_file_mb"] == 32
+    assert saved["chat_attachment_max_total_mb"] == 32
 
     # Out-of-range / garbage values clamp or fall back to defaults.
     saved = service.save_system(
@@ -427,8 +427,8 @@ def test_chat_attachment_limits_defaults_and_clamping(tmp_path: Path) -> None:
             "chat_attachment_max_chars_total": 1,
         }
     )
-    assert saved["chat_attachment_max_file_mb"] == 1024
-    assert saved["chat_attachment_max_total_mb"] == 1024
+    assert saved["chat_attachment_max_file_mb"] == 40
+    assert saved["chat_attachment_max_total_mb"] == 40
     assert saved["chat_attachment_max_chars_per_doc"] == 200_000
     assert saved["chat_attachment_max_chars_total"] == 10_000
 
@@ -437,8 +437,8 @@ def test_chat_attachment_limits_env_overrides(tmp_path: Path) -> None:
     service = RuntimeSettingsService(
         tmp_path / "settings",
         process_env={
-            "CHAT_ATTACHMENT_MAX_FILE_MB": "64",
-            "CHAT_ATTACHMENT_MAX_TOTAL_MB": "128",
+            "CHAT_ATTACHMENT_MAX_FILE_MB": "32",
+            "CHAT_ATTACHMENT_MAX_TOTAL_MB": "40",
             "CHAT_ATTACHMENT_MAX_CHARS_PER_DOC": "400000",
             "CHAT_ATTACHMENT_MAX_CHARS_TOTAL": "300000",
         },
@@ -446,8 +446,8 @@ def test_chat_attachment_limits_env_overrides(tmp_path: Path) -> None:
     service.save_system({})
 
     effective = service.load_system()
-    assert effective["chat_attachment_max_file_mb"] == 64
-    assert effective["chat_attachment_max_total_mb"] == 128
+    assert effective["chat_attachment_max_file_mb"] == 32
+    assert effective["chat_attachment_max_total_mb"] == 40
     assert effective["chat_attachment_max_chars_per_doc"] == 400_000
     assert effective["chat_attachment_max_chars_total"] == 300_000
     # The file keeps the stored (default) values — env is a process override.
@@ -459,8 +459,8 @@ def test_compute_ws_max_size_floor_and_inflation() -> None:
 
     # Small totals never drop below uvicorn's 16MB default.
     assert compute_ws_max_size(1 * 1024 * 1024) == 16 * 1024 * 1024
-    # Large totals get base64 inflation (×4/3) plus envelope slack.
+    # Large totals are capped so base64 inflation cannot create a multi-GB
+    # frame from a permissive settings value.
     total = 100 * 1024 * 1024
     derived = compute_ws_max_size(total)
-    assert derived > (total * 4) // 3
-    assert derived == (total * 4) // 3 + 8 * 1024 * 1024
+    assert derived == 64 * 1024 * 1024

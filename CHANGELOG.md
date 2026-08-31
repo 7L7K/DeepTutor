@@ -8,6 +8,14 @@
   paths require live scoped model authority and bounded beta admission instead
   of falling back to deployment-global provider access.
 
+- Closed the remaining controlled-beta resource edges before release review.
+  Unified WebSocket frames and nested payloads now have fixed transport and
+  schema ceilings; generic provider turns share per-learner and process-wide
+  admission; notebook identifiers are resolved inside the owner workspace;
+  redirect hops, Office/MinerU archives, and local sandbox output/resources are
+  bounded; and learner notebook, mastery, and quiz mutations reject oversized
+  nested bodies before they can expand into unbounded work.
+
 - Closed additional controlled-beta resource and shared-browser boundaries.
   Personal Knowledge Base indexing remains owner/admin-only. Course-source
   uploads are deny-by-default per learner grant and now enforce pre-parse body

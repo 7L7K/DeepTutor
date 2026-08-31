@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from pathlib import Path
 
 from deeptutor.services.notebook.service import NotebookManager, RecordType
 
@@ -67,3 +68,27 @@ def test_get_notebook_repairs_existing_thinking_tags_in_summary(tmp_path) -> Non
     assert repaired is not None
     assert repaired["records"][0]["summary"] == "Reusable summary."
     assert "old reasoning" not in path.read_text(encoding="utf-8")
+
+
+def test_notebook_ids_cannot_escape_user_workspace_or_delete_external_json(tmp_path: Path) -> None:
+    notebook_dir = tmp_path / "notebooks"
+    manager = NotebookManager(base_dir=str(notebook_dir))
+    outside = tmp_path / "outside.json"
+    outside.write_text('{"secret": true}', encoding="utf-8")
+
+    assert manager.get_notebook("../outside") is None
+    assert manager.get_notebook("nested/name") is None
+    assert manager.delete_notebook("../outside") is False
+    assert outside.exists()
+
+
+def test_notebook_symlink_target_cannot_escape_user_workspace(tmp_path: Path) -> None:
+    notebook_dir = tmp_path / "notebooks"
+    manager = NotebookManager(base_dir=str(notebook_dir))
+    outside = tmp_path / "outside.json"
+    outside.write_text('{"secret": true}', encoding="utf-8")
+    (notebook_dir / "linked.json").symlink_to(outside)
+
+    assert manager.get_notebook("linked") is None
+    assert manager.delete_notebook("linked") is False
+    assert outside.exists()

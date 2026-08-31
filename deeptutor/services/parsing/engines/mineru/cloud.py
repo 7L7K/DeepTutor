@@ -43,9 +43,14 @@ _DOWNLOAD_TIMEOUT_SECONDS = 300.0
 _TERMINAL_OK = "done"
 _TERMINAL_FAIL = "failed"
 
-# Bounds for the extracted archive (defends a hostile/buggy CDN response).
-_MAX_TOTAL_BYTES = 500 * 1024 * 1024
-_MAX_ENTRIES = 5000
+# Bounds for the downloaded/extracted archive (defends a hostile/buggy CDN
+# response). The download ceiling is checked before and after buffering; the
+# extraction path applies the same aggregate budget while streaming members.
+_MAX_TOTAL_BYTES = 128 * 1024 * 1024
+_MAX_DOWNLOAD_BYTES = _MAX_TOTAL_BYTES
+_MAX_ENTRY_BYTES = 64 * 1024 * 1024
+_MAX_ENTRIES = 2_000
+_MAX_COMPRESSION_RATIO = 1_000
 
 
 def parse_cloud(
@@ -231,7 +236,19 @@ def _download(zip_url: str) -> bytes:
     try:
         response = httpx.get(zip_url, timeout=_DOWNLOAD_TIMEOUT_SECONDS, follow_redirects=True)
         response.raise_for_status()
-        return response.content
+        headers = getattr(response, "headers", {}) or {}
+        raw_length = headers.get("content-length")
+        try:
+            if raw_length is not None and int(raw_length) > _MAX_DOWNLOAD_BYTES:
+                raise MinerUError("MinerU result archive exceeds the download size limit.")
+        except (TypeError, ValueError):
+            raise MinerUError("MinerU result archive returned an invalid content length.") from None
+        content = bytes(response.content)
+        if len(content) > _MAX_DOWNLOAD_BYTES:
+            raise MinerUError("MinerU result archive exceeds the download size limit.")
+        return content
+    except MinerUError:
+        raise
     except httpx.HTTPError as exc:
         raise MinerUError(f"Failed to download MinerU result archive: {exc}") from exc
 
@@ -330,12 +347,24 @@ def _extract_archive(archive_bytes: bytes, target_dir: Path) -> None:
                 if target_root not in dest.parents and dest != target_root:
                     logger.warning("Skipping zip member escaping root: %s", member.filename)
                     continue
-                total += member.file_size
+                member_size = int(member.file_size)
+                compressed_size = int(member.compress_size)
+                if member_size > _MAX_ENTRY_BYTES:
+                    raise MinerUError("MinerU archive entry exceeds the size limit.")
+                if member_size and (
+                    compressed_size <= 0 or member_size > compressed_size * _MAX_COMPRESSION_RATIO
+                ):
+                    raise MinerUError("MinerU archive entry has an unsafe compression ratio.")
+                total += member_size
                 if total > _MAX_TOTAL_BYTES:
                     raise MinerUError("MinerU archive exceeds the size limit.")
                 dest.parent.mkdir(parents=True, exist_ok=True)
                 with archive.open(member) as src, open(dest, "wb") as out:
-                    out.write(src.read())
+                    while True:
+                        chunk = src.read(1024 * 1024)
+                        if not chunk:
+                            break
+                        out.write(chunk)
     except zipfile.BadZipFile as exc:
         raise MinerUError(f"MinerU returned an invalid archive: {exc}") from exc
 

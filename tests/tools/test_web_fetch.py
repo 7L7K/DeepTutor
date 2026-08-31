@@ -81,12 +81,16 @@ class _StubResponse:
         status: int = 200,
         url: str = "https://example.com/p",
         encoding: str = "utf-8",
+        headers: dict[str, str] | None = None,
     ) -> None:
         self._body = body
         self.status_code = status
         self.url = url
         self.encoding = encoding
-        self.headers = {"content-type": "text/html; charset=utf-8"}
+        self.headers = {
+            "content-type": "text/html; charset=utf-8",
+            **(headers or {}),
+        }
 
     async def aiter_bytes(self):
         yield self._body
@@ -124,6 +128,25 @@ def _factory_returning(response: _StubResponse):
         return _StubAsyncClient(response)
 
     return _factory
+
+
+class _SequenceAsyncClient(_StubAsyncClient):
+    def __init__(self, responses: list[_StubResponse], requested: list[str]) -> None:
+        self._responses = iter(responses)
+        self.requested = requested
+
+    def stream(self, _method, url, **_kwargs):
+        outer = self
+        outer.requested.append(url)
+
+        class _Ctx:
+            async def __aenter__(self):
+                return next(outer._responses)
+
+            async def __aexit__(self, exc_type, exc, tb):
+                return False
+
+        return _Ctx()
 
 
 @pytest.mark.asyncio
@@ -181,3 +204,32 @@ async def test_fetch_propagates_http_error_as_outcome_not_exception() -> None:
     )
     assert outcome.ok is False
     assert "404" in outcome.error
+
+
+@pytest.mark.asyncio
+async def test_fetch_validates_redirect_target_before_requesting_next_hop() -> None:
+    requested: list[str] = []
+    client = _SequenceAsyncClient(
+        [
+            _StubResponse(
+                status=302,
+                url="https://example.com/start",
+                headers={"location": "http://127.0.0.1/internal"},
+            ),
+            _StubResponse(url="http://127.0.0.1/internal"),
+        ],
+        requested,
+    )
+
+    def factory(*, timeout: float, user_agent: str):
+        return client
+
+    outcome = await fetch_url_as_markdown(
+        "https://example.com/start",
+        client_factory=factory,
+        host_validator=_is_disallowed_host,
+    )
+
+    assert outcome.ok is False
+    assert "private" in outcome.error.lower() or "loopback" in outcome.error.lower()
+    assert requested == ["https://example.com/start"]

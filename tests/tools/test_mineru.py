@@ -292,6 +292,35 @@ def test_extract_archive_rejects_zip_slip(tmp_path: Path) -> None:
     assert not (tmp_path / "evil.txt").exists()
 
 
+def test_extract_archive_rejects_unsafe_compression_ratio(tmp_path: Path) -> None:
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w", compression=zipfile.ZIP_DEFLATED) as archive:
+        archive.writestr("huge.md", b"0" * (2 * 1024 * 1024))
+
+    with pytest.raises(MinerUError, match="compression ratio"):
+        mineru_cloud._extract_archive(buf.getvalue(), tmp_path / "wd")
+
+
+def test_download_rejects_oversized_response_before_extraction(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from types import SimpleNamespace
+
+    response = SimpleNamespace(
+        headers={"content-length": str(mineru_cloud._MAX_DOWNLOAD_BYTES + 1)},
+        content=b"",
+        raise_for_status=lambda: None,
+    )
+    fake = SimpleNamespace(
+        get=lambda *args, **kwargs: response,
+        HTTPError=real_httpx.HTTPError,
+    )
+    monkeypatch.setattr(mineru_cloud, "httpx", fake)
+
+    with pytest.raises(MinerUError, match="download size limit"):
+        mineru_cloud._download("https://zip")
+
+
 # ---------------------------------------------------------------------------
 # Cloud client end-to-end (mocked transport)
 # ---------------------------------------------------------------------------

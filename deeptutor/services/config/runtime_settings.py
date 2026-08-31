@@ -41,11 +41,12 @@ DEFAULT_SYSTEM_SETTINGS: dict[str, Any] = {
     "chat_attachment_max_chars_total": 150_000,
 }
 
-# Clamp bounds for the chat attachment knobs. The MB ceilings are deliberately
-# generous (local deployments parse in-process; the WS frame cap is derived
-# from the total) while still refusing nonsense like 0 or 10^9.
-CHAT_ATTACHMENT_MAX_FILE_MB_RANGE = (1, 1024)
-CHAT_ATTACHMENT_MAX_TOTAL_MB_RANGE = (1, 2048)
+# Clamp bounds for the chat attachment knobs. The unified WebSocket carries
+# attachments as base64, so keeping the total below 40 MiB leaves room for
+# inflation and JSON metadata under the fixed 64 MiB transport ceiling. Larger
+# source files should use the bounded Course/knowledge ingestion paths instead.
+CHAT_ATTACHMENT_MAX_FILE_MB_RANGE = (1, 40)
+CHAT_ATTACHMENT_MAX_TOTAL_MB_RANGE = (1, 40)
 CHAT_ATTACHMENT_CHARS_RANGE = (10_000, 5_000_000)
 
 DEFAULT_AUTH_SETTINGS: dict[str, Any] = {
@@ -991,6 +992,7 @@ def get_chat_attachment_limits() -> ChatAttachmentLimits:
 # uvicorn's default WebSocket frame ceiling. Never derive below it so chat
 # behaves identically to older builds even if the configured totals are tiny.
 _WS_MAX_SIZE_FLOOR = 16 * 1024 * 1024
+_WS_MAX_SIZE_HARD_CAP = 64 * 1024 * 1024
 
 
 def compute_ws_max_size(max_total_bytes: int) -> int:
@@ -1002,7 +1004,7 @@ def compute_ws_max_size(max_total_bytes: int) -> int:
     (message text, metadata, quoting) on top of the inflated payload.
     """
     inflated = (max_total_bytes * 4) // 3
-    return max(_WS_MAX_SIZE_FLOOR, inflated + 8 * 1024 * 1024)
+    return min(_WS_MAX_SIZE_HARD_CAP, max(_WS_MAX_SIZE_FLOOR, inflated + 8 * 1024 * 1024))
 
 
 def get_ws_max_size() -> int:

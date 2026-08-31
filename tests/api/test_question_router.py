@@ -241,10 +241,14 @@ def test_question_generate_uses_current_topic_contract(
         types.SimpleNamespace(get_instance=lambda: FakeTaskManager()),
     )
     monkeypatch.setattr(question_router_module, "get_llm_config", lambda: FakeConfig())
-    monkeypatch.setattr(question_router_module, "get_path_service", lambda: types.SimpleNamespace(
-        get_question_batch_dir=lambda _task_id: tmp_path,
-        get_question_dir=lambda: tmp_path,
-    ))
+    monkeypatch.setattr(
+        question_router_module,
+        "get_path_service",
+        lambda: types.SimpleNamespace(
+            get_question_batch_dir=lambda _task_id: tmp_path,
+            get_question_dir=lambda: tmp_path,
+        ),
+    )
     monkeypatch.setattr(question_router_module, "_admit_question_generation", _admit)
 
     websocket = FakeWebSocket()
@@ -280,10 +284,14 @@ def test_mimic_rejects_invalid_upload_before_question_admission(
     question_router_module = _load_question_router_module(monkeypatch)
     admission_calls = 0
 
+    class _Lease:
+        async def aclose(self) -> None:
+            return None
+
     async def _admit():
         nonlocal admission_calls
         admission_calls += 1
-        raise AssertionError("invalid uploads must not reserve generation capacity")
+        return None, _Lease()
 
     monkeypatch.setattr(question_router_module, "_admit_question_generation", _admit)
 
@@ -294,8 +302,18 @@ def test_mimic_rejects_invalid_upload_before_question_admission(
             )
             message = websocket.receive_json()
 
-    assert admission_calls == 0
+    # Admission intentionally precedes frame receipt so an attacker cannot
+    # make many sockets buffer/decode large envelopes before the bulkhead.
+    assert admission_calls == 1
     assert message == {"type": "error", "content": "Question generation is unavailable."}
+
+
+def test_question_global_bulkhead_serializes_process_stdout_capture(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    question_router_module = _load_question_router_module(monkeypatch)
+
+    assert question_router_module._QUESTION_GLOBAL_QUOTA._max_concurrent == 1
 
 
 def test_mimic_parsed_path_is_jailed_to_the_authenticated_workspace(

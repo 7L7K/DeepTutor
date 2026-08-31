@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import base64
 import io
+import zipfile
 
 from docx import Document as DocxDocument
 from openpyxl import Workbook
@@ -273,6 +274,14 @@ class TestFailureModes:
         # OOXML header but garbage body
         with pytest.raises(CorruptDocumentError):
             extract_text_from_bytes("foo.docx", b"PK\x03\x04" + b"\x00" * 512)
+
+    def test_ooxml_zip_expansion_budget_rejects_compression_bomb(self) -> None:
+        buf = io.BytesIO()
+        with zipfile.ZipFile(buf, "w", compression=zipfile.ZIP_DEFLATED) as archive:
+            archive.writestr("word/document.xml", b"0" * (2 * 1024 * 1024))
+
+        with pytest.raises(CorruptDocumentError, match="compression ratio"):
+            extract_text_from_bytes("bomb.docx", buf.getvalue())
 
     def test_empty_docx_no_text(self) -> None:
         data = _make_docx([])  # no paragraphs

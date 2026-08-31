@@ -18,6 +18,7 @@ import uuid
 from deeptutor.core.stream import StreamEvent, StreamEventType
 from deeptutor.services.llm.utils import clean_thinking_tags
 from deeptutor.services.path_service import get_path_service
+from deeptutor.services.sandbox.quota import QuotaExceeded, UserExecQuota
 from deeptutor.services.session.artifact_attachments import (
     artifact_attachments,
     fill_preview_text,
@@ -107,6 +108,15 @@ _TITLE_PREFIXES: tuple[str, ...] = (
 )
 _TITLE_TRAILING_PUNCT = ".。!！?？,，;；、 \t"
 _INTERRUPTED_TURN_ERROR = "Turn interrupted by server restart. Please retry your message."
+
+# Generic unified-chat turns are provider-backed work, so they need the same
+# process-local admission guard as the narrower notebook/question surfaces.
+# These are deliberately generous for the controlled beta; the provider
+# project hard cap remains the billing authority. A multi-replica deployment
+# must move this lease to a shared store before scaling out.
+_TURN_REQUEST_QUOTA = UserExecQuota(max_concurrent=2, max_per_minute=60)
+_TURN_GLOBAL_QUOTA = UserExecQuota(max_concurrent=8, max_per_minute=240)
+_TURN_GLOBAL_QUOTA_KEY = "unified-turn-global"
 
 
 def _sanitize_session_title(raw: str) -> str:
@@ -594,6 +604,7 @@ class _TurnExecution:
     events: list[dict[str, Any]] = field(default_factory=list)
     next_seq: int = 1
     events_flushed: bool = False
+    admission_leases: contextlib.AsyncExitStack | None = None
 
 
 class TurnRuntimeManager:
@@ -645,6 +656,30 @@ class TurnRuntimeManager:
     def _assert_execution_owner_current(self, execution: _TurnExecution) -> None:
         if not self._execution_owner_is_current(execution):
             raise PermissionError("Account authorization changed during turn")
+
+    async def _admit_turn(self, user_id: str) -> contextlib.AsyncExitStack:
+        """Reserve user/global capacity before persisting a provider turn."""
+        leases = contextlib.AsyncExitStack()
+        try:
+            user_lease = await _TURN_REQUEST_QUOTA.acquire(user_id)
+            await leases.enter_async_context(user_lease)
+            global_lease = await _TURN_GLOBAL_QUOTA.acquire(_TURN_GLOBAL_QUOTA_KEY)
+            await leases.enter_async_context(global_lease)
+            return leases
+        except QuotaExceeded as exc:
+            await leases.aclose()
+            raise RuntimeError("Turn capacity is temporarily full; please retry shortly.") from exc
+        except BaseException:
+            await leases.aclose()
+            raise
+
+    async def _release_turn_admission(self, execution: _TurnExecution) -> None:
+        """Release a turn's leases exactly once, including test/task fallbacks."""
+        leases = execution.admission_leases
+        if leases is None:
+            return
+        execution.admission_leases = None
+        await leases.aclose()
 
     async def _publish_authorized_live_event(
         self,
@@ -861,6 +896,10 @@ class TurnRuntimeManager:
                 "tools": [t for t in (payload.get("tools") or []) if t in allowed_tools],
             }
         payload = {**payload, "llm_selection": llm_selection}
+        # Reserve capacity before creating a session/turn. This prevents a
+        # learner from bypassing admission simply by opening fresh sessions
+        # and keeps provider-backed work bounded until the worker finishes.
+        admission_leases = await self._admit_turn(current_user.id)
 
         async def persist_new_turn(
             current_payload: dict[str, Any],
@@ -900,13 +939,17 @@ class TurnRuntimeManager:
             new_turn = await self.store.create_turn(session["id"], capability=capability)
             return current_payload, new_turn
 
-        if course_id:
-            from deeptutor.courses.service import course_operation_lock
+        try:
+            if course_id:
+                from deeptutor.courses.service import course_operation_lock
 
-            async with course_operation_lock(course_id):
+                async with course_operation_lock(course_id):
+                    payload, turn = await persist_new_turn(payload)
+            else:
                 payload, turn = await persist_new_turn(payload)
-        else:
-            payload, turn = await persist_new_turn(payload)
+        except BaseException:
+            await admission_leases.aclose()
+            raise
         assert session is not None
         from deeptutor.multi_user.context import get_current_user
 
@@ -918,6 +961,7 @@ class TurnRuntimeManager:
             payload=dict(payload),
             owner_user_id=current_owner.id,
             owner_role=current_owner.role,
+            admission_leases=admission_leases,
         )
         session_metadata: dict[str, Any] = {
             "session_id": session["id"],
@@ -933,30 +977,40 @@ class TurnRuntimeManager:
             session_metadata["superseded_turn_id"] = str(superseded_turn_id)
         if runtime_only_config.get("_regenerate"):
             session_metadata["regenerate"] = True
-        await self._publish_live_event(
-            execution,
-            StreamEvent(
-                type=StreamEventType.SESSION,
-                source="turn_runtime",
-                metadata=session_metadata,
-            ),
-        )
-        if replace_assistant_message_id is not None:
-            # Keep the previous answer durable while the replacement runs. The
-            # worker inserts the new sibling first and removes the old answer
-            # only after the new message commit succeeds, so a provider error,
-            # cancellation, or process crash cannot erase the last good answer.
-            payload = {
-                **payload,
-                "config": {
-                    **dict(payload.get("config", {}) or {}),
-                    "_replace_assistant_message_id": int(replace_assistant_message_id),
-                },
-            }
-            execution.payload = dict(payload)
-        async with self._lock:
-            self._executions[turn["id"]] = execution
-            execution.task = asyncio.create_task(self._run_turn(execution))
+        try:
+            await self._publish_live_event(
+                execution,
+                StreamEvent(
+                    type=StreamEventType.SESSION,
+                    source="turn_runtime",
+                    metadata=session_metadata,
+                ),
+            )
+            if replace_assistant_message_id is not None:
+                # Keep the previous answer durable while the replacement runs. The
+                # worker inserts the new sibling first and removes the old answer
+                # only after the new message commit succeeds, so a provider error,
+                # cancellation, or process crash cannot erase the last good answer.
+                payload = {
+                    **payload,
+                    "config": {
+                        **dict(payload.get("config", {}) or {}),
+                        "_replace_assistant_message_id": int(replace_assistant_message_id),
+                    },
+                }
+                execution.payload = dict(payload)
+            async with self._lock:
+                self._executions[turn["id"]] = execution
+                execution.task = asyncio.create_task(self._run_turn(execution))
+                # A few internal/test callers replace ``_run_turn`` with a
+                # lightweight coroutine. The callback keeps those paths from
+                # pinning the process-global admission semaphore forever.
+                execution.task.add_done_callback(
+                    lambda _task: asyncio.create_task(self._release_turn_admission(execution))
+                )
+        except BaseException:
+            await self._release_turn_admission(execution)
+            raise
         return session, turn
 
     async def regenerate_last_turn(
@@ -1138,7 +1192,7 @@ class TurnRuntimeManager:
         orphan cannot indefinitely block Course archive or learning reset.
         """
         recovered = 0
-        for turn in await self.store.list_active_course_turns(course_id):
+        for turn in await self.store.list_active_course_turns(course_id):  # type: ignore[attr-defined]
             before = str(turn.get("status") or "")
             after = await self._fail_orphan_running_turn(turn)
             if before == "running" and str((after or {}).get("status") or "") == "failed":
@@ -1349,7 +1403,7 @@ class TurnRuntimeManager:
         capability_name = execution.capability
         turn_id = execution.turn_id
         attachments = []
-        attachment_records = []
+        attachment_records: list[dict[str, Any]] = []
         persisted_input_attachment_ids: list[str] = []
         input_attachments_committed = False
         attachment_store: Any | None = None
@@ -2195,6 +2249,7 @@ class TurnRuntimeManager:
                 and reset_active_text_generation_feature is not None
             ):
                 reset_active_text_generation_feature(text_generation_feature_token)
+            await self._release_turn_admission(execution)
             # Drop the reply queue first — any in-flight ``submit_user_reply``
             # that finds the queue gone will return ``False`` rather than
             # accumulating on a dead turn.

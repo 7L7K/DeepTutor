@@ -69,8 +69,8 @@ class NotebookEntryListResponse(BaseModel):
 
 class EntryUpdateRequest(BaseModel):
     bookmarked: bool | None = None
-    followup_session_id: str | None = None
-    ai_judgment: str | None = None
+    followup_session_id: str | None = Field(default=None, max_length=100)
+    ai_judgment: str | None = Field(default=None, max_length=12_000)
 
 
 class CategoryItem(BaseModel):
@@ -101,11 +101,11 @@ class AnswerImageUpload(BaseModel):
     record across resubmissions.
     """
 
-    id: str = ""
-    base64: str = ""
-    url: str = ""
-    filename: str = "answer.png"
-    mime_type: str = "image/png"
+    id: str = Field(default="", max_length=100)
+    base64: str = Field(default="", max_length=40 * 1024 * 1024)
+    url: str = Field(default="", max_length=2_048)
+    filename: str = Field(default="answer.png", max_length=255)
+    mime_type: str = Field(default="image/png", max_length=255)
 
     @field_validator("base64")
     @classmethod
@@ -121,21 +121,30 @@ class AnswerImageUpload(BaseModel):
 
 
 class UpsertEntryRequest(BaseModel):
-    session_id: str
-    turn_id: str = ""
-    question_id: str
-    question: str
-    question_type: str = ""
-    options: dict[str, str] | None = None
-    correct_answer: str = ""
-    explanation: str = ""
-    difficulty: str = ""
-    user_answer: str = ""
+    session_id: str = Field(..., max_length=100)
+    turn_id: str = Field(default="", max_length=100)
+    question_id: str = Field(..., max_length=100)
+    question: str = Field(..., max_length=50_000)
+    question_type: str = Field(default="", max_length=100)
+    options: dict[str, str] | None = Field(default=None, max_length=100)
+    correct_answer: str = Field(default="", max_length=20_000)
+    explanation: str = Field(default="", max_length=20_000)
+    difficulty: str = Field(default="", max_length=100)
+    user_answer: str = Field(default="", max_length=20_000)
     # Optional: list of images attached as part of the learner's answer.
     # ``None`` means "don't touch any previously-stored images on update";
     # an empty list explicitly clears them.
     user_answer_images: list[AnswerImageUpload] | None = Field(default=None, max_length=5)
     is_correct: bool = False
+
+    @field_validator("options")
+    @classmethod
+    def option_text_is_bounded(cls, value: dict[str, str] | None) -> dict[str, str] | None:
+        if value is not None and any(
+            len(key) > 100 or len(text) > 2_000 for key, text in value.items()
+        ):
+            raise ValueError("question options are too large")
+        return value
 
 
 # ── Entry endpoints ──────────────────────────────────────────────

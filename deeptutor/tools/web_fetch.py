@@ -12,9 +12,9 @@ arguments, not a human):
 
 * Only ``http://`` / ``https://`` schemes accepted.
 * IP literals and hostnames resolving to **private / loopback / link-local**
-  ranges are rejected up front. The strict-host check happens both
-  pre-flight (against the parsed URL) and post-redirect (against the
-  final resolved URL) so a redirect to ``127.0.0.1`` can't slip past.
+  ranges are rejected up front. Redirects are followed manually and each
+  ``Location`` target is validated before the next request, so a redirect to
+  ``127.0.0.1`` is never issued.
 * Response size is hard-capped at ``MAX_RESPONSE_BYTES``; we stop reading
   once the body grows past this even before the server finishes.
 * Extracted text is truncated to ``max_chars`` (default 50 000 chars,
@@ -29,7 +29,7 @@ import logging
 import re
 import socket
 from typing import Any
-from urllib.parse import urlparse
+from urllib.parse import urljoin, urlparse
 
 import httpx
 
@@ -40,6 +40,7 @@ MAX_RESPONSE_BYTES = 4 * 1024 * 1024  # 4 MB — safety cap on raw download
 DEFAULT_TIMEOUT_S = 15.0
 DEFAULT_USER_AGENT = "DeepTutor/1.0 (+https://hkuds.dev/deeptutor)"
 ALLOWED_SCHEMES = {"http", "https"}
+MAX_REDIRECTS = 5
 
 # Cheap inline HTML → text. Good enough for blog / docs / arxiv abstract
 # pages. For JS-heavy SPAs the tool will return the bare HTML scaffold —
@@ -108,26 +109,72 @@ async def fetch_url_as_markdown(
     try:
         async with factory(timeout=timeout_s, user_agent=user_agent) as client:
             try:
-                async with client.stream(
-                    "GET",
-                    url_clean,
-                    headers={"User-Agent": user_agent, "Accept": "text/html,*/*;q=0.5"},
-                    follow_redirects=True,
-                ) as response:
-                    final_url = str(response.url)
-                    final_host = (urlparse(final_url).hostname or "").strip()
-                    if final_host and validator(final_host):
+                current_url = url_clean
+                raw = ""
+                final_url = current_url
+                for redirect_count in range(MAX_REDIRECTS + 1):
+                    # Validate every hop before issuing its request. Automatic
+                    # redirect handling would send the next GET before this
+                    # application had a chance to reject a private target.
+                    current = urlparse(current_url)
+                    current_host = (current.hostname or "").strip()
+                    if current.scheme.lower() not in ALLOWED_SCHEMES or not current_host:
+                        return FetchOutcome(ok=False, error="Redirect target URL is invalid.")
+                    if validator(current_host):
                         return FetchOutcome(
                             ok=False,
-                            error=f"Redirect to private/loopback host blocked: {final_host}.",
+                            error=f"Redirect to private/loopback host blocked: {current_host}.",
                         )
-                    if response.status_code >= 400:
-                        return FetchOutcome(
-                            ok=False,
-                            url=final_url,
-                            error=f"HTTP {response.status_code} from {final_url}.",
-                        )
-                    raw = await _bounded_read(response, MAX_RESPONSE_BYTES)
+
+                    async with client.stream(
+                        "GET",
+                        current_url,
+                        headers={"User-Agent": user_agent, "Accept": "text/html,*/*;q=0.5"},
+                        follow_redirects=False,
+                    ) as response:
+                        response_url = str(response.url)
+                        status = int(response.status_code)
+                        location = response.headers.get("location")
+                        if 300 <= status < 400 and location:
+                            if redirect_count >= MAX_REDIRECTS:
+                                return FetchOutcome(
+                                    ok=False,
+                                    url=response_url,
+                                    error=f"Too many redirects (maximum {MAX_REDIRECTS}).",
+                                )
+                            next_url = urljoin(current_url, location)
+                            next_parsed = urlparse(next_url)
+                            next_host = (next_parsed.hostname or "").strip()
+                            if next_parsed.scheme.lower() not in ALLOWED_SCHEMES or not next_host:
+                                return FetchOutcome(
+                                    ok=False,
+                                    error="Redirect target URL is invalid.",
+                                )
+                            if validator(next_host):
+                                return FetchOutcome(
+                                    ok=False,
+                                    error=f"Redirect to private/loopback host blocked: {next_host}.",
+                                )
+                            current_url = next_url
+                            continue
+
+                        final_url = response_url
+                        final_host = (urlparse(final_url).hostname or "").strip()
+                        if final_host and validator(final_host):
+                            return FetchOutcome(
+                                ok=False,
+                                error=f"Redirect to private/loopback host blocked: {final_host}.",
+                            )
+                        if status >= 400:
+                            return FetchOutcome(
+                                ok=False,
+                                url=final_url,
+                                error=f"HTTP {status} from {final_url}.",
+                            )
+                        raw = await _bounded_read(response, MAX_RESPONSE_BYTES)
+                        break
+                else:  # pragma: no cover - range always includes a terminal iteration
+                    return FetchOutcome(ok=False, error="Too many redirects.")
             except httpx.HTTPError as exc:
                 return FetchOutcome(ok=False, error=f"Network error: {exc}")
     except Exception as exc:  # pragma: no cover — defensive
@@ -257,6 +304,7 @@ def _extract_readable(html_or_text: str) -> tuple[str, str]:
 
 __all__ = [
     "DEFAULT_MAX_CHARS",
+    "MAX_REDIRECTS",
     "FetchOutcome",
     "fetch_url_as_markdown",
 ]

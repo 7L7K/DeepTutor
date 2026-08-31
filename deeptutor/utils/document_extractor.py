@@ -105,6 +105,10 @@ def _current_limits() -> tuple[int, int, int, int]:
 
 _PDF_MAGIC = b"%PDF-"
 _OOXML_MAGIC = b"PK\x03\x04"
+_OOXML_MAX_ENTRIES = 2_000
+_OOXML_MAX_ENTRY_UNCOMPRESSED_BYTES = 64 * 1024 * 1024
+_OOXML_MAX_TOTAL_UNCOMPRESSED_BYTES = 128 * 1024 * 1024
+_OOXML_MAX_COMPRESSION_RATIO = 1_000
 
 
 class DocumentExtractionError(Exception):
@@ -195,6 +199,13 @@ def extract_text_from_bytes(
         )
 
     _check_magic(ext, data, filename)
+
+    # Validate the ZIP central directory before handing OOXML bytes to
+    # python-docx/openpyxl/python-pptx. Those libraries otherwise expand and
+    # traverse every member before our extracted-character cap runs.
+    if ext in {".docx", ".xlsx", ".pptx"}:
+        with _open_ooxml(data, filename):
+            pass
 
     if ext == ".pdf":
         text = _extract_pdf(data, filename)
@@ -374,7 +385,38 @@ def _extract_text_like(data: bytes, filename: str) -> str:
 
 def _open_ooxml(data: bytes, filename: str) -> zipfile.ZipFile:
     try:
-        return zipfile.ZipFile(io.BytesIO(data))
+        archive = zipfile.ZipFile(io.BytesIO(data))
+        infos = archive.infolist()
+        if len(infos) > _OOXML_MAX_ENTRIES:
+            archive.close()
+            raise CorruptDocumentError(
+                f"{filename}: Office ZIP has too many entries", filename=filename
+            )
+        total_uncompressed = 0
+        for info in infos:
+            if info.is_dir():
+                continue
+            uncompressed = int(info.file_size)
+            compressed = int(info.compress_size)
+            if uncompressed > _OOXML_MAX_ENTRY_UNCOMPRESSED_BYTES:
+                archive.close()
+                raise CorruptDocumentError(
+                    f"{filename}: Office ZIP entry is too large", filename=filename
+                )
+            total_uncompressed += uncompressed
+            if total_uncompressed > _OOXML_MAX_TOTAL_UNCOMPRESSED_BYTES:
+                archive.close()
+                raise CorruptDocumentError(
+                    f"{filename}: Office ZIP expands beyond the safety budget", filename=filename
+                )
+            if uncompressed and (
+                compressed <= 0 or uncompressed > compressed * _OOXML_MAX_COMPRESSION_RATIO
+            ):
+                archive.close()
+                raise CorruptDocumentError(
+                    f"{filename}: Office ZIP compression ratio is unsafe", filename=filename
+                )
+        return archive
     except zipfile.BadZipFile as exc:
         raise CorruptDocumentError(
             f"{filename}: failed to open Office ZIP package ({exc})", filename=filename

@@ -10,6 +10,7 @@ from __future__ import annotations
 from enum import Enum
 import json
 from pathlib import Path
+import re
 import time
 import uuid
 
@@ -58,6 +59,7 @@ class Notebook(BaseModel):
 
 
 _UNSET = object()
+_NOTEBOOK_ID_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_-]{0,99}$")
 
 
 def _clean_record_summary(summary: str) -> str:
@@ -97,10 +99,26 @@ class NotebookManager:
             json.dump(index, f, indent=2, ensure_ascii=False)
 
     def _get_notebook_file(self, notebook_id: str) -> Path:
-        return self.base_dir / f"{notebook_id}.json"
+        # Notebook IDs are persisted filenames under the current user's
+        # workspace.  Reject path syntax and enforce resolved containment so a
+        # caller cannot use a crafted ID (or a symlink) to read another
+        # user's notebook file.
+        normalized_id = str(notebook_id or "")
+        if not _NOTEBOOK_ID_PATTERN.fullmatch(normalized_id):
+            raise ValueError("invalid notebook id")
+        base_dir = self.base_dir.resolve()
+        candidate = (base_dir / f"{normalized_id}.json").resolve()
+        try:
+            candidate.relative_to(base_dir)
+        except ValueError as exc:
+            raise ValueError("invalid notebook id") from exc
+        return candidate
 
     def _load_notebook(self, notebook_id: str) -> dict | None:
-        filepath = self._get_notebook_file(notebook_id)
+        try:
+            filepath = self._get_notebook_file(notebook_id)
+        except (TypeError, ValueError):
+            return None
         if not filepath.exists():
             return None
         try:
@@ -239,7 +257,10 @@ class NotebookManager:
         return notebook
 
     def delete_notebook(self, notebook_id: str) -> bool:
-        filepath = self._get_notebook_file(notebook_id)
+        try:
+            filepath = self._get_notebook_file(notebook_id)
+        except (TypeError, ValueError):
+            return False
         if not filepath.exists():
             return False
 

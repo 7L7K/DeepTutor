@@ -4,6 +4,8 @@ import asyncio
 
 import pytest
 
+from deeptutor.services.sandbox.quota import UserExecQuota
+from deeptutor.services.session import turn_runtime as turn_runtime_module
 from deeptutor.services.session.sqlite_store import SQLiteSessionStore
 from deeptutor.services.session.turn_runtime import TurnRuntimeManager, _TurnExecution
 
@@ -101,3 +103,45 @@ async def test_start_turn_clears_orphan_running_turn_before_create(
     persisted = await store.get_turn(stale["id"])
     assert persisted is not None
     assert persisted["status"] == "failed"
+
+
+@pytest.mark.asyncio
+async def test_start_turn_admission_blocks_fresh_sessions_until_first_finishes(
+    monkeypatch: pytest.MonkeyPatch, tmp_path
+) -> None:
+    """A learner cannot bypass the provider bulkhead by changing session IDs."""
+
+    store = SQLiteSessionStore(tmp_path / "chat_history.db")
+    runtime = TurnRuntimeManager(store)
+    gate = asyncio.Event()
+
+    async def _hold_run(_execution):
+        await gate.wait()
+
+    monkeypatch.setattr(runtime, "_run_turn", _hold_run)
+    monkeypatch.setattr(
+        turn_runtime_module,
+        "_TURN_REQUEST_QUOTA",
+        UserExecQuota(max_concurrent=1, max_per_minute=10),
+    )
+    payload = {
+        "type": "start_turn",
+        "session_id": None,
+        "capability": "chat",
+        "content": "hello",
+        "tools": [],
+        "knowledge_bases": [],
+        "attachments": [],
+        "language": "en",
+        "config": {},
+    }
+
+    _session, first_turn = await runtime.start_turn(payload)
+    with pytest.raises(RuntimeError, match="capacity"):
+        await runtime.start_turn({**payload, "session_id": None})
+
+    gate.set()
+    first_task = runtime._executions[first_turn["id"]].task
+    assert first_task is not None
+    await asyncio.wait_for(first_task, timeout=1)
+    await asyncio.sleep(0)

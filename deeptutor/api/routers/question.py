@@ -35,13 +35,19 @@ logger = logging.getLogger(__name__)
 router = APIRouter()
 
 _QUESTION_REQUEST_QUOTA = UserExecQuota(max_concurrent=1, max_per_minute=6)
-_QUESTION_GLOBAL_QUOTA = UserExecQuota(max_concurrent=2, max_per_minute=12)
+# Question/mimic generation uses process-global logging and stdout capture in
+# the legacy workflow.  Serialize the whole admitted socket so one tenant's
+# process output can never be routed to another tenant's WebSocket.
+_QUESTION_GLOBAL_QUOTA = UserExecQuota(max_concurrent=1, max_per_minute=12)
 _QUESTION_GLOBAL_QUOTA_KEY = "question-generation-global"
 _MAX_QUESTION_COUNT = 10
 _MAX_REQUIREMENT_CHARS = 12_000
 _MAX_KB_NAME_CHARS = 128
 _MAX_MIMIC_PATH_CHARS = 512
-_MAX_MIMIC_PDF_B64_CHARS = (DocumentValidator.MAX_FILE_SIZE * 4) // 3 + 4
+# Keep the legacy question upload inside the fixed 64 MiB WebSocket ceiling
+# (40 MiB decoded bytes plus base64/envelope overhead). The general document
+# validator remains broader for HTTP/Course ingestion paths.
+_MAX_MIMIC_PDF_B64_CHARS = ((40 * 1024 * 1024 + 2) // 3) * 4 + 4
 _MAX_REQUEST_JSON_CHARS = _MAX_MIMIC_PDF_B64_CHARS + 64 * 1024
 
 # These are deliberately conservative, process-local beta bulkheads. They
@@ -81,9 +87,7 @@ def _activate_question_llm_scope() -> object:
         if not has_capability_access("llm"):
             raise PermissionError("No LLM model is assigned to this account.")
         granted = [
-            item
-            for item in redacted_model_access(user.id).get("llm", [])
-            if item.get("available")
+            item for item in redacted_model_access(user.id).get("llm", []) if item.get("available")
         ]
         if not granted:
             raise PermissionError("No LLM model is assigned to this account.")
@@ -207,6 +211,14 @@ async def websocket_mimic_generate(websocket: WebSocket):
     uploaded_pdf_bytes: bytes | None = None
 
     try:
+        # Revalidate and reserve the bounded per-user/global slot before
+        # receiving a potentially large WebSocket frame.  This prevents an
+        # authenticated caller from opening many sockets that all buffer or
+        # decode large envelopes before quota admission.
+        if not await ws_revalidate_auth(websocket):
+            return
+        llm_scope_token, admission_leases = await _admit_question_generation()
+
         # 1. Wait for config
         data = await _receive_bounded_request_json(websocket)
         mode = data.get("mode", "parsed")
@@ -230,10 +242,6 @@ async def websocket_mimic_generate(websocket: WebSocket):
         else:
             paper_path = _resolve_parsed_mimic_path(data.get("paper_path"))
             data = {**data, "paper_path": paper_path}
-
-        if not await ws_revalidate_auth(websocket):
-            return
-        llm_scope_token, admission_leases = await _admit_question_generation()
 
         logger.info(f"Starting mimic generation (mode: {mode}, kb: {kb_name})")
 
@@ -445,7 +453,9 @@ async def websocket_mimic_generate(websocket: WebSocket):
     except Exception:
         logger.exception("Mimic generation error")
         try:
-            await websocket.send_json({"type": "error", "content": "Question generation is unavailable."})
+            await websocket.send_json(
+                {"type": "error", "content": "Question generation is unavailable."}
+            )
         except Exception:
             pass
     finally:
@@ -506,6 +516,12 @@ async def websocket_question_generate(websocket: WebSocket):
     admission_leases = None
 
     try:
+        # Revalidate and reserve the bounded per-user/global slot before
+        # receiving a potentially large WebSocket frame.
+        if not await ws_revalidate_auth(websocket):
+            return
+        llm_scope_token, admission_leases = await _admit_question_generation()
+
         # 1. Wait for config
         data = await _receive_bounded_request_json(websocket)
         requirement = data.get("requirement")
@@ -527,10 +543,6 @@ async def websocket_question_generate(websocket: WebSocket):
                 pass
             return
 
-        if not await ws_revalidate_auth(websocket):
-            return
-        llm_scope_token, admission_leases = await _admit_question_generation()
-
         # Generate task ID
         task_key = f"question_{kb_name}_{hash(str(requirement))}"
         task_id = task_manager.generate_task_id("question_gen", task_key)
@@ -542,7 +554,11 @@ async def websocket_question_generate(websocket: WebSocket):
             logger.debug("WebSocket closed, cannot send task_id")
             return
 
-        topic_for_log = requirement.get("knowledge_point", "Unknown") if isinstance(requirement, dict) else requirement
+        topic_for_log = (
+            requirement.get("knowledge_point", "Unknown")
+            if isinstance(requirement, dict)
+            else requirement
+        )
         logger.info(f"[{task_id}] Starting question generation: {topic_for_log}")
 
         # 2. Initialize Coordinator

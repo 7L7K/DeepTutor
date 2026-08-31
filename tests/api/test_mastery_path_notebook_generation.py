@@ -10,6 +10,8 @@ import pytest
 
 from deeptutor.api.routers.mastery_path import (
     GenerateFromNotebookRequest,
+    ImportFromBookRequest,
+    InitModulesRequest,
     generate_from_notebook,
 )
 from deeptutor.multi_user.context import reset_current_user, set_current_user
@@ -50,6 +52,17 @@ def test_notebook_generation_request_bounds_records_and_text() -> None:
             notebook_id="notebook-1",
             records=[{"id": str(index)} for index in range(13)],
         )
+
+
+def test_mastery_structure_requests_bound_nested_counts_and_text() -> None:
+    with pytest.raises(ValueError):
+        InitModulesRequest(modules=[{} for _ in range(101)])
+    with pytest.raises(ValueError):
+        InitModulesRequest(modules=[{"knowledge_points": [{} for _ in range(101)]}])
+    with pytest.raises(ValueError):
+        ImportFromBookRequest(chapters=[{"title": "Chapter", "knowledge_points": ["x" * 501]}])
+    with pytest.raises(ValueError):
+        ImportFromBookRequest(chapters=[{"title": "Chapter"}] * 101)
     with pytest.raises(ValueError):
         GenerateFromNotebookRequest(
             notebook_id="notebook-1",
@@ -60,6 +73,7 @@ def test_notebook_generation_request_bounds_records_and_text() -> None:
 def test_notebook_generation_reports_quota_exhaustion_before_llm(tmp_path, monkeypatch) -> None:
     token = set_current_user(_learner(tmp_path))
     try:
+
         @asynccontextmanager
         async def exhausted_quota():
             raise QuotaExceeded("rate limit")
@@ -84,6 +98,7 @@ def test_notebook_generation_uses_current_users_saved_records_not_client_content
 ) -> None:
     token = set_current_user(_learner(tmp_path))
     try:
+
         @asynccontextmanager
         async def admitted():
             yield SimpleNamespace()
@@ -118,7 +133,9 @@ def test_notebook_generation_uses_current_users_saved_records_not_client_content
             return_value='{"modules":[{"name":"M","knowledge_points":['
             '{"name":"Key","type":"concept"}]}]}'
         )
-        monkeypatch.setattr("deeptutor.api.routers.mastery_path.admitted_notebook_llm_call", admitted)
+        monkeypatch.setattr(
+            "deeptutor.api.routers.mastery_path.admitted_notebook_llm_call", admitted
+        )
         monkeypatch.setattr(
             "deeptutor.api.routers.mastery_path.get_notebook_manager", lambda: _NotebookManager()
         )
@@ -153,9 +170,12 @@ def test_notebook_generation_uses_current_users_saved_records_not_client_content
         reset_current_user(token)
 
 
-def test_notebook_generation_rejects_missing_server_record_before_llm(tmp_path, monkeypatch) -> None:
+def test_notebook_generation_rejects_missing_server_record_before_llm(
+    tmp_path, monkeypatch
+) -> None:
     token = set_current_user(_learner(tmp_path))
     try:
+
         @asynccontextmanager
         async def admitted():
             yield SimpleNamespace()
@@ -168,7 +188,9 @@ def test_notebook_generation_rejects_missing_server_record_before_llm(tmp_path, 
                 return []
 
         complete = AsyncMock()
-        monkeypatch.setattr("deeptutor.api.routers.mastery_path.admitted_notebook_llm_call", admitted)
+        monkeypatch.setattr(
+            "deeptutor.api.routers.mastery_path.admitted_notebook_llm_call", admitted
+        )
         monkeypatch.setattr(
             "deeptutor.api.routers.mastery_path.get_notebook_manager", lambda: _NotebookManager()
         )

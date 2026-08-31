@@ -81,6 +81,17 @@ async def test_restricted_subprocess_timeout() -> None:
 
 
 @pytest.mark.asyncio
+async def test_restricted_subprocess_stops_when_output_budget_is_exceeded() -> None:
+    request = ExecRequest(
+        command=f"{shlex.quote(sys.executable)} -c \"print('x' * 20000)\"",
+        limits=ResourceLimits(timeout_s=5, max_output_chars=100),
+    )
+    result = await RestrictedSubprocessBackend().exec(request)
+    assert "output limit exceeded" in result.error
+    assert len(result.stdout) <= 400
+
+
+@pytest.mark.asyncio
 async def test_service_disabled_when_no_backend() -> None:
     svc = SandboxService(SandboxSettings(runner_url="", allow_subprocess=False))
     # Force the "no backend" branch deterministically.

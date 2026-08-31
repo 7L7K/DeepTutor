@@ -60,14 +60,20 @@ Mounts note:
 
 from __future__ import annotations
 
+import contextlib
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import json
+import logging
 import os
 import resource
+import selectors
 import subprocess
 import sys
+import time
 import traceback
-from typing import Any
+from typing import Any, cast
+
+logger = logging.getLogger(__name__)
 
 # Port to listen on inside the container; overridable for local testing.
 DEFAULT_PORT = 8900
@@ -228,22 +234,26 @@ def execute(payload: dict[str, Any]) -> dict[str, Any]:
     preexec_fn = _build_preexec_fn(memory_mb, cpu_seconds)
 
     try:
-        completed = subprocess.run(  # noqa: S602 - shell=True is the contract
+        stdout_bytes, stderr_bytes, timed_out, output_limited, returncode = _run_bounded_process(
             argv or command,
-            # An argv request is exec'd directly; only the shell-string form gets
-            # a shell. See the "Argv note" in the module docstring.
-            shell=not argv,  # nosec B602 — the runner exists to execute shell commands in-sandbox
+            # A shell string is the legacy runner contract; argv requests take
+            # the no-shell branch above. nosec B602,B604.
+            shell=not argv,  # nosec B602,B604
             cwd=workdir,
             env=env,
-            timeout=timeout_s,
-            capture_output=True,
-            text=True,
-            preexec_fn=preexec_fn,  # POSIX-only; None elsewhere
+            timeout_s=timeout_s,
+            max_output_chars=max_output_chars,
+            preexec_fn=preexec_fn,
         )
-    except subprocess.TimeoutExpired as exc:
-        # Surface whatever was captured before the kill, head+tail capped.
-        stdout = _decode(exc.stdout)
-        stderr = _decode(exc.stderr)
+    except (OSError, ValueError) as exc:
+        # Spawn failure (bad cwd, exec error, ...) — a runner-level problem.
+        return _error_result(f"{type(exc).__name__}: {exc}")
+
+    stdout = _decode(stdout_bytes)
+    stderr = _decode(stderr_bytes)
+    if output_limited:
+        logger.debug("sandbox command output exceeded %s characters", max_output_chars)
+    if timed_out:
         return {
             "stdout": _truncate_head_tail(stdout, max_output_chars),
             "stderr": _truncate_head_tail(stderr, max_output_chars),
@@ -251,17 +261,98 @@ def execute(payload: dict[str, Any]) -> dict[str, Any]:
             "timed_out": True,
             "error": "",
         }
-    except (OSError, ValueError) as exc:
-        # Spawn failure (bad cwd, exec error, ...) — a runner-level problem.
-        return _error_result(f"{type(exc).__name__}: {exc}")
 
     return {
-        "stdout": _truncate_head_tail(completed.stdout or "", max_output_chars),
-        "stderr": _truncate_head_tail(completed.stderr or "", max_output_chars),
-        "exit_code": completed.returncode,
+        "stdout": _truncate_head_tail(stdout, max_output_chars),
+        "stderr": _truncate_head_tail(stderr, max_output_chars),
+        "exit_code": returncode,
         "timed_out": False,
         "error": "",
     }
+
+
+def _run_bounded_process(
+    command: str | list[str],
+    *,
+    shell: bool,
+    cwd: str | None,
+    env: dict[str, str],
+    timeout_s: int,
+    max_output_chars: int,
+    preexec_fn: Any,
+) -> tuple[bytes, bytes, bool, bool, int]:
+    """Run a child while bounding both pipe buffers and wall-clock time."""
+    max_bytes = max(1, max_output_chars) * 4
+    process = subprocess.Popen(  # nosec B602 — shell=True is the runner contract
+        command,
+        shell=shell,
+        cwd=cwd,
+        env=env,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        preexec_fn=preexec_fn,
+    )
+    assert process.stdout is not None and process.stderr is not None
+    selector = selectors.DefaultSelector()
+    selector.register(process.stdout, selectors.EVENT_READ, "stdout")
+    selector.register(process.stderr, selectors.EVENT_READ, "stderr")
+    buffers: dict[str, bytearray] = {"stdout": bytearray(), "stderr": bytearray()}
+    timed_out = False
+    output_limited = False
+    deadline = time.monotonic() + max(1, timeout_s)
+
+    def stop_child() -> None:
+        with contextlib.suppress(ProcessLookupError):
+            process.kill()
+
+    try:
+        while selector.get_map():
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                timed_out = True
+                stop_child()
+                break
+            for key, _ in selector.select(min(remaining, 0.25)):
+                stream = cast(Any, key.fileobj)
+                label = key.data
+                chunk = os.read(stream.fileno(), min(64 * 1024, max_bytes + 1))
+                if not chunk:
+                    selector.unregister(stream)
+                    stream.close()
+                    continue
+                room = max_bytes - len(buffers[label])
+                if len(chunk) > room:
+                    buffers[label].extend(chunk[: max(0, room)])
+                    output_limited = True
+                    stop_child()
+                    # Closing the parent read ends lets a child that ignores
+                    # SIGTERM receive SIGPIPE instead of keeping this loop
+                    # alive while unbounded output is produced.
+                    for pending in list(selector.get_map().values()):
+                        pending_stream = cast(Any, pending.fileobj)
+                        selector.unregister(pending_stream)
+                        pending_stream.close()
+                    break
+                buffers[label].extend(chunk)
+            if output_limited or timed_out:
+                break
+    finally:
+        if timed_out or output_limited:
+            stop_child()
+        with contextlib.suppress(subprocess.TimeoutExpired):
+            process.wait(timeout=5)
+        selector.close()
+        for stream in (process.stdout, process.stderr):
+            if stream is not None and not stream.closed:
+                stream.close()
+
+    if timed_out:
+        return bytes(buffers["stdout"]), bytes(buffers["stderr"]), True, False, 124
+    if output_limited:
+        # Preserve the historical command-level contract: an output cap is a
+        # successful, truncated result rather than a provider/tool failure.
+        return bytes(buffers["stdout"]), bytes(buffers["stderr"]), False, True, 0
+    return bytes(buffers["stdout"]), bytes(buffers["stderr"]), False, False, process.returncode or 0
 
 
 def _decode(value: Any) -> str:
