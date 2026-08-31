@@ -5,6 +5,7 @@ from __future__ import annotations
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
 from deeptutor.services.config.runtime_settings import get_chat_attachment_limits
+from deeptutor.services.sandbox.quota import QuotaExceeded, UserExecQuota
 
 _NOTEBOOK_UPSERT_PATH = "/api/v1/question-notebook/entries/upsert"
 _JSON_ENVELOPE_BYTES = 1024 * 1024
@@ -30,6 +31,7 @@ _VOICE_TTS_PATH = "/api/v1/voice/tts"
 _VOICE_TTS_BODY_BYTES = 128 * 1024
 _VOICE_STT_PATH = "/api/v1/voice/stt"
 _VOICE_STT_BODY_BYTES = 26 * 1024 * 1024
+_VOICE_STT_INTAKE_QUOTA = UserExecQuota(max_concurrent=4, max_per_minute=48)
 
 
 class _RequestBodyTooLarge(Exception):
@@ -108,41 +110,52 @@ class NotebookUpsertBodyLimitMiddleware:
         if limit is None:
             await self.app(scope, receive, send)
             return
-        headers = dict(scope.get("headers") or [])
-        raw_length = headers.get(b"content-length")
-        if raw_length:
+        intake_lease = None
+        if str(scope.get("path") or "").rstrip("/") == _VOICE_STT_PATH:
             try:
-                content_length = int(raw_length)
-                if content_length < 0 or content_length > limit:
+                intake_lease = await _VOICE_STT_INTAKE_QUOTA.acquire("voice-stt-intake-global")
+            except QuotaExceeded:
+                await _send_rate_limited(send)
+                return
+        try:
+            headers = dict(scope.get("headers") or [])
+            raw_length = headers.get(b"content-length")
+            if raw_length:
+                try:
+                    content_length = int(raw_length)
+                    if content_length < 0 or content_length > limit:
+                        await _send_too_large(send)
+                        return
+                except ValueError:
                     await _send_too_large(send)
                     return
-            except ValueError:
-                await _send_too_large(send)
-                return
 
-        received = 0
-        response_started = False
+            received = 0
+            response_started = False
 
-        async def limited_receive() -> Message:
-            nonlocal received
-            message = await receive()
-            if message["type"] == "http.request":
-                received += len(message.get("body", b""))
-                if received > limit:
-                    raise _RequestBodyTooLarge
-            return message
+            async def limited_receive() -> Message:
+                nonlocal received
+                message = await receive()
+                if message["type"] == "http.request":
+                    received += len(message.get("body", b""))
+                    if received > limit:
+                        raise _RequestBodyTooLarge
+                return message
 
-        async def tracked_send(message: Message) -> None:
-            nonlocal response_started
-            if message["type"] == "http.response.start":
-                response_started = True
-            await send(message)
+            async def tracked_send(message: Message) -> None:
+                nonlocal response_started
+                if message["type"] == "http.response.start":
+                    response_started = True
+                await send(message)
 
-        try:
-            await self.app(scope, limited_receive, tracked_send)
-        except _RequestBodyTooLarge:
-            if not response_started:
-                await _send_too_large(send)
+            try:
+                await self.app(scope, limited_receive, tracked_send)
+            except _RequestBodyTooLarge:
+                if not response_started:
+                    await _send_too_large(send)
+        finally:
+            if intake_lease is not None:
+                await intake_lease.__aexit__(None, None, None)
 
 
 async def _send_too_large(send: Send) -> None:
@@ -157,5 +170,21 @@ async def _send_too_large(send: Send) -> None:
         {
             "type": "http.response.body",
             "body": b'{"detail":"Request body too large"}',
+        }
+    )
+
+
+async def _send_rate_limited(send: Send) -> None:
+    await send(
+        {
+            "type": "http.response.start",
+            "status": 429,
+            "headers": [(b"content-type", b"application/json"), (b"retry-after", b"1")],
+        }
+    )
+    await send(
+        {
+            "type": "http.response.body",
+            "body": b'{"detail":"Request capacity is busy. Retry shortly"}',
         }
     )

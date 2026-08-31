@@ -18,6 +18,7 @@ from deeptutor.api.request_body_limits import (
     _VOICE_TTS_BODY_BYTES,
     _VOICE_TTS_PATH,
     NotebookUpsertBodyLimitMiddleware,
+    QuotaExceeded,
     _request_body_limit,
 )
 
@@ -131,6 +132,27 @@ def test_chunked_body_over_limit_is_rejected_without_materializing(monkeypatch) 
     asyncio.run(invoke())
 
     assert sent[0]["status"] == 413
+    assert seen == []
+
+
+def test_voice_stt_intake_quota_rejects_before_downstream(monkeypatch) -> None:
+    class DenyQuota:
+        async def acquire(self, _key: str):
+            raise QuotaExceeded("busy")
+
+    monkeypatch.setattr("deeptutor.api.request_body_limits._VOICE_STT_INTAKE_QUOTA", DenyQuota())
+    seen: list[int] = []
+
+    with TestClient(_limited_app(seen, _VOICE_STT_PATH)) as client:
+        response = client.post(
+            _VOICE_STT_PATH,
+            content=b"not parsed",
+            headers={"content-type": "application/octet-stream"},
+        )
+
+    assert response.status_code == 429
+    assert response.json() == {"detail": "Request capacity is busy. Retry shortly"}
+    assert response.headers["retry-after"] == "1"
     assert seen == []
 
 
