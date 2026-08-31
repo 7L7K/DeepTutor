@@ -26,6 +26,10 @@ _QUIZ_RESULTS_BODY_BYTES = 1024 * 1024
 _COURSE_SOURCE_PREFIX = "/api/v1/courses/"
 _COURSE_SOURCE_SUFFIX = "/sources"
 _COURSE_SOURCE_BODY_BYTES = 12 * 1024 * 1024
+_VOICE_TTS_PATH = "/api/v1/voice/tts"
+_VOICE_TTS_BODY_BYTES = 128 * 1024
+_VOICE_STT_PATH = "/api/v1/voice/stt"
+_VOICE_STT_BODY_BYTES = 26 * 1024 * 1024
 
 
 class _RequestBodyTooLarge(Exception):
@@ -49,6 +53,10 @@ def _request_body_limit(scope: Scope) -> int | None:
     method = str(scope.get("method") or "").upper()
     if method != "POST":
         return None
+    if normalized_path == _VOICE_TTS_PATH:
+        return _VOICE_TTS_BODY_BYTES
+    if normalized_path == _VOICE_STT_PATH:
+        return _VOICE_STT_BODY_BYTES
     if normalized_path == _NOTEBOOK_UPSERT_PATH:
         return notebook_upsert_body_limit()
     if normalized_path in _NOTEBOOK_SUMMARY_PATHS:

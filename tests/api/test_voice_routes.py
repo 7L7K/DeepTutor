@@ -65,6 +65,24 @@ def test_tts_rejects_empty_text(client: TestClient) -> None:
     assert resp.status_code == 422  # pydantic min_length
 
 
+def test_tts_rejects_oversized_text(client: TestClient) -> None:
+    resp = client.post("/api/v1/voice/tts", json={"text": "x" * 12_001})
+    assert resp.status_code == 422
+
+
+def test_tts_returns_busy_when_voice_quota_is_exhausted(
+    client: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class DenyQuota:
+        async def acquire(self, _user_id: str):
+            raise voice_router.QuotaExceeded("busy")
+
+    monkeypatch.setattr(voice_router, "_VOICE_USER_QUOTA", DenyQuota())
+    resp = client.post("/api/v1/voice/tts", json={"text": "hello"})
+    assert resp.status_code == 429
+
+
 def test_tts_provider_error_is_502(client: TestClient, monkeypatch: pytest.MonkeyPatch) -> None:
     async def boom(*_: Any, **__: Any):
         raise VoiceProviderError("upstream down")
@@ -109,3 +127,15 @@ def test_stt_rejects_empty_upload(client: TestClient) -> None:
         files={"file": ("empty.webm", b"", "audio/webm")},
     )
     assert resp.status_code == 400
+
+
+def test_stt_rejects_oversized_upload_without_forwarding(
+    client: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(voice_router, "_MAX_AUDIO_BYTES", 3)
+    resp = client.post(
+        "/api/v1/voice/stt",
+        files={"file": ("large.webm", b"1234", "audio/webm")},
+    )
+    assert resp.status_code == 413

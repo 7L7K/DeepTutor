@@ -13,6 +13,10 @@ from deeptutor.api.request_body_limits import (
     _MASTERY_STRUCTURE_BODY_BYTES,
     _NOTEBOOK_UPSERT_PATH,
     _QUIZ_RESULTS_BODY_BYTES,
+    _VOICE_STT_BODY_BYTES,
+    _VOICE_STT_PATH,
+    _VOICE_TTS_BODY_BYTES,
+    _VOICE_TTS_PATH,
     NotebookUpsertBodyLimitMiddleware,
     _request_body_limit,
 )
@@ -41,6 +45,17 @@ def _limited_app(seen: list[int], path: str = _NOTEBOOK_UPSERT_PATH) -> FastAPI:
         return {"size": len(body)}
 
     return app
+
+
+@pytest.mark.parametrize(
+    ("path", "expected"),
+    [
+        (_VOICE_TTS_PATH, _VOICE_TTS_BODY_BYTES),
+        (_VOICE_STT_PATH, _VOICE_STT_BODY_BYTES),
+    ],
+)
+def test_voice_routes_have_request_body_limits(path: str, expected: int) -> None:
+    assert _request_body_limit({"path": path, "method": "POST"}) == expected
 
 
 def test_content_length_over_limit_is_rejected_before_downstream(monkeypatch) -> None:
