@@ -30,6 +30,11 @@ logger = logging.getLogger(__name__)
 # cheap, and it picks up externally-edited stores within a minute.
 _MAX_SLEEP_SECONDS = 60.0
 _MAX_RUN_HISTORY = 10
+# Scheduled chat turns can spend shared model capacity without an active
+# browser session. Keep the persistent queue bounded both per conversation
+# owner and for the deployment as a whole.
+_MAX_ENABLED_JOBS_PER_OWNER = 8
+_MAX_ENABLED_JOBS_GLOBAL = 64
 
 
 def _now_ms() -> int:
@@ -53,7 +58,9 @@ class CronOwner:
 
     kind: str  # "chat" | "partner"
     user_id: str = ""  # chat: owning user
-    is_admin: bool = True  # chat: scope restore
+    # Missing ownership metadata must fail closed when loading legacy jobs;
+    # only the explicit local-admin sentinel below may use admin scope.
+    is_admin: bool = False  # chat: scope restore
     session_id: str = ""  # chat: reply lands in this session
     language: str = "en"
     partner_id: str = ""  # partner: owning partner
@@ -225,6 +232,19 @@ class CronService:
 
     # ── job management ────────────────────────────────────────────
 
+    def _assert_enabled_job_capacity(self, owner: CronOwner) -> None:
+        """Reject a new enabled job when its durable queue is at capacity."""
+        enabled_jobs = [job for job in self._jobs.values() if job.enabled]
+        if len(enabled_jobs) >= _MAX_ENABLED_JOBS_GLOBAL:
+            raise ValueError(
+                f"Cron global limit reached ({_MAX_ENABLED_JOBS_GLOBAL} enabled jobs)."
+            )
+        owner_enabled_jobs = [job for job in enabled_jobs if job.owner.key == owner.key]
+        if len(owner_enabled_jobs) >= _MAX_ENABLED_JOBS_PER_OWNER:
+            raise ValueError(
+                f"Cron owner limit reached ({_MAX_ENABLED_JOBS_PER_OWNER} enabled jobs per owner)."
+            )
+
     def add_job(
         self,
         *,
@@ -238,6 +258,7 @@ class CronService:
         validate_schedule(schedule)
         if not message.strip():
             raise ValueError("message is required")
+        self._assert_enabled_job_capacity(owner)
         job = CronJob(
             id=uuid.uuid4().hex[:10],
             name=name.strip() or message.strip()[:48],

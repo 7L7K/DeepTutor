@@ -21,8 +21,9 @@ async def mimic_exam_questions(
     kb_name: str | None = None,
     output_dir: str | None = None,
     max_questions: int | None = None,
-    allowed_builtin_tools: list[str] | None = None,
     ws_callback: WsCallback | None = None,
+    *,
+    allowed_builtin_tools: list[str] | None = None,
 ) -> dict[str, Any]:
     """
     Backward utility wrapper that delegates to the new coordinator pipeline.

@@ -192,7 +192,8 @@ services:
     # Resource limits. Honored on cgroup v2 hosts; podman warns and skips
     # on cgroup v1 or no-cgroup environments.
     # pids_limit: 1024
-    # mem_limit: 4g
+    # Keep the app below the 4 GiB VPS ceiling when this Podman variant is used.
+    mem_limit: 2g
     # cpus: 4.0
 
 networks:

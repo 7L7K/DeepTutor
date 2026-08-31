@@ -310,7 +310,6 @@ def test_mimic_websocket_passes_only_server_granted_builtin_tools(
                 {
                     "mode": "parsed",
                     "paper_path": "parsed-paper",
-                    "allowed_builtin_tools": ["web_fetch", "exec"],
                 }
             )
             messages = [websocket.receive_json() for _ in range(3)]
@@ -525,6 +524,79 @@ def test_mimic_oversized_request_uses_and_releases_intake_without_generation_adm
     assert intake_releases == 1
     assert generation_calls == 0
     assert message == {"type": "error", "content": "Question generation is unavailable."}
+
+
+def test_mimic_parsed_request_rejects_unknown_padding_before_json_parsing(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    question_router_module = _load_question_router_module(monkeypatch)
+    raw = '{"mode":"parsed","paper_path":"paper","padding":"' + ("x" * 1_000_000) + '"}'
+
+    with pytest.raises(ValueError, match="request is invalid"):
+        question_router_module._mimic_raw_request_limit(raw)
+
+
+def test_mimic_parsed_request_cap_rejects_before_generation_admission(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    question_router_module = _load_question_router_module(monkeypatch)
+    monkeypatch.setattr(question_router_module, "_MAX_MIMIC_PARSED_REQUEST_JSON_CHARS", 32)
+    generation_calls = 0
+
+    class _IntakeLease:
+        async def aclose(self) -> None:
+            return None
+
+    async def _admit_intake():
+        return _IntakeLease()
+
+    async def _admit_generation():
+        nonlocal generation_calls
+        generation_calls += 1
+        raise AssertionError("oversized parsed input must not reach generation admission")
+
+    monkeypatch.setattr(question_router_module, "_admit_question_intake", _admit_intake)
+    monkeypatch.setattr(question_router_module, "_admit_question_generation", _admit_generation)
+
+    class FakeWebSocket:
+        def __init__(self) -> None:
+            self.messages: list[dict] = []
+
+        async def accept(self) -> None:
+            return None
+
+        async def receive(self) -> dict:
+            return {
+                "type": "websocket.receive",
+                "text": '{"mode":"parsed","paper_path":"paper"}' + (" " * 40),
+            }
+
+        async def send_json(self, payload: dict) -> None:
+            self.messages.append(payload)
+
+        async def close(self, *_args, **_kwargs) -> None:
+            return None
+
+    websocket = FakeWebSocket()
+    asyncio.run(question_router_module.websocket_mimic_generate(websocket))
+
+    assert generation_calls == 0
+    assert websocket.messages == [
+        {"type": "error", "content": "Question generation is unavailable."}
+    ]
+
+
+def test_mimic_request_envelope_is_mode_specific(monkeypatch: pytest.MonkeyPatch) -> None:
+    question_router_module = _load_question_router_module(monkeypatch)
+
+    with pytest.raises(ValueError, match="request is invalid"):
+        question_router_module._validate_mimic_request_envelope(
+            {"mode": "parsed", "paper_path": "paper", "pdf_data": "ignored"}
+        )
+    with pytest.raises(ValueError, match="request is invalid"):
+        question_router_module._validate_mimic_request_envelope(
+            {"mode": "upload", "pdf_data": "data", "padding": "ignored"}
+        )
 
 
 def test_empty_question_requirement_does_not_spend_generation_admission(

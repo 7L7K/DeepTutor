@@ -52,6 +52,9 @@ _MAX_MIMIC_PATH_CHARS = 512
 # validator remains broader for HTTP/Course ingestion paths.
 _MAX_MIMIC_PDF_B64_CHARS = ((40 * 1024 * 1024 + 2) // 3) * 4 + 4
 _MAX_REQUEST_JSON_CHARS = _MAX_MIMIC_PDF_B64_CHARS + 64 * 1024
+# Parsed-paper mimic requests contain only short path/settings fields. Keep
+# their envelope small even though upload mode needs the larger PDF allowance.
+_MAX_MIMIC_PARSED_REQUEST_JSON_CHARS = 8 * 1024
 # ``/generate`` has no upload field. Keep its first WebSocket frame bounded
 # independently from ``/mimic`` while still allowing the four documented
 # requirement strings at their supported maximum, including JSON escaping.
@@ -188,6 +191,237 @@ def _validate_request_envelope(data: object) -> dict:
     return data
 
 
+_MIMIC_UPLOAD_REQUEST_FIELDS = frozenset(
+    {"mode", "pdf_data", "pdf_name", "kb_name", "max_questions"}
+)
+_MIMIC_PARSED_REQUEST_FIELDS = frozenset({"mode", "paper_path", "kb_name", "max_questions"})
+_MIMIC_REQUEST_FIELDS = _MIMIC_UPLOAD_REQUEST_FIELDS | _MIMIC_PARSED_REQUEST_FIELDS
+
+
+def _scan_json_string(
+    raw: str,
+    index: int,
+    *,
+    decode: bool,
+    maximum_wire_chars: int | None = None,
+) -> tuple[str | None, int]:
+    """Scan one JSON string without materializing large values.
+
+    The mimic raw envelope is inspected before ``json.loads`` so a parsed-mode
+    request cannot hide an upload-sized ignored field.  Keys and the small
+    mode discriminator are decoded; PDF data is only scanned for its closing
+    quote and remains unallocated until the upload-size path is selected.
+    """
+    if index >= len(raw) or raw[index] != '"':
+        raise ValueError("request is invalid")
+    start = index
+    index += 1
+    while index < len(raw):
+        char = raw[index]
+        if char == "\\":
+            index += 2
+            continue
+        if char == '"':
+            end = index + 1
+            if maximum_wire_chars is not None and end - start > maximum_wire_chars + 2:
+                raise ValueError("request is invalid")
+            if decode:
+                # All decoded fields used here are protocol names, so reject
+                # a pathological key/mode token before slicing it out.
+                if end - start > _MAX_MIMIC_PATH_CHARS + 2:
+                    raise ValueError("request is invalid")
+                try:
+                    value = json.loads(raw[start:end])
+                except (TypeError, ValueError, json.JSONDecodeError) as exc:
+                    raise ValueError("request is invalid") from exc
+                if not isinstance(value, str):
+                    raise ValueError("request is invalid")
+                return value, end
+            return None, end
+        index += 1
+    raise ValueError("request is invalid")
+
+
+def _skip_json_value(
+    raw: str,
+    index: int,
+    *,
+    depth: int = 0,
+    maximum_scalar_chars: int | None = None,
+) -> int:
+    """Skip one JSON value without building its Python representation."""
+    if depth > 16:
+        raise ValueError("request is invalid")
+    while index < len(raw) and raw[index].isspace():
+        index += 1
+    if index >= len(raw):
+        raise ValueError("request is invalid")
+    char = raw[index]
+    if char == '"':
+        return _scan_json_string(
+            raw,
+            index,
+            decode=False,
+            maximum_wire_chars=maximum_scalar_chars,
+        )[1]
+    if char == "[":
+        index += 1
+        while True:
+            while index < len(raw) and raw[index].isspace():
+                index += 1
+            if index < len(raw) and raw[index] == "]":
+                return index + 1
+            index = _skip_json_value(
+                raw,
+                index,
+                depth=depth + 1,
+                maximum_scalar_chars=maximum_scalar_chars,
+            )
+            while index < len(raw) and raw[index].isspace():
+                index += 1
+            if index < len(raw) and raw[index] == ",":
+                index += 1
+                continue
+            if index < len(raw) and raw[index] == "]":
+                return index + 1
+            raise ValueError("request is invalid")
+    if char == "{":
+        index += 1
+        while True:
+            while index < len(raw) and raw[index].isspace():
+                index += 1
+            if index < len(raw) and raw[index] == "}":
+                return index + 1
+            _, index = _scan_json_string(raw, index, decode=False)
+            while index < len(raw) and raw[index].isspace():
+                index += 1
+            if index >= len(raw) or raw[index] != ":":
+                raise ValueError("request is invalid")
+            index = _skip_json_value(
+                raw,
+                index + 1,
+                depth=depth + 1,
+                maximum_scalar_chars=maximum_scalar_chars,
+            )
+            while index < len(raw) and raw[index].isspace():
+                index += 1
+            if index < len(raw) and raw[index] == ",":
+                index += 1
+                continue
+            if index < len(raw) and raw[index] == "}":
+                return index + 1
+            raise ValueError("request is invalid")
+    # Primitive values are validated by json.loads after the mode-specific
+    # raw-size decision. Here we only need their structural delimiter.
+    start = index
+    while index < len(raw) and raw[index] not in ",]}" and not raw[index].isspace():
+        index += 1
+    if maximum_scalar_chars is not None and index - start > maximum_scalar_chars:
+        raise ValueError("request is invalid")
+    if index == 0 or raw[index - 1].isspace():
+        raise ValueError("request is invalid")
+    return index
+
+
+def _mimic_raw_request_limit(raw: str) -> int:
+    """Reject unknown/mismatched keys before parsing an upload-sized frame."""
+    index = 0
+    while index < len(raw) and raw[index].isspace():
+        index += 1
+    if index >= len(raw) or raw[index] != "{":
+        raise ValueError("request is invalid")
+    index += 1
+    seen: set[str] = set()
+    mode: str | None = None
+    while True:
+        while index < len(raw) and raw[index].isspace():
+            index += 1
+        if index < len(raw) and raw[index] == "}":
+            index += 1
+            break
+        key, index = _scan_json_string(raw, index, decode=True)
+        if key is None or key in seen or key not in _MIMIC_REQUEST_FIELDS:
+            raise ValueError("request is invalid")
+        seen.add(key)
+        while index < len(raw) and raw[index].isspace():
+            index += 1
+        if index >= len(raw) or raw[index] != ":":
+            raise ValueError("request is invalid")
+        index += 1
+        while index < len(raw) and raw[index].isspace():
+            index += 1
+        if key == "mode":
+            mode, index = _scan_json_string(raw, index, decode=True)
+            if mode not in {"upload", "parsed"}:
+                raise ValueError("request is invalid")
+        elif key in {"pdf_data", "pdf_name", "kb_name", "paper_path"}:
+            string_limit = _MAX_MIMIC_PDF_B64_CHARS if key == "pdf_data" else 4096
+            if index >= len(raw) or raw[index] != '"':
+                raise ValueError("request is invalid")
+            index = _scan_json_string(
+                raw,
+                index,
+                decode=False,
+                maximum_wire_chars=string_limit,
+            )[1]
+        elif key == "max_questions":
+            if index < len(raw) and raw[index] in "[{":
+                raise ValueError("request is invalid")
+            index = _skip_json_value(raw, index, maximum_scalar_chars=64)
+        else:
+            index = _skip_json_value(raw, index)
+        while index < len(raw) and raw[index].isspace():
+            index += 1
+        if index < len(raw) and raw[index] == ",":
+            index += 1
+            continue
+        if index < len(raw) and raw[index] == "}":
+            index += 1
+            break
+        raise ValueError("request is invalid")
+
+    effective_mode = mode or "parsed"
+    allowed_fields = (
+        _MIMIC_UPLOAD_REQUEST_FIELDS if effective_mode == "upload" else _MIMIC_PARSED_REQUEST_FIELDS
+    )
+    if seen.difference(allowed_fields):
+        raise ValueError("request is invalid")
+    trailing = index
+    while trailing < len(raw) and raw[trailing].isspace():
+        trailing += 1
+    if trailing != len(raw):
+        raise ValueError("request is invalid")
+    return (
+        _MAX_REQUEST_JSON_CHARS
+        if effective_mode == "upload"
+        else _MAX_MIMIC_PARSED_REQUEST_JSON_CHARS
+    )
+
+
+def _validate_mimic_request_envelope(data: object) -> dict:
+    """Validate the documented mode-specific legacy mimic envelope."""
+    envelope = _validate_request_envelope(data)
+    mode = envelope.get("mode", "parsed")
+    if mode not in {"upload", "parsed"}:
+        raise ValueError("request is invalid")
+    allowed_fields = (
+        _MIMIC_UPLOAD_REQUEST_FIELDS if mode == "upload" else _MIMIC_PARSED_REQUEST_FIELDS
+    )
+    if set(envelope).difference(allowed_fields):
+        raise ValueError("request is invalid")
+    return envelope
+
+
+def _reject_duplicate_json_fields(pairs: list[tuple[str, object]]) -> dict[str, object]:
+    """Reject ambiguous last-key-wins JSON before legacy route dispatch."""
+    result: dict[str, object] = {}
+    for key, value in pairs:
+        if key in result:
+            raise ValueError("request is invalid")
+        result[key] = value
+    return result
+
+
 _GENERATE_REQUEST_FIELDS = frozenset({"requirement", "kb_name", "count"})
 _GENERATE_REQUIREMENT_FIELDS = frozenset(
     {"knowledge_point", "preference", "difficulty", "question_type"}
@@ -216,6 +450,7 @@ async def _receive_bounded_request_json(
     *,
     maximum_chars: int | None = None,
     envelope_validator=None,
+    raw_validator=None,
 ) -> dict:
     """Receive one text JSON envelope without parsing an unbounded payload."""
     message = await asyncio.wait_for(
@@ -224,12 +459,16 @@ async def _receive_bounded_request_json(
     if message.get("type") == "websocket.disconnect":
         raise WebSocketDisconnect(message.get("code", 1000))
     raw = message.get("text")
+    if not isinstance(raw, str) or len(raw) > _MAX_REQUEST_JSON_CHARS:
+        raise ValueError("request is invalid")
     maximum = _MAX_REQUEST_JSON_CHARS if maximum_chars is None else maximum_chars
-    if not isinstance(raw, str) or len(raw) > maximum:
+    if raw_validator is not None:
+        maximum = raw_validator(raw)
+    if len(raw) > maximum:
         raise ValueError("request is invalid")
     try:
         validator = envelope_validator or _validate_request_envelope
-        return validator(json.loads(raw))
+        return validator(json.loads(raw, object_pairs_hook=_reject_duplicate_json_fields))
     except (TypeError, ValueError, json.JSONDecodeError) as exc:
         raise ValueError("request is invalid") from exc
 
@@ -294,7 +533,11 @@ async def websocket_mimic_generate(websocket: WebSocket):
         try:
             # 1. Receive and locally validate/preprocess the request while
             # holding only the bounded intake lease, never a provider lease.
-            data = await _receive_bounded_request_json(websocket)
+            data = await _receive_bounded_request_json(
+                websocket,
+                envelope_validator=_validate_mimic_request_envelope,
+                raw_validator=_mimic_raw_request_limit,
+            )
             mode = data.get("mode", "parsed")
             if mode not in {"upload", "parsed"}:
                 raise ValueError("mimic mode is invalid")

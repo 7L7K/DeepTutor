@@ -93,6 +93,146 @@ def test_duplicate_nested_answer_fields_cannot_hide_padding() -> None:
         _decode_bounded_unified_ws_text(raw)
 
 
+def test_preparser_rejects_escaped_duplicate_and_unknown_nested_keys_before_json_loads(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import deeptutor.api.routers.unified_ws as unified_ws
+
+    def _json_loads_must_not_run(*_args: object, **_kwargs: object) -> object:
+        raise AssertionError("json.loads must not run for a structurally invalid frame")
+
+    monkeypatch.setattr(unified_ws.json, "loads", _json_loads_must_not_run)
+    with pytest.raises(ValueError, match="Invalid message"):
+        _decode_bounded_unified_ws_text(
+            '{"type":"start_turn","content":"ok","c\\u006fntent":"duplicate"}'
+        )
+    with pytest.raises(ValueError, match="Invalid message"):
+        _decode_bounded_unified_ws_text(
+            '{"type":"start_turn","content":"ok","attachments":[{"type":"file","padding":"x"}]}'
+        )
+
+
+def test_preparser_rejects_depth_token_and_scalar_budgets_before_json_loads(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import deeptutor.api.routers.unified_ws as unified_ws
+
+    def _json_loads_must_not_run(*_args: object, **_kwargs: object) -> object:
+        raise AssertionError("json.loads must not run after a pre-parser budget failure")
+
+    monkeypatch.setattr(unified_ws.json, "loads", _json_loads_must_not_run)
+
+    monkeypatch.setattr(unified_ws, "_MAX_UNIFIED_JSON_DEPTH", 3)
+    with pytest.raises(ValueError, match="Invalid message"):
+        _decode_bounded_unified_ws_text(
+            '{"type":"start_turn","content":"ok","config":{"a":{"b":[]}}}'
+        )
+
+    monkeypatch.setattr(unified_ws, "_MAX_UNIFIED_JSON_DEPTH", 32)
+    monkeypatch.setattr(unified_ws, "_MAX_UNIFIED_JSON_TOKENS", 6)
+    with pytest.raises(ValueError, match="Invalid message"):
+        _decode_bounded_unified_ws_text(
+            '{"type":"start_turn","content":"ok","tools":["a","b","c"]}'
+        )
+
+    monkeypatch.setattr(unified_ws, "_MAX_UNIFIED_JSON_TOKENS", 50_000)
+    monkeypatch.setattr(unified_ws, "_MAX_UNIFIED_CONTENT_CHARS", 4)
+    with pytest.raises(ValueError, match="Invalid message"):
+        _decode_bounded_unified_ws_text('{"type":"start_turn","content":"12345"}')
+
+
+def test_preparser_applies_order_independent_reply_and_integer_types_before_json_loads(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import deeptutor.api.routers.unified_ws as unified_ws
+
+    def _json_loads_must_not_run(*_args: object, **_kwargs: object) -> object:
+        raise AssertionError("known protocol scalar failures must precede json.loads")
+
+    monkeypatch.setattr(unified_ws.json, "loads", _json_loads_must_not_run)
+    with pytest.raises(ValueError, match="Invalid message"):
+        _decode_bounded_unified_ws_text(
+            '{"content":"' + ("x" * 12_001) + '","type":"user_input","turn_id":"t1"}'
+        )
+
+    invalid_integer_frames = [
+        '{"type":"subscribe_turn","turn_id":"t1","after_seq":"' + ("1" * 1_000) + '"}',
+        '{"type":"start_turn","content":"ok","parent_message_id":"1"}',
+        '{"type":"start_turn","content":"ok","question_notebook_references":["1"]}',
+    ]
+    for raw in invalid_integer_frames:
+        with pytest.raises(ValueError, match="Invalid message"):
+            _decode_bounded_unified_ws_text(raw)
+
+
+def test_preparser_preserves_type_order_and_exempts_only_attachment_base64(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import deeptutor.api.routers.unified_ws as unified_ws
+
+    monkeypatch.setattr(unified_ws, "_MAX_UNIFIED_ORDINARY_MESSAGE_BYTES", 256)
+    raw = (
+        '{"content":"ok","attachments":[{"type":"file","base64":"'
+        + ("a" * 1_024)
+        + '"}],"type":"start_turn"}'
+    )
+    message = _decode_bounded_unified_ws_text(raw)
+    assert list(message) == ["content", "attachments", "type"]
+
+    escaped_raw = (
+        '{"type":"start_turn","content":"ok",'
+        '"attachments":[{"type":"file","base64":"' + ("\\u0061" * 200) + '"}]}'
+    )
+    escaped_message = _decode_bounded_unified_ws_text(escaped_raw)
+    assert escaped_message["attachments"][0]["base64"] == "a" * 200
+
+    with pytest.raises(ValueError, match="Invalid message"):
+        _decode_bounded_unified_ws_text(
+            '{"type":"start_turn","content":"' + ("x" * 300) + '","attachments":[]}'
+        )
+    with pytest.raises(ValueError, match="Invalid message"):
+        _decode_bounded_unified_ws_text(
+            '{"type":"start_turn","content":"ok","config":{"base64":"' + ("a" * 300) + '"}}'
+        )
+    with pytest.raises(ValueError, match="Invalid message"):
+        _decode_bounded_unified_ws_text(
+            '{"type":"start_turn","content":"ok",'
+            '"attachments":[{"type":"file","base64":"' + ("=" * 300) + '"}]}'
+        )
+
+
+def test_config_and_overrides_size_checks_do_not_serialize_a_copy(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import deeptutor.api.routers.unified_ws as unified_ws
+
+    def _json_dumps_must_not_run(*_args: object, **_kwargs: object) -> str:
+        raise AssertionError("config size checks must not serialize a JSON copy")
+
+    monkeypatch.setattr(unified_ws.json, "dumps", _json_dumps_must_not_run)
+    config_message = {
+        "type": "start_turn",
+        "content": "hello",
+        "config": {"confirmed_outline": [{"title": "Scope", "overview": "Intro"}]},
+    }
+    assert _validate_unified_ws_message(config_message) is config_message
+    override_message = {
+        "type": "regenerate",
+        "session_id": "session-1",
+        "overrides": {"config": {"mode": "comparison"}, "language": "en"},
+    }
+    assert _validate_unified_ws_message(override_message) is override_message
+
+    with pytest.raises(ValueError, match="config is too large"):
+        _validate_unified_ws_message(
+            {
+                "type": "start_turn",
+                "content": "hello",
+                "config": {"prompt": "x" * _MAX_UNIFIED_CONFIG_BYTES},
+            }
+        )
+
+
 def test_start_turn_accepts_supported_nested_protocol_shapes() -> None:
     message = {
         "type": "start_turn",
