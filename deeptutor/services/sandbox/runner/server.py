@@ -110,7 +110,14 @@ _MAX_OUTPUT_CHARS = 1_000_000
 # Generous file-descriptor ceiling: high enough for normal tooling (git, build
 # steps), low enough to bound a runaway fd leak.
 _RLIMIT_NOFILE = 4096
-_RLIMIT_NPROC = 64
+# Keep the per-command process ceiling below the runner container's cgroup
+# ``pids_limit`` (256), but leave enough headroom for the Python runtime and
+# normal child-process fan-out. Linux enforces RLIMIT_NPROC per real UID; a
+# value of 64 is below the effective UID quota in some hosted/container user
+# namespaces and can make even the first ``/bin/sh`` fork fail with EAGAIN.
+# The local fallback deliberately does not apply this UID-global limit because
+# it shares the application's UID and would starve unrelated app/test workers.
+_RLIMIT_NPROC = 128
 _RLIMIT_FSIZE_BYTES = 256 * 1024 * 1024
 
 
