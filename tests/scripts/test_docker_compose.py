@@ -5,6 +5,8 @@ import json
 from pathlib import Path
 import sys
 
+import pytest
+
 
 def _load_module():
     module_path = Path(__file__).resolve().parents[2] / "scripts" / "docker_compose.py"
@@ -62,6 +64,35 @@ def test_render_docker_env_uses_defaults_for_missing_or_invalid_json(tmp_path: P
     assert values["DEEPTUTOR_DOCKER_POCKETBASE_PORT"] == "8090"
 
 
+def test_runner_compose_detection_keeps_token_out_of_generated_env() -> None:
+    module = _load_module()
+    assert module._uses_runner_compose(["up", "-d"])
+    assert module._uses_runner_compose(["-f", "docker-compose.yml", "up"])
+    assert not module._uses_runner_compose(["-f", "docker-compose.ghcr.yml", "up"])
+    assert not module._uses_runner_compose(["-f", "compose.yaml", "up"])
+
+
+def test_published_compose_detection_requires_digest() -> None:
+    module = _load_module()
+    assert module._uses_digest_pinned_compose(["-f", "docker-compose.ghcr.yml", "up"])
+    assert module._uses_digest_pinned_compose(["-f", "compose.yaml", "up"])
+    assert not module._uses_digest_pinned_compose(["-f", "docker-compose.yml", "up"])
+
+
+def test_runner_compose_requires_token_without_persisting_it(monkeypatch) -> None:
+    module = _load_module()
+    monkeypatch.delenv(module.RUNNER_TOKEN_ENV, raising=False)
+    with pytest.raises(SystemExit, match="must be exported"):
+        module.main(["up", "-d"])
+
+
+def test_published_compose_requires_lowercase_sha256_digest(monkeypatch) -> None:
+    module = _load_module()
+    monkeypatch.delenv(module.IMAGE_DIGEST_ENV, raising=False)
+    with pytest.raises(SystemExit, match="64-character lowercase sha256"):
+        module.main(["-f", "compose.yaml", "config"])
+
+
 def test_compose_files_do_not_consume_legacy_env_names() -> None:
     root = Path(__file__).resolve().parents[2]
     for name in ("docker-compose.yml", "docker-compose.ghcr.yml"):
@@ -75,7 +106,26 @@ def test_compose_files_do_not_consume_legacy_env_names() -> None:
     ghcr = (Path(__file__).resolve().parents[2] / "docker-compose.ghcr.yml").read_text(
         encoding="utf-8"
     )
-    assert "./data/system:/app/data/system" in ghcr
+    assert "./data:/app/data" in ghcr
+    assert "DEEPTUTOR_IMAGE_DIGEST" in ghcr
+    assert "ghcr.io/hkuds/deeptutor@sha256:${DEEPTUTOR_IMAGE_DIGEST" in ghcr
+    assert "ghcr.io/hkuds/deeptutor:latest" not in ghcr
+    assert "bootstrap-teeechr-owner.py" in ghcr
+    assert "CONTAINERIZATION.md" in ghcr
+
+    rootless = (root / "compose.yaml").read_text(encoding="utf-8")
+    assert "ghcr.io/hkuds/deeptutor@sha256:${DEEPTUTOR_IMAGE_DIGEST" in rootless
+
+
+def test_deployment_compose_files_bind_service_ports_to_loopback() -> None:
+    root = Path(__file__).resolve().parents[2]
+    for name in ("docker-compose.yml", "docker-compose.ghcr.yml"):
+        content = (root / name).read_text(encoding="utf-8")
+        assert '"127.0.0.1:${DEEPTUTOR_DOCKER_BACKEND_PORT' in content
+        assert '"127.0.0.1:${DEEPTUTOR_DOCKER_FRONTEND_PORT' in content
+    docker_compose = (root / "docker-compose.yml").read_text(encoding="utf-8")
+    assert '"127.0.0.1:${DEEPTUTOR_DOCKER_POCKETBASE_PORT' in docker_compose
+    assert "ghcr.io/muchobien/pocketbase:latest" not in docker_compose
 
 
 def test_dockerfile_is_json_driven_without_bundle_sed() -> None:

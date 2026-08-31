@@ -1106,7 +1106,11 @@ class BlueWayService:
                 repository, connection=connection, snapshot_id=str(snapshot["snapshot_id"]),
                 assert_owner_current=lambda: self._assert_owner_current(connection.owner_user_id),
             )
-            self._assert_owner_current(connection.owner_user_id)
+            # ``materialize_course_bundles`` checks the owner while holding the
+            # identity lock around the final ready transition.  Once that
+            # transition wins, finish its matching run bookkeeping without a
+            # second owner check: an account disable is allowed to win next,
+            # but must not turn an already-visible bundle into a failed run.
             finished = repository.complete_materialization(completed.id)
             if connection.observability_trace_id:
                 emit_blueway_event(

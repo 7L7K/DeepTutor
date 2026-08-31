@@ -125,6 +125,13 @@ def validate_production_auth_configuration() -> None:
             "data/user/settings/auth.json before starting TEEECHR"
         )
 
+    if not auth_settings.get("cookie_secure", False):
+        raise RuntimeError(
+            "Production requires secure authentication cookies; set "
+            "data/user/settings/auth.json cookie_secure to true before "
+            "starting TEEECHR"
+        )
+
     if not _has_durable_production_identity(auth_settings):
         raise RuntimeError(
             "Production requires a durable owner identity; persist "

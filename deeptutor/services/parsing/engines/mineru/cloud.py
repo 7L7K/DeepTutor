@@ -20,12 +20,17 @@ simplest correct choice (no nested event loop).
 from __future__ import annotations
 
 from collections.abc import Callable
+from dataclasses import dataclass
 import io
+import ipaddress
 import logging
 from pathlib import Path
+import socket
 import time
+from urllib.parse import urlsplit
 import zipfile
 
+import httpcore
 import httpx
 
 from .config import MinerUConfig, MinerUError
@@ -54,6 +59,195 @@ _MAX_ENTRIES = 2_000
 _MAX_COMPRESSION_RATIO = 1_000
 
 
+@dataclass(frozen=True)
+class _PinnedAddress:
+    """One policy-approved numeric address for a MinerU hostname."""
+
+    family: socket.AddressFamily
+    host: str
+
+
+class _PinnedURL(str):
+    """A URL paired with the addresses accepted for its next TCP connection."""
+
+    host: str
+    port: int
+    addresses: tuple[_PinnedAddress, ...]
+
+    def __new__(
+        cls,
+        value: str,
+        *,
+        host: str,
+        port: int,
+        addresses: tuple[_PinnedAddress, ...],
+    ) -> _PinnedURL:
+        instance = super().__new__(cls, value)
+        instance.host = host
+        instance.port = port
+        instance.addresses = addresses
+        return instance
+
+
+class _PinnedNetworkBackend:
+    """Dial vetted numeric addresses while HTTP/TLS retain the original host.
+
+    httpcore asks this backend for a TCP connection immediately before a
+    request.  By replacing only that dial with the address obtained during URL
+    validation, DNS cannot change the destination after policy checks.  The
+    request URL itself is intentionally untouched, so httpcore still emits the
+    original Host header and passes the original hostname to TLS for SNI and
+    certificate verification.
+    """
+
+    def __init__(self, destination: _PinnedURL) -> None:
+        self._destination = destination
+        self._backend = httpcore.SyncBackend()
+
+    def connect_tcp(
+        self,
+        host: str,
+        port: int,
+        timeout: float | None = None,
+        local_address: str | None = None,
+        socket_options: object = None,
+    ) -> object:
+        if (host.rstrip(".").lower(), port) != (self._destination.host, self._destination.port):
+            raise httpcore.ConnectError("MinerU request attempted an unvalidated destination.")
+
+        last_error: Exception | None = None
+        for address in self._destination.addresses:
+            try:
+                # ``host`` is now a numeric literal; SyncBackend's
+                # create_connection cannot perform a hostname lookup for it.
+                return self._backend.connect_tcp(
+                    host=address.host,
+                    port=port,
+                    timeout=timeout,
+                    local_address=local_address,
+                    socket_options=socket_options,
+                )
+            except (httpcore.ConnectError, httpcore.ConnectTimeout) as exc:
+                last_error = exc
+        if last_error is not None:
+            raise last_error
+        raise httpcore.ConnectError("MinerU URL had no approved connection address.")
+
+    def connect_unix_socket(self, *args: object, **kwargs: object) -> object:
+        return self._backend.connect_unix_socket(*args, **kwargs)
+
+    def sleep(self, seconds: float) -> None:
+        self._backend.sleep(seconds)
+
+
+class _PinnedHTTPTransport(httpx.HTTPTransport):
+    """HTTPX transport with a connection pool bound to one vetted URL."""
+
+    def __init__(self, destination: _PinnedURL) -> None:
+        # Retain HTTPX's certificate-verifying context with environment trust
+        # disabled. Replace only the direct connection pool so no proxy can
+        # bypass the pin and the dial is delegated to _PinnedNetworkBackend.
+        super().__init__(trust_env=False, retries=0)
+        self._pool.close()
+        self._pool = httpcore.ConnectionPool(
+            ssl_context=httpx.create_ssl_context(verify=True, trust_env=False),
+            network_backend=_PinnedNetworkBackend(destination),
+            retries=0,
+        )
+
+
+def _assert_public_https_url(value: str, *, purpose: str) -> _PinnedURL:
+    """Return a safe external HTTPS URL or raise a user-safe error.
+
+    MinerU returns the signed upload and result URLs at runtime.  Treating
+    those values as data rather than executable destinations keeps a malformed
+    provider response (or an unsafe administrator override) from turning the
+    parsing worker into a request primitive for local services or cloud
+    metadata.  DNS is checked immediately before each request; redirects are
+    deliberately disabled on the transfer calls below so the validated URL is
+    also the one requested.
+    """
+    candidate = str(value or "").strip()
+    try:
+        parsed = urlsplit(candidate)
+        port = parsed.port
+    except ValueError as exc:
+        raise MinerUError(f"MinerU returned an invalid {purpose} URL.") from exc
+    if (
+        parsed.scheme.lower() != "https"
+        or not parsed.hostname
+        or parsed.username is not None
+        or parsed.password is not None
+        or port == 0
+    ):
+        raise MinerUError(f"MinerU returned an unsafe {purpose} URL.")
+
+    host = parsed.hostname.rstrip(".")
+    try:
+        connection_host = host.encode("idna").decode("ascii").lower()
+    except UnicodeError as exc:
+        raise MinerUError(f"MinerU returned an invalid {purpose} URL.") from exc
+    if connection_host in {
+        "localhost",
+        "ip6-localhost",
+        "ip6-loopback",
+    } or connection_host.endswith(".local"):
+        raise MinerUError(f"MinerU returned an unsafe {purpose} URL.")
+    connection_port = port or 443
+    try:
+        addresses = socket.getaddrinfo(
+            connection_host, connection_port, socket.AF_UNSPEC, socket.SOCK_STREAM
+        )
+    except OSError as exc:
+        raise MinerUError(f"MinerU {purpose} URL could not be resolved safely.") from exc
+    if not addresses:
+        raise MinerUError(f"MinerU {purpose} URL could not be resolved safely.")
+    pinned_addresses: list[_PinnedAddress] = []
+    for address in addresses:
+        try:
+            ip = ipaddress.ip_address(address[4][0])
+        except (IndexError, ValueError):
+            raise MinerUError(f"MinerU {purpose} URL resolved to an invalid address.") from None
+        if not ip.is_global:
+            raise MinerUError(f"MinerU returned an unsafe {purpose} URL.")
+        pinned_addresses.append(_PinnedAddress(family=address[0], host=str(ip)))
+    return _PinnedURL(
+        candidate,
+        host=connection_host,
+        port=connection_port,
+        addresses=tuple(pinned_addresses),
+    )
+
+
+def _transport_for(destination: str) -> httpx.BaseTransport | None:
+    """Build a pinned transport for validated production URLs.
+
+    Tests may replace ``_assert_public_https_url`` with a plain string to keep
+    their fake HTTP clients isolated.  Real validation always returns
+    ``_PinnedURL`` and therefore always uses the pinning transport.
+    """
+    if isinstance(destination, _PinnedURL):
+        return _PinnedHTTPTransport(destination)
+    return None
+
+
+def _client_for(destination: str, *, headers: dict[str, str] | None = None) -> httpx.Client:
+    return httpx.Client(
+        base_url=str(destination),
+        headers=headers,
+        follow_redirects=False,
+        trust_env=False,
+        transport=_transport_for(destination),
+    )
+
+
+def _file_chunks(path: Path):
+    """Yield a PDF incrementally so uploads do not duplicate it in memory."""
+    with path.open("rb") as source:
+        while chunk := source.read(_DOWNLOAD_CHUNK_BYTES):
+            yield chunk
+
+
 def parse_cloud(
     pdf_path: Path,
     output_base: Path,
@@ -80,7 +274,7 @@ def parse_cloud(
     if not pdf_path.is_file():
         raise MinerUError(f"PDF file not found: {pdf_path}")
 
-    base_url = config.api_base_url.rstrip("/")
+    base_url = _assert_public_https_url(config.api_base_url.rstrip("/"), purpose="API")
     headers = {
         "Authorization": f"Bearer {config.api_token}",
         "Accept": "application/json",
@@ -94,7 +288,7 @@ def parse_cloud(
         except Exception:
             logger.debug("on_progress callback failed", exc_info=True)
 
-    with httpx.Client(base_url=base_url, headers=headers) as client:
+    with _client_for(base_url, headers=headers) as client:
         report(f"MinerU cloud: requesting upload slot for {pdf_path.name}")
         batch_id, upload_url = _request_upload(client, pdf_path, config)
         size_mb = pdf_path.stat().st_size / (1024 * 1024)
@@ -152,10 +346,34 @@ def _upload_file(pdf_path: Path, upload_url: str) -> None:
     ``Authorization`` or ``Content-Type`` header (a stray Content-Type breaks
     the OSS signature).
     """
-    data = pdf_path.read_bytes()
+    safe_url = _assert_public_https_url(upload_url, purpose="upload")
     try:
-        response = httpx.put(upload_url, content=data, timeout=_UPLOAD_TIMEOUT_SECONDS)
-        response.raise_for_status()
+        transport = _transport_for(safe_url)
+        if transport is None:
+            # Kept for the injectable test seam; real validated URLs always
+            # take the pinned-client branch below.
+            with httpx.stream(
+                "PUT",
+                safe_url,
+                content=_file_chunks(pdf_path),
+                timeout=_UPLOAD_TIMEOUT_SECONDS,
+                follow_redirects=False,
+                trust_env=False,
+            ) as response:
+                response.raise_for_status()
+        else:
+            with httpx.Client(
+                follow_redirects=False,
+                trust_env=False,
+                transport=transport,
+            ) as client:
+                with client.stream(
+                    "PUT",
+                    str(safe_url),
+                    content=_file_chunks(pdf_path),
+                    timeout=_UPLOAD_TIMEOUT_SECONDS,
+                ) as response:
+                    response.raise_for_status()
     except httpx.HTTPError as exc:
         raise MinerUError(f"Failed to upload PDF to MinerU: {exc}") from exc
 
@@ -216,7 +434,7 @@ def verify_credentials(config: MinerUConfig) -> None:
     any failure."""
     if not config.api_token:
         raise MinerUError("No API token configured.")
-    base_url = config.api_base_url.rstrip("/")
+    base_url = _assert_public_https_url(config.api_base_url.rstrip("/"), purpose="API")
     headers = {
         "Authorization": f"Bearer {config.api_token}",
         "Accept": "application/json",
@@ -229,39 +447,62 @@ def verify_credentials(config: MinerUConfig) -> None:
     }
     if config.api_language:
         body["language"] = config.api_language
-    with httpx.Client(base_url=base_url, headers=headers) as client:
+    with _client_for(base_url, headers=headers) as client:
         _post_json(client, "/api/v4/file-urls/batch", body)
 
 
 def _download(zip_url: str) -> bytes:
+    safe_url = _assert_public_https_url(zip_url, purpose="result archive")
     try:
         # ``httpx.get`` buffers the complete body before returning. Keep the
         # archive ceiling effective for chunked or dishonest CDN responses by
         # streaming into a bounded buffer instead.
-        with httpx.stream(
-            "GET", zip_url, timeout=_DOWNLOAD_TIMEOUT_SECONDS, follow_redirects=True
-        ) as response:
-            response.raise_for_status()
-            headers = getattr(response, "headers", {}) or {}
-            raw_length = headers.get("content-length")
-            try:
-                if raw_length is not None and int(raw_length) > _MAX_DOWNLOAD_BYTES:
-                    raise MinerUError("MinerU result archive exceeds the download size limit.")
-            except (TypeError, ValueError):
-                raise MinerUError(
-                    "MinerU result archive returned an invalid content length."
-                ) from None
-
-            content = bytearray()
-            for chunk in response.iter_bytes(chunk_size=_DOWNLOAD_CHUNK_BYTES):
-                if len(content) + len(chunk) > _MAX_DOWNLOAD_BYTES:
-                    raise MinerUError("MinerU result archive exceeds the download size limit.")
-                content.extend(chunk)
-            return bytes(content)
+        transport = _transport_for(safe_url)
+        if transport is None:
+            # See _upload_file: fake tests intentionally retain this module
+            # level HTTPX seam, while production uses the pinned transport.
+            with httpx.stream(
+                "GET",
+                safe_url,
+                timeout=_DOWNLOAD_TIMEOUT_SECONDS,
+                follow_redirects=False,
+                trust_env=False,
+            ) as response:
+                return _bounded_download_bytes(response)
+        with httpx.Client(
+            follow_redirects=False,
+            trust_env=False,
+            transport=transport,
+        ) as client:
+            with client.stream(
+                "GET",
+                str(safe_url),
+                timeout=_DOWNLOAD_TIMEOUT_SECONDS,
+            ) as response:
+                return _bounded_download_bytes(response)
     except MinerUError:
         raise
     except httpx.HTTPError as exc:
         raise MinerUError(f"Failed to download MinerU result archive: {exc}") from exc
+
+
+def _bounded_download_bytes(response: httpx.Response) -> bytes:
+    """Read one response without permitting an archive beyond the ceiling."""
+    response.raise_for_status()
+    headers = getattr(response, "headers", {}) or {}
+    raw_length = headers.get("content-length")
+    try:
+        if raw_length is not None and int(raw_length) > _MAX_DOWNLOAD_BYTES:
+            raise MinerUError("MinerU result archive exceeds the download size limit.")
+    except (TypeError, ValueError):
+        raise MinerUError("MinerU result archive returned an invalid content length.") from None
+
+    content = bytearray()
+    for chunk in response.iter_bytes(chunk_size=_DOWNLOAD_CHUNK_BYTES):
+        if len(content) + len(chunk) > _MAX_DOWNLOAD_BYTES:
+            raise MinerUError("MinerU result archive exceeds the download size limit.")
+        content.extend(chunk)
+    return bytes(content)
 
 
 # ---------------------------------------------------------------------------

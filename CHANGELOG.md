@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+- Made the sandbox runner rollout fail closed across mixed image versions. The
+  app now probes an authenticated capability contract and uses a versioned
+  execution endpoint, so a stale runner cannot silently ignore principal or
+  authorization fields; standalone GHCR Compose instructions now point to the
+  required durable-owner bootstrap.
+
+- Fixed a BlueWay account-disable race after the final Course bundle becomes
+  visible: the winning bundle now completes its matching sync receipt before a
+  later identity change is observed.
+
 - Tightened the remaining controlled-beta release boundaries. Production now
   requires a durable owner identity, the GHCR recipe persists `data/system`,
   PocketBase scopes tokens by immutable record ID, fallback subprocesses clean

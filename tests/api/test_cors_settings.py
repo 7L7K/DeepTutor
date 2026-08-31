@@ -90,15 +90,35 @@ def test_production_startup_rejects_disabled_or_missing_auth(monkeypatch) -> Non
 
 def test_production_startup_accepts_enabled_auth(monkeypatch) -> None:
     monkeypatch.setattr(api_main, "is_production_environment", lambda: True)
-    monkeypatch.setattr(api_main, "load_auth_settings", lambda: {"enabled": True})
+    monkeypatch.setattr(
+        api_main,
+        "load_auth_settings",
+        lambda: {"enabled": True, "cookie_secure": True},
+    )
     monkeypatch.setattr(api_main, "_has_durable_production_identity", lambda _settings: True)
 
     api_main.validate_production_auth_configuration()
 
 
+def test_production_startup_rejects_insecure_auth_cookie(monkeypatch) -> None:
+    monkeypatch.setattr(api_main, "is_production_environment", lambda: True)
+    monkeypatch.setattr(
+        api_main,
+        "load_auth_settings",
+        lambda: {"enabled": True, "cookie_secure": False},
+    )
+
+    with pytest.raises(RuntimeError, match="secure authentication cookies"):
+        api_main.validate_production_auth_configuration()
+
+
 def test_production_startup_rejects_missing_durable_identity(monkeypatch) -> None:
     monkeypatch.setattr(api_main, "is_production_environment", lambda: True)
-    monkeypatch.setattr(api_main, "load_auth_settings", lambda: {"enabled": True})
+    monkeypatch.setattr(
+        api_main,
+        "load_auth_settings",
+        lambda: {"enabled": True, "cookie_secure": True},
+    )
     monkeypatch.setattr(api_main, "_has_durable_production_identity", lambda _settings: False)
 
     with pytest.raises(RuntimeError, match="durable owner identity"):

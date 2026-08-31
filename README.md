@@ -282,10 +282,10 @@ deeptutor start
 <details>
 <summary><b>Option 3 — Docker</b> · one self-contained container</summary>
 
-One container for the full Web app. Images on GitHub Container Registry:
-
-- `ghcr.io/hkuds/deeptutor:latest` — stable release
-- `ghcr.io/hkuds/deeptutor:pre` — pre-release, when available
+One container for the full Web app. Images are published to GitHub Container
+Registry. For a shared/demo or hosted instance, use the exact manifest digest
+from the release receipt; mutable tags such as `latest` are not a release
+identity.
 
 > See [CONTAINERIZATION.md](./CONTAINERIZATION.md) for podman/rootless/read-only-rootfs deployments and the full per-installation guide.
 
@@ -293,12 +293,19 @@ One container for the full Web app. Images on GitHub Container Registry:
 docker run --rm --name deeptutor \
   -p 127.0.0.1:3782:3782 \
   -v deeptutor-data:/app/data \
-  ghcr.io/hkuds/deeptutor:latest
+  ghcr.io/hkuds/deeptutor@sha256:<reviewed-manifest-digest>
 ```
 
 > **Only `3782` needs to be published.** The browser talks exclusively to the frontend origin; the Next.js middleware (`web/proxy.ts`) forwards `/api/*` and `/ws/*` to the FastAPI backend **inside the container**. Publishing `8001` (`-p 127.0.0.1:8001:8001`) is optional — handy only for hitting the API directly with curl or scripts.
 
-Open [http://127.0.0.1:3782](http://127.0.0.1:3782). The container creates `/app/data/user/settings/*.json` on first boot; configure model providers from the Web Settings page. Config, API keys, logs, workspace files, memory, and knowledge bases persist in the `deeptutor-data` volume.
+For a production image, seed the owner once before the first start (the image
+fails closed while the volume has no durable identity); the exact interactive
+command is in [CONTAINERIZATION.md](./CONTAINERIZATION.md#production-first-run-authentication).
+After that bootstrap, put the endpoint behind HTTPS, open the resulting URL,
+and configure model providers from the authenticated Web Settings page. Config,
+API keys, logs, workspace files, memory, and knowledge bases persist in the
+`deeptutor-data` volume. For a localhost-only development run without this
+production bootstrap, use the source `deeptutor start` path instead.
 
 - **Different host ports:** change the left side of each `-p host:container` mapping (e.g. `-p 127.0.0.1:8088:3782`). If you change container-side ports in `/app/data/user/settings/system.json`, restart and update the right side of each mapping to match.
 - **Detached:** add `-d`, then `docker logs -f deeptutor` to follow, `docker stop deeptutor` to stop, `docker rm deeptutor` before reusing the name. The `deeptutor-data` volume keeps your settings and workspace across restarts.
@@ -339,7 +346,7 @@ docker run --rm --name deeptutor \
   -p 127.0.0.1:3782:3782 -p 127.0.0.1:8001:8001 \
   --add-host=host.docker.internal:host-gateway \
   -v deeptutor-data:/app/data \
-  ghcr.io/hkuds/deeptutor:latest
+  ghcr.io/hkuds/deeptutor@sha256:<reviewed-manifest-digest>
 ```
 
 Then in **Settings → Models**, point the provider Base URL at `host.docker.internal`:
@@ -404,21 +411,24 @@ The local `deeptutor-cli` install ships no Web assets or server dependencies. Ke
 The built-in office skills — **docx / pdf / pptx / xlsx** — work by having the
 model write a short Python script (`python-docx`, `reportlab`, `openpyxl`, …),
 run it through the `exec` / `code_execution` tools, and hand back a download URL.
-Those tools mount whenever a sandbox backend is active, which it is **by default**
-in every deployment shape:
+Those tools are available only when a sandbox backend is active:
 
-- **Local (Option 1 / 2) and Docker (Option 3, single container):** a restricted
-  subprocess sandbox runs the model's code (on the host locally, or inside the
-  container under Docker — the container being its own isolation boundary).
-- **docker-compose:** routed instead to a hardened, least-privileged **runner
-  sidecar** (`Dockerfile.runner`) via `DEEPTUTOR_SANDBOX_RUNNER_URL` — the
-  strongest posture, and preferred automatically when present.
+- **Local (Option 1 / 2):** host-side execution is disabled by default. An
+  administrator can explicitly opt in on a trusted development machine.
+- **Docker (Option 3, single container):** use an isolated container backend or
+  explicitly enable the restricted fallback only for a trusted single-user
+  demo.
+- **docker-compose:** routed to a hardened, least-privileged **runner sidecar**
+  (`Dockerfile.runner`) via `DEEPTUTOR_SANDBOX_RUNNER_URL`; the app and runner
+  must share `DEEPTUTOR_SANDBOX_RUNNER_TOKEN`. The shared sidecar exposes only
+  the admin workspace, so learner execution is intentionally disabled until a
+  per-user/job runner is provisioned.
 
-The subprocess sandbox is controlled by the `sandbox_allow_subprocess` setting in
-`data/user/settings/system.json` (default `true`). Running model-generated code
-on your host is a real trust decision — set it to `false` (or export
-`DEEPTUTOR_SANDBOX_ALLOW_SUBPROCESS=0`) to disable host-side execution, at the
-cost of the office skills no longer being able to produce files.
+The subprocess fallback is controlled by the `sandbox_allow_subprocess` setting
+in `data/user/settings/system.json` (default `false`). Running model-generated
+code on your host is a real trust decision — set it to `true` only on a trusted
+single-user development machine. With it disabled, office skills require the
+container/runner backend and fail closed when none is available.
 
 </details>
 

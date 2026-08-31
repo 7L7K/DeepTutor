@@ -20,7 +20,7 @@
 # Run on the build platform natively (not under QEMU emulation).
 # The output is platform-independent static assets (JS/HTML/CSS),
 # so there is no need to cross-compile this stage.
-FROM --platform=$BUILDPLATFORM node:22-slim AS frontend-builder
+FROM --platform=$BUILDPLATFORM node:22-slim@sha256:83f487e0a63425e5b4d146fb5e5be574bcbe1b7b843d3ebafdd95eaf7767a7e5 AS frontend-builder
 
 WORKDIR /app/web
 
@@ -56,14 +56,17 @@ RUN npm run build
 # Provides the correctly-architected node binary for the final image.
 # Unlike frontend-builder (pinned to BUILDPLATFORM), this stage pulls
 # the node image matching each target platform (amd64 / arm64).
-FROM node:22-slim AS node-runtime
+FROM node:22-slim@sha256:83f487e0a63425e5b4d146fb5e5be574bcbe1b7b843d3ebafdd95eaf7767a7e5 AS node-runtime
 
 # ============================================
 # Stage 2: Python Base with Dependencies
 # ============================================
-FROM python:3.11-slim AS python-base
+FROM python:3.11-slim@sha256:1042b61448fef4ba92d16a8c7eb4996d027568ce64792a7877fd88511e0af7c6 AS python-base
 
-# Set environment variables
+# Set environment variables. The exact-release controller historically
+# supplied the target SHA as TEEECHR_APP_VERSION; preserve that compatibility
+# path while preferring the explicit source-revision build arg used by the
+# publication workflow.
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
     PYTHONIOENCODING=utf-8 \
@@ -101,9 +104,10 @@ RUN pip install --upgrade pip && \
 # ============================================
 # Stage 3: Production Image
 # ============================================
-FROM python:3.11-slim AS production
+FROM python:3.11-slim@sha256:1042b61448fef4ba92d16a8c7eb4996d027568ce64792a7877fd88511e0af7c6 AS production
 
 ARG TEEECHR_APP_VERSION=""
+ARG TEEECHR_SOURCE_REVISION=""
 
 # Labels
 LABEL maintainer="DeepTutor Team" \
@@ -116,15 +120,17 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     NODE_ENV=production \
     TEEECHR_ENVIRONMENT=production \
     TEEECHR_APP_VERSION=${TEEECHR_APP_VERSION} \
+    TEEECHR_SOURCE_REVISION=${TEEECHR_SOURCE_REVISION:-${TEEECHR_APP_VERSION}} \
     DEEPTUTOR_IGNORE_PROCESS_ENV_OVERRIDES=1
 
 # Code-execution sandbox: the restricted-subprocess backend (which the office
 # skills — docx/pdf/pptx/xlsx — rely on for `exec` / `code_execution`) is
-# enabled by default via the `sandbox_allow_subprocess` runtime setting
-# (system.json, default on), exported to DEEPTUTOR_SANDBOX_ALLOW_SUBPROCESS at
-# startup. No hardcoded ENV here — that would override the setting and block
-# disabling it. docker-compose still routes exec to the hardened runner sidecar
-# (DEEPTUTOR_SANDBOX_RUNNER_URL), which build_backend() prefers.
+# available only when explicitly enabled via the `sandbox_allow_subprocess`
+# runtime setting (system.json, default off), exported to
+# DEEPTUTOR_SANDBOX_ALLOW_SUBPROCESS at startup. No hardcoded ENV here — that
+# would override the setting and block disabling it. docker-compose still
+# routes exec to the hardened runner sidecar (DEEPTUTOR_SANDBOX_RUNNER_URL),
+# which build_backend() prefers.
 
 WORKDIR /app
 

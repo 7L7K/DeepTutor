@@ -39,6 +39,8 @@ def test_exact_platform_digests_are_pulled_and_runtime_verified() -> None:
     assert "org.opencontainers.image.revision" in workflow
     assert "org.opencontainers.image.version" in workflow
     assert "/app/scripts/verify-teeechr-release-container.py" in workflow
+    assert "TEEECHR_SOURCE_REVISION=${{ steps.version.outputs.commit }}" in workflow
+    assert '-e EXPECTED_RELEASE_REVISION="$RELEASE_COMMIT"' in workflow
 
 
 def test_manifest_is_created_only_from_verified_artifacts_without_rebuild() -> None:

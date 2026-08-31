@@ -58,17 +58,49 @@ The full per-installation guide follows.
 The simplest possible deployment. One container, one volume, two port
 mappings.
 
+### Production first-run authentication
+
+The published image is marked `production` and deliberately refuses to start
+with the default disabled authentication or an empty durable identity store.
+That prevents a fresh volume from becoming an anonymous administrator. Seed the
+owner once, before the first production start, using the exact reviewed image:
+
+```bash
+IMAGE='ghcr.io/hkuds/deeptutor@sha256:<reviewed-manifest-digest>'
+docker run --rm -it \
+  -v deeptutor-data:/app/data \
+  --entrypoint python "$IMAGE" \
+  /app/scripts/bootstrap-teeechr-owner.py
+```
+
+The helper asks for the username and password without putting the password in
+shell history or container arguments, writes a durable admin identity, and
+enables `cookie_secure`. Put the image behind HTTPS before sharing it; secure
+cookies intentionally do not authenticate a plain-HTTP public deployment. A
+fresh volume that has not been seeded will exit with an actionable startup
+error. For a localhost-only development run, use the source `deeptutor start`
+path instead of weakening the production image.
+
+The multi-container Docker shape also requires a private app-to-runner token.
+Export it only for the Compose command; `scripts/docker_compose.py` passes it
+through without writing it to `data/user/settings/docker.env`:
+
+```bash
+export DEEPTUTOR_SANDBOX_RUNNER_TOKEN="$(openssl rand -hex 32)"
+python scripts/docker_compose.py up -d
+```
+
 ```bash
 docker run --rm --name deeptutor \
   -p 127.0.0.1:3782:3782 \
   -v deeptutor-data:/app/data \
-  ghcr.io/hkuds/deeptutor:latest
+  ghcr.io/hkuds/deeptutor@sha256:<reviewed-manifest-digest>
 ```
 
-Open <http://127.0.0.1:3782>. The container creates
-`/app/data/user/settings/*.json` on first boot; configure model providers
-from the Web Settings page. Config, API keys, logs, workspace files,
-memory, and knowledge bases persist in the `deeptutor-data` named volume.
+After the one-time bootstrap, open the HTTPS endpoint exposed by your reverse
+proxy. Config, API keys, logs, workspace files, memory, and knowledge bases
+persist in the `deeptutor-data` named volume; configure model providers from
+the authenticated Settings page.
 
 Notes:
 
@@ -140,7 +172,7 @@ docker run --rm --name deeptutor \
   -p 127.0.0.1:3782:3782 -p 127.0.0.1:8001:8001 \
   --add-host=host.docker.internal:host-gateway \
   -v deeptutor-data:/app/data \
-  ghcr.io/hkuds/deeptutor:latest
+  ghcr.io/hkuds/deeptutor@sha256:<reviewed-manifest-digest>
 ```
 
 Then in **Settings → Models**, point the provider Base URL at
@@ -173,12 +205,13 @@ to loopback breaks the published `-p` port forward.
 
 For users who want the strongest default posture — rootless, with a
 read-only root filesystem — `compose.yaml` is the supported starting
-point. It pulls the same `ghcr.io/hkuds/deeptutor:latest` image and
+point. It pulls the same digest-pinned `ghcr.io/hkuds/deeptutor` image and
 relies on the entrypoint chown + supervisord's per-program privilege drop,
 the URL-forwarding `proxy.ts`, and host-side bind mounts to make it all work.
 
 ```bash
 cp .env.example .env       # then edit if needed
+# Set DEEPTUTOR_IMAGE_DIGEST to the exact 64-character digest in .env.
 podman compose -f compose.yaml up -d
 podman compose -f compose.yaml ps
 podman compose -f compose.yaml logs -f deeptutor
@@ -221,7 +254,12 @@ invariants apply if you want to drive `podman run` directly:
 
 ```bash
 mkdir -p data/user/settings
-echo '{}' > data/user/settings/system.json
+
+# Seed the durable owner first, using the exact reviewed image (see above).
+IMAGE='ghcr.io/hkuds/deeptutor@sha256:<reviewed-manifest-digest>'
+podman run --rm -it -v "$(pwd)/data:/app/data:U" \
+  --entrypoint python "$IMAGE" \
+  /app/scripts/bootstrap-teeechr-owner.py
 
 podman run --rm -d --name deeptutor \
   -p 127.0.0.1:8001:8001 \
@@ -235,7 +273,7 @@ podman run --rm -d --name deeptutor \
   --tmpfs /root:size=16m,mode=0700 \
   --tmpfs /home:size=16m,mode=0755 \
   --userns=keep-id \
-  ghcr.io/hkuds/deeptutor:latest
+  ghcr.io/hkuds/deeptutor@sha256:<reviewed-manifest-digest>
 ```
 
 After the container is up, the backend and frontend always run as the
@@ -313,8 +351,8 @@ falling back to the SQLite single-user layout.
 
 The `pocketbase` service in `compose.yaml` (and the corrected mount in
 `docker-compose.yml`) bind-mounts three subdirectories of `./data` —
-`/pb_data`, `/pb_public`, `/pb_hooks` — matching the upstream
-`ghcr.io/muchobien/pocketbase:latest` image's entrypoint, which uses
+`/pb_data`, `/pb_public`, `/pb_hooks` — matching the upstream PocketBase
+image's entrypoint, which uses
 absolute paths. The earlier `docker-compose.yml` example mounted
 `/pb/pb_data` and crashed on first start with
 `mkdir /pb_data: read-only file system`; this PR fixes that.
@@ -352,7 +390,8 @@ directory you own, or use `:U` on the volume mount.
 **`sed -i` errors on a fresh image.** There shouldn't be any — the
 runtime no longer mutates the bundle. The URL is forwarded at request
 time. If you see one, you are probably on an older image; pull
-`ghcr.io/hkuds/deeptutor:latest` again.
+the exact reviewed `ghcr.io/hkuds/deeptutor@sha256:<reviewed-manifest-digest>`
+again.
 
 **Settings page won't accept the API base URL.** Open
 `data/user/settings/system.json` on the host and set
@@ -380,6 +419,10 @@ renormalized on save.
   for the rootless-podman shape; the main app falls back to `bwrap` or
   the restricted subprocess backend controlled by
   `sandbox_allow_subprocess`.
+- The app/runner pair uses an authenticated capability probe and the versioned
+  `/v2/exec` endpoint. A stale runner that only exposes the legacy `/exec`
+  endpoint is treated as unavailable, so a mixed-version rollout fails closed
+  instead of silently dropping principal or authorization fields.
 - Auth (`data/user/settings/auth.json` → `auth_enabled = true`) gates
   `/api/*` and `/ws/*` via the `dt_token` cookie. `web/proxy.ts` reads
   `DEEPTUTOR_AUTH_ENABLED` (exported by the entrypoint on every start)

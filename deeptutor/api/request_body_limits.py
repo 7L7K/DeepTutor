@@ -27,6 +27,9 @@ _QUIZ_RESULTS_BODY_BYTES = 1024 * 1024
 _COURSE_SOURCE_PREFIX = "/api/v1/courses/"
 _COURSE_SOURCE_SUFFIX = "/sources"
 _COURSE_SOURCE_BODY_BYTES = 12 * 1024 * 1024
+_PARTNER_CHAT_PREFIX = "/api/v1/partners/"
+_PARTNER_CHAT_SUFFIXES = ("/chat", "/chat/execute-stream")
+_PARTNER_CHAT_JSON_OVERHEAD_BYTES = 1024 * 1024
 _VOICE_TTS_PATH = "/api/v1/voice/tts"
 _VOICE_TTS_BODY_BYTES = 128 * 1024
 _VOICE_STT_PATH = "/api/v1/voice/stt"
@@ -47,6 +50,12 @@ def notebook_upsert_body_limit() -> int:
 def course_source_body_limit() -> int:
     """Bound multipart intake before FastAPI creates UploadFile objects."""
     return _COURSE_SOURCE_BODY_BYTES
+
+
+def partner_chat_body_limit() -> int:
+    """Allow policy-sized base64 attachments plus a bounded JSON envelope."""
+    max_bytes = get_chat_attachment_limits().max_total_bytes
+    return ((max_bytes + 2) // 3) * 4 + _PARTNER_CHAT_JSON_OVERHEAD_BYTES
 
 
 def _request_body_limit(scope: Scope) -> int | None:
@@ -92,11 +101,18 @@ def _request_body_limit(scope: Scope) -> int | None:
         and "/" not in normalized_path[len(_COURSE_SOURCE_PREFIX) : -len(_COURSE_SOURCE_SUFFIX)]
     ):
         return course_source_body_limit()
+    if normalized_path.startswith(_PARTNER_CHAT_PREFIX) and any(
+        normalized_path.endswith(suffix)
+        and len(normalized_path) > len(_PARTNER_CHAT_PREFIX) + len(suffix)
+        and "/" not in normalized_path[len(_PARTNER_CHAT_PREFIX) : -len(suffix)]
+        for suffix in _PARTNER_CHAT_SUFFIXES
+    ):
+        return partner_chat_body_limit()
     return None
 
 
 class NotebookUpsertBodyLimitMiddleware:
-    """Reject oversized notebook/Course upload bodies before FastAPI parses them."""
+    """Reject oversized binary/JSON intake before FastAPI parses it."""
 
     def __init__(self, app: ASGIApp) -> None:
         self.app = app

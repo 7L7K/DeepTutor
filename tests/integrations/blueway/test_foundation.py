@@ -1499,12 +1499,19 @@ def test_identity_lock_linearizes_final_bundle_commit_and_account_disable(tmp_pa
     result: dict[str, object] = {}
 
     def sync() -> None:
-        result["run"] = service.run_queued_sync(run_id=service.queue_sync().id)
+        try:
+            result["run"] = service.run_queued_sync(run_id=service.queue_sync().id)
+        except BaseException as exc:  # noqa: BLE001 - thread failures must fail this race regression.
+            result["error"] = exc
 
     def disable() -> None:
         delete_started.set()
-        result["disabled"] = user_identity.delete_user("owner")
-        delete_done.set()
+        try:
+            result["disabled"] = user_identity.delete_user("owner")
+        except BaseException as exc:  # noqa: BLE001 - thread failures must fail this race regression.
+            result["disable_error"] = exc
+        finally:
+            delete_done.set()
 
     sync_thread = threading.Thread(target=sync)
     sync_thread.start()
@@ -1518,6 +1525,8 @@ def test_identity_lock_linearizes_final_bundle_commit_and_account_disable(tmp_pa
     sync_thread.join(5)
     disable_thread.join(5)
     assert not sync_thread.is_alive() and not disable_thread.is_alive()
+    assert "error" not in result
+    assert "disable_error" not in result
     assert result["run"].state == "completed"  # type: ignore[union-attr]
     assert result["disabled"] is True
     assert user_identity.get_user("owner")["disabled"] is True

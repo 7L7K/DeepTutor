@@ -24,7 +24,7 @@ from deeptutor.services.sandbox.backends import (
     RunnerSidecarBackend,
 )
 from deeptutor.services.sandbox.runner import server as runner_server
-from deeptutor.services.sandbox.spec import ExecRequest
+from deeptutor.services.sandbox.spec import ExecRequest, Mount
 
 #: Arguments that would each do something different if a shell saw them.
 HOSTILE_ARGS = [
@@ -51,7 +51,8 @@ def test_of_argv_derives_the_shell_form() -> None:
 
 def test_the_two_spellings_cannot_be_made_to_disagree() -> None:
     """Setting one and forgetting the other would run different things on
-    different runner images — silently, and only during a rolling deploy."""
+    different runner images — silently, and only when a protocol contract is
+    missing."""
     with pytest.raises(ValueError, match="of_argv"):
         ExecRequest(command="echo hello", argv=("echo", "goodbye"))
 
@@ -76,6 +77,7 @@ def test_bwrap_execs_the_vector_with_no_shell_between() -> None:
     assert "/bin/sh" not in argv
     assert argv[-3:] == ["/app/bin/tool", "sub", "; rm -rf /"]
     assert argv[-4] == "--", "bwrap needs the separator or it would parse the argv as its own flags"
+    assert "--clearenv" in argv
 
 
 def test_bwrap_keeps_using_a_shell_for_a_shell_request() -> None:
@@ -85,8 +87,7 @@ def test_bwrap_keeps_using_a_shell_for_a_shell_request() -> None:
 
 
 def test_the_sidecar_sends_both_spellings() -> None:
-    """An older runner ignores ``argv``; a newer one prefers it. Both must be
-    present or the protocol only works in one deploy direction."""
+    """A current runner receives both spellings and prefers the vector."""
     captured: dict[str, object] = {}
 
     class _Client:
@@ -96,8 +97,10 @@ def test_the_sidecar_sends_both_spellings() -> None:
         async def __aexit__(self, *exc: object) -> None:
             return None
 
-        async def post(self, url: str, json: dict) -> object:
+        async def post(self, url: str, json: dict, headers: dict) -> object:
             captured.update(json)
+            captured["url"] = url
+            captured["headers"] = headers
 
             class _Response:
                 @staticmethod
@@ -110,18 +113,35 @@ def test_the_sidecar_sends_both_spellings() -> None:
 
             return _Response()
 
-    backend = RunnerSidecarBackend("http://runner:8900")
+    backend = RunnerSidecarBackend("http://runner:8900", token="test-runner-token")
     import deeptutor.services.sandbox.backends as backends_module
 
     original = backends_module.httpx.AsyncClient
     backends_module.httpx.AsyncClient = lambda **_kwargs: _Client()  # type: ignore[assignment]
     try:
-        asyncio.run(backend.exec(ExecRequest.of_argv(["/bin/echo", "a b"])))
+        asyncio.run(
+            backend.exec(
+                ExecRequest.of_argv(
+                    ["/bin/echo", "a b"],
+                    workdir="/app/data/user/workspace/task",
+                    mounts=(
+                        Mount(
+                            host_path="/app/data/user/workspace/task",
+                            sandbox_path="/app/data/user/workspace/task",
+                            read_only=False,
+                        ),
+                    ),
+                )
+            )
+        )
     finally:
         backends_module.httpx.AsyncClient = original  # type: ignore[assignment]
 
     assert captured["argv"] == ["/bin/echo", "a b"]
     assert captured["command"] == shlex.join(["/bin/echo", "a b"])
+    assert captured["principal_root"] == "/app/data/user/workspace/task"
+    assert str(captured["url"]).endswith(runner_server._RUNNER_EXEC_PATH)
+    assert captured["headers"] == {"Authorization": "Bearer test-runner-token"}
 
 
 @pytest.mark.parametrize("argument", HOSTILE_ARGS)
@@ -139,12 +159,11 @@ def test_the_local_backend_passes_a_hostile_argument_through_untouched(argument:
 
 @pytest.mark.parametrize("argument", HOSTILE_ARGS)
 def test_the_shell_fallback_is_quoted_well_enough_to_be_equivalent(argument: str) -> None:
-    """The compatibility path has to be *correct*, not merely present: on an old
-    runner image this string is what actually executes."""
+    """The shell spelling remains correctly quoted for explicit shell callers."""
     request = ExecRequest.of_argv(
         ["/usr/bin/env", "python3", "-c", "import sys; print(sys.argv[1], end='')", argument]
     )
-    # Exactly what a pre-argv runner does with the payload: shell out to it.
+    # The local shell backend still honors the shell spelling for this request.
     backend = RestrictedSubprocessBackend()
     via_shell = asyncio.run(backend.exec(ExecRequest(command=request.command)))
 
@@ -155,12 +174,17 @@ def test_the_shell_fallback_is_quoted_well_enough_to_be_equivalent(argument: str
 # ── the runner's own end of the wire ──────────────────────────────────────
 
 
-def test_the_runner_prefers_argv_over_the_shell_string() -> None:
+def test_the_runner_prefers_argv_over_the_shell_string(
+    tmp_path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     """Sent both, it must run the vector — that is what makes the arguments data."""
+    monkeypatch.setattr(runner_server, "_ALLOWED_PRINCIPAL_ROOTS", [str(tmp_path)])
     result = runner_server.execute(
         {
             "command": "/bin/echo shell-form",
             "argv": ["/bin/echo", "argv-form"],
+            "principal_root": str(tmp_path),
+            "workdir": str(tmp_path),
             "limits": {"timeout_s": 10},
         }
     )
@@ -168,16 +192,31 @@ def test_the_runner_prefers_argv_over_the_shell_string() -> None:
     assert result["stdout"].strip() == "argv-form"
 
 
-def test_the_runner_runs_the_shell_string_when_no_argv_is_sent() -> None:
-    result = runner_server.execute({"command": "echo a && echo b", "limits": {"timeout_s": 10}})
+def test_the_runner_runs_the_shell_string_when_no_argv_is_sent(
+    tmp_path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(runner_server, "_ALLOWED_PRINCIPAL_ROOTS", [str(tmp_path)])
+    result = runner_server.execute(
+        {
+            "command": "echo a && echo b",
+            "principal_root": str(tmp_path),
+            "workdir": str(tmp_path),
+            "limits": {"timeout_s": 10},
+        }
+    )
     assert result["stdout"].split() == ["a", "b"]
 
 
-def test_the_runner_does_not_expand_a_hostile_argv_element() -> None:
+def test_the_runner_does_not_expand_a_hostile_argv_element(
+    tmp_path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(runner_server, "_ALLOWED_PRINCIPAL_ROOTS", [str(tmp_path)])
     result = runner_server.execute(
         {
             "command": "unused",
             "argv": ["/bin/echo", "$HOME; rm -rf /"],
+            "principal_root": str(tmp_path),
+            "workdir": str(tmp_path),
             "limits": {"timeout_s": 10},
         }
     )
@@ -185,6 +224,17 @@ def test_the_runner_does_not_expand_a_hostile_argv_element() -> None:
 
 
 @pytest.mark.parametrize("bad", [{"argv": "echo hi"}, {"argv": ["ok", 7]}])
-def test_the_runner_refuses_a_malformed_argv(bad: dict) -> None:
-    result = runner_server.execute({"command": "echo hi", **bad, "limits": {"timeout_s": 5}})
+def test_the_runner_refuses_a_malformed_argv(
+    bad: dict, tmp_path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(runner_server, "_ALLOWED_PRINCIPAL_ROOTS", [str(tmp_path)])
+    result = runner_server.execute(
+        {
+            "command": "echo hi",
+            **bad,
+            "principal_root": str(tmp_path),
+            "workdir": str(tmp_path),
+            "limits": {"timeout_s": 5},
+        }
+    )
     assert "argv" in result["error"]

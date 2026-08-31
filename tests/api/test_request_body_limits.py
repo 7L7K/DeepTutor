@@ -20,6 +20,7 @@ from deeptutor.api.request_body_limits import (
     NotebookUpsertBodyLimitMiddleware,
     QuotaExceeded,
     _request_body_limit,
+    partner_chat_body_limit,
 )
 
 
@@ -59,6 +60,24 @@ def test_voice_routes_have_request_body_limits(path: str, expected: int) -> None
     assert _request_body_limit({"path": path, "method": "POST"}) == expected
 
 
+def test_partner_chat_routes_have_policy_sized_raw_body_limits(monkeypatch) -> None:
+    class Limits:
+        max_total_bytes = 6
+
+    monkeypatch.setattr(
+        "deeptutor.api.request_body_limits.get_chat_attachment_limits", lambda: Limits()
+    )
+    expected = partner_chat_body_limit()
+    assert _request_body_limit({"path": "/api/v1/partners/demo/chat", "method": "POST"}) == expected
+    assert (
+        _request_body_limit({"path": "/api/v1/partners/demo/chat/execute-stream", "method": "POST"})
+        == expected
+    )
+    assert (
+        _request_body_limit({"path": "/api/v1/partners/demo/chat/nested", "method": "POST"}) is None
+    )
+
+
 def test_content_length_over_limit_is_rejected_before_downstream(monkeypatch) -> None:
     monkeypatch.setattr("deeptutor.api.request_body_limits.notebook_upsert_body_limit", lambda: 8)
     seen: list[int] = []
@@ -72,6 +91,22 @@ def test_content_length_over_limit_is_rejected_before_downstream(monkeypatch) ->
 
     assert response.status_code == 413
     assert response.json() == {"detail": "Request body too large"}
+    assert seen == []
+
+
+def test_partner_chat_body_is_rejected_before_fastapi_parsing(monkeypatch) -> None:
+    monkeypatch.setattr("deeptutor.api.request_body_limits.partner_chat_body_limit", lambda: 8)
+    seen: list[int] = []
+    path = "/api/v1/partners/demo/chat"
+
+    with TestClient(_limited_app(seen, path)) as client:
+        response = client.post(
+            path,
+            content=b"123456789",
+            headers={"content-type": "application/json"},
+        )
+
+    assert response.status_code == 413
     assert seen == []
 
 

@@ -8,15 +8,25 @@ from collections import deque
 from collections.abc import Callable
 import os
 from pathlib import Path
+import queue
 import shutil
+import signal
 import subprocess
 import sys
+import threading
 import time
 
 # Minimum seconds between on_output callbacks. MinerU's CLI emits tqdm-style
 # progress that universal-newline decoding turns into many lines per second;
 # without a floor the trace panel gets flooded during model downloads.
 _ON_OUTPUT_MIN_INTERVAL = 0.5
+# MinerU may spend several minutes loading models and parsing a large PDF, but
+# an unbounded local CLI can otherwise occupy a worker indefinitely.  This is
+# intentionally a module constant so deployment policy can tune it through a
+# narrow code change rather than letting a request choose its own deadline.
+_LOCAL_PARSE_TIMEOUT_SECONDS = 15 * 60
+_PROCESS_GRACE_SECONDS = 5.0
+_OUTPUT_QUEUE_MAX_LINES = 256
 
 
 def check_mineru_installed():
@@ -123,6 +133,7 @@ def parse_pdf_with_mineru(
     print(f"📁 Output directory: {output_dir}")
     print("→ Starting parsing...")
 
+    process: subprocess.Popen[str] | None = None
     try:
         temp_output = base_dir / "temp_mineru_output"
         temp_output.mkdir(parents=True, exist_ok=True)
@@ -133,7 +144,8 @@ def parse_pdf_with_mineru(
 
         # Stream combined stdout/stderr line by line. text=True enables
         # universal newlines, so tqdm's \r-rewritten progress bars arrive as
-        # individual lines rather than one giant buffered blob at exit.
+        # individual lines rather than one giant buffered blob at exit.  A
+        # separate reader keeps a silent/hung CLI from defeating the deadline.
         process = subprocess.Popen(  # nosec B603 — fixed argv, shell=False
             cmd,
             stdout=subprocess.PIPE,
@@ -141,26 +153,21 @@ def parse_pdf_with_mineru(
             text=True,
             shell=False,
             env={**os.environ, **extra_env} if extra_env else None,
+            start_new_session=os.name == "posix",
         )
         tail: deque[str] = deque(maxlen=40)
-        last_emit = 0.0
-        assert process.stdout is not None
-        for raw_line in process.stdout:
-            line = raw_line.strip()
-            if not line:
-                continue
-            tail.append(line)
-            if on_output is not None:
-                now = time.monotonic()
-                if now - last_emit >= _ON_OUTPUT_MIN_INTERVAL:
-                    last_emit = now
-                    try:
-                        on_output(line[:300])
-                    except Exception:
-                        # A broken callback must not kill the parse; stop
-                        # reporting and keep going.
-                        on_output = None
-        returncode = process.wait()
+        returncode = _stream_process_output(
+            process,
+            tail=tail,
+            on_output=on_output,
+            timeout=_LOCAL_PARSE_TIMEOUT_SECONDS,
+        )
+
+        if returncode is None:
+            print(f"✗ MinerU parsing timed out after {_LOCAL_PARSE_TIMEOUT_SECONDS}s.")
+            if temp_output.exists():
+                shutil.rmtree(temp_output)
+            return False
 
         if returncode != 0:
             print("✗ MinerU parsing failed:")
@@ -214,11 +221,123 @@ def parse_pdf_with_mineru(
         return True
 
     except Exception as e:
+        if process is not None:
+            _terminate_process_tree(process)
         print(f"✗ Error occurred during parsing: {e!s}")
         import traceback
 
         traceback.print_exc()
         return False
+
+
+def _stream_process_output(
+    process: subprocess.Popen[str],
+    *,
+    tail: deque[str],
+    on_output: Callable[[str], None] | None,
+    timeout: float,
+) -> int | None:
+    """Read CLI output without letting a quiet process bypass ``timeout``.
+
+    ``for line in process.stdout`` blocks until data arrives, so it cannot
+    enforce a deadline for a stalled model download.  A tiny reader thread
+    leaves the controlling thread free to observe the process and terminate
+    its complete POSIX process group on deadline.
+    """
+    assert process.stdout is not None
+    # The bounded queue applies backpressure to a noisy/malicious CLI instead
+    # of letting its output consume unbounded worker memory.
+    lines: queue.Queue[str] = queue.Queue(maxsize=_OUTPUT_QUEUE_MAX_LINES)
+    reader_done = threading.Event()
+    stop_reader = threading.Event()
+
+    def read_stdout() -> None:
+        try:
+            for raw_line in process.stdout:
+                while not stop_reader.is_set():
+                    try:
+                        lines.put(raw_line, timeout=0.1)
+                        break
+                    except queue.Full:
+                        continue
+        finally:
+            reader_done.set()
+
+    threading.Thread(target=read_stdout, name="mineru-output-reader", daemon=True).start()
+    deadline = time.monotonic() + timeout
+    last_emit = 0.0
+    callback = on_output
+
+    while True:
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            stop_reader.set()
+            _terminate_process_tree(process)
+            return None
+        try:
+            raw_line = lines.get(timeout=min(0.25, remaining))
+        except queue.Empty:
+            raw_line = None
+        if raw_line is not None:
+            line = raw_line.strip()
+            if line:
+                tail.append(line)
+                if callback is not None:
+                    now = time.monotonic()
+                    if now - last_emit >= _ON_OUTPUT_MIN_INTERVAL:
+                        last_emit = now
+                        try:
+                            callback(line[:300])
+                        except Exception:
+                            # A broken callback must not kill the parse; stop
+                            # reporting and keep going.
+                            callback = None
+
+        poll = getattr(process, "poll", None)
+        returncode = poll() if callable(poll) else None
+        if returncode is not None and reader_done.is_set() and lines.empty():
+            return returncode
+        # Test doubles and a few older wrappers expose only ``wait``.  Once
+        # their stream closes, that is still enough to collect the status
+        # without sacrificing the real Popen deadline path above.
+        if not callable(poll) and reader_done.is_set() and lines.empty():
+            return process.wait()
+
+
+def _terminate_process_tree(process: subprocess.Popen[str]) -> None:
+    """Best-effort deadline cleanup for the CLI and descendants it spawned."""
+    poll = getattr(process, "poll", None)
+    if callable(poll) and poll() is not None:
+        return
+    if os.name == "posix":
+        try:
+            os.killpg(process.pid, signal.SIGTERM)
+        except (OSError, ProcessLookupError):
+            pass
+    else:  # pragma: no cover - Windows lifecycle is exercised in integration.
+        try:
+            process.terminate()
+        except OSError:
+            pass
+    try:
+        process.wait(timeout=_PROCESS_GRACE_SECONDS)
+        return
+    except subprocess.TimeoutExpired:
+        pass
+    if os.name == "posix":
+        try:
+            os.killpg(process.pid, signal.SIGKILL)
+        except (OSError, ProcessLookupError):
+            pass
+    else:  # pragma: no cover - Windows lifecycle is exercised in integration.
+        try:
+            process.kill()
+        except OSError:
+            pass
+    try:
+        process.wait(timeout=_PROCESS_GRACE_SECONDS)
+    except (OSError, subprocess.TimeoutExpired):
+        pass
 
 
 def main():

@@ -3,8 +3,10 @@
 
 Docker Compose cannot read ``data/user/settings/system.json`` directly for
 host port interpolation. This wrapper renders a tiny compose env file from the
-JSON settings and then invokes ``docker compose --env-file``. It intentionally
-does not read or migrate the project-root ``.env`` file.
+JSON settings and then invokes ``docker compose --env-file``. The runner
+credential is read only from the caller's environment and is never written to
+that generated file. It intentionally does not read or migrate the project-root
+``.env`` file.
 """
 
 from __future__ import annotations
@@ -12,6 +14,7 @@ from __future__ import annotations
 import json
 import os
 from pathlib import Path
+import re
 import shutil
 import subprocess
 import sys
@@ -24,6 +27,9 @@ DOCKER_ENV_PATH = SETTINGS_DIR / "docker.env"
 DEFAULT_BACKEND_PORT = 8001
 DEFAULT_FRONTEND_PORT = 3782
 DEFAULT_POCKETBASE_PORT = 8090
+RUNNER_TOKEN_ENV = "DEEPTUTOR_SANDBOX_RUNNER_TOKEN"
+IMAGE_DIGEST_ENV = "DEEPTUTOR_IMAGE_DIGEST"
+_IMAGE_DIGEST = re.compile(r"^[0-9a-f]{64}$")
 
 
 def _read_json_object(path: Path) -> dict[str, Any]:
@@ -77,10 +83,57 @@ def _compose_command(args: list[str]) -> list[str]:
     return [docker, "compose", "--env-file", str(DOCKER_ENV_PATH), *args]
 
 
+def _uses_runner_compose(args: list[str]) -> bool:
+    """Return whether the selected compose files include the runner sidecar."""
+    files: list[str] = []
+    index = 0
+    while index < len(args):
+        argument = args[index]
+        if argument in {"-f", "--file"} and index + 1 < len(args):
+            files.append(args[index + 1])
+            index += 2
+            continue
+        if argument.startswith("--file="):
+            files.append(argument.split("=", 1)[1])
+        index += 1
+    if not files:
+        files = ["docker-compose.yml"]
+    return any(Path(path).name == "docker-compose.yml" for path in files)
+
+
+def _uses_digest_pinned_compose(args: list[str]) -> bool:
+    """Return whether the selected compose files pull a published image."""
+    files: list[str] = []
+    index = 0
+    while index < len(args):
+        argument = args[index]
+        if argument in {"-f", "--file"} and index + 1 < len(args):
+            files.append(args[index + 1])
+            index += 2
+            continue
+        if argument.startswith("--file="):
+            files.append(argument.split("=", 1)[1])
+        index += 1
+    return any(Path(path).name in {"compose.yaml", "docker-compose.ghcr.yml"} for path in files)
+
+
 def main(argv: list[str] | None = None) -> int:
     args = list(argv if argv is not None else sys.argv[1:])
     if not args:
         args = ["up", "-d"]
+
+    if _uses_runner_compose(args) and not os.environ.get(RUNNER_TOKEN_ENV, "").strip():
+        raise SystemExit(
+            f"{RUNNER_TOKEN_ENV} must be exported for docker-compose.yml; "
+            "the wrapper never persists runner credentials"
+        )
+    if _uses_digest_pinned_compose(args):
+        image_digest = os.environ.get(IMAGE_DIGEST_ENV, "").strip()
+        if not _IMAGE_DIGEST.fullmatch(image_digest):
+            raise SystemExit(
+                f"{IMAGE_DIGEST_ENV} must be a 64-character lowercase sha256 digest "
+                "for the published-image compose files"
+            )
 
     values = render_docker_env()
     print(
@@ -92,6 +145,8 @@ def main(argv: list[str] | None = None) -> int:
     )
 
     env = os.environ.copy()
+    if RUNNER_TOKEN_ENV in env:
+        env[RUNNER_TOKEN_ENV] = env[RUNNER_TOKEN_ENV].strip()
     # Keep Docker execution detached from host process overrides.
     for key in (
         "BACKEND_PORT",
