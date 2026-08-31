@@ -21,6 +21,7 @@ async def mimic_exam_questions(
     kb_name: str | None = None,
     output_dir: str | None = None,
     max_questions: int | None = None,
+    allowed_builtin_tools: list[str] | None = None,
     ws_callback: WsCallback | None = None,
 ) -> dict[str, Any]:
     """
@@ -38,6 +39,7 @@ async def mimic_exam_questions(
         api_version=getattr(llm_config, "api_version", None),
         kb_name=kb_name,
         output_dir=output_dir,
+        allowed_builtin_tools=allowed_builtin_tools,
     )
 
     if ws_callback:

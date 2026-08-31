@@ -52,6 +52,10 @@ _MAX_MIMIC_PATH_CHARS = 512
 # validator remains broader for HTTP/Course ingestion paths.
 _MAX_MIMIC_PDF_B64_CHARS = ((40 * 1024 * 1024 + 2) // 3) * 4 + 4
 _MAX_REQUEST_JSON_CHARS = _MAX_MIMIC_PDF_B64_CHARS + 64 * 1024
+# ``/generate`` has no upload field. Keep its first WebSocket frame bounded
+# independently from ``/mimic`` while still allowing the four documented
+# requirement strings at their supported maximum, including JSON escaping.
+_MAX_GENERATE_REQUEST_JSON_CHARS = 320 * 1024
 # Generation capacity is acquired only for validated work, but an upgraded
 # socket still gets a finite chance to supply that first request.
 _QUESTION_INITIAL_REQUEST_TIMEOUT_S = 30.0
@@ -112,6 +116,20 @@ def _activate_question_llm_scope() -> object:
     return token
 
 
+def _allowed_question_builtin_tools() -> list[str] | None:
+    """Resolve the caller's server-owned built-in tool grant for legacy turns.
+
+    The legacy Question entry points do not use ``turn_runtime``.  They must
+    therefore resolve this grant directly rather than accept a browser-provided
+    tool list.  ``None`` remains the explicit unrestricted-admin sentinel;
+    learners receive a deterministic allowlist (empty by default).
+    """
+    from deeptutor.multi_user.tool_access import allowed_builtin_tools
+
+    allowed = allowed_builtin_tools()
+    return None if allowed is None else sorted(allowed)
+
+
 async def _admit_question_generation() -> tuple[object, AsyncExitStack]:
     """Install the authorized model and reserve beta bulkhead leases."""
     from deeptutor.multi_user.context import get_current_user
@@ -170,7 +188,35 @@ def _validate_request_envelope(data: object) -> dict:
     return data
 
 
-async def _receive_bounded_request_json(websocket: WebSocket) -> dict:
+_GENERATE_REQUEST_FIELDS = frozenset({"requirement", "kb_name", "count"})
+_GENERATE_REQUIREMENT_FIELDS = frozenset(
+    {"knowledge_point", "preference", "difficulty", "question_type"}
+)
+
+
+def _validate_generate_request_envelope(data: object) -> dict:
+    """Reject unsupported generator fields before route-level processing.
+
+    Unlike mimic, generation has no binary payload. Strictly naming its
+    compact schema prevents a client from making this legacy endpoint carry
+    arbitrary padded JSON that no supported contract consumes.
+    """
+    envelope = _validate_request_envelope(data)
+    if set(envelope) - _GENERATE_REQUEST_FIELDS:
+        raise ValueError("request is invalid")
+
+    requirement = envelope.get("requirement")
+    if isinstance(requirement, dict) and set(requirement) - _GENERATE_REQUIREMENT_FIELDS:
+        raise ValueError("request is invalid")
+    return envelope
+
+
+async def _receive_bounded_request_json(
+    websocket: WebSocket,
+    *,
+    maximum_chars: int | None = None,
+    envelope_validator=None,
+) -> dict:
     """Receive one text JSON envelope without parsing an unbounded payload."""
     message = await asyncio.wait_for(
         websocket.receive(), timeout=_QUESTION_INITIAL_REQUEST_TIMEOUT_S
@@ -178,10 +224,12 @@ async def _receive_bounded_request_json(websocket: WebSocket) -> dict:
     if message.get("type") == "websocket.disconnect":
         raise WebSocketDisconnect(message.get("code", 1000))
     raw = message.get("text")
-    if not isinstance(raw, str) or len(raw) > _MAX_REQUEST_JSON_CHARS:
+    maximum = _MAX_REQUEST_JSON_CHARS if maximum_chars is None else maximum_chars
+    if not isinstance(raw, str) or len(raw) > maximum:
         raise ValueError("request is invalid")
     try:
-        return _validate_request_envelope(json.loads(raw))
+        validator = envelope_validator or _validate_request_envelope
+        return validator(json.loads(raw))
     except (TypeError, ValueError, json.JSONDecodeError) as exc:
         raise ValueError("request is invalid") from exc
 
@@ -276,6 +324,7 @@ async def websocket_mimic_generate(websocket: WebSocket):
         # actual generation only.  An authenticated but idle socket therefore
         # cannot monopolize the single global generation lease.
         llm_scope_token, admission_leases = await _admit_question_generation()
+        allowed_builtin_tools = _allowed_question_builtin_tools()
 
         logger.info(f"Starting mimic generation (mode: {mode}, kb: {kb_name})")
 
@@ -402,6 +451,7 @@ async def websocket_mimic_generate(websocket: WebSocket):
                         kb_name=kb_name,
                         output_dir=output_dir,
                         max_questions=max_questions,
+                        allowed_builtin_tools=allowed_builtin_tools,
                         ws_callback=ws_callback,
                     )
 
@@ -509,7 +559,11 @@ async def websocket_question_generate(websocket: WebSocket):
         try:
             # 1. Receive and locally validate the request before consuming a
             # provider/generation rate-quota slot.
-            data = await _receive_bounded_request_json(websocket)
+            data = await _receive_bounded_request_json(
+                websocket,
+                maximum_chars=_MAX_GENERATE_REQUEST_JSON_CHARS,
+                envelope_validator=_validate_generate_request_envelope,
+            )
             requirement = data.get("requirement")
             if isinstance(requirement, dict):
                 requirement = {
@@ -533,6 +587,7 @@ async def websocket_question_generate(websocket: WebSocket):
             return
 
         llm_scope_token, admission_leases = await _admit_question_generation()
+        allowed_builtin_tools = _allowed_question_builtin_tools()
 
         # Generate task ID
         task_key = f"question_{kb_name}_{hash(str(requirement))}"
@@ -570,6 +625,7 @@ async def websocket_question_generate(websocket: WebSocket):
             kb_name=kb_name,
             language=get_ui_language(default=config.get("system", {}).get("language", "en")),
             output_dir=str(output_base),
+            allowed_builtin_tools=allowed_builtin_tools,
         )
 
         # 3. Setup Log Queue for WebSocket streaming

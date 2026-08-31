@@ -46,6 +46,7 @@ class AgentCoordinator:
         language: str | None = None,
         output_dir: str | None = None,
         enabled_tools: list[str] | None = None,
+        allowed_builtin_tools: list[str] | None = None,
         enable_idea_rag: bool | None = None,
     ) -> None:
         # The new pipeline reads provider settings from the shared config
@@ -58,6 +59,9 @@ class AgentCoordinator:
         self.language = language or get_ui_language(default="en")
         self.output_dir = output_dir
         self.enabled_tools = list(enabled_tools or [])
+        self.allowed_builtin_tools = (
+            None if allowed_builtin_tools is None else list(allowed_builtin_tools)
+        )
         self._ws_callback: WsCallback | None = None
 
     def set_ws_callback(self, callback: WsCallback | None) -> None:
@@ -157,6 +161,7 @@ class AgentCoordinator:
             active_capability="deep_question",
             knowledge_bases=[kb_name] if kb_name else [],
             language=self.language,
+            allowed_builtin_tools=self.allowed_builtin_tools,
         )
 
     def _build_pipeline(self) -> QuestionPipeline:

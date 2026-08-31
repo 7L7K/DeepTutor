@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import time
+from types import SimpleNamespace
 
 import pytest
 
@@ -186,6 +187,114 @@ class TestRegistryIntegration:
 
 
 class TestExecutorRouting:
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        ("builtin_grant", "expected"),
+        [
+            ([], []),
+            (["web_fetch"], ["web_fetch"]),
+        ],
+    )
+    async def test_chat_job_uses_owner_builtin_grant(self, monkeypatch, builtin_grant, expected):
+        """A cron-only learner cannot regain auto-mounted host tools."""
+        from deeptutor.core.stream import StreamEventType
+        from deeptutor.multi_user import tool_access
+        import deeptutor.runtime.orchestrator as orchestrator_mod
+        from deeptutor.services.cron import executor
+        from deeptutor.services.cron.service import CronJob, CronOwner, CronSchedule
+        import deeptutor.services.session as session_mod
+
+        seen_contexts = []
+
+        class FakeStore:
+            async def get_session(self, _session_id):
+                return {"id": "s1"}
+
+            async def get_messages_for_context(self, _session_id):
+                return []
+
+            async def add_message(self, **_kwargs):
+                return None
+
+        class FakeOrchestrator:
+            async def handle(self, context):
+                seen_contexts.append(context)
+                yield SimpleNamespace(
+                    type=StreamEventType.RESULT,
+                    source="chat",
+                    metadata={"response": "scheduled reply"},
+                    content=None,
+                )
+
+        monkeypatch.setattr(
+            tool_access,
+            "load_grant",
+            lambda user_id: {"builtin_tools": builtin_grant} if user_id == "u_learner" else {},
+        )
+        monkeypatch.setattr(session_mod, "get_sqlite_session_store", lambda: FakeStore())
+        monkeypatch.setattr(orchestrator_mod, "ChatOrchestrator", FakeOrchestrator)
+        monkeypatch.setattr(executor, "_maybe_send_desktop_notification", _noop_notify)
+        job = CronJob(
+            id="learner-job",
+            name="review",
+            message="review this",
+            schedule=CronSchedule(kind="every", every_seconds=60),
+            owner=CronOwner(kind="chat", user_id="u_learner", is_admin=False, session_id="s1"),
+        )
+
+        status, error = await executor.execute_job(job)
+
+        assert (status, error) == ("ok", None)
+        assert len(seen_contexts) == 1
+        assert seen_contexts[0].allowed_builtin_tools == expected
+
+    @pytest.mark.asyncio
+    async def test_chat_job_keeps_admin_builtin_tools_unrestricted(self, monkeypatch):
+        """The local admin remains the sole unrestricted cron owner."""
+        from deeptutor.core.stream import StreamEventType
+        import deeptutor.runtime.orchestrator as orchestrator_mod
+        from deeptutor.services.cron import executor
+        from deeptutor.services.cron.service import CronJob, CronOwner, CronSchedule
+        import deeptutor.services.session as session_mod
+
+        seen_contexts = []
+
+        class FakeStore:
+            async def get_session(self, _session_id):
+                return {"id": "s1"}
+
+            async def get_messages_for_context(self, _session_id):
+                return []
+
+            async def add_message(self, **_kwargs):
+                return None
+
+        class FakeOrchestrator:
+            async def handle(self, context):
+                seen_contexts.append(context)
+                yield SimpleNamespace(
+                    type=StreamEventType.RESULT,
+                    source="chat",
+                    metadata={"response": "scheduled reply"},
+                    content=None,
+                )
+
+        monkeypatch.setattr(session_mod, "get_sqlite_session_store", lambda: FakeStore())
+        monkeypatch.setattr(orchestrator_mod, "ChatOrchestrator", FakeOrchestrator)
+        monkeypatch.setattr(executor, "_maybe_send_desktop_notification", _noop_notify)
+        job = CronJob(
+            id="admin-job",
+            name="review",
+            message="review this",
+            schedule=CronSchedule(kind="every", every_seconds=60),
+            owner=CronOwner(kind="chat", user_id="local-admin", session_id="s1", is_admin=True),
+        )
+
+        status, error = await executor.execute_job(job)
+
+        assert (status, error) == ("ok", None)
+        assert seen_contexts[0].allowed_builtin_tools is None
+
     @pytest.mark.asyncio
     async def test_delegated_partner_job_never_replays_as_owner(self, monkeypatch):
         from deeptutor.services.cron import executor

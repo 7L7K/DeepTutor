@@ -53,6 +53,10 @@ _MAX_UNIFIED_FIELD_CHARS = 512
 _MAX_UNIFIED_REPLY_CHARS = 12_000
 _MAX_UNIFIED_LIST_ITEMS = 100
 _MAX_UNIFIED_CONFIG_BYTES = 256 * 1024
+# Runtime settings allow at most 40 MiB per decoded attachment. Bound the
+# encoded wire value to the largest base64 string that can satisfy that
+# policy, rather than letting one known field consume the whole 64 MiB frame.
+_MAX_UNIFIED_ATTACHMENT_BASE64_CHARS = ((40 * 1024 * 1024 + 2) // 3) * 4
 # Only a small, bounded number of authenticated sockets may be waiting for a
 # frame. Leases are released as soon as a frame arrives or the timeout fires;
 # they do not cover turn execution.
@@ -103,6 +107,11 @@ _UNIFIED_WS_ALLOWED_FIELDS: dict[str, frozenset[str]] = {
     "user_input": frozenset({"type", "turn_id", "content", "course_id"}),
     "ping": frozenset({"type"}),
 }
+_UNIFIED_WS_ATTACHMENT_FIELDS = frozenset({"type", "url", "base64", "filename", "mime_type"})
+_UNIFIED_WS_NOTEBOOK_REFERENCE_FIELDS = frozenset({"notebook_id", "record_ids"})
+_UNIFIED_WS_BOOK_REFERENCE_FIELDS = frozenset({"book_id", "page_ids"})
+_UNIFIED_WS_LLM_SELECTION_FIELDS = frozenset({"profile_id", "model_id"})
+_UNIFIED_WS_ANSWER_FIELDS = frozenset({"questionId", "id", "text"})
 
 
 class _UnifiedWsFrameTooLarge(ValueError):
@@ -128,6 +137,16 @@ def _fits_utf8_byte_limit(value: str, maximum: int) -> bool:
     return True
 
 
+def _reject_duplicate_json_fields(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
+    """Build a JSON object while rejecting ambiguous last-key-wins input."""
+    result: dict[str, Any] = {}
+    for key, value in pairs:
+        if key in result:
+            raise ValueError("JSON object contains duplicate fields.")
+        result[key] = value
+    return result
+
+
 def _decode_bounded_unified_ws_text(raw: object) -> dict[str, Any]:
     """Apply the transport ceiling before allocating JSON parser structures."""
     if not isinstance(raw, str):
@@ -135,7 +154,7 @@ def _decode_bounded_unified_ws_text(raw: object) -> dict[str, Any]:
     if not _fits_utf8_byte_limit(raw, _MAX_UNIFIED_WS_MESSAGE_BYTES):
         raise _UnifiedWsFrameTooLarge("Message is too large.")
     try:
-        message = json.loads(raw)
+        message = json.loads(raw, object_pairs_hook=_reject_duplicate_json_fields)
         return _validate_unified_ws_message(message)
     except (json.JSONDecodeError, RecursionError, TypeError, ValueError) as exc:
         if isinstance(exc, _UnifiedWsFrameTooLarge):
@@ -183,6 +202,22 @@ def _bounded_ws_list(value: object, *, label: str, maximum: int = _MAX_UNIFIED_L
     return value
 
 
+def _bounded_ws_object(
+    value: object, *, label: str, allowed_fields: frozenset[str]
+) -> dict[str, Any]:
+    """Validate one fixed-shape client protocol object.
+
+    Capability ``config`` remains intentionally extensible and is bounded by
+    its separate aggregate limit. This helper is for protocol-owned nested
+    objects whose complete wire shape is defined by the unified WS contract.
+    """
+    if not isinstance(value, dict):
+        raise ValueError(f"{label} is invalid")
+    if set(value).difference(allowed_fields):
+        raise ValueError(f"{label} contains unsupported fields")
+    return value
+
+
 def _bounded_ws_nonnegative_int(value: object, *, label: str, maximum: int = 10_000_000) -> int:
     if isinstance(value, bool) or not isinstance(value, int) or value < 0 or value > maximum:
         raise ValueError(f"{label} is invalid")
@@ -222,8 +257,11 @@ def _validate_unified_ws_message(message: object) -> dict[str, Any]:
         attachments = message.get("attachments")
         if attachments is not None:
             for item in _bounded_ws_list(attachments, label="attachments", maximum=10):
-                if not isinstance(item, dict):
-                    raise ValueError("attachments are invalid")
+                item = _bounded_ws_object(
+                    item,
+                    label="attachment",
+                    allowed_fields=_UNIFIED_WS_ATTACHMENT_FIELDS,
+                )
                 for key, maximum in (
                     ("type", _MAX_UNIFIED_FIELD_CHARS),
                     ("url", _MAX_UNIFIED_FIELD_CHARS),
@@ -236,7 +274,7 @@ def _validate_unified_ws_message(message: object) -> dict[str, Any]:
                     _bounded_ws_string(
                         item["base64"],
                         label="attachment base64",
-                        maximum=_MAX_UNIFIED_WS_MESSAGE_BYTES,
+                        maximum=_MAX_UNIFIED_ATTACHMENT_BASE64_CHARS,
                     )
 
         for key in ("notebook_references", "book_references"):
@@ -244,14 +282,26 @@ def _validate_unified_ws_message(message: object) -> dict[str, Any]:
                 continue
             references = _bounded_ws_list(message[key], label=key, maximum=50)
             for reference in references:
-                if not isinstance(reference, dict):
-                    raise ValueError(f"{key} are invalid")
+                reference = _bounded_ws_object(
+                    reference,
+                    label=f"{key} item",
+                    allowed_fields=(
+                        _UNIFIED_WS_NOTEBOOK_REFERENCE_FIELDS
+                        if key == "notebook_references"
+                        else _UNIFIED_WS_BOOK_REFERENCE_FIELDS
+                    ),
+                )
                 _bounded_ws_string(
                     reference.get("notebook_id", reference.get("book_id")), label=f"{key} id"
                 )
                 id_key = "record_ids" if key == "notebook_references" else "page_ids"
                 for item_id in _bounded_ws_list(reference.get(id_key, []), label=id_key):
                     _bounded_ws_string(item_id, label=f"{id_key} item")
+        if "history_references" in message:
+            for session_id in _bounded_ws_list(
+                message["history_references"], label="history_references"
+            ):
+                _bounded_ws_string(session_id, label="history_references item")
         if "question_notebook_references" in message:
             for item in _bounded_ws_list(
                 message["question_notebook_references"],
@@ -267,8 +317,11 @@ def _validate_unified_ws_message(message: object) -> dict[str, Any]:
                 raise ValueError("config is too large")
         selection = message.get("llm_selection")
         if selection is not None:
-            if not isinstance(selection, dict):
-                raise ValueError("llm_selection is invalid")
+            selection = _bounded_ws_object(
+                selection,
+                label="llm_selection",
+                allowed_fields=_UNIFIED_WS_LLM_SELECTION_FIELDS,
+            )
             for key in ("profile_id", "model_id"):
                 _bounded_ws_string(selection.get(key), label=f"llm_selection.{key}")
         if "parent_message_id" in message:
@@ -284,8 +337,11 @@ def _validate_unified_ws_message(message: object) -> dict[str, Any]:
             answers = message.get("answers")
             if answers is not None:
                 for answer in _bounded_ws_list(answers, label="answers", maximum=50):
-                    if not isinstance(answer, dict):
-                        raise ValueError("answers are invalid")
+                    answer = _bounded_ws_object(
+                        answer,
+                        label="answer",
+                        allowed_fields=_UNIFIED_WS_ANSWER_FIELDS,
+                    )
                     _bounded_ws_string(
                         answer.get("questionId", answer.get("id")), label="answer questionId"
                     )

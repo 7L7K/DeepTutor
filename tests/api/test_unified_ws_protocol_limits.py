@@ -6,6 +6,7 @@ import json
 import pytest
 
 from deeptutor.api.routers.unified_ws import (
+    _MAX_UNIFIED_ATTACHMENT_BASE64_CHARS,
     _MAX_UNIFIED_CONFIG_BYTES,
     _MAX_UNIFIED_CONTENT_CHARS,
     _MAX_UNIFIED_INVALID_MESSAGES,
@@ -38,6 +39,101 @@ def test_start_turn_bounds_nested_config_and_references() -> None:
         _validate_unified_ws_message(
             {"type": "start_turn", "content": "hello", "attachments": [{}] * 11}
         )
+    with pytest.raises(ValueError, match="history_references"):
+        _validate_unified_ws_message(
+            {
+                "type": "start_turn",
+                "content": "hello",
+                "history_references": ["session"] * 101,
+            }
+        )
+
+
+@pytest.mark.parametrize(
+    "nested_payload",
+    [
+        {"attachments": [{"type": "file", "padding": "x"}]},
+        {"notebook_references": [{"notebook_id": "n1", "record_ids": ["r1"], "padding": "x"}]},
+        {"book_references": [{"book_id": "b1", "page_ids": ["p1"], "padding": "x"}]},
+        {"llm_selection": {"profile_id": "p1", "model_id": "m1", "padding": "x"}},
+    ],
+)
+def test_start_turn_rejects_unknown_nested_protocol_fields(
+    nested_payload: dict[str, object],
+) -> None:
+    with pytest.raises(ValueError, match="unsupported fields"):
+        _validate_unified_ws_message({"type": "start_turn", "content": "hello", **nested_payload})
+
+
+def test_nested_attachment_padding_is_invalid_after_json_parse() -> None:
+    raw = json.dumps(
+        {
+            "type": "start_turn",
+            "content": "hello",
+            "attachments": [{"type": "file", "padding": "x" * 1_000_000}],
+        }
+    )
+    with pytest.raises(ValueError, match="Invalid message"):
+        _decode_bounded_unified_ws_text(raw)
+
+
+@pytest.mark.parametrize("message_type", ["start_turn", "message"])
+def test_duplicate_top_level_fields_cannot_hide_padding(message_type: str) -> None:
+    raw = f'{{"type":"{message_type}","content":"' + ("x" * 1_000_000) + '","content":"ok"}'
+    with pytest.raises(ValueError, match="Invalid message"):
+        _decode_bounded_unified_ws_text(raw)
+
+
+def test_duplicate_nested_answer_fields_cannot_hide_padding() -> None:
+    raw = (
+        '{"type":"submit_user_reply","turn_id":"turn-1",'
+        '"answers":[{"questionId":"q1","text":"' + ("x" * 1_000_000) + '","text":"ok"}]}'
+    )
+    with pytest.raises(ValueError, match="Invalid message"):
+        _decode_bounded_unified_ws_text(raw)
+
+
+def test_start_turn_accepts_supported_nested_protocol_shapes() -> None:
+    message = {
+        "type": "start_turn",
+        "content": "hello",
+        "attachments": [
+            {
+                "type": "file",
+                "url": "/api/attachments/s1/a1/notes.txt",
+                "base64": "aGVsbG8=",
+                "filename": "notes.txt",
+                "mime_type": "text/plain",
+            }
+        ],
+        "notebook_references": [{"notebook_id": "n1", "record_ids": ["r1"]}],
+        "history_references": ["session-1"],
+        "question_notebook_references": [1],
+        "book_references": [{"book_id": "b1", "page_ids": ["p1"]}],
+        "llm_selection": {"profile_id": "profile-1", "model_id": "model-1"},
+        # Capability config is intentionally extensible; only its aggregate
+        # serialized size is constrained at this transport boundary.
+        "config": {"confirmed_outline": [{"title": "Scope", "overview": "Intro"}]},
+    }
+
+    assert _validate_unified_ws_message(message) is message
+
+
+def test_attachment_base64_is_bounded_to_runtime_policy_maximum(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import deeptutor.api.routers.unified_ws as unified_ws
+
+    assert _MAX_UNIFIED_ATTACHMENT_BASE64_CHARS < _MAX_UNIFIED_WS_MESSAGE_BYTES
+    monkeypatch.setattr(unified_ws, "_MAX_UNIFIED_ATTACHMENT_BASE64_CHARS", 8)
+    with pytest.raises(ValueError, match="attachment base64"):
+        _validate_unified_ws_message(
+            {
+                "type": "start_turn",
+                "content": "hello",
+                "attachments": [{"type": "file", "base64": "a" * 9}],
+            }
+        )
 
 
 def test_submit_user_reply_bounds_each_answer() -> None:
@@ -49,6 +145,24 @@ def test_submit_user_reply_bounds_each_answer() -> None:
                 "answers": [{"questionId": "q1", "text": "x" * 12_001}],
             }
         )
+
+
+def test_submit_user_reply_rejects_unknown_answer_fields_and_accepts_legacy_id() -> None:
+    with pytest.raises(ValueError, match="unsupported fields"):
+        _validate_unified_ws_message(
+            {
+                "type": "submit_user_reply",
+                "turn_id": "turn-1",
+                "answers": [{"questionId": "q1", "text": "ok", "padding": "x"}],
+            }
+        )
+
+    message = {
+        "type": "submit_user_reply",
+        "turn_id": "turn-1",
+        "answers": [{"id": "legacy-q1", "text": "ok"}],
+    }
+    assert _validate_unified_ws_message(message) is message
 
 
 @pytest.mark.parametrize(

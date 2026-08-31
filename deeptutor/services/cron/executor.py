@@ -148,6 +148,12 @@ async def _execute_chat_job(job: CronJob) -> tuple[str, str | None]:
 
     prompt = _reminder_prompt(job)
     with user_context(user):
+        # Cron re-enters the chat pipeline without going through turn_runtime,
+        # so it must reconstruct the same server-owned built-in-tool boundary
+        # here.  A scheduled job is not an authority escalation for its owner.
+        from deeptutor.multi_user.tool_access import allowed_builtin_tools
+
+        allowed_builtins = allowed_builtin_tools()
         store = get_sqlite_session_store()
         session = await store.get_session(job.owner.session_id)
         if session is None:
@@ -162,6 +168,7 @@ async def _execute_chat_job(job: CronJob) -> tuple[str, str | None]:
                 for m in history
                 if m.get("role") in {"user", "assistant"} and m.get("content")
             ],
+            allowed_builtin_tools=(None if allowed_builtins is None else sorted(allowed_builtins)),
             active_capability="chat",
             language=job.owner.language or "en",
             metadata={
