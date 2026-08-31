@@ -44,10 +44,11 @@ _TERMINAL_OK = "done"
 _TERMINAL_FAIL = "failed"
 
 # Bounds for the downloaded/extracted archive (defends a hostile/buggy CDN
-# response). The download ceiling is checked before and after buffering; the
+# response). The download ceiling is checked before and while buffering; the
 # extraction path applies the same aggregate budget while streaming members.
 _MAX_TOTAL_BYTES = 128 * 1024 * 1024
 _MAX_DOWNLOAD_BYTES = _MAX_TOTAL_BYTES
+_DOWNLOAD_CHUNK_BYTES = 64 * 1024
 _MAX_ENTRY_BYTES = 64 * 1024 * 1024
 _MAX_ENTRIES = 2_000
 _MAX_COMPRESSION_RATIO = 1_000
@@ -234,19 +235,29 @@ def verify_credentials(config: MinerUConfig) -> None:
 
 def _download(zip_url: str) -> bytes:
     try:
-        response = httpx.get(zip_url, timeout=_DOWNLOAD_TIMEOUT_SECONDS, follow_redirects=True)
-        response.raise_for_status()
-        headers = getattr(response, "headers", {}) or {}
-        raw_length = headers.get("content-length")
-        try:
-            if raw_length is not None and int(raw_length) > _MAX_DOWNLOAD_BYTES:
-                raise MinerUError("MinerU result archive exceeds the download size limit.")
-        except (TypeError, ValueError):
-            raise MinerUError("MinerU result archive returned an invalid content length.") from None
-        content = bytes(response.content)
-        if len(content) > _MAX_DOWNLOAD_BYTES:
-            raise MinerUError("MinerU result archive exceeds the download size limit.")
-        return content
+        # ``httpx.get`` buffers the complete body before returning. Keep the
+        # archive ceiling effective for chunked or dishonest CDN responses by
+        # streaming into a bounded buffer instead.
+        with httpx.stream(
+            "GET", zip_url, timeout=_DOWNLOAD_TIMEOUT_SECONDS, follow_redirects=True
+        ) as response:
+            response.raise_for_status()
+            headers = getattr(response, "headers", {}) or {}
+            raw_length = headers.get("content-length")
+            try:
+                if raw_length is not None and int(raw_length) > _MAX_DOWNLOAD_BYTES:
+                    raise MinerUError("MinerU result archive exceeds the download size limit.")
+            except (TypeError, ValueError):
+                raise MinerUError(
+                    "MinerU result archive returned an invalid content length."
+                ) from None
+
+            content = bytearray()
+            for chunk in response.iter_bytes(chunk_size=_DOWNLOAD_CHUNK_BYTES):
+                if len(content) + len(chunk) > _MAX_DOWNLOAD_BYTES:
+                    raise MinerUError("MinerU result archive exceeds the download size limit.")
+                content.extend(chunk)
+            return bytes(content)
     except MinerUError:
         raise
     except httpx.HTTPError as exc:

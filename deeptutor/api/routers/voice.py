@@ -1,9 +1,8 @@
 """Voice endpoints — text-to-speech and speech-to-text.
 
-These are thin HTTP surfaces over :mod:`deeptutor.services.voice`. Config comes
-from the admin-managed model catalog (``services.tts`` / ``services.stt``), so
-voice is shared infrastructure like embedding/search — any authenticated user
-may call it; it is not gated by per-user LLM grants.
+These are thin HTTP surfaces over :mod:`deeptutor.services.voice`.  The active
+provider credentials are deployment-owned, so the controlled beta keeps voice
+admin-only until there is an explicit per-learner admission grant and budget.
 """
 
 from __future__ import annotations
@@ -47,6 +46,17 @@ class TTSRequest(BaseModel):
     format: str | None = None
 
 
+def _admit_voice_user() -> str:
+    """Return the caller id only when they may consume shared voice capacity."""
+    user = get_current_user()
+    if not user.is_admin:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Voice is not enabled for this account.",
+        )
+    return user.id
+
+
 def _parse_pcm_content_type(content_type: str) -> tuple[int, int] | None:
     """Return ``(sample_rate, channels)`` when a provider sent raw PCM audio."""
     media_type, *params = (content_type or "").split(";")
@@ -85,9 +95,10 @@ def _pcm16_to_wav(audio: bytes, *, sample_rate: int, channels: int) -> bytes:
 @router.post("/tts")
 async def text_to_speech(payload: TTSRequest) -> Response:
     """Synthesize ``text`` to audio using the active TTS provider."""
+    user_id = _admit_voice_user()
     async with AsyncExitStack() as quota_stack:
         try:
-            user_lease = await _VOICE_USER_QUOTA.acquire(get_current_user().id)
+            user_lease = await _VOICE_USER_QUOTA.acquire(user_id)
             await quota_stack.enter_async_context(user_lease)
             global_lease = await _VOICE_GLOBAL_QUOTA.acquire(_VOICE_QUOTA_GLOBAL_KEY)
             await quota_stack.enter_async_context(global_lease)
@@ -125,6 +136,7 @@ async def speech_to_text(
     language: str | None = Form(default=None),
 ) -> dict[str, str]:
     """Transcribe an uploaded audio clip using the active STT provider."""
+    user_id = _admit_voice_user()
     # Read only one byte past the provider limit so oversized multipart bodies
     # cannot be retained in full before we reject them.
     audio = await file.read(_MAX_AUDIO_BYTES + 1)
@@ -137,7 +149,7 @@ async def speech_to_text(
         )
     async with AsyncExitStack() as quota_stack:
         try:
-            user_lease = await _VOICE_USER_QUOTA.acquire(get_current_user().id)
+            user_lease = await _VOICE_USER_QUOTA.acquire(user_id)
             await quota_stack.enter_async_context(user_lease)
             global_lease = await _VOICE_GLOBAL_QUOTA.acquire(_VOICE_QUOTA_GLOBAL_KEY)
             await quota_stack.enter_async_context(global_lease)

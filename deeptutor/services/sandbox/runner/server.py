@@ -67,6 +67,7 @@ import logging
 import os
 import resource
 import selectors
+import signal
 import subprocess
 import sys
 import time
@@ -291,6 +292,10 @@ def _run_bounded_process(
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
         preexec_fn=preexec_fn,
+        # A dedicated session makes the command's PID its process-group ID.
+        # Timeout/output enforcement can then stop the command and ordinary
+        # descendants together instead of leaving background jobs running.
+        start_new_session=_POSIX,
     )
     assert process.stdout is not None and process.stderr is not None
     selector = selectors.DefaultSelector()
@@ -302,6 +307,10 @@ def _run_bounded_process(
     deadline = time.monotonic() + max(1, timeout_s)
 
     def stop_child() -> None:
+        if _POSIX:
+            with contextlib.suppress(ProcessLookupError, OSError):
+                os.killpg(process.pid, signal.SIGKILL)
+                return
         with contextlib.suppress(ProcessLookupError):
             process.kill()
 

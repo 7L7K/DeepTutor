@@ -105,6 +105,23 @@ def _build_cors_settings() -> dict[str, object]:
     }
 
 
+def validate_production_auth_configuration() -> None:
+    """Reject a production process that would synthesize a local admin.
+
+    Authentication is deliberately optional for local, single-user development.
+    The same default is unsafe on an Internet-facing deployment: absent or
+    disabled ``auth.json`` would otherwise make every request the synthetic
+    local administrator.  Check the effective settings during startup rather
+    than trusting a compose-file convention, because runtime settings are the
+    authoritative configuration source.
+    """
+    if is_production_environment() and not load_auth_settings()["enabled"]:
+        raise RuntimeError(
+            "Production requires authentication to be enabled; configure "
+            "data/user/settings/auth.json before starting TEEECHR"
+        )
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """
@@ -115,6 +132,7 @@ async def lifespan(app: FastAPI):
     logger.info("Application startup")
 
     # Validate configuration consistency
+    validate_production_auth_configuration()
     validate_tool_consistency()
     validate_course_backend_compatibility()
     from deeptutor.courses.deployment import SingleProcessCourseLock

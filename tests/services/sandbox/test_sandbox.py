@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 import asyncio
+import os
 import shlex
 import sys
+import time
 
 import pytest
 
@@ -171,6 +173,52 @@ def test_runner_server_executes_and_truncates_output() -> None:
     assert result["error"] == ""
     assert "truncated" in result["stdout"]
     assert len(result["stdout"]) < 120
+
+
+@pytest.mark.skipif(os.name != "posix", reason="runner process groups require POSIX")
+@pytest.mark.parametrize("limit", ["timeout", "output"])
+def test_runner_server_limit_stops_descendant_processes(tmp_path, limit: str) -> None:
+    """A background child must not outlive a timeout or output-cap response."""
+    from deeptutor.services.sandbox.runner import server
+
+    marker = tmp_path / f"{limit}-descendant-survived"
+    child_script = (
+        "import pathlib, time; "
+        "time.sleep(1.5); "
+        f"pathlib.Path({str(marker)!r}).write_text('survived', encoding='utf-8')"
+    )
+    parent_script = (
+        "import subprocess, sys, time; "
+        f"subprocess.Popen([sys.executable, '-c', {child_script!r}]); "
+        + (
+            "time.sleep(30)"
+            if limit == "timeout"
+            else "print('x' * 100000, flush=True); time.sleep(30)"
+        )
+    )
+    limits = {"timeout_s": 1, "max_output_chars": 10_000}
+    if limit == "output":
+        limits["max_output_chars"] = 16
+
+    result = server.execute(
+        {
+            "command": "unused",
+            "argv": [sys.executable, "-c", parent_script],
+            "limits": limits,
+        }
+    )
+
+    if limit == "timeout":
+        assert result["timed_out"] is True
+        assert result["exit_code"] == 124
+    else:
+        assert result["timed_out"] is False
+        assert result["exit_code"] == 0
+    # Timeout returns after about one second; output capping returns almost
+    # immediately. Wait long enough that an escaped child would write in both
+    # cases, without making the test depend on process reaping details.
+    time.sleep(0.8 if limit == "timeout" else 1.8)
+    assert not marker.exists(), "runner limit left a descendant process alive"
 
 
 def test_runner_server_rejects_workdir_outside_allowed_roots(

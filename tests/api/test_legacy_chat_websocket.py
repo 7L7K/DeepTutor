@@ -49,13 +49,13 @@ def test_production_rejects_legacy_chat_socket_before_auth_or_provider_work(
     assert provider_started is False
 
 
-def test_production_legacy_socket_opt_in_is_explicit(monkeypatch) -> None:
+def test_production_legacy_socket_cannot_be_reenabled_by_environment(monkeypatch) -> None:
     monkeypatch.setenv("TEEECHR_ENVIRONMENT", "production")
     monkeypatch.delenv("TEEECHR_ENABLE_LEGACY_CHAT_WEBSOCKET", raising=False)
     assert chat_router._legacy_chat_websocket_enabled() is False
 
     monkeypatch.setenv("TEEECHR_ENABLE_LEGACY_CHAT_WEBSOCKET", "true")
-    assert chat_router._legacy_chat_websocket_enabled() is True
+    assert chat_router._legacy_chat_websocket_enabled() is False
 
 
 def test_production_legacy_socket_closure_does_not_affect_session_rest_api(

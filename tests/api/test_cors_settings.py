@@ -80,6 +80,28 @@ def test_auth_enabled_cors_never_allows_wildcard_origin(monkeypatch) -> None:
     assert "https://learn.example.com" in settings["allow_origins"]
 
 
+def test_production_startup_rejects_disabled_or_missing_auth(monkeypatch) -> None:
+    monkeypatch.setattr(api_main, "is_production_environment", lambda: True)
+    monkeypatch.setattr(api_main, "load_auth_settings", lambda: {"enabled": False})
+
+    with pytest.raises(RuntimeError, match="Production requires authentication"):
+        api_main.validate_production_auth_configuration()
+
+
+def test_production_startup_accepts_enabled_auth(monkeypatch) -> None:
+    monkeypatch.setattr(api_main, "is_production_environment", lambda: True)
+    monkeypatch.setattr(api_main, "load_auth_settings", lambda: {"enabled": True})
+
+    api_main.validate_production_auth_configuration()
+
+
+def test_local_startup_allows_auth_disabled_for_single_user_development(monkeypatch) -> None:
+    monkeypatch.setattr(api_main, "is_production_environment", lambda: False)
+    monkeypatch.setattr(api_main, "load_auth_settings", lambda: {"enabled": False})
+
+    api_main.validate_production_auth_configuration()
+
+
 def test_production_websocket_origin_policy_matches_cors(monkeypatch) -> None:
     from deeptutor.services.config import load_system_settings
     from deeptutor.services.config.origins import browser_origins

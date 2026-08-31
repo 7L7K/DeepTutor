@@ -83,6 +83,39 @@ def test_tts_returns_busy_when_voice_quota_is_exhausted(
     assert resp.status_code == 429
 
 
+@pytest.mark.parametrize(
+    ("path", "request_kwargs"),
+    [
+        ("/api/v1/voice/tts", {"json": {"text": "hello"}}),
+        (
+            "/api/v1/voice/stt",
+            {"files": {"file": ("clip.webm", b"audiobytes", "audio/webm")}},
+        ),
+    ],
+)
+def test_voice_fails_closed_for_non_admins(
+    client: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
+    path: str,
+    request_kwargs: dict[str, Any],
+) -> None:
+    class Learner:
+        id = "learner"
+        is_admin = False
+
+    async def provider_must_not_run(*_: Any, **__: Any):
+        raise AssertionError("voice provider must not run for learners")
+
+    monkeypatch.setattr(voice_router, "get_current_user", lambda: Learner())
+    monkeypatch.setattr(voice_router, "synthesize_speech", provider_must_not_run)
+    monkeypatch.setattr(voice_router, "transcribe_audio", provider_must_not_run)
+
+    resp = client.post(path, **request_kwargs)
+
+    assert resp.status_code == 403
+    assert resp.json()["detail"] == "Voice is not enabled for this account."
+
+
 def test_tts_provider_error_is_502(client: TestClient, monkeypatch: pytest.MonkeyPatch) -> None:
     async def boom(*_: Any, **__: Any):
         raise VoiceProviderError("upstream down")

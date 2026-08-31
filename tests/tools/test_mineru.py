@@ -304,18 +304,68 @@ def test_extract_archive_rejects_unsafe_compression_ratio(tmp_path: Path) -> Non
 def test_download_rejects_oversized_response_before_extraction(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    class _Response:
+        headers = {"content-length": str(mineru_cloud._MAX_DOWNLOAD_BYTES + 1)}
+
+        def __enter__(self) -> "_Response":
+            return self
+
+        def __exit__(self, *args: object) -> bool:
+            return False
+
+        def raise_for_status(self) -> None:
+            return None
+
+        def iter_bytes(self, *, chunk_size: int):
+            assert chunk_size == mineru_cloud._DOWNLOAD_CHUNK_BYTES
+            yield b""
+
+    response = _Response()
     from types import SimpleNamespace
 
-    response = SimpleNamespace(
-        headers={"content-length": str(mineru_cloud._MAX_DOWNLOAD_BYTES + 1)},
-        content=b"",
-        raise_for_status=lambda: None,
-    )
     fake = SimpleNamespace(
-        get=lambda *args, **kwargs: response,
+        stream=lambda *args, **kwargs: response,
         HTTPError=real_httpx.HTTPError,
     )
     monkeypatch.setattr(mineru_cloud, "httpx", fake)
+
+    with pytest.raises(MinerUError, match="download size limit"):
+        mineru_cloud._download("https://zip")
+
+
+def test_download_streams_and_rejects_oversized_chunked_response(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class _StreamingResponse:
+        headers: dict[str, str] = {}
+
+        def __enter__(self) -> "_StreamingResponse":
+            return self
+
+        def __exit__(self, *args: object) -> bool:
+            return False
+
+        def raise_for_status(self) -> None:
+            return None
+
+        @property
+        def content(self) -> bytes:
+            raise AssertionError("download must not materialize response.content")
+
+        def iter_bytes(self, *, chunk_size: int):
+            assert chunk_size == mineru_cloud._DOWNLOAD_CHUNK_BYTES
+            yield b"12345"
+            yield b"67890"
+            yield b"x"
+
+    from types import SimpleNamespace
+
+    fake = SimpleNamespace(
+        stream=lambda *args, **kwargs: _StreamingResponse(),
+        HTTPError=real_httpx.HTTPError,
+    )
+    monkeypatch.setattr(mineru_cloud, "httpx", fake)
+    monkeypatch.setattr(mineru_cloud, "_MAX_DOWNLOAD_BYTES", 10)
 
     with pytest.raises(MinerUError, match="download size limit"):
         mineru_cloud._download("https://zip")
@@ -350,6 +400,15 @@ class _Resp:
             response = real_httpx.Response(self.status_code, request=request)
             raise real_httpx.HTTPStatusError("err", request=request, response=response)
 
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *args):  # noqa: ANN002
+        return False
+
+    def iter_bytes(self, *, chunk_size: int):
+        yield self.content
+
 
 def _install_fake_httpx(monkeypatch: pytest.MonkeyPatch, *, submit, poll, download) -> None:
     from types import SimpleNamespace
@@ -373,7 +432,7 @@ def _install_fake_httpx(monkeypatch: pytest.MonkeyPatch, *, submit, poll, downlo
     fake = SimpleNamespace(
         Client=FakeClient,
         put=lambda url, content=None, timeout=None: _Resp(status=200),
-        get=lambda url, timeout=None, follow_redirects=False: download(url),
+        stream=lambda method, url, timeout=None, follow_redirects=False: download(url),
         HTTPError=real_httpx.HTTPError,
         HTTPStatusError=real_httpx.HTTPStatusError,
     )

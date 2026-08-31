@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import time
 
 import pytest
@@ -120,6 +121,65 @@ class TestJobManagement:
         assert service.list_jobs() == []
         # The corrupt original was moved aside, not overwritten.
         assert any(p.name.startswith("jobs") and "corrupt" in p.name for p in tmp_path.iterdir())
+
+    def test_load_disables_persisted_jobs_over_owner_cap_and_preserves_them(
+        self, tmp_path, monkeypatch
+    ):
+        import deeptutor.services.cron.service as service_mod
+
+        monkeypatch.setattr(service_mod, "_MAX_ENABLED_JOBS_PER_OWNER", 2)
+        monkeypatch.setattr(service_mod, "_MAX_ENABLED_JOBS_GLOBAL", 8)
+        store = tmp_path / "jobs.json"
+        jobs = [
+            {
+                "id": f"owner-{index}",
+                "name": "reminder",
+                "message": "hello",
+                "schedule": {"kind": "every", "every_seconds": 60},
+                "owner": {"kind": "chat", "user_id": "learner"},
+                "enabled": True,
+            }
+            for index in range(3)
+        ]
+        store.write_text(json.dumps({"version": 1, "jobs": jobs}), encoding="utf-8")
+
+        loaded = CronService(store_path=store).list_jobs()
+
+        assert [job.enabled for job in loaded] == [True, True, False]
+        assert loaded[-1].state.last_status == "skipped"
+        assert "owner enabled-job limit" in (loaded[-1].state.last_error or "")
+        persisted = json.loads(store.read_text(encoding="utf-8"))
+        assert persisted["jobs"][-1]["enabled"] is False
+
+    def test_load_disables_persisted_jobs_over_global_cap_and_preserves_existing_disabled(
+        self, tmp_path, monkeypatch
+    ):
+        import deeptutor.services.cron.service as service_mod
+
+        monkeypatch.setattr(service_mod, "_MAX_ENABLED_JOBS_PER_OWNER", 8)
+        monkeypatch.setattr(service_mod, "_MAX_ENABLED_JOBS_GLOBAL", 2)
+        store = tmp_path / "jobs.json"
+        jobs = [
+            {
+                "id": f"job-{index}",
+                "name": "reminder",
+                "message": "hello",
+                "schedule": {"kind": "every", "every_seconds": 60},
+                "owner": {"kind": "chat", "user_id": f"learner-{index}"},
+                "enabled": index != 3,
+            }
+            for index in range(4)
+        ]
+        store.write_text(json.dumps({"version": 1, "jobs": jobs}), encoding="utf-8")
+
+        loaded = {job.id: job for job in CronService(store_path=store).list_jobs()}
+
+        assert loaded["job-0"].enabled is True
+        assert loaded["job-1"].enabled is True
+        assert loaded["job-2"].enabled is False
+        assert "global enabled-job limit" in (loaded["job-2"].state.last_error or "")
+        assert loaded["job-3"].enabled is False
+        assert loaded["job-3"].state.last_error is None
 
 
 class TestSchedulerLoop:

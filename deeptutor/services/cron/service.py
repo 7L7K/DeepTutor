@@ -222,6 +222,52 @@ class CronService:
             except OSError:
                 pass
             logger.exception("Corrupt cron store moved to %s", backup)
+            return
+
+        if self._normalize_persisted_enabled_job_capacity():
+            # Persist the fail-closed normalization so the same bounded subset
+            # is retained on subsequent restarts.  Overflow jobs remain in the
+            # store as disabled records for audit/recovery.  A write failure
+            # must not make a valid store look corrupt or trigger a rename;
+            # the in-memory view is already fail-closed and will retry on the
+            # next save/restart.
+            try:
+                self._save()
+            except Exception:
+                logger.exception("Failed to persist normalized cron job capacity")
+
+    def _normalize_persisted_enabled_job_capacity(self) -> bool:
+        """Disable persisted enabled jobs that exceed the durable queue caps.
+
+        Earlier releases only applied the limits at creation time.  A legacy
+        or manually-edited store could therefore restart with an unbounded
+        queue.  Preserve each overflow job instead of deleting it, but make it
+        inert before the scheduler ever sees it.
+        """
+        enabled_total = 0
+        enabled_by_owner: dict[str, int] = {}
+        changed = False
+        for job in self._jobs.values():
+            if not job.enabled:
+                continue
+            owner_count = enabled_by_owner.get(job.owner.key, 0)
+            reason: str | None = None
+            if enabled_total >= _MAX_ENABLED_JOBS_GLOBAL:
+                reason = f"global enabled-job limit ({_MAX_ENABLED_JOBS_GLOBAL})"
+            elif owner_count >= _MAX_ENABLED_JOBS_PER_OWNER:
+                reason = (
+                    f"owner enabled-job limit ({_MAX_ENABLED_JOBS_PER_OWNER}) for {job.owner.key}"
+                )
+            if reason is not None:
+                job.enabled = False
+                job.state.last_status = "skipped"
+                job.state.last_error = f"Disabled while loading: {reason}."
+                changed = True
+                logger.warning("Disabled persisted cron job %s: %s", job.id, reason)
+                continue
+            enabled_total += 1
+            enabled_by_owner[job.owner.key] = owner_count + 1
+        return changed
 
     def _save(self) -> None:
         self.store_path.parent.mkdir(parents=True, exist_ok=True)
