@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Fixed learner-safe Settings and BlueWay pages redirecting to General Study
+  after rendering. Optional admin gates now skip the redirect while required
+  admin gates continue to block non-administrators.
+
 - Added the learner Course surfaces for local-first beta qualification: distinct
   Overview, Practice, Flashcards, and Materials flows; Course-grounded quiz and
   flashcard creation; editable learner cards; and admin-only navigation and

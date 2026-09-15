@@ -19,7 +19,7 @@ export default function AdminGate({
 }) {
   const router = useRouter();
   const { enabled, isAdmin, loading } = useAuthStatus();
-  const denied = !loading && enabled && !isAdmin;
+  const denied = required && !loading && enabled && !isAdmin;
 
   useEffect(() => {
     if (denied) router.replace("/home");
