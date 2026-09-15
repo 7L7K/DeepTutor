@@ -42,6 +42,7 @@ _FIELDS: dict[str, set[str]] = {
         "metadata_version", "course_name_snapshot", "meeting_date", "meeting_binding_status",
         "schedule_item_id", "scheduled_start_at", "scheduled_end_at", "recording_name",
         "recorded_at", "stopped_at", "schedule_event_id",
+        "term_id", "source_origin", "imported_at",
     },
     "capture_notes": _COMMON | {"course_id", "capture_id", "body"},
     "transcripts": _COMMON | {"course_id", "capture_id", "recorded_at", "stopped_at", "duration_ms", "language", "layer", "segments"},
@@ -98,6 +99,27 @@ def _validate_record(kind: str, record: Any) -> None:
         raise SnapshotValidationError("BlueWay course identity/title is invalid")
     if kind == "capture_metadata" and "schedule_event_id" in record and not _text(record["schedule_event_id"], limit=128):
         raise SnapshotValidationError("BlueWay capture schedule event identity is invalid")
+    if kind == "capture_metadata":
+        version = record.get("metadata_version")
+        if version not in ("1", "2", "3"):
+            raise SnapshotValidationError("BlueWay capture metadata version is invalid")
+        if "term_id" in record and (
+            version not in ("2", "3") or not isinstance(term_id, str)
+            or len(term_id) > 160 or not re.fullmatch(r"[a-z0-9]+(?:-[a-z0-9]+)*", term_id)
+        ):
+            raise SnapshotValidationError("BlueWay capture term identity is invalid")
+        if version == "3" or "source_origin" in record or "imported_at" in record:
+            imported_at = record.get("imported_at")
+            if (version != "3" or not term_id or record.get("source_origin") != "imported_audio"
+                or "recorded_at" in record or "stopped_at" in record
+                or not isinstance(imported_at, str)
+                or not re.fullmatch(r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,3})?Z", imported_at)):
+                raise SnapshotValidationError("BlueWay imported capture provenance is invalid")
+            from datetime import datetime
+            try:
+                datetime.fromisoformat(imported_at.replace("Z", "+00:00"))
+            except ValueError as exc:
+                raise SnapshotValidationError("BlueWay imported capture timestamp is invalid") from exc
     # The export is intentionally scalar-only outside transcript segments.
     # Accept omitted optional fields, but never provider-shaped objects.
     for field, value in record.items():

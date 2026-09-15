@@ -2101,6 +2101,18 @@ def test_term_course_mapping_links_meetings_and_replays_without_duplicates(tmp_p
             "term_id": course["term_id"], "title": course["title"], "state": "current",
             "revision": "a" * 64, "content_sha256": "a" * 64,
         })
+    for course in payload["datasets"]["courses"]:
+        version = 3 if course["term_id"] == "spring-2027" else 2
+        capture = json.loads((Path(__file__).parents[2] / f"fixtures/blueway/capture_metadata.v{version}.json").read_text())["datasets"]["capture_metadata"][0]
+        capture["term_id"] = course["term_id"]
+        capture["id"] = "capture-" + course["term_id"]
+        payload["datasets"]["capture_metadata"].append(capture)
+        payload["datasets"]["transcripts"].append({
+            "id": "transcript-" + course["term_id"], "course_id": course["course_id"],
+            "capture_id": capture["id"], "state": "current", "layer": "raw",
+            "segments": [{"start_ms": 0, "end_ms": 1000, "text": "Synthetic lecture."}],
+            "revision": "b" * 64, "content_sha256": "b" * 64,
+        })
     payload["payload_sha256"] = canonical_snapshot_hash(payload)
     monkeypatch.setattr(service.transport, "fetch_snapshot", lambda **_kwargs: copy.deepcopy(payload))
     attempt = service.start_connection()
@@ -2111,11 +2123,60 @@ def test_term_course_mapping_links_meetings_and_replays_without_duplicates(tmp_p
         maps = conn.execute("SELECT external_course_id, external_term_id, course_id FROM blueway_course_maps WHERE connection_id = ?", (connection.id,)).fetchall()
         meetings = conn.execute("SELECT external_course_id, external_term_id, course_id, state FROM blueway_records WHERE connection_id = ? AND record_kind = 'class_meetings'", (connection.id,)).fetchall()
         profiles = conn.execute("SELECT external_course_id, external_term_id, course_id, state FROM blueway_records WHERE connection_id = ? AND record_kind = 'course_profiles'", (connection.id,)).fetchall()
+        captures = conn.execute("SELECT external_course_id, external_term_id, course_id, state FROM blueway_records WHERE connection_id = ? AND record_kind = 'capture_metadata'", (connection.id,)).fetchall()
+    assert len(captures) == 2
     assert len(maps) == len(meetings) == len(courses.list_courses()) == 2
     assert len({row["course_id"] for row in maps}) == 2
     expected = {(row["external_course_id"], row["external_term_id"]): row["course_id"] for row in maps}
     assert {key[0] for key in expected} == {"course_1789498800000_abcdef"}
     assert len(profiles) == 2
-    for row in [*meetings, *profiles]:
+    for row in [*meetings, *profiles, *captures]:
         assert row["state"] == "current"
         assert row["course_id"] == expected[(row["external_course_id"], row["external_term_id"])]
+
+    bundles = BlueWayRepository(courses).bundle_records(connection.id)
+    assert len(bundles) == 2
+    for local_id, external_id, term, records in bundles:
+        captures = [item["record"] for item in records if item["kind"] == "capture_metadata"]
+        assert len(captures) == 1
+        assert captures[0]["term_id"] == term
+        transcripts = [item["record"] for item in records if item["kind"] == "transcripts"]
+        assert len(transcripts) == 1
+        assert transcripts[0]["capture_id"] == captures[0]["id"]
+        assert local_id == expected[(external_id, term)]
+        if term == "spring-2027":
+            assert captures[0]["source_origin"] == "imported_audio"
+            assert captures[0]["imported_at"] == "2026-09-15T18:00:00.000Z"
+
+
+@pytest.mark.parametrize("version", [1, 2, 3])
+def test_deployed_exporter_capture_metadata_is_accepted(version: int) -> None:
+    validate_snapshot_fixture(Path(__file__).parents[2] / f"fixtures/blueway/capture_metadata.v{version}.json")
+
+
+@pytest.mark.parametrize("field,value", [
+    ("term_id", "invalid term"), ("source_origin", "remote_url"),
+    ("imported_at", "not-a-date"), ("imported_at", "2026-02-30T18:00:00Z"),
+    ("imported_at", "2026-09-15T18:00:00"),
+    ("metadata_version", "1"), ("metadata_version", []), ("recorded_at", "2026-09-15T18:00:00Z"),
+    ("audio_url", "https://example.test/private.m4a"),
+])
+def test_imported_capture_rejects_invalid_provenance(field: str, value: object) -> None:
+    payload = json.loads((Path(__file__).parents[2] / "fixtures/blueway/capture_metadata.v3.json").read_text())
+    payload["datasets"]["capture_metadata"][0][field] = value
+    payload["payload_sha256"] = canonical_snapshot_hash(payload)
+    with pytest.raises(SnapshotValidationError):
+        validate_snapshot(payload)
+
+
+@pytest.mark.parametrize("version", [None, "4", 3, [], {}])
+def test_capture_requires_known_metadata_version(version: object) -> None:
+    payload = json.loads((Path(__file__).parents[2] / "fixtures/blueway/capture_metadata.v1.json").read_text())
+    record = payload["datasets"]["capture_metadata"][0]
+    if version is None:
+        record.pop("metadata_version")
+    else:
+        record["metadata_version"] = version
+    payload["payload_sha256"] = canonical_snapshot_hash(payload)
+    with pytest.raises(SnapshotValidationError, match="version"):
+        validate_snapshot(payload)
