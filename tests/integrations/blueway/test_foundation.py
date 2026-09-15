@@ -261,6 +261,7 @@ def test_term_qualified_mapping_keeps_same_external_course_id_distinct_and_repla
 def test_snapshot_accepts_optional_term_identity_only_on_qualified_datasets() -> None:
     snapshot = _snapshot()
     snapshot["datasets"]["courses"][0]["term_id"] = "fall-2026"
+    snapshot["datasets"]["courses"][0]["id"] = "course-same-title-a__fall-2026"
     snapshot["datasets"]["class_meetings"] = [{
         "id": "meeting-1", "course_id": "course-same-title-a", "term_id": "fall-2026",
         "title": "Lecture", "state": "current", "revision": "a" * 64, "content_sha256": "a" * 64,
@@ -1357,8 +1358,16 @@ def test_fifty_owner_repositories_are_isolated_under_concurrent_local_operations
     assert len({tmp_path / owner / "courses.db" for owner, _ in results}) == 50
 
 
-def test_reconnect_rebinds_same_subject_but_never_cross_subject(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+@pytest.mark.parametrize("with_term", [False, True])
+def test_reconnect_rebinds_same_subject_but_never_cross_subject(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, with_term: bool) -> None:
     service, courses = _service(tmp_path, monkeypatch)
+    if with_term:
+        payload = _snapshot()
+        for course in payload["datasets"]["courses"]:
+            course["term_id"] = "fall-2026"
+            course["id"] = course["course_id"] + "__fall-2026"
+        payload["payload_sha256"] = canonical_snapshot_hash(payload)
+        monkeypatch.setattr(service.transport, "fetch_snapshot", lambda **_kwargs: copy.deepcopy(payload))
     first_attempt = service.start_connection()
     first_connection = service.complete_connection_for_transport(
         attempt_id=first_attempt.id,
@@ -2064,3 +2073,58 @@ def test_sync_failure_event_preserves_concurrent_cancellation(
     failure = [fields for event, fields in events if event == "blueway_sync_failed"][-1]
     assert failure["state_to"] == "cancelled"
     assert failure["outcome"] == "terminal"
+
+
+def _exported_term_snapshot() -> dict:
+    """Synthetic output from the deployed BlueWay exporter, with a real term shape."""
+    return json.loads((Path(__file__).parents[2] / "fixtures/blueway/academic_snapshot.term.v1.json").read_text())
+
+
+def test_deployed_exporter_term_snapshot_is_accepted() -> None:
+    validate_snapshot(_exported_term_snapshot())
+
+
+@pytest.mark.parametrize("record_id", ["course_1789498800000_abcdef", "wrong-course__term-fall-1yzl4x3", "course_1789498800000_abcdef__wrong-term"])
+def test_term_course_rejects_noncanonical_record_identity(record_id: str) -> None:
+    payload = _exported_term_snapshot()
+    payload["datasets"]["courses"][0]["id"] = record_id
+    payload["payload_sha256"] = canonical_snapshot_hash(payload)
+    with pytest.raises(SnapshotValidationError, match="course identity/title"):
+        validate_snapshot(payload)
+
+
+def test_term_course_mapping_links_meetings_and_replays_without_duplicates(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    service, courses = _service(tmp_path, monkeypatch)
+    payload = _exported_term_snapshot()
+    # One course taught in two terms must remain two distinct learner Courses.
+    course = copy.deepcopy(payload["datasets"]["courses"][0])
+    meeting = copy.deepcopy(payload["datasets"]["class_meetings"][0])
+    course["term_id"] = meeting["term_id"] = "spring-2027"
+    course["id"] = course["course_id"] + "__spring-2027"
+    meeting["id"] = "synthetic-spring-meeting"
+    payload["datasets"]["courses"].append(course)
+    payload["datasets"]["class_meetings"].append(meeting)
+    for course in payload["datasets"]["courses"]:
+        payload["datasets"]["course_profiles"].append({
+            "id": "profile-" + course["term_id"], "course_id": course["course_id"],
+            "term_id": course["term_id"], "title": course["title"], "state": "current",
+            "revision": "a" * 64, "content_sha256": "a" * 64,
+        })
+    payload["payload_sha256"] = canonical_snapshot_hash(payload)
+    monkeypatch.setattr(service.transport, "fetch_snapshot", lambda **_kwargs: copy.deepcopy(payload))
+    attempt = service.start_connection()
+    connection = service.complete_connection_for_transport(attempt_id=attempt.id, exchange=TokenExchange("grant-a", "subject-a", "access", "2026-07-23T00:00:00Z", "refresh-secret"))
+    for _ in range(2):
+        assert service.run_queued_sync(run_id=service.queue_sync().id).state == "completed"
+    with courses._connect() as conn:
+        maps = conn.execute("SELECT external_course_id, external_term_id, course_id FROM blueway_course_maps WHERE connection_id = ?", (connection.id,)).fetchall()
+        meetings = conn.execute("SELECT external_course_id, external_term_id, course_id, state FROM blueway_records WHERE connection_id = ? AND record_kind = 'class_meetings'", (connection.id,)).fetchall()
+        profiles = conn.execute("SELECT external_course_id, external_term_id, course_id, state FROM blueway_records WHERE connection_id = ? AND record_kind = 'course_profiles'", (connection.id,)).fetchall()
+    assert len(maps) == len(meetings) == len(courses.list_courses()) == 2
+    assert len({row["course_id"] for row in maps}) == 2
+    expected = {(row["external_course_id"], row["external_term_id"]): row["course_id"] for row in maps}
+    assert {key[0] for key in expected} == {"course_1789498800000_abcdef"}
+    assert len(profiles) == 2
+    for row in [*meetings, *profiles]:
+        assert row["state"] == "current"
+        assert row["course_id"] == expected[(row["external_course_id"], row["external_term_id"])]

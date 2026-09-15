@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Fixed BlueWay imports rejecting semester-qualified course records and leaving
+  their meetings unlinked. Course mappings now use the canonical course ID and
+  semester, independently of the exported record ID.
+
 - Made the sandbox runner rollout fail closed across mixed image versions. The
   app now probes an authenticated capability contract and uses a versioned
   execution endpoint, so a stale runner cannot silently ignore principal or

@@ -85,8 +85,13 @@ def _validate_record(kind: str, record: Any) -> None:
         raise SnapshotValidationError("BlueWay course_id is invalid")
     if "term_id" in record and record["term_id"] is not None and not _text(record["term_id"], limit=256):
         raise SnapshotValidationError("BlueWay term_id is invalid")
+    # The export record identifies a course offering; child records refer to
+    # its canonical course_id and optional term_id separately.
+    term_id = record.get("term_id")
+    expected_course_record_id = f"{course_id}__{term_id}" if term_id is not None else course_id
     if kind == "courses" and (
-        record.get("course_id") != record["id"]
+        not _text(course_id, limit=256)
+        or expected_course_record_id != record["id"]
         or record["state"] != "current"
         or not _text(record.get("title"), limit=256)
     ):
