@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Fixed BlueWay imports rejecting semester-qualified course records and leaving
+  their meetings unlinked. Course mappings now use the canonical course ID and
+  semester, independently of the exported record ID.
+
 - Fixed learner-safe Settings and BlueWay pages redirecting to General Study
   after rendering. Optional admin gates now skip the redirect while required
   admin gates continue to block non-administrators.

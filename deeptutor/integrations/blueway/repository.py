@@ -999,7 +999,7 @@ class BlueWayRepository:
             course_ids: dict[tuple[str, str | None], str] = {}
             unavailable = {str(item["dataset"]) for item in snapshot.get("unavailable", [])}
             for remote in snapshot["datasets"]["courses"]:
-                external_id, title = str(remote["id"]), str(remote["title"])
+                external_id, title = str(remote["course_id"]), str(remote["title"])
                 external_term_id = remote.get("term_id")
                 mapped = conn.execute(
                     "SELECT course_id FROM blueway_course_maps WHERE connection_id = ? AND external_course_id = ? AND external_term_id IS ?",
