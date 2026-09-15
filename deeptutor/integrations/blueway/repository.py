@@ -1073,6 +1073,11 @@ class BlueWayRepository:
                            )""",
                         [now, *local_ids, connection_id, *local_ids],
                     )
+            capture_terms = {
+                (capture.get("course_id"), capture["id"]): capture.get("term_id")
+                for capture in snapshot["datasets"].get("capture_metadata", [])
+                if capture["state"] == "current"
+            }
             explicitly_archived_source_ids: list[str] = []
             for kind, records in snapshot["datasets"].items():
                 if kind == "courses":
@@ -1080,7 +1085,10 @@ class BlueWayRepository:
                 counts[kind] = len(records)
                 for remote in records:
                     external_course_id = remote.get("course_id")
-                    external_term_id = remote.get("term_id") if kind in {"class_meetings", "course_profiles"} else None
+                    external_term_id = remote.get("term_id") if kind in {"class_meetings", "course_profiles", "capture_metadata"} else None
+                    if kind == "transcripts":
+                        # Capture identity is qualified by course as well as recording ID.
+                        external_term_id = capture_terms.get((external_course_id, remote.get("capture_id")))
                     prior = conn.execute(
                         """SELECT state, current_source_id FROM blueway_records
                            WHERE connection_id = ? AND record_kind = ? AND external_record_id = ? AND external_term_id IS ?""",

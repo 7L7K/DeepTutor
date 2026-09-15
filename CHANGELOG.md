@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Accept the current BlueWay lecture metadata contract, validate imported-audio
+  provenance, and preserve semester identity when linking recordings and their
+  transcripts to Courses.
+
 - Fixed BlueWay imports rejecting semester-qualified course records and leaving
   their meetings unlinked. Course mappings now use the canonical course ID and
   semester, independently of the exported record ID.
