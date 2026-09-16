@@ -52,6 +52,7 @@ import type { StreamEvent } from "@/lib/unified-ws";
 import type { CourseChatReadiness } from "@/lib/course-api";
 import {
   courseCitationIsAvailable,
+  courseCitationMaterialHref,
   extractCourseCitations,
   visibleChatKnowledgeReferences,
 } from "@/lib/course-chat";
@@ -138,6 +139,7 @@ function CourseCitationList({
           const available = readiness
             ? courseCitationIsAvailable(citation, readiness)
             : null;
+          const materialHref = courseCitationMaterialHref(citation, readiness);
           const locator =
             citation.locator_type && citation.locator_value
               ? `${citation.locator_type} ${citation.locator_value}`
@@ -149,7 +151,9 @@ function CourseCitationList({
               className="flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-[var(--foreground)]"
             >
               <BookOpen className="h-3.5 w-3.5 text-[var(--muted-foreground)]" />
-              <span className="font-medium">{citation.source_title_snapshot}</span>
+              {materialHref ? (
+                <a className="font-medium underline underline-offset-4" href={materialHref}>{citation.source_title_snapshot}</a>
+              ) : <span className="font-medium">{citation.source_title_snapshot}</span>}
               {locator ? (
                 <span className="text-[var(--muted-foreground)]">{locator}</span>
               ) : null}

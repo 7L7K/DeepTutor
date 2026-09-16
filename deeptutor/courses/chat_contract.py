@@ -31,6 +31,7 @@ class CourseChatReadySource(BaseModel):
 
     source_id: str
     title: str
+    kind: str = "document"
     revision: int = Field(ge=1)
     content_sha256: str
 
@@ -104,6 +105,7 @@ def classify_course_chat_sources(
             CourseChatReadySource(
                 source_id=source.id,
                 title=source.display_name,
+                kind=source.kind,
                 revision=source.revision,
                 content_sha256=source.content_sha256,
             )

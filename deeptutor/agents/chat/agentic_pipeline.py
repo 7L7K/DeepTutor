@@ -1107,6 +1107,7 @@ class AgenticChatPipeline:
                 # dispatch so a hallucinated or prompt-injected kb_name cannot
                 # reach another accessible Knowledge base.
                 raise ValueError("RAG knowledge base is not attached to this turn")
+            kwargs["_course_context"] = (context.metadata or {}).get("course_context")
             kwargs.setdefault("mode", "hybrid")
         elif tool_name == "kb_files":
             # The report is read by the user as much as by the model, so it is
@@ -1289,9 +1290,18 @@ class AgenticChatPipeline:
         query = (context.user_message or "").strip()
         if not kbs or not query:
             return ""
-        if len(kbs) > KB_SEED_MAX_KBS:
+        course_mode = bool((context.metadata or {}).get("course_context"))
+        if not course_mode and len(kbs) > KB_SEED_MAX_KBS:
             kbs = kbs[:KB_SEED_MAX_KBS]
-        results = await asyncio.gather(*(self._seed_search_one_kb(kb, query, stream) for kb in kbs))
+        semaphore = asyncio.Semaphore(4)
+
+        async def retrieve(kb):
+            async with semaphore:
+                return await self._seed_search_one_kb(
+                    kb, query, stream, course_context=(context.metadata or {}).get("course_context"),
+                )
+
+        results = await asyncio.gather(*(retrieve(kb) for kb in kbs))
         sections: list[str] = []
         sources: list[dict[str, Any]] = []
         for kb, result in zip(kbs, results, strict=False):
@@ -1320,6 +1330,7 @@ class AgenticChatPipeline:
         kb_name: str,
         query: str,
         stream: StreamBus,
+        course_context: dict | None = None,
     ) -> tuple[str, list[dict[str, Any]]] | None:
         call_id = new_call_id("chat-kb-seed")
         retrieve_meta = build_trace_metadata(
@@ -1334,7 +1345,10 @@ class AgenticChatPipeline:
         )
         result = await self._execute_tool_call(
             "rag",
-            {"query": query, "kb_name": kb_name, "mode": "hybrid"},
+            {
+                "query": query, "kb_name": kb_name, "mode": "hybrid",
+                **({"_course_context": course_context} if course_context else {}),
+            },
             stream=stream,
             retrieve_meta=retrieve_meta,
         )

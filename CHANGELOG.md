@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- Make BlueWay materials readable by lecture, syllabus entry, assignment, and
+  notes. Course references open the exact current material version; transcript
+  references carry segment locations. Course Chat retrieves BlueWay passages
+  directly from verified imports and searches all attached Course sources.
+  Missing course evidence is not replaced by a source-name-only reference.
+
 - Sync BlueWay semester names, dates, archive status, and selected semester onto
   their exact Course mappings. Default Classes to the selected semester, with
   All semesters, class-name and recently-added sorting, and a separate unassigned

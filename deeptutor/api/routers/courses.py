@@ -2717,6 +2717,19 @@ async def get_course_source(course_id: str, source_id: str):
     return _call(lambda: _service().get_source(course_id, source_id)).model_dump()
 
 
+@router.get("/{course_id}/sources/{source_id}/materials")
+def get_course_source_materials(
+    course_id: str, source_id: str, revision: int | None = None,
+    content_hash: str | None = None, item_id: str | None = None,
+):
+    from deeptutor.courses.materials import source_materials
+
+    return _call(lambda: source_materials(
+        _service(), course_id, source_id, revision=revision,
+        content_hash=content_hash, item_id=item_id,
+    ))
+
+
 @router.get("/{course_id}/sources/{source_id}/progress")
 async def stream_course_source_progress(course_id: str, source_id: str):
     from deeptutor.api.utils.task_log_stream import get_task_stream_manager

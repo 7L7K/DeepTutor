@@ -12,6 +12,8 @@ import {
   type CourseSource,
 } from "@/lib/course-api";
 
+import BlueWayMaterials from "./BlueWayMaterials";
+
 type MaterialState = CourseSource["state"];
 
 export interface MaterialErrorState {
@@ -107,6 +109,11 @@ export default function CourseMaterials() {
       if (!isCurrentMaterialRefresh(requestEpoch, refreshEpochRef.current)) return;
       setSources(loadedSources);
       setErrors((current) => reduceMaterialErrors(current, { type: "load-succeeded" }));
+      const query = new URLSearchParams(window.location.search);
+      const requested = query.get("source");
+      if (requested && !loadedSources.some(source => source.id === requested && source.state === "ready" && String(source.revision) === query.get("revision") && source.content_sha256 === query.get("hash"))) {
+        setStatus("The cited material version is no longer available. Current materials are shown below.");
+      }
     } catch (cause) {
       if (!isCurrentMaterialRefresh(requestEpoch, refreshEpochRef.current)) return;
       setErrors((current) => reduceMaterialErrors(current, {
@@ -146,6 +153,12 @@ export default function CourseMaterials() {
       if (timer !== null) window.clearTimeout(timer);
     };
   }, [busy, hasProcessingSources, loading, refresh]);
+
+  useEffect(() => {
+    if (loading) return;
+    const requested = new URLSearchParams(window.location.search).get("source");
+    if (requested) document.getElementById(`source-${requested}`)?.scrollIntoView({block: "start"});
+  }, [loading, sources]);
 
   async function attach(file: File | undefined) {
     const course = courseShell?.course;
@@ -210,9 +223,9 @@ export default function CourseMaterials() {
     fileRef.current?.click();
   };
   const renderSource = (source: CourseSource) => (
-    <li key={source.id} className="flex flex-wrap items-start justify-between gap-4 rounded-2xl border border-[var(--border)] bg-[var(--card)] px-5 py-4">
+    <li key={source.id} id={`source-${source.id}`} className="flex flex-wrap items-start justify-between gap-4 rounded-2xl border border-[var(--border)] bg-[var(--card)] px-5 py-4">
       <div className="min-w-0">
-        <p className="truncate font-medium text-[var(--foreground)]">{source.display_name}</p>
+        <p className="truncate font-medium text-[var(--foreground)]">{source.kind === "blueway snapshot" ? "From BlueWay" : source.display_name}</p>
         <p className="mt-1 text-sm text-[var(--muted-foreground)]">
           {materialKindLabel(source)} · {materialStateLabel(source.state)}
         </p>
@@ -232,6 +245,7 @@ export default function CourseMaterials() {
           <button type="button" onClick={() => void archiveSource(source)} disabled={busy || source.state === "processing" || course.state !== "active"} className="rounded-lg border border-[var(--border)] px-3 py-1.5 text-sm text-[var(--muted-foreground)] transition hover:bg-[var(--muted)] disabled:cursor-not-allowed disabled:opacity-50">Archive</button>
         ) : null}
       </div>
+      {source.kind === "blueway snapshot" && source.state === "ready" ? <BlueWayMaterials courseId={courseId} source={source} /> : null}
     </li>
   );
 
