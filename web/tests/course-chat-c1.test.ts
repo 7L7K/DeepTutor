@@ -288,3 +288,18 @@ test("Course readiness API uses the exact owner-scoped Course route", async (t) 
   assert.equal(readiness.ready_sources[0].source_id, "src_bio");
   assert.equal(requestedUrl, "/api/v1/courses/crs%2Fbio/chat-readiness");
 });
+
+test("BlueWay references open the exact item and segment; stale and unsupported sources do not link", async () => {
+  const {courseCitationMaterialHref} = await import("../lib/course-chat");
+  const citation = {schema_version: 1 as const, course_id:"crs_bio", source_id:"src_bio", source_revision:4, source_content_hash:"a".repeat(64), source_title_snapshot:"Imported material", locator_type:"timestamp" as const, locator_value:"1:20", retrieval_fragment_id:`material:${"a".repeat(24)}:12`};
+  const readiness = {state:"ready" as const, counts:{ready:1,processing:0,failed:0,unavailable:0,total:1}, ready_sources:[{...READY_SOURCE,kind:"blueway snapshot"}]};
+  assert.equal(courseCitationMaterialHref(citation,{...readiness,course_id:"crs_other"}),null);
+  const link = courseCitationMaterialHref(citation,readiness)!;
+  const url = new URL(link,"https://example.test");
+  assert.equal(url.searchParams.get("item"), "a".repeat(24));
+  assert.equal(url.searchParams.get("segment"),"12");
+  assert.equal(url.searchParams.get("revision"),"4");
+  assert.equal(url.searchParams.get("hash"),citation.source_content_hash);
+  assert.equal(courseCitationMaterialHref({...citation,source_revision:3},readiness),null);
+  assert.equal(courseCitationMaterialHref(citation,{...readiness,ready_sources:[READY_SOURCE]}),null);
+});

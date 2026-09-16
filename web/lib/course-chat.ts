@@ -194,3 +194,14 @@ export function courseCitationIsAvailable(
       source.content_sha256 === citation.source_content_hash,
   );
 }
+
+/** Open only a current source with a supported reader; never substitute a new version. */
+export function courseCitationMaterialHref(citation: CourseCitation, readiness: CourseChatReadiness | null): string | null {
+  if (!readiness || !courseCitationIsAvailable(citation, readiness)) return null;
+  if (readiness.course_id && readiness.course_id !== citation.course_id) return null;
+  if (!readiness.ready_sources.some(source => source.source_id === citation.source_id && source.kind === "blueway snapshot")) return null;
+  const query = new URLSearchParams({source: citation.source_id, revision: String(citation.source_revision), hash: citation.source_content_hash});
+  const fragment = /^material:([a-f0-9]{24}):(\d+)$/.exec(citation.retrieval_fragment_id || "");
+  if (fragment) {query.set("item", fragment[1]); query.set("segment", fragment[2]);}
+  return `/classes/${encodeURIComponent(citation.course_id)}/materials?${query}#source-${encodeURIComponent(citation.source_id)}`;
+}

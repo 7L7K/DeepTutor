@@ -344,3 +344,13 @@ async def test_run_clips_oversized_seed_passages(monkeypatch: pytest.MonkeyPatch
     # section title, truncation marker, and the trailing template line.
     seed_block = turn_context.split("[Knowledge Base Context]", 1)[1]
     assert len(seed_block) < KB_SEED_CHARS_PER_KB + 400
+
+@pytest.mark.asyncio
+async def test_course_seed_searches_fourth_source(monkeypatch):
+    registry = _SeedRegistry()
+    client = _ScriptedChatClient([[_llm_chunk(content="Done.")]])
+    pipeline = _make_pipeline(monkeypatch, registry, client)
+    context = UnifiedContext(session_id="course-seed", user_message="late work policy", knowledge_bases=["one", "two", "three", "syllabus"], language="en", metadata={"turn_id":"t1", "course_context":{"course_id":"crs_one"}})
+    await _run(pipeline, context)
+    assert {call['kwargs']['kb_name'] for call in registry.executed} == {'one','two','three','syllabus'}
+    assert all(call['kwargs']['_course_context']['course_id']=='crs_one' for call in registry.executed)

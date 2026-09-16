@@ -43,6 +43,7 @@ export interface CourseCapabilities {
 
 export interface CourseChatReadySource {
   source_id: string;
+  kind?: string;
   title: string;
   revision: number;
   content_sha256: string;
@@ -215,4 +216,26 @@ export async function resetCourseLearning(courseId: string, sessionId?: string |
       body: JSON.stringify({ session_id: sessionId || null }),
     }),
   );
+}
+
+export interface CourseMaterialItem {
+  id: string;
+  kind: string;
+  group: string;
+  title: string;
+  date: string | null;
+  notice: string | null;
+  fields?: { label: string; text: string }[];
+  segments?: { start_ms: number; end_ms: number; text: string }[];
+}
+export interface CourseMaterialCollection {
+  source_id: string;
+  revision: number;
+  content_hash: string;
+  items: CourseMaterialItem[];
+}
+export async function getCourseMaterials(courseId: string, source: CourseSource, itemId?: string): Promise<CourseMaterialCollection> {
+  const query = new URLSearchParams({revision: String(source.revision), content_hash: source.content_sha256});
+  if (itemId) query.set("item_id", itemId);
+  return json<CourseMaterialCollection>(await apiFetch(apiUrl(`/api/v1/courses/${encodeURIComponent(courseId)}/sources/${encodeURIComponent(source.id)}/materials?${query}`), {cache: "no-store"}));
 }

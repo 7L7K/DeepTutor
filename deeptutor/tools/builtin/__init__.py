@@ -127,16 +127,28 @@ class RAGTool(_PromptHintsMixin, BaseTool):
             if key not in {"query", "kb_name", "event_sink"}
         }
 
-        result = await rag_search(
-            query=query,
-            kb_name=kb_name,
-            event_sink=event_sink,
-            **extra_kwargs,
-        )
+        course_context = extra_kwargs.pop("_course_context", None)
+        result = None
+        if isinstance(course_context, dict):
+            import asyncio
+
+            from deeptutor.courses.materials import search_blueway_materials
+            from deeptutor.courses.service import get_current_course_service
+
+            result = await asyncio.to_thread(
+                search_blueway_materials, get_current_course_service(), course_context, kb_name, query,
+            )
+        if result is None:
+            result = await rag_search(
+                query=query, kb_name=kb_name, event_sink=event_sink, **extra_kwargs,
+            )
         content = result.get("answer") or result.get("content", "")
         return ToolResult(
             content=content,
-            sources=_rag_sources(result, query=query, kb_name=kb_name),
+            sources=(
+                _rag_sources(result, query=query, kb_name=kb_name)
+                if not course_context or result.get("sources") else []
+            ),
             metadata=result,
         )
 
