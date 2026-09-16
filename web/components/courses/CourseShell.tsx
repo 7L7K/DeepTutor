@@ -164,7 +164,7 @@ export default function CourseShell({
     () => (course ? { course, courseId: course.id } : null),
     [course],
   );
-  const termLabel = learnerCourseTermLabel(course?.term);
+  const termLabel = learnerCourseTermLabel(course?.term, course?.term_label);
 
   // The direct Course read is the authorization boundary for a deep link.
   // The owner-scoped Course list is shared navigation state and may briefly

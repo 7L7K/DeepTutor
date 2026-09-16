@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- Sync BlueWay semester names, dates, archive status, and selected semester onto
+  their exact Course mappings. Default Classes to the selected semester, with
+  All semesters, class-name and recently-added sorting, and a separate unassigned
+  group. Keep semester metadata out of study-material indexing.
+
 - Accept the current BlueWay lecture metadata contract, validate imported-audio
   provenance, and preserve semester identity when linking recordings and their
   transcripts to Courses.

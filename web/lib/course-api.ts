@@ -6,6 +6,11 @@ export interface Course {
   owner_user_id: string;
   title: string;
   term?: string | null;
+  term_label?: string | null;
+  term_starts_on?: string | null;
+  term_ends_on?: string | null;
+  term_archived?: boolean | null;
+  term_selected?: boolean | null;
   workspace_kind: "academic_course" | "general_study";
   state: "active" | "archived";
   revision: number;

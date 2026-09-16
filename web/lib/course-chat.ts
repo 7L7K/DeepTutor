@@ -70,7 +70,10 @@ export function academicTermLabel(term: string | null | undefined): string {
 /** Everyday learner surfaces omit a missing term instead of showing setup copy. */
 export function learnerCourseTermLabel(
   term: string | null | undefined,
+  label?: string | null,
 ): string | null {
+  if (label?.trim()) return label.trim();
+  if (term?.startsWith("term-")) return null;
   const normalized = String(term || "").trim();
   return normalized ? academicTermLabel(normalized) : null;
 }

@@ -21,6 +21,11 @@ class Course(BaseModel):
     # When a term-qualified BlueWay mapping exists, the repository projects
     # its single unambiguous term here; ambiguous or absent mappings stay null.
     term: str | None = None
+    term_label: str | None = None
+    term_starts_on: str | None = None
+    term_ends_on: str | None = None
+    term_archived: bool | None = None
+    term_selected: bool | None = None
     workspace_kind: CourseWorkspaceKind = "academic_course"
     state: CourseState = "active"
     revision: int = 1

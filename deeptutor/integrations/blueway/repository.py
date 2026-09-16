@@ -692,7 +692,7 @@ class BlueWayRepository:
                    FROM blueway_records r JOIN courses c ON c.id = r.course_id
                    JOIN blueway_course_maps m ON m.connection_id = r.connection_id AND m.course_id = r.course_id
                    WHERE r.connection_id = ? AND r.state = 'current' AND c.owner_user_id = ?
-                     AND c.state = 'active' ORDER BY r.course_id, r.record_kind, r.external_record_id""",
+                     AND c.state = 'active' AND r.record_kind <> 'courses' ORDER BY r.course_id, r.record_kind, r.external_record_id""",
                 (connection_id, self.owner_user_id),
             ).fetchall()
         grouped: dict[tuple[str, str, str | None], list[dict[str, Any]]] = {}
@@ -781,7 +781,7 @@ class BlueWayRepository:
             for item in items:
                 conn.execute(
                     """UPDATE blueway_records SET current_source_id = ?, updated_at = ?
-                       WHERE connection_id = ? AND course_id = ? AND state = 'current'""",
+                       WHERE connection_id = ? AND course_id = ? AND state = 'current' AND record_kind <> 'courses'""",
                     (item["source_id"], now, connection_id, item["course_id"]),
                 )
                 previous = item.get("previous_source_id")
@@ -820,7 +820,7 @@ class BlueWayRepository:
                 raise CourseConflictError("BlueWay connection is stale or no longer writable")
             conn.execute(
                 """UPDATE blueway_records SET current_source_id = ?, updated_at = ?
-                   WHERE connection_id = ? AND course_id = ? AND state = 'current'""",
+                   WHERE connection_id = ? AND course_id = ? AND state = 'current' AND record_kind <> 'courses'""",
                 (source_id, time.time(), connection_id, course_id),
             )
 
@@ -1080,12 +1080,11 @@ class BlueWayRepository:
             }
             explicitly_archived_source_ids: list[str] = []
             for kind, records in snapshot["datasets"].items():
-                if kind == "courses":
-                    continue
-                counts[kind] = len(records)
+                if kind != "courses":
+                    counts[kind] = len(records)
                 for remote in records:
                     external_course_id = remote.get("course_id")
-                    external_term_id = remote.get("term_id") if kind in {"class_meetings", "course_profiles", "capture_metadata"} else None
+                    external_term_id = remote.get("term_id") if kind in {"courses", "class_meetings", "course_profiles", "capture_metadata"} else None
                     if kind == "transcripts":
                         # Capture identity is qualified by course as well as recording ID.
                         external_term_id = capture_terms.get((external_course_id, remote.get("capture_id")))
@@ -1096,7 +1095,7 @@ class BlueWayRepository:
                     ).fetchone()
                     local_course_id = None
                     if external_course_id:
-                        if external_term_id is not None:
+                        if kind == "courses" or external_term_id is not None:
                             local_course_id = course_ids.get((str(external_course_id), external_term_id))
                         else:
                             candidates = {
@@ -1108,8 +1107,9 @@ class BlueWayRepository:
                                 local_course_id = candidates.pop()
                     if local_course_id is not None:
                         course_row = conn.execute("SELECT state FROM courses WHERE id = ? AND owner_user_id = ?", (local_course_id, self.owner_user_id)).fetchone()
-                        if course_row is None or str(course_row["state"]) != "active":
-                            # A learner's archived Course never becomes writable through an import.
+                        if course_row is None or (kind != "courses" and str(course_row["state"]) != "active"):
+                            # Semester display metadata may refresh for an archived Course;
+                            # study material still cannot become writable there.
                             local_course_id = None
                     state = "unlinked" if local_course_id is None else str(remote["state"])
                     payload = json.dumps(remote, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
@@ -1131,7 +1131,7 @@ class BlueWayRepository:
                     [now, *explicitly_archived_source_ids],
                 )
             if snapshot["complete"]:
-                archive_kinds = [kind for kind in snapshot["datasets"] if kind not in unavailable and kind != "courses"]
+                archive_kinds = [kind for kind in snapshot["datasets"] if kind not in unavailable]
                 if not archive_kinds:
                     archive_kinds = []
                 marks = ",".join("?" for _ in archive_kinds)
