@@ -20,7 +20,7 @@ test("Classes presents a focused class entry point", () => {
 
 test("Class cards keep authoritative metadata and one clear destination", () => {
   assert.match(source, /Academic course/);
-  assert.match(source, /learnerCourseTermLabel\(course\.term\)/);
+  assert.match(source, /learnerCourseTermLabel\(course\.term, course\.term_label\)/);
   assert.doesNotMatch(source, /Your course workspace/);
   assert.match(source, /course\.state === "active" \? "Active" : "Archived"/);
   assert.match(source, /bg-emerald-500/);

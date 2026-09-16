@@ -6,6 +6,7 @@ import { useEffect, useState } from "react";
 import { useCourses } from "@/context/CourseContext";
 import type { Course } from "@/lib/course-api";
 import { learnerCourseTermLabel } from "@/lib/course-chat";
+import { defaultSemester, groupClasses, semesterOptions, type ClassSort } from "@/lib/course-list";
 
 function CourseCard({
   course,
@@ -14,7 +15,7 @@ function CourseCard({
   course: Course;
   onOpen: () => void;
 }) {
-  const termLabel = learnerCourseTermLabel(course.term);
+  const termLabel = learnerCourseTermLabel(course.term, course.term_label);
 
   return (
     <Link
@@ -31,9 +32,9 @@ function CourseCard({
           <p className="text-[11px] font-medium uppercase tracking-[0.14em] text-[var(--muted-foreground)]">
             Academic course
           </p>
-          <h2 className="mt-2 truncate text-xl font-semibold tracking-tight text-[var(--foreground)]">
+          <h4 className="mt-2 truncate text-xl font-semibold tracking-tight text-[var(--foreground)]">
             {course.title}
-          </h2>
+          </h4>
           {termLabel ? (
             <p className="mt-1 text-sm text-[var(--muted-foreground)]">{termLabel}</p>
           ) : null}
@@ -160,6 +161,8 @@ function AddClassModal({
 export default function ClassesHome() {
   const { courses, loading, error, refresh, createCourse, selectCourse } =
     useCourses();
+  const [semester, setSemester] = useState<string | null | undefined>(undefined);
+  const [sort, setSort] = useState<ClassSort>("name");
   const [newTitle, setNewTitle] = useState("");
   const [creating, setCreating] = useState(false);
   const [createOpen, setCreateOpen] = useState(false);
@@ -174,6 +177,12 @@ export default function ClassesHome() {
   const archivedCourses = academicCourses.filter(
     (course) => course.state === "archived",
   );
+
+
+  const options = semesterOptions(academicCourses);
+  const selectedSemester = semester === undefined ? defaultSemester(options) : semester !== null && options.some((option) => option.id === semester) ? semester : null;
+  const activeGroups = groupClasses(activeCourses, selectedSemester, sort, options);
+  const archivedGroups = groupClasses(archivedCourses, selectedSemester, sort, options);
 
   async function submitCourse(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -228,6 +237,24 @@ export default function ClassesHome() {
             </button>
           </div>
         </header>
+        {academicCourses.length > 0 && (
+          <div className="mt-6 flex flex-wrap gap-4">
+            <label className="flex flex-col gap-1.5 text-sm font-medium">
+              Semester
+              <select value={selectedSemester === null ? "all" : `term:${selectedSemester}`} onChange={(event) => setSemester(event.target.value === "all" ? null : event.target.value.slice(5))} className="rounded-lg border border-[var(--border)] bg-[var(--card)] px-3 py-2">
+                <option value="all">All semesters</option>
+                {options.map((option) => <option key={option.id} value={`term:${option.id}`}>{option.label}</option>)}
+              </select>
+            </label>
+            <label className="flex flex-col gap-1.5 text-sm font-medium">
+              Sort classes
+              <select value={sort} onChange={(event) => setSort(event.target.value as ClassSort)} className="rounded-lg border border-[var(--border)] bg-[var(--card)] px-3 py-2">
+                <option value="name">Class name (A–Z)</option>
+                <option value="newest">Recently added</option>
+              </select>
+            </label>
+          </div>
+        )}
 
         {error ? (
           <div
@@ -247,7 +274,7 @@ export default function ClassesHome() {
           <div className="mt-10 rounded-2xl border border-dashed border-[var(--border)] px-6 py-14 text-center text-sm text-[var(--muted-foreground)]">
             Loading your Courses…
           </div>
-        ) : activeCourses.length ? (
+        ) : activeGroups.length ? (
           <section aria-labelledby="active-courses-heading" className="mt-10">
             <div className="mb-4">
               <h2
@@ -257,13 +284,14 @@ export default function ClassesHome() {
                 Your classes
               </h2>
             </div>
-            <div className="grid gap-4 md:grid-cols-2">
-              {activeCourses.map((course) => (
-                <CourseCard
-                  key={course.id}
-                  course={course}
-                  onOpen={() => selectCourse(course.id)}
-                />
+            <div className="space-y-7">
+              {activeGroups.map((group) => (
+                <section key={group.id} aria-label={group.label}>
+                  <h3 className="mb-3 text-base font-semibold">{group.label} <span className="font-normal text-[var(--muted-foreground)]">({group.courses.length})</span></h3>
+                  <div className="grid gap-4 md:grid-cols-2">
+                    {group.courses.map((course) => <CourseCard key={course.id} course={course} onOpen={() => selectCourse(course.id)} />)}
+                  </div>
+                </section>
               ))}
             </div>
           </section>
@@ -299,7 +327,7 @@ export default function ClassesHome() {
           </section>
         )}
 
-        {archivedCourses.length ? (
+        {archivedGroups.length ? (
           <section aria-labelledby="archived-courses-heading" className="mt-10">
             <h2
               id="archived-courses-heading"
@@ -307,13 +335,14 @@ export default function ClassesHome() {
             >
               Archived classes
             </h2>
-            <div className="grid gap-4 md:grid-cols-2">
-              {archivedCourses.map((course) => (
-                <CourseCard
-                  key={course.id}
-                  course={course}
-                  onOpen={() => selectCourse(course.id)}
-                />
+            <div className="space-y-7">
+              {archivedGroups.map((group) => (
+                <section key={group.id} aria-label={group.label}>
+                  <h3 className="mb-3 text-base font-semibold">{group.label} <span className="font-normal text-[var(--muted-foreground)]">({group.courses.length})</span></h3>
+                  <div className="grid gap-4 md:grid-cols-2">
+                    {group.courses.map((course) => <CourseCard key={course.id} course={course} onOpen={() => selectCourse(course.id)} />)}
+                  </div>
+                </section>
               ))}
             </div>
           </section>

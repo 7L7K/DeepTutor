@@ -112,7 +112,14 @@ class CourseRepository:
         return cleaned
 
     def _course_from_row(self, row: sqlite3.Row) -> Course:
-        course = Course.model_validate(dict(row))
+        data = dict(row)
+        payload = data.pop("semester_payload", None)
+        if payload and data.get("term"):
+            metadata = json.loads(payload)
+            if metadata.get("term_id") == data["term"]:
+                for field in ("term_label", "term_starts_on", "term_ends_on", "term_archived", "term_selected"):
+                    data[field] = metadata.get(field)
+        course = Course.model_validate(data)
         if course.owner_user_id != self.owner_user_id:
             raise CourseNotFoundError("Course not found")
         return course
@@ -133,7 +140,18 @@ class CourseRepository:
                        WHEN COUNT(DISTINCT map.external_term_id) = 1
                        THEN MAX(map.external_term_id)
                        ELSE NULL
-                   END AS term
+                   END AS term,
+                   (SELECT r.payload_json
+                    FROM blueway_records r
+                    JOIN blueway_connections bc ON bc.id = r.connection_id
+                    JOIN blueway_course_maps bm ON bm.connection_id = r.connection_id
+                      AND bm.course_id = r.course_id
+                      AND bm.external_course_id = r.external_course_id
+                      AND bm.external_term_id IS r.external_term_id
+                    WHERE r.course_id = c.id AND r.record_kind = 'courses'
+                      AND r.state = 'current' AND bc.state = 'active' AND bc.credential_status = 'healthy'
+                      AND bc.owner_user_id = c.owner_user_id
+                    ORDER BY r.updated_at DESC, r.connection_id LIMIT 1) AS semester_payload
             FROM courses AS c
             LEFT JOIN blueway_course_maps AS map
               ON map.course_id = c.id

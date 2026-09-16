@@ -28,7 +28,7 @@ _COMMON = {"id", "revision", "content_sha256", "state"}
 _HEX64 = re.compile(r"^[0-9a-f]{64}$")
 _SNAPSHOT_ID = re.compile(r"^bws_[0-9a-f]{64}$")
 _FIELDS: dict[str, set[str]] = {
-    "courses": _COMMON | {"course_id", "term_id", "title"},
+    "courses": _COMMON | {"course_id", "term_id", "title", "term_label", "term_starts_on", "term_ends_on", "term_archived", "term_selected"},
     "class_meetings": _COMMON | {"course_id", "term_id", "title", "days", "start_time", "end_time", "room", "location_text"},
     "schedule_events": _COMMON | {"course_id", "title", "date", "starts_at", "ends_at", "all_day", "notes"},
     "assignments": _COMMON | {"course_id", "title", "due_at", "details", "submission_method", "grading_note", "status"},
@@ -97,6 +97,26 @@ def _validate_record(kind: str, record: Any) -> None:
         or not _text(record.get("title"), limit=256)
     ):
         raise SnapshotValidationError("BlueWay course identity/title is invalid")
+    if kind == "courses":
+        semester_fields = {"term_label", "term_starts_on", "term_ends_on", "term_archived", "term_selected"}
+        if semester_fields.intersection(record):
+            if (not term_id or not _text(record.get("term_label"), limit=80)
+                or not isinstance(record.get("term_archived"), bool)
+                or not isinstance(record.get("term_selected"), bool)
+                or (record["term_archived"] and record["term_selected"])):
+                raise SnapshotValidationError("BlueWay semester metadata is invalid")
+            from datetime import date
+            for field in ("term_starts_on", "term_ends_on"):
+                if field in record:
+                    value = record[field]
+                    try:
+                        if not isinstance(value, str) or not re.fullmatch(r"\d{4}-\d{2}-\d{2}", value):
+                            raise ValueError("date required")
+                        date.fromisoformat(value)
+                    except ValueError as exc:
+                        raise SnapshotValidationError("BlueWay semester date is invalid") from exc
+            if record.get("term_starts_on") and record.get("term_ends_on") and record["term_starts_on"] > record["term_ends_on"]:
+                raise SnapshotValidationError("BlueWay semester date range is invalid")
     if kind == "capture_metadata" and "schedule_event_id" in record and not _text(record["schedule_event_id"], limit=128):
         raise SnapshotValidationError("BlueWay capture schedule event identity is invalid")
     if kind == "capture_metadata":
@@ -124,6 +144,8 @@ def _validate_record(kind: str, record: Any) -> None:
     # Accept omitted optional fields, but never provider-shaped objects.
     for field, value in record.items():
         if field in _COMMON or field == "course_id":
+            continue
+        if kind == "courses" and field in {"term_archived", "term_selected"}:
             continue
         if kind == "class_meetings" and field == "days":
             if not isinstance(value, list) or not all(_text(day, limit=16) for day in value):
@@ -221,6 +243,20 @@ def validate_snapshot(snapshot: dict[str, Any]) -> dict[str, Any]:
                 raise SnapshotValidationError("BlueWay snapshot contains duplicate record ids")
             seen.add(identity)
             total += 1
+    semesters: dict[str, tuple] = {}
+    selected_terms: set[str] = set()
+    for course in datasets["courses"]:
+        if "term_label" not in course:
+            continue
+        term = course["term_id"]
+        metadata = tuple(course.get(field) for field in ("term_label", "term_starts_on", "term_ends_on", "term_archived", "term_selected"))
+        if term in semesters and semesters[term] != metadata:
+            raise SnapshotValidationError("BlueWay semester metadata is inconsistent")
+        semesters[term] = metadata
+        if course["term_selected"]:
+            selected_terms.add(term)
+    if len(selected_terms) > 1:
+        raise SnapshotValidationError("BlueWay selected semester is ambiguous")
     if total > MAX_RECORDS_PER_PAGE:
         raise SnapshotValidationError("BlueWay page exceeds the 500-record limit")
     return snapshot

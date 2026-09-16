@@ -2180,3 +2180,84 @@ def test_capture_requires_known_metadata_version(version: object) -> None:
     payload["payload_sha256"] = canonical_snapshot_hash(payload)
     with pytest.raises(SnapshotValidationError, match="version"):
         validate_snapshot(payload)
+
+
+def _semester_snapshot() -> dict:
+    payload = _exported_term_snapshot()
+    for course in payload["datasets"]["courses"]:
+        course.update(term_label="Fall", term_starts_on="2026-09-10", term_ends_on="2027-01-10", term_archived=False, term_selected=True)
+    payload["payload_sha256"] = canonical_snapshot_hash(payload)
+    return payload
+
+
+@pytest.mark.parametrize("overrides", [
+    {"term_selected": "true"}, {"term_archived": 1}, {"term_label": ""}, {"term_label": "x" * 81}, {"term_label": "é" * 41},
+    {"term_starts_on": "2026-02-29"}, {"term_ends_on": "2025-01-01"},
+    {"term_starts_on": None}, {"term_archived": True}, {"term_id": None},
+])
+def test_semester_metadata_rejects_invalid_provider_fields(overrides: dict) -> None:
+    payload = _semester_snapshot()
+    payload["datasets"]["courses"][0].update(overrides)
+    payload["payload_sha256"] = canonical_snapshot_hash(payload)
+    with pytest.raises(SnapshotValidationError):
+        validate_snapshot(payload)
+
+
+def test_semester_metadata_rejects_two_selected_terms() -> None:
+    payload = _semester_snapshot()
+    second = copy.deepcopy(payload["datasets"]["courses"][0])
+    second["term_id"] = "another-term"
+    second["id"] = second["course_id"] + "__another-term"
+    payload["datasets"]["courses"].append(second)
+    payload["payload_sha256"] = canonical_snapshot_hash(payload)
+    with pytest.raises(SnapshotValidationError, match="ambiguous"):
+        validate_snapshot(payload)
+
+
+def test_semester_metadata_sync_updates_in_place_and_stays_out_of_knowledge(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    service, courses = _service(tmp_path, monkeypatch)
+    payload = _semester_snapshot()
+    monkeypatch.setattr(service.transport, "fetch_snapshot", lambda **_kwargs: copy.deepcopy(payload))
+    attempt = service.start_connection()
+    connection = service.complete_connection_for_transport(attempt_id=attempt.id, exchange=TokenExchange("grant-a", "subject-a", "access", "2026-07-23T00:00:00Z", "refresh-secret"))
+    assert service.run_queued_sync(run_id=service.queue_sync().id).state == "completed"
+    imported = courses.list_courses()[0]
+    assert imported.term_label == "Fall" and imported.term_selected is True
+    assert imported.term_starts_on == "2026-09-10" and imported.term_ends_on == "2027-01-10"
+    assert not CourseRepository(courses.db_path, "other-owner").list_courses()
+    payload["snapshot_id"] = "bws_" + "d" * 64
+    payload["snapshot_revision"] += 1
+    payload["datasets"]["courses"][0].update(term_label="Fall renamed", term_selected=False, term_archived=True)
+    payload["payload_sha256"] = canonical_snapshot_hash(payload)
+    assert service.run_queued_sync(run_id=service.queue_sync().id).state == "completed"
+    renamed = courses.get_course(imported.id)
+    assert renamed.term_label == "Fall renamed" and renamed.term_archived is True
+    assert renamed.state == "active" and renamed.term_selected is False
+    assert len(courses.list_courses()) == 1
+    with courses._connect() as conn:
+        rows = conn.execute("SELECT current_source_id FROM blueway_records WHERE record_kind = 'courses'").fetchall()
+        assert len(rows) == 1 and rows[0]["current_source_id"] is None
+    for _, _, _, records in BlueWayRepository(courses).bundle_records(connection.id):
+        assert all(record["kind"] != "courses" for record in records)
+    with courses._connect() as conn:
+        conn.execute("UPDATE blueway_connections SET state = 'disconnected' WHERE id = ?", (connection.id,))
+    assert courses.get_course(imported.id).term_label is None
+    with courses._connect() as conn:
+        conn.execute("UPDATE blueway_connections SET state = 'active' WHERE id = ?", (connection.id,))
+    payload["snapshot_id"] = "bws_" + "e" * 64
+    payload["snapshot_revision"] += 1
+    payload["datasets"] = {kind: [] for kind in payload["datasets"]}
+    payload["payload_sha256"] = canonical_snapshot_hash(payload)
+    assert service.run_queued_sync(run_id=service.queue_sync().id).state == "completed"
+    assert courses.get_course(imported.id).term_label is None
+    assert courses.get_course(imported.id).state == "active"
+    with courses._connect() as conn:
+        assert conn.execute("SELECT state FROM blueway_records WHERE record_kind = 'courses'").fetchone()[0] == "archived"
+
+
+def test_semester_snapshot_matches_actual_producer_output() -> None:
+    snapshot = validate_snapshot_fixture(Path(__file__).parents[2] / "fixtures/blueway/academic_snapshot.semester.v1.json")
+    courses = snapshot["datasets"]["courses"]
+    assert len(courses) == 2
+    assert sum(course["term_selected"] for course in courses) == 1
+    assert sum(course["term_archived"] for course in courses) == 1
