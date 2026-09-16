@@ -1975,6 +1975,7 @@ class TurnRuntimeManager:
                 event_stream = finalize_course_chat_stream(
                     dict(payload.get("course_context") or {}),
                     event_stream,
+                    user_message=context.user_message if not attachments else "",
                 )
             async for event in event_stream:
                 if event.type == StreamEventType.SESSION:
