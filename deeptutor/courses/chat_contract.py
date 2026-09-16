@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import AsyncIterable, AsyncIterator, Iterable, Mapping
+import re
 from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
@@ -336,8 +337,30 @@ def finalize_course_chat_events(
 async def finalize_course_chat_stream(
     course_context: Mapping[str, Any],
     events: AsyncIterable[StreamEvent],
+    *,
+    user_message: str = "",
 ) -> AsyncIterator[StreamEvent]:
     """Buffer one Course turn so unvalidated output is never published live."""
+
+    # Only exact social turns receive a fixed, non-factual response. Never pass
+    # arbitrary model output through without citations based on a greeting prefix.
+    social = re.sub(r"[.!?,]+$", "", user_message.strip().casefold()).strip()
+    response = None
+    if social in {"hi", "hello", "hey", "good morning", "good afternoon", "good evening"}:
+        response = "Hi! What would you like to work on in this class?"
+    elif social in {"thanks", "thank you", "thank you so much", "thanks a lot"}:
+        response = "You're welcome! What would you like to work on next?"
+    elif social in {"ok", "okay", "got it"}:
+        response = "What would you like to work on next in this class?"
+    if response:
+        yield StreamEvent(
+            type=StreamEventType.CONTENT,
+            source="course_conversation",
+            content=response,
+            metadata={"call_kind": "llm_final_response", "course_grounding": "conversational"},
+        )
+        yield StreamEvent(type=StreamEventType.DONE, source="course_conversation", metadata={"status": "completed"})
+        return
 
     buffered = [event async for event in events]
     for event in finalize_course_chat_events(course_context, buffered):

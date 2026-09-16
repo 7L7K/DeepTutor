@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- Respond naturally to standalone Course Chat greetings and acknowledgements
+  without requiring citations. Factual course questions retain source validation.
+
+- Open BlueWay lecture transcripts in a scrollable dialog, keeping the Materials
+  list compact. Make the class-question action prominent on the list and reader.
+
 - Make BlueWay materials readable by lecture, syllabus entry, assignment, and
   notes. Course references open the exact current material version; transcript
   references carry segment locations. Course Chat retrieves BlueWay passages
